@@ -87,6 +87,13 @@ public extension MirageClientService {
             disableResolutionCap: encoderRequest.disableResolutionCap == true
         )
         resolutionScale = geometry.resolvedStreamScale
+        desktopResizeCoordinator.lastSentTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: effectiveDisplayResolution,
+            displayScaleFactor: geometry.displayScaleFactor,
+            requestedStreamScale: geometry.resolvedStreamScale,
+            encoderMaxWidth: encoderRequest.encoderMaxWidth,
+            encoderMaxHeight: encoderRequest.encoderMaxHeight
+        )
         let bitrateSemantics = MirageDesktopBitrateRequestSemantics.resolve(
             enteredBitrateBps: encoderRequest.enteredBitrate,
             requestedTargetBitrateBps: encoderRequest.bitrate,

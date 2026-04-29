@@ -304,6 +304,8 @@ package struct DesktopStreamStartedMessage: Codable {
     package var transitionPhase: MirageDesktopTransitionPhase?
     /// Optional resize outcome metadata.
     package var transitionOutcome: MirageDesktopTransitionOutcome?
+    /// Host-authoritative generation for desktop presentation geometry.
+    package var desktopPresentationGeneration: UInt64?
     /// Effective host capture source for this desktop stream.
     package var captureSource: MirageDesktopCaptureSource
     /// Whether the client may request virtual-display resize transactions.
@@ -334,6 +336,7 @@ package struct DesktopStreamStartedMessage: Codable {
         case transitionID
         case transitionPhase
         case transitionOutcome
+        case desktopPresentationGeneration
         case captureSource
         case allowsClientResize
         case presentationWidth
@@ -354,6 +357,7 @@ package struct DesktopStreamStartedMessage: Codable {
         transitionID: UUID? = nil,
         transitionPhase: MirageDesktopTransitionPhase? = nil,
         transitionOutcome: MirageDesktopTransitionOutcome? = nil,
+        desktopPresentationGeneration: UInt64? = nil,
         captureSource: MirageDesktopCaptureSource = .virtualDisplay,
         allowsClientResize: Bool = true,
         presentationWidth: Int? = nil,
@@ -372,6 +376,7 @@ package struct DesktopStreamStartedMessage: Codable {
         self.transitionID = transitionID
         self.transitionPhase = transitionPhase
         self.transitionOutcome = transitionOutcome
+        self.desktopPresentationGeneration = desktopPresentationGeneration
         self.captureSource = captureSource
         self.allowsClientResize = allowsClientResize
         self.presentationWidth = presentationWidth
@@ -396,6 +401,10 @@ package struct DesktopStreamStartedMessage: Codable {
         transitionOutcome = try container.decodeIfPresent(
             MirageDesktopTransitionOutcome.self,
             forKey: .transitionOutcome
+        )
+        desktopPresentationGeneration = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .desktopPresentationGeneration
         )
         captureSource = try container.decodeIfPresent(
             MirageDesktopCaptureSource.self,

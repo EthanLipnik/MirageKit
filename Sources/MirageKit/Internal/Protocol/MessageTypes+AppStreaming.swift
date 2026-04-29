@@ -51,12 +51,12 @@ public struct StreamPolicyUpdateMessage: Codable, Sendable, Equatable {
 package struct AppListRequestMessage: Codable {
     /// Whether host-side app-list caches should be bypassed for this request
     package let forceRefresh: Bool
-    /// Whether host should ignore icon-diff caches and resend all icon payloads.
+    /// Whether host should ignore client icon-presence hints and resend all icon payloads.
     package let forceIconReset: Bool
     /// Preferred icon-priority ordering from the client (pinned/recent first).
     package let priorityBundleIdentifiers: [String]
-    /// Icon payload signatures the client has already persisted, keyed by bundle identifier.
-    package let knownIconSignaturesByBundleIdentifier: [String: String]
+    /// Bundle identifiers whose icon payloads the client has already persisted.
+    package let knownIconBundleIdentifiers: [String]
     /// Client-generated request identifier for correlating metadata + icon updates.
     package let requestID: UUID
 
@@ -64,39 +64,30 @@ package struct AppListRequestMessage: Codable {
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
         priorityBundleIdentifiers: [String] = [],
-        knownIconSignaturesByBundleIdentifier: [String: String] = [:],
+        knownIconBundleIdentifiers: [String] = [],
         requestID: UUID = UUID()
     ) {
         self.forceRefresh = forceRefresh
         self.forceIconReset = forceIconReset
         self.priorityBundleIdentifiers = priorityBundleIdentifiers
-        self.knownIconSignaturesByBundleIdentifier = Self.normalizedIconSignaturesByBundleIdentifier(
-            knownIconSignaturesByBundleIdentifier
-        )
+        self.knownIconBundleIdentifiers = Self.normalizedBundleIdentifiers(knownIconBundleIdentifiers)
         self.requestID = requestID
     }
 
-    private static func normalizedIconSignaturesByBundleIdentifier(
-        _ signaturesByBundleIdentifier: [String: String]
-    ) -> [String: String] {
-        var normalizedSignatures: [String: String] = [:]
-        normalizedSignatures.reserveCapacity(signaturesByBundleIdentifier.count)
+    private static func normalizedBundleIdentifiers(_ bundleIdentifiers: [String]) -> [String] {
+        var seen: Set<String> = []
+        var normalizedBundleIdentifiers: [String] = []
+        normalizedBundleIdentifiers.reserveCapacity(bundleIdentifiers.count)
 
-        for (bundleIdentifier, signature) in signaturesByBundleIdentifier {
-            let normalizedBundleIdentifier = bundleIdentifier
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard !normalizedBundleIdentifier.isEmpty else { continue }
-
-            let normalizedSignature = signature
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard !normalizedSignature.isEmpty else { continue }
-
-            normalizedSignatures[normalizedBundleIdentifier] = normalizedSignature
+        for bundleIdentifier in bundleIdentifiers {
+            let normalizedBundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedBundleIdentifier.isEmpty, seen.insert(normalizedBundleIdentifier).inserted else {
+                continue
+            }
+            normalizedBundleIdentifiers.append(normalizedBundleIdentifier)
         }
 
-        return normalizedSignatures
+        return normalizedBundleIdentifiers
     }
 }
 

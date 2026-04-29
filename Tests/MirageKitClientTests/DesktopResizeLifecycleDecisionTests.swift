@@ -11,8 +11,15 @@ import Testing
 #if os(macOS)
 @Suite("Desktop Resize Lifecycle Decision")
 struct DesktopResizeLifecycleDecisionTests {
-    @Test("Only backgrounding suspends drawable-metric processing")
-    func onlyBackgroundingSuspendsDrawableMetricProcessing() {
+    @Test("Only backgrounding suspends resize-metric processing")
+    func onlyBackgroundingSuspendsResizeMetricProcessing() {
+        let activeContainer = desktopResizeLifecycleDecision(
+            state: .active,
+            event: .containerSizeChanged
+        )
+        #expect(activeContainer.nextState == .active)
+        #expect(activeContainer.shouldProcessDrawableMetrics)
+
         let activeMetrics = desktopResizeLifecycleDecision(
             state: .active,
             event: .drawableMetricsChanged
@@ -27,12 +34,19 @@ struct DesktopResizeLifecycleDecisionTests {
         #expect(backgrounded.nextState == .suspended)
         #expect(backgrounded.shouldProcessDrawableMetrics == false)
 
-        let ignoredWhileSuspended = desktopResizeLifecycleDecision(
+        let ignoredContainerWhileSuspended = desktopResizeLifecycleDecision(
+            state: backgrounded.nextState,
+            event: .containerSizeChanged
+        )
+        #expect(ignoredContainerWhileSuspended.nextState == .suspended)
+        #expect(ignoredContainerWhileSuspended.shouldProcessDrawableMetrics == false)
+
+        let ignoredDrawableWhileSuspended = desktopResizeLifecycleDecision(
             state: backgrounded.nextState,
             event: .drawableMetricsChanged
         )
-        #expect(ignoredWhileSuspended.nextState == .suspended)
-        #expect(ignoredWhileSuspended.shouldProcessDrawableMetrics == false)
+        #expect(ignoredDrawableWhileSuspended.nextState == .suspended)
+        #expect(ignoredDrawableWhileSuspended.shouldProcessDrawableMetrics == false)
 
         let inactive = desktopResizeLifecycleDecision(
             state: .active,
@@ -48,8 +62,15 @@ struct DesktopResizeLifecycleDecisionTests {
             state: .suspended,
             event: .foregroundHoldoffElapsed
         )
-        #expect(heldOff.nextState == .awaitingFreshActiveMetrics)
+        #expect(heldOff.nextState == .active)
         #expect(heldOff.shouldProcessDrawableMetrics == false)
+
+        let firstPostDebounceContainerMetrics = desktopResizeLifecycleDecision(
+            state: heldOff.nextState,
+            event: .containerSizeChanged
+        )
+        #expect(firstPostDebounceContainerMetrics.nextState == .active)
+        #expect(firstPostDebounceContainerMetrics.shouldProcessDrawableMetrics)
 
         let firstFreshMetrics = desktopResizeLifecycleDecision(
             state: heldOff.nextState,

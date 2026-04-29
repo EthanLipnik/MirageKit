@@ -66,6 +66,55 @@ struct DesktopResizeCoordinatorTests {
         #expect(coordinator.maskActive)
     }
 
+    @Test("Local timeout clears presentation UI but preserves active transition")
+    func localTimeoutClearsPresentationUIButPreservesActiveTransition() {
+        let coordinator = DesktopResizeCoordinator()
+        let transitionID = UUID()
+        let activeTarget = target()
+        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
+        coordinator.beginTransition(
+            streamID: 23,
+            transitionID: transitionID,
+            target: activeTarget
+        )
+        coordinator.queueLatestTarget(queuedTarget)
+
+        coordinator.clearLocalPresentationState()
+
+        #expect(
+            coordinator.activeTransition == DesktopResizeCoordinator.ActiveTransition(
+                streamID: 23,
+                transitionID: transitionID,
+                target: activeTarget
+            )
+        )
+        #expect(coordinator.queuedTarget == queuedTarget)
+        #expect(!coordinator.isResizing)
+        #expect(!coordinator.maskActive)
+    }
+
+    @Test("Unified automatic workload never requests resolution resize")
+    func unifiedAutomaticWorkloadNeverRequestsResolutionResize() {
+        #expect(
+            !MirageClientService.allowsAutomaticDesktopResolutionResize(
+                mode: .unified,
+                allowsClientResize: true
+            )
+        )
+        #expect(
+            MirageClientService.allowsAutomaticDesktopResolutionResize(
+                mode: .secondary,
+                allowsClientResize: true
+            )
+        )
+        #expect(
+            !MirageClientService.allowsAutomaticDesktopResolutionResize(
+                mode: .secondary,
+                allowsClientResize: false
+            )
+        )
+    }
+
     @Test("Clear-all-state drops transition and queued targets")
     func clearAllStateDropsTransitionAndQueuedTargets() {
         let coordinator = DesktopResizeCoordinator()
@@ -107,33 +156,27 @@ struct DesktopResizeCoordinatorTests {
         #expect(!coordinator.maskActive)
     }
 
-    @Test("Foreground stabilization requires extra confirmation for orientation flips")
-    func foregroundStabilizationRequiresExtraConfirmationForOrientationFlips() {
+    @Test("Lifecycle suspension can preserve last sent target while clearing queued resize")
+    func lifecycleSuspensionCanPreserveLastSentTargetWhileClearingQueuedResize() {
         let coordinator = DesktopResizeCoordinator()
-        let portraitTarget = target(logicalWidth: 1024, logicalHeight: 1366)
-        let landscapeTarget = target()
+        let lastSentTarget = target()
+        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
 
-        coordinator.lastSentTarget = landscapeTarget
-        coordinator.beginForegroundResizeStabilization()
+        coordinator.lastSentTarget = lastSentTarget
+        coordinator.queueLatestTarget(queuedTarget)
+        coordinator.isResizing = true
+        coordinator.maskActive = true
 
-        #expect(!coordinator.shouldAcceptForegroundResizeTarget(portraitTarget))
-        #expect(!coordinator.shouldAcceptForegroundResizeTarget(target(logicalWidth: 1112, logicalHeight: 834)))
-        #expect(!coordinator.shouldAcceptForegroundResizeTarget(portraitTarget))
-        #expect(!coordinator.shouldAcceptForegroundResizeTarget(portraitTarget))
-        #expect(!coordinator.shouldAcceptForegroundResizeTarget(portraitTarget))
-        #expect(coordinator.shouldAcceptForegroundResizeTarget(portraitTarget))
-    }
+        coordinator.clearAllState(
+            preserveLifecycleState: true,
+            preserveLastSentTarget: true
+        )
 
-    @Test("Foreground stabilization accepts unchanged desktop target immediately")
-    func foregroundStabilizationAcceptsUnchangedDesktopTargetImmediately() {
-        let coordinator = DesktopResizeCoordinator()
-        let landscapeTarget = target()
-
-        coordinator.lastSentTarget = landscapeTarget
-        coordinator.beginForegroundResizeStabilization()
-
-        #expect(coordinator.shouldAcceptForegroundResizeTarget(landscapeTarget))
-        #expect(coordinator.shouldAcceptForegroundResizeTarget(target(logicalWidth: 1512, logicalHeight: 982)))
+        #expect(coordinator.lastSentTarget == lastSentTarget)
+        #expect(coordinator.queuedTarget == nil)
+        #expect(coordinator.latestRequestedTarget == nil)
+        #expect(!coordinator.isResizing)
+        #expect(!coordinator.maskActive)
     }
 }
 #endif

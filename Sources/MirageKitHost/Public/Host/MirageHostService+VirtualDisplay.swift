@@ -64,7 +64,7 @@ func desktopResizeShouldSuspendMirroring(
     plan: DesktopResizeMirroringPlan,
     updateOutcome: SharedVirtualDisplayManager.DisplayResolutionUpdateOutcome
 ) -> Bool {
-    plan == .suspendAndRestore && updateOutcome == .requiresRecreation
+    plan == .suspendAndRestore && updateOutcome != .noChange
 }
 
 func desktopResizeShouldDisableResidualMirroring(
@@ -80,6 +80,12 @@ enum DesktopResizeTransactionContinuationDecision: Equatable {
     case abortStreamInactive
 }
 
+enum DesktopResizeFailureRecoveryPlan: Equatable {
+    case rollbackToLastKnownGood
+    case mainDisplayFallback
+    case stopStream
+}
+
 func desktopResizeTransactionContinuationDecision(
     requestedStreamID: StreamID,
     activeDesktopStreamID: StreamID?,
@@ -89,6 +95,16 @@ func desktopResizeTransactionContinuationDecision(
         return .abortStreamInactive
     }
     return .continueTransaction
+}
+
+func desktopResizeFailureRecoveryPlan(
+    desktopStreamMode: MirageDesktopStreamMode,
+    hasPreResizeSnapshot: Bool
+) -> DesktopResizeFailureRecoveryPlan {
+    if desktopStreamMode == .unified {
+        return hasPreResizeSnapshot ? .rollbackToLastKnownGood : .stopStream
+    }
+    return .mainDisplayFallback
 }
 
 struct DesktopBackingScaleResolution: Equatable {
@@ -285,7 +301,6 @@ func resolvedAppStreamResizeAspectRatio(
 
 private enum DesktopResizeTransactionAbort: Error {
     case streamNoLongerActive
-    case supersededByNewerRequest
 }
 
 extension MirageHostService {
@@ -745,6 +760,8 @@ extension MirageHostService {
     func resetDesktopResizeTransactionState() {
         activeDesktopResizeRequest = nil
         queuedDesktopResizeRequest = nil
+        desktopResizeTransactionState = .idle
+        desktopPresentationGeneration = 0
     }
 
     private func enqueueDesktopResolutionChange(
@@ -774,6 +791,7 @@ extension MirageHostService {
         while let nextRequest = queuedDesktopResizeRequest {
             queuedDesktopResizeRequest = nil
             activeDesktopResizeRequest = nextRequest
+            desktopResizeTransactionState = .applying(nextRequest)
             await applyDesktopResolutionChange(
                 streamID: streamID,
                 request: nextRequest
@@ -929,6 +947,15 @@ extension MirageHostService {
                 resizeCompletionContext = desktopContext
                 resizeOutcome = .resized
             } else {
+                if desktopResizeShouldSuspendMirroring(
+                    plan: mirroringPlan,
+                    updateOutcome: .updatedInPlace
+                ), let displayID = preResizeSnapshot?.displayID {
+                    await suspendDisplayMirroringForResize(targetDisplayID: displayID)
+                    suspendedMirroringDisplayID = displayID
+                    shouldRestoreMirroring = true
+                }
+
                 var updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                     for: .desktopStream,
                     newResolution: geometry.pixelResolution,
@@ -938,7 +965,10 @@ extension MirageHostService {
                 )
 
                 if updateResult.outcome == .requiresRecreation {
-                    if desktopResizeShouldSuspendMirroring(
+                    guard desktopStreamMode != .unified else {
+                        throw MirageError.protocolError("Unified desktop resize requires display recreation")
+                    }
+                    if !shouldRestoreMirroring, desktopResizeShouldSuspendMirroring(
                         plan: mirroringPlan,
                         updateOutcome: updateResult.outcome
                     ) {
@@ -1043,34 +1073,22 @@ extension MirageHostService {
                 resizeCompletionContext = latestDesktopContext
                 resizeOutcome = .resized
             }
-        } catch DesktopResizeTransactionAbort.supersededByNewerRequest {
-            MirageLogger.host(
-                "Desktop resize transaction superseded by a newer request " +
-                    "(transition=\(request.transitionID?.uuidString ?? "nil"))"
-            )
-            return
         } catch DesktopResizeTransactionAbort.streamNoLongerActive {
             MirageLogger.host(
                 "Desktop resize transaction aborted because stream is no longer active " +
                     "(transition=\(request.transitionID?.uuidString ?? "nil"))"
             )
+            desktopResizeTransactionState = .failed(request)
             return
         } catch {
             let resizeError = error
             if streamID == desktopStreamID,
                let latestDesktopContext = desktopStreamContext {
-                do {
-                    let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
-                        streamID: streamID,
-                        request: request,
-                        context: latestDesktopContext,
-                        reason: "desktop_resize_failed"
-                    )
-                    resizeCompletionContext = fallbackContext
-                    resizeOutcome = .rolledBack
-                    shouldRestoreMirroring = false
-                } catch {
-                    MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
+                switch desktopResizeFailureRecoveryPlan(
+                    desktopStreamMode: desktopStreamMode,
+                    hasPreResizeSnapshot: preResizeSnapshot != nil
+                ) {
+                case .rollbackToLastKnownGood:
                     MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                     if let preResizeSnapshot {
                         do {
@@ -1086,6 +1104,7 @@ extension MirageHostService {
                             )
                             resizeCompletionContext = restoredContext
                             resizeOutcome = .rolledBack
+                            shouldRestoreMirroring = false
                         } catch {
                             MirageLogger.error(
                                 .host,
@@ -1097,6 +1116,25 @@ extension MirageHostService {
                     } else {
                         shouldStopDesktopStreamWithError = true
                     }
+                case .mainDisplayFallback:
+                    do {
+                        let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
+                            streamID: streamID,
+                            request: request,
+                            context: latestDesktopContext,
+                            reason: "desktop_resize_failed"
+                        )
+                        resizeCompletionContext = fallbackContext
+                        resizeOutcome = .rolledBack
+                        shouldRestoreMirroring = false
+                    } catch {
+                        MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
+                        MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
+                        shouldStopDesktopStreamWithError = true
+                    }
+                case .stopStream:
+                    MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
+                    shouldStopDesktopStreamWithError = true
                 }
             } else {
                 MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
@@ -1148,6 +1186,7 @@ extension MirageHostService {
                 await resizeCompletionContext.resumeEncodingAfterDesktopResize()
                 shouldResumeEncodingAfterResize = false
             }
+            desktopResizeTransactionState = resizeOutcome == .rolledBack ? .rolledBack(request) : .committed(request)
         }
 
         if shouldResumeEncodingAfterResize,
@@ -1183,6 +1222,9 @@ extension MirageHostService {
             allowRecreation: false
         )
         if updateResult.outcome == .requiresRecreation {
+            guard desktopStreamMode != .unified else {
+                throw MirageError.protocolError("Unified desktop resize rollback requires display recreation")
+            }
             updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: snapshot.resolution,
@@ -1256,10 +1298,6 @@ extension MirageHostService {
             activeDesktopStreamID: desktopStreamID,
             hasDesktopContext: desktopStreamContext != nil
         )
-        if let queuedDesktopResizeRequest,
-           queuedDesktopResizeRequest != request {
-            throw DesktopResizeTransactionAbort.supersededByNewerRequest
-        }
         guard continuationDecision == .continueTransaction,
               activeDesktopResizeRequest == request else {
             throw DesktopResizeTransactionAbort.streamNoLongerActive
@@ -1356,6 +1394,7 @@ extension MirageHostService {
         let updatedTargetFrameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
         let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
+        desktopPresentationGeneration &+= 1
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
@@ -1369,6 +1408,7 @@ extension MirageHostService {
             transitionID: request.transitionID,
             transitionPhase: .resize,
             transitionOutcome: outcome,
+            desktopPresentationGeneration: desktopPresentationGeneration,
             captureSource: desktopCaptureSource,
             allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
             presentationWidth: Int(presentationResolution.width.rounded()),

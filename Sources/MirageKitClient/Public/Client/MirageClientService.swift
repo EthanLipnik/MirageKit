@@ -327,6 +327,8 @@ public final class MirageClientService {
     public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
+    /// Last host-authoritative desktop presentation generation per active session.
+    var desktopPresentationGenerationBySessionID: [UUID: UInt64] = [:]
     /// Last seen app/window stream dimension token per stream.
     var appDimensionTokenByStream: [StreamID: UInt16] = [:]
     /// Last app/window stream-start acknowledgement per stream.
@@ -384,6 +386,8 @@ public final class MirageClientService {
 
     /// Request identifier for the latest app list snapshot received from the host.
     var activeAppListRequestID: UUID?
+    /// Bundle identifiers received for the active app-list request.
+    var activeAppListReceivedBundleIdentifiers: Set<String> = []
     /// Incremental app-list state keyed by normalized bundle identifier.
     var availableAppsByBundleIdentifier: [String: MirageInstalledApp] = [:]
     /// Stable app-list order for the active app-list request.

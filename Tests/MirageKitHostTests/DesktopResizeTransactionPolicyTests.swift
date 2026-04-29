@@ -83,10 +83,10 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(plan == .unchanged)
     }
 
-    @Test("Mirrored mode only suspends mirroring when recreation is required")
-    func mirroredModeOnlySuspendsMirroringWhenRecreationIsRequired() {
+    @Test("Mirrored mode suspends mirroring for in-place updates and recreation")
+    func mirroredModeSuspendsMirroringForInPlaceUpdatesAndRecreation() {
         #expect(
-            !desktopResizeShouldSuspendMirroring(
+            desktopResizeShouldSuspendMirroring(
                 plan: .suspendAndRestore,
                 updateOutcome: .updatedInPlace
             )
@@ -171,6 +171,36 @@ struct DesktopResizeTransactionPolicyTests {
         )
 
         #expect(decision == .continueTransaction)
+    }
+
+    @Test("Unified resize failure rolls back to last known good display")
+    func unifiedResizeFailureRollsBackToLastKnownGoodDisplay() {
+        let decision = desktopResizeFailureRecoveryPlan(
+            desktopStreamMode: .unified,
+            hasPreResizeSnapshot: true
+        )
+
+        #expect(decision == .rollbackToLastKnownGood)
+    }
+
+    @Test("Unified resize failure without rollback snapshot stops stream")
+    func unifiedResizeFailureWithoutRollbackSnapshotStopsStream() {
+        let decision = desktopResizeFailureRecoveryPlan(
+            desktopStreamMode: .unified,
+            hasPreResizeSnapshot: false
+        )
+
+        #expect(decision == .stopStream)
+    }
+
+    @Test("Secondary resize failure may fall back to main display")
+    func secondaryResizeFailureMayFallBackToMainDisplay() {
+        let decision = desktopResizeFailureRecoveryPlan(
+            desktopStreamMode: .secondary,
+            hasPreResizeSnapshot: true
+        )
+
+        #expect(decision == .mainDisplayFallback)
     }
 
     @Test("Generation-change rebind is suppressed during resize transaction")

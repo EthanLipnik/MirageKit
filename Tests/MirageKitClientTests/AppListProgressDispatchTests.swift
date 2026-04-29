@@ -7,7 +7,6 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
-import CryptoKit
 import Foundation
 import Testing
 
@@ -28,7 +27,6 @@ struct AppListProgressDispatchTests {
         service.activeAppListRequestID = requestID
 
         let editorIconData = try Self.validPNGData()
-        let editorIconSignature = SHA256.hash(data: editorIconData).map { String(format: "%02x", $0) }.joined()
         let progress = AppListProgressMessage(
             requestID: requestID,
             apps: [
@@ -36,8 +34,7 @@ struct AppListProgressDispatchTests {
                     bundleIdentifier: "com.example.Editor",
                     name: "Editor",
                     path: "/Applications/Editor.app",
-                    iconData: editorIconData,
-                    iconSignature: editorIconSignature
+                    iconData: editorIconData
                 ),
                 MirageInstalledApp(
                     bundleIdentifier: "com.example.Terminal",
@@ -54,7 +51,6 @@ struct AppListProgressDispatchTests {
             "com.example.Terminal",
         ])
         #expect(service.availableApps.first?.iconData == editorIconData)
-        #expect(service.availableApps.first?.iconSignature == editorIconSignature)
         #expect(latestProgressApps.first?.iconData == editorIconData)
     }
 
@@ -66,7 +62,6 @@ struct AppListProgressDispatchTests {
         service.activeAppListRequestID = requestID
 
         let iconData = try Self.validPNGData()
-        let iconSignature = SHA256.hash(data: iconData).map { String(format: "%02x", $0) }.joined()
         await service.handleAppListProgress(
             try ControlMessage(
                 type: .appListProgress,
@@ -77,8 +72,7 @@ struct AppListProgressDispatchTests {
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app",
-                            iconData: iconData,
-                            iconSignature: iconSignature
+                            iconData: iconData
                         ),
                     ]
                 )
@@ -103,7 +97,61 @@ struct AppListProgressDispatchTests {
 
         #expect(service.availableApps.count == 1)
         #expect(service.availableApps.first?.iconData == iconData)
-        #expect(service.availableApps.first?.iconSignature == iconSignature)
+    }
+
+    @MainActor
+    @Test("Metadata refresh preserves cached icons and removes deleted apps only on completion")
+    func metadataRefreshPreservesCachedIconsAndRemovesDeletedAppsOnlyOnCompletion() async throws {
+        let service = MirageClientService()
+        let requestID = UUID()
+        let iconData = try Self.validPNGData()
+        let editor = MirageInstalledApp(
+            bundleIdentifier: "com.example.Editor",
+            name: "Editor",
+            path: "/Applications/Editor.app",
+            iconData: iconData
+        )
+        let deleted = MirageInstalledApp(
+            bundleIdentifier: "com.example.Deleted",
+            name: "Deleted",
+            path: "/Applications/Deleted.app",
+            iconData: try Self.validPNGData()
+        )
+        service.availableApps = [editor, deleted]
+        service.rebuildAvailableAppAccumulator(from: service.availableApps)
+        service.activeAppListRequestID = requestID
+
+        await service.handleAppListProgress(
+            try ControlMessage(
+                type: .appListProgress,
+                content: AppListProgressMessage(
+                    requestID: requestID,
+                    apps: [
+                        MirageInstalledApp(
+                            bundleIdentifier: "com.example.Editor",
+                            name: "Editor",
+                            path: "/Applications/Editor.app"
+                        ),
+                    ]
+                )
+            )
+        )
+
+        #expect(service.availableApps.map(\.bundleIdentifier) == [
+            "com.example.Editor",
+            "com.example.Deleted",
+        ])
+        #expect(service.availableApps.first?.iconData == iconData)
+
+        service.handleAppListComplete(
+            try ControlMessage(
+                type: .appListComplete,
+                content: AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+            )
+        )
+
+        #expect(service.availableApps.map(\.bundleIdentifier) == ["com.example.Editor"])
+        #expect(service.availableApps.first?.iconData == iconData)
     }
 
     @MainActor
@@ -114,7 +162,6 @@ struct AppListProgressDispatchTests {
         service.activeAppListRequestID = requestID
 
         let invalidIconData = Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02, 0x03])
-        let invalidSignature = SHA256.hash(data: invalidIconData).map { String(format: "%02x", $0) }.joined()
         await service.handleAppListProgress(
             try ControlMessage(
                 type: .appListProgress,
@@ -125,8 +172,7 @@ struct AppListProgressDispatchTests {
                             bundleIdentifier: "com.example.Editor",
                             name: "Editor",
                             path: "/Applications/Editor.app",
-                            iconData: invalidIconData,
-                            iconSignature: invalidSignature
+                            iconData: invalidIconData
                         ),
                     ]
                 )
@@ -134,7 +180,6 @@ struct AppListProgressDispatchTests {
         )
 
         #expect(service.availableApps.first?.iconData == nil)
-        #expect(service.availableApps.first?.iconSignature == nil)
     }
 
     private static func validPNGData() throws -> Data {

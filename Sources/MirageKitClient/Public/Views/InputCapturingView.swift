@@ -375,6 +375,8 @@ public class InputCapturingView: UIView {
     var pencilCurrentLocation: CGPoint = .zero
     var pencilCurrentStylus: MirageStylusEvent?
     var lastPencilPressure: CGFloat = 0
+    var lastPencilMoveSampleTimestamp: TimeInterval = 0
+    var lastPencilMoveSampleLocation: CGPoint?
     #if os(iOS)
     private var pencilInteraction: UIPencilInteraction?
     #endif
@@ -426,6 +428,7 @@ public class InputCapturingView: UIView {
     var virtualCursorLongPressGesture: UILongPressGestureRecognizer!
     var lockedPointerPanGesture: UIPanGestureRecognizer!
     var lockedPointerPressGesture: UILongPressGestureRecognizer!
+    var pencilContactGesture: PencilContactGestureRecognizer!
 
     // Track drag state
     var isDragging = false
@@ -1086,6 +1089,7 @@ public class InputCapturingView: UIView {
         isMultipleTouchEnabled = true
 
         setupGestureRecognizers()
+        setupPencilContactGestureRecognizer()
         setupPointerInteraction()
         setupVirtualCursorView()
         setupLockedCursorView()
@@ -1241,6 +1245,34 @@ public class InputCapturingView: UIView {
         addInteraction(interaction)
         pencilInteraction = interaction
         #endif
+    }
+
+    private func setupPencilContactGestureRecognizer() {
+        let gesture = PencilContactGestureRecognizer()
+        gesture.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.pencil.rawValue),
+            NSNumber(value: UITouch.TouchType.direct.rawValue),
+        ]
+        gesture.cancelsTouchesInView = false
+        gesture.delaysTouchesBegan = false
+        gesture.delaysTouchesEnded = false
+        gesture.isStylusTouch = { [weak self] touch in
+            self?.isStylusTouch(touch) ?? false
+        }
+        gesture.onTouchesBegan = { [weak self] touches, event in
+            self?.handlePencilTouchesBegan(touches, event: event)
+        }
+        gesture.onTouchesMoved = { [weak self] touches, event in
+            self?.handlePencilTouchesMoved(touches, event: event)
+        }
+        gesture.onTouchesEnded = { [weak self] touches, event in
+            self?.handlePencilTouchesEnded(touches, event: event)
+        }
+        gesture.onTouchesCancelled = { [weak self] touches, event in
+            self?.handlePencilTouchesCancelled(touches, event: event)
+        }
+        pencilContactGesture = gesture
+        addGestureRecognizer(gesture)
     }
 
     func updateVirtualTrackpadMode() {
@@ -1577,6 +1609,8 @@ public class InputCapturingView: UIView {
         pencilCurrentLocation = .zero
         pencilCurrentStylus = nil
         lastPencilPressure = 0
+        lastPencilMoveSampleTimestamp = 0
+        lastPencilMoveSampleLocation = nil
     }
 
     func setLockedCursorVisible(_ isVisible: Bool) {
@@ -2210,6 +2244,8 @@ public class InputCapturingView: UIView {
         pencilCurrentLocation = location
         pencilCurrentStylus = stylusEvent(from: touch)
         lastPencilPressure = normalizedPencilPressure(for: touch)
+        lastPencilMoveSampleTimestamp = touch.timestamp
+        lastPencilMoveSampleLocation = location
         updatePointerLocationForLocalContact(location)
 
         let now = CACurrentMediaTime()
@@ -2235,6 +2271,7 @@ public class InputCapturingView: UIView {
             let location = normalizedLocation(rawLocation)
             let pressure = normalizedPencilPressure(for: sample)
             let stylus = stylusEvent(from: sample)
+            guard shouldProcessPencilMoveSample(sample, location: location) else { continue }
             pencilCurrentLocation = location
             pencilCurrentStylus = stylus
             updatePointerLocationForLocalContact(location)
@@ -2256,6 +2293,17 @@ public class InputCapturingView: UIView {
             isDragging = true
             lastPanLocation = location
         }
+    }
+
+    private func shouldProcessPencilMoveSample(_ sample: UITouch, location: CGPoint) -> Bool {
+        if sample.timestamp < lastPencilMoveSampleTimestamp { return false }
+        if sample.timestamp == lastPencilMoveSampleTimestamp,
+           lastPencilMoveSampleLocation == location {
+            return false
+        }
+        lastPencilMoveSampleTimestamp = sample.timestamp
+        lastPencilMoveSampleLocation = location
+        return true
     }
 
     func endPencilInteraction(for touch: UITouch) {

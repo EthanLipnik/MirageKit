@@ -241,6 +241,92 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Stale transition UUID with older generation is ignored")
+    func staleTransitionUUIDWithOlderGenerationIsIgnored() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 24
+        let desktopSessionID = UUID()
+        let activeTransitionID = UUID()
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.desktopPresentationGenerationBySessionID[desktopSessionID] = 4
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: activeTransitionID,
+            target: DesktopResizeCoordinator.RequestGeometry(
+                logicalResolution: CGSize(width: 1512, height: 982),
+                displayScaleFactor: 2.0,
+                requestedStreamScale: 1.0,
+                encoderMaxWidth: 2360,
+                encoderMaxHeight: 1640
+            )
+        )
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopPresentationGeneration: 3
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 1984, height: 2192))
+        #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 4)
+        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
+    }
+
+    @MainActor
+    @Test("Newer generation is accepted after local resize UI timeout clears transition")
+    func newerGenerationAcceptedAfterLocalTimeoutClearsTransition() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 25
+        let desktopSessionID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.desktopPresentationGenerationBySessionID[desktopSessionID] = 1
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.clearLocalPresentationState()
+        service.desktopResizeCoordinator.activeTransition = nil
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized,
+            desktopPresentationGeneration: 2
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 8)
+        #expect(service.desktopPresentationGenerationBySessionID[desktopSessionID] == 2)
+
+        await controller.stop()
+    }
+
+    @MainActor
     @Test("Non-transition desktop start token advance updates resolution and begins post-resize gating")
     func nonTransitionDesktopStartTokenAdvanceUpdatesResolutionAndBeginsPostResizeGating() async throws {
         let service = MirageClientService()

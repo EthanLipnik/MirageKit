@@ -5,7 +5,6 @@
 //  Created by Ethan Lipnik on 4/16/26.
 //
 
-import CryptoKit
 import Foundation
 import MirageKit
 
@@ -13,7 +12,6 @@ import MirageKit
 actor HostAppIconCatalogStore {
     struct IconPayload: Equatable, Sendable {
         let data: Data
-        let signature: String
     }
 
     private struct CacheKey: Hashable {
@@ -59,10 +57,7 @@ actor HostAppIconCatalogStore {
             return nil
         }
 
-        let payload = IconPayload(
-            data: data,
-            signature: Self.sha256Hex(data)
-        )
+        let payload = IconPayload(data: data)
         payloadsByKey[key] = payload
         markAccessed(key)
         evictEntriesBeyondLimit()
@@ -118,8 +113,5 @@ actor HostAppIconCatalogStore {
         }
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
 }
 #endif

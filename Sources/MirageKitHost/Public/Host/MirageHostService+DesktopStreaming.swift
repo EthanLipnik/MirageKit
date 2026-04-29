@@ -912,6 +912,7 @@ extension MirageHostService {
         let codec = await streamContext.getCodec()
         let acceptedMediaMaxPacketSize = await streamContext.getMediaMaxPacketSize()
         let startupAttemptID = UUID()
+        desktopPresentationGeneration &+= 1
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
@@ -924,6 +925,7 @@ extension MirageHostService {
             dimensionToken: dimensionToken,
             acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize,
             transitionPhase: .startup,
+            desktopPresentationGeneration: desktopPresentationGeneration,
             captureSource: captureSource,
             allowsClientResize: allowsClientResize,
             presentationWidth: Int(presentationResolution.width.rounded()),

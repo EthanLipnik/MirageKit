@@ -15,64 +15,45 @@ import MirageKit
 public extension MirageClientService {
     /// Request list of installed apps from host.
     /// - Parameter forceRefresh: Whether host-side app-list caches should be bypassed.
-    /// - Parameter forceIconReset: Whether host-side icon-diff caches should be bypassed.
+    /// - Parameter forceIconReset: Whether client icon-presence hints should be ignored.
     /// - Parameter priorityBundleIdentifiers: Client-preferred icon streaming order.
-    /// - Parameter knownIconSignaturesByBundleIdentifier: Icon payload signatures already cached by the client.
+    /// - Parameter knownIconBundleIdentifiers: Bundle identifiers with icons already cached by the client.
     func requestAppList(
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
         priorityBundleIdentifiers: [String] = [],
-        knownIconSignaturesByBundleIdentifier: [String: String] = [:]
+        knownIconBundleIdentifiers: [String] = []
     ) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
-        let normalizedKnownIconSignatures = Self.normalizedKnownIconSignatures(
-            knownIconSignaturesByBundleIdentifier
-        )
+        let normalizedKnownIconBundleIdentifiers = Self.normalizedPriorityBundleIdentifiers(knownIconBundleIdentifiers)
         let requestID = UUID()
         MirageLogger.client(
-            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(forceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconSignatures.count), requestID: \(requestID.uuidString))"
+            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(forceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconBundleIdentifiers.count), requestID: \(requestID.uuidString))"
         )
         let request = AppListRequestMessage(
             forceRefresh: forceRefresh,
             forceIconReset: forceIconReset,
             priorityBundleIdentifiers: normalizedPriority,
-            knownIconSignaturesByBundleIdentifier: normalizedKnownIconSignatures,
+            knownIconBundleIdentifiers: normalizedKnownIconBundleIdentifiers,
             requestID: requestID
         )
         activeAppListRequestID = requestID
-        availableAppsByBundleIdentifier.removeAll(keepingCapacity: true)
-        orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: true)
+        activeAppListReceivedBundleIdentifiers.removeAll(keepingCapacity: true)
+        if forceIconReset {
+            availableApps.removeAll(keepingCapacity: true)
+            availableAppsByBundleIdentifier.removeAll(keepingCapacity: true)
+            orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: true)
+        } else {
+            rebuildAvailableAppAccumulator(from: availableApps)
+        }
         try await sendControlMessage(.appListRequest, content: request)
         // App-list snapshots and follow-up icon diffs can temporarily monopolize
         // the control channel. Give the heartbeat room so it does not declare a
         // false disconnect while the host is still servicing metadata work.
         heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         MirageLogger.client("App list request sent")
-    }
-
-    private static func normalizedKnownIconSignatures(
-        _ signaturesByBundleIdentifier: [String: String]
-    ) -> [String: String] {
-        var normalizedSignatures: [String: String] = [:]
-        normalizedSignatures.reserveCapacity(signaturesByBundleIdentifier.count)
-
-        for (bundleIdentifier, signature) in signaturesByBundleIdentifier {
-            let normalizedBundleIdentifier = bundleIdentifier
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard !normalizedBundleIdentifier.isEmpty else { continue }
-
-            let normalizedSignature = signature
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard !normalizedSignature.isEmpty else { continue }
-
-            normalizedSignatures[normalizedBundleIdentifier] = normalizedSignature
-        }
-
-        return normalizedSignatures
     }
 
     /// Request the connected host's hardware icon payload.
@@ -306,20 +287,14 @@ public extension MirageClientService {
         try await sendControlMessage(.appWindowCloseAlertActionRequest, content: request)
     }
 
-    /// Clears cached icon payloads for the current in-memory app list snapshot.
-    func invalidateAvailableAppIcons() {
-        availableApps = availableApps.map { app in
-            MirageInstalledApp(
-                bundleIdentifier: app.bundleIdentifier,
-                name: app.name,
-                path: app.path,
-                iconData: nil,
-                version: app.version,
-                isRunning: app.isRunning,
-                isBeingStreamed: app.isBeingStreamed
-            )
-        }
-        rebuildAvailableAppAccumulator(from: availableApps)
+    /// Clears the current in-memory app list snapshot.
+    func clearAvailableApps() {
+        availableApps.removeAll(keepingCapacity: false)
+        hasReceivedAppList = false
+        activeAppListRequestID = nil
+        activeAppListReceivedBundleIdentifiers.removeAll(keepingCapacity: false)
+        availableAppsByBundleIdentifier.removeAll(keepingCapacity: false)
+        orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: false)
     }
 
     private static func normalizedPriorityBundleIdentifiers(_ bundleIdentifiers: [String]) -> [String] {

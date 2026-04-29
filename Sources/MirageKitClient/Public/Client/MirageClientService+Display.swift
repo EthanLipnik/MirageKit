@@ -335,8 +335,12 @@ extension MirageClientService {
             currentEncodedSize,
             target.encodedPixelSize
         )
+        let allowsAutomaticResolutionResize = Self.allowsAutomaticDesktopResolutionResize(
+            mode: desktopStreamMode,
+            allowsClientResize: desktopStreamAllowsClientResize
+        )
 
-        guard needsFrameRateChange || needsResize else { return false }
+        guard needsFrameRateChange || (needsResize && allowsAutomaticResolutionResize) else { return false }
 
         if needsFrameRateChange {
             try await sendStreamEncoderSettingsChange(
@@ -345,7 +349,7 @@ extension MirageClientService {
             )
         }
 
-        if needsResize {
+        if needsResize, allowsAutomaticResolutionResize {
             let logicalResolution = automaticDesktopLogicalResolution(
                 forEncodedPixelSize: target.encodedPixelSize
             )
@@ -380,6 +384,13 @@ extension MirageClientService {
     private nonisolated static func approximatelyEqualEncodedSize(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
         guard lhs.width > 0, lhs.height > 0, rhs.width > 0, rhs.height > 0 else { return false }
         return abs(lhs.width - rhs.width) <= 16 && abs(lhs.height - rhs.height) <= 16
+    }
+
+    nonisolated static func allowsAutomaticDesktopResolutionResize(
+        mode: MirageDesktopStreamMode?,
+        allowsClientResize: Bool
+    ) -> Bool {
+        mode != .unified && allowsClientResize
     }
 
     func sendDesktopResizeRequest(

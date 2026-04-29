@@ -77,10 +77,7 @@ extension MirageClientService {
         guard let target else { return }
         coordinator.latestRequestedTarget = target
         guard coordinator.resizeLifecycleState == .active else {
-            coordinator.displayResolutionTask?.cancel()
-            coordinator.displayResolutionTask = nil
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.cancelPendingResizeDispatch()
             return
         }
 
@@ -215,27 +212,37 @@ extension MirageClientService {
             guard let self else { return }
             guard self.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
             MirageLogger.client(
-                "Clearing stale post-resize wait for stream \(streamID) after client-side timeout"
+                "Clearing local post-resize loading UI for stream \(streamID) after client-side timeout"
             )
-            self.finishPostResizeTransitionWait(streamID: streamID, reason: "timeout")
+            self.finishPostResizeTransitionWait(streamID: streamID, reason: "timeout", dispatchQueuedResize: false)
         }
     }
 
-    private func finishPostResizeTransitionWait(streamID: StreamID, reason: String) {
+    private func finishPostResizeTransitionWait(
+        streamID: StreamID,
+        reason: String,
+        dispatchQueuedResize: Bool = true
+    ) {
         postResizeTransitionTimeoutTasks[streamID]?.cancel()
         postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
         sessionStore.clearPostResizeTransition(for: streamID)
         desktopResizeCoordinator.clearLocalPresentationState()
         MirageLogger.client("Post-resize transition cleared for stream \(streamID) (\(reason))")
-        handleDesktopPresentationReady(streamID: streamID)
+        if dispatchQueuedResize {
+            handleDesktopPresentationReady(streamID: streamID)
+        }
     }
 
     func clearDesktopResizeState(
         streamID: StreamID,
         clearPostResizeState: Bool = true,
-        preserveLifecycleState: Bool = false
+        preserveLifecycleState: Bool = false,
+        preserveLastSentTarget: Bool = false
     ) {
-        desktopResizeCoordinator.clearAllState(preserveLifecycleState: preserveLifecycleState)
+        desktopResizeCoordinator.clearAllState(
+            preserveLifecycleState: preserveLifecycleState,
+            preserveLastSentTarget: preserveLastSentTarget
+        )
         if clearPostResizeState {
             sessionStore.clearPostResizeTransition(for: streamID)
         }

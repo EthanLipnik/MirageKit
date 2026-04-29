@@ -457,9 +457,7 @@ struct MirageKitTests {
                 "com.apple.mail",
                 "com.apple.safari",
             ],
-            knownIconSignaturesByBundleIdentifier: [
-                "com.apple.mail": "mail-icon-signature",
-            ],
+            knownIconBundleIdentifiers: ["com.apple.mail"],
             requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
         )
 
@@ -470,7 +468,7 @@ struct MirageKitTests {
         #expect(decoded.forceRefresh)
         #expect(decoded.forceIconReset)
         #expect(decoded.priorityBundleIdentifiers == ["com.apple.mail", "com.apple.safari"])
-        #expect(decoded.knownIconSignaturesByBundleIdentifier == ["com.apple.mail": "mail-icon-signature"])
+        #expect(decoded.knownIconBundleIdentifiers == ["com.apple.mail"])
         #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
     }
 
@@ -482,7 +480,6 @@ struct MirageKitTests {
                 name: "Mail",
                 path: "/Applications/Mail.app",
                 iconData: Data([0x01, 0x02, 0x03]),
-                iconSignature: "abc123",
                 version: "1.0",
                 isRunning: true,
                 isBeingStreamed: false
@@ -506,7 +503,6 @@ struct MirageKitTests {
         #expect(decodedProgress.apps.count == 1)
         #expect(decodedProgress.apps[0].bundleIdentifier == "com.apple.mail")
         #expect(decodedProgress.apps[0].iconData == Data([0x01, 0x02, 0x03]))
-        #expect(decodedProgress.apps[0].iconSignature == "abc123")
     }
 
     @Test("App window inventory and swap messages serialize")

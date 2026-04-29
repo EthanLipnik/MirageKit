@@ -80,6 +80,7 @@ public struct MirageStreamContentView: View {
     @State private var latestDrawableViewSize: CGSize = .zero
     @State private var localKeyboardOcclusionActive = false
     @State private var suppressNextOrderedPasteKeyUp = false
+    private let foregroundResizeDebounce: Duration = .milliseconds(1250)
 
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
@@ -691,7 +692,7 @@ public struct MirageStreamContentView: View {
     private func scheduleContainerSizeChanged(_ containerSize: CGSize) {
         Task { @MainActor in
             await Task.yield()
-            handleContainerSizeChanged(containerSize)
+            handleContainerSizeChanged(containerSize, lifecycleEvent: .containerSizeChanged)
         }
     }
 
@@ -732,19 +733,34 @@ public struct MirageStreamContentView: View {
         }
         #endif
 
-        if latestContainerDisplaySize.width <= 0 || latestContainerDisplaySize.height <= 0 {
-            handleContainerSizeChanged(viewSize)
+        if isDesktopStream {
+            let targetSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
+                ? latestContainerDisplaySize
+                : viewSize
+            handleContainerSizeChanged(targetSize, lifecycleEvent: .drawableMetricsChanged)
+        } else if latestContainerDisplaySize.width <= 0 || latestContainerDisplaySize.height <= 0 {
+            handleContainerSizeChanged(viewSize, lifecycleEvent: .drawableMetricsChanged)
         }
     }
 
-    private func handleContainerSizeChanged(_ containerSize: CGSize) {
+    private func handleContainerSizeChanged(
+        _ containerSize: CGSize,
+        lifecycleEvent: DesktopResizeLifecycleEvent
+    ) {
+        if containerSize.width > 0, containerSize.height > 0 {
+            latestContainerDisplaySize = containerSize
+            #if os(iOS) || os(visionOS)
+            MirageClientService.lastKnownViewSize = containerSize
+            #endif
+        }
+
         #if os(iOS) || os(visionOS)
         let currentLifecycleState = isDesktopStream
             ? desktopResizeCoordinator.resizeLifecycleState
             : resizeLifecycleState
         let lifecycleDecision = desktopResizeLifecycleDecision(
             state: currentLifecycleState,
-            event: .drawableMetricsChanged
+            event: lifecycleEvent
         )
         if isDesktopStream {
             desktopResizeCoordinator.resizeLifecycleState = lifecycleDecision.nextState
@@ -753,13 +769,6 @@ public struct MirageStreamContentView: View {
         }
         guard lifecycleDecision.shouldProcessDrawableMetrics else { return }
         #endif
-
-        if containerSize.width > 0, containerSize.height > 0 {
-            latestContainerDisplaySize = containerSize
-            #if os(iOS) || os(visionOS)
-            MirageClientService.lastKnownViewSize = containerSize
-            #endif
-        }
 
         let decision = windowDrivenResizeTargetDecision(
             containerSize: containerSize,
@@ -845,13 +854,6 @@ public struct MirageStreamContentView: View {
                 for: preferredDisplaySize,
                 maxDrawableSize: maxDrawableSize
             )
-            if let target,
-               !desktopResizeCoordinator.shouldAcceptForegroundResizeTarget(target) {
-                MirageLogger.client(
-                    "Deferring desktop resize for stream \(session.streamID) until foreground metrics stabilize"
-                )
-                return
-            }
             clientService.queueDesktopResize(
                 streamID: session.streamID,
                 target: target,
@@ -1036,7 +1038,8 @@ public struct MirageStreamContentView: View {
         if isResizing { isResizing = false }
         clientService.clearDesktopResizeState(
             streamID: session.streamID,
-            preserveLifecycleState: isDesktopStream
+            preserveLifecycleState: isDesktopStream,
+            preserveLastSentTarget: isDesktopStream
         )
     }
 
@@ -1057,14 +1060,13 @@ public struct MirageStreamContentView: View {
 
         if isDesktopStream {
             desktopResizeCoordinator.resizeHoldoffTask?.cancel()
-            desktopResizeCoordinator.beginForegroundResizeStabilization()
         } else {
             resizeHoldoffTask?.cancel()
         }
         updateLifecycleState(.suspended)
         let holdoffTask = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(600))
+                try await Task.sleep(for: foregroundResizeDebounce)
             } catch {
                 return
             }

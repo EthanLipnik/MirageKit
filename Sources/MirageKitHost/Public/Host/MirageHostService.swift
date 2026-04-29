@@ -300,6 +300,14 @@ public final class MirageHostService {
         let encoderMaxHeight: Int?
     }
 
+    enum DesktopResizeTransactionState: Sendable, Equatable {
+        case idle
+        case applying(DesktopResizeRequestState)
+        case committed(DesktopResizeRequestState)
+        case rolledBack(DesktopResizeRequestState)
+        case failed(DesktopResizeRequestState)
+    }
+
     // Per-window dedicated virtual display state for app/window streams.
     var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
     // Per-stream queued resize targets for dedicated app/window displays.
@@ -332,7 +340,9 @@ public final class MirageHostService {
     var desktopStreamMode: MirageDesktopStreamMode = .unified
     var activeDesktopResizeRequest: DesktopResizeRequestState?
     var queuedDesktopResizeRequest: DesktopResizeRequestState?
+    var desktopResizeTransactionState: DesktopResizeTransactionState = .idle
     var desktopSharedDisplayTransitionDepth: Int = 0
+    var desktopPresentationGeneration: UInt64 = 0
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []
@@ -535,7 +545,7 @@ public final class MirageHostService {
         var requestedForceRefresh: Bool
         var forceIconReset: Bool
         var priorityBundleIdentifiers: [String]
-        var knownIconSignaturesByBundleIdentifier: [String: String]
+        var knownIconBundleIdentifiers: [String]
     }
 
     public init(

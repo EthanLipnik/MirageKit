@@ -67,6 +67,24 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Input capturing view installs non-cancelling Pencil contact capture")
+    func inputCapturingViewInstallsPencilContactCapture() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let directTouchType = Int(UITouch.TouchType.direct.rawValue)
+        let pencilTouchType = Int(UITouch.TouchType.pencil.rawValue)
+
+        #expect(view.pencilContactGesture.view === view)
+        #expect(view.pencilContactGesture.cancelsTouchesInView == false)
+        #expect(view.pencilContactGesture.delaysTouchesBegan == false)
+        #expect(view.pencilContactGesture.delaysTouchesEnded == false)
+        #expect(Set((view.pencilContactGesture.allowedTouchTypes ?? []).map(\.intValue)) == [
+            directTouchType,
+            pencilTouchType,
+        ])
+        #expect(!view.pencilContactGesture.canPrevent(view.directTapGesture))
+        #expect(!view.pencilContactGesture.canBePrevented(by: view.directTapGesture))
+    }
+
     @Test("Input capturing view disables the generic pointer long press while cursor lock is active")
     func inputCapturingViewDisablesGenericPointerLongPressWhenCursorLocked() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

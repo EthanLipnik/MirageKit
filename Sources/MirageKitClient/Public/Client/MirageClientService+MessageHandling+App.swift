@@ -7,7 +7,6 @@
 //  App-centric streaming message handling.
 //
 
-import CryptoKit
 import Foundation
 import ImageIO
 import MirageKit
@@ -45,7 +44,9 @@ extension MirageClientService {
 
             for app in preparedProgress.apps {
                 let normalizedBundleID = app.bundleIdentifier.lowercased()
-                if availableAppsByBundleIdentifier[normalizedBundleID] == nil {
+                guard !normalizedBundleID.isEmpty else { continue }
+                if activeAppListReceivedBundleIdentifiers.insert(normalizedBundleID).inserted,
+                   !orderedAvailableAppBundleIdentifiers.contains(normalizedBundleID) {
                     orderedAvailableAppBundleIdentifiers.append(normalizedBundleID)
                 }
                 availableAppsByBundleIdentifier[normalizedBundleID] = app
@@ -74,9 +75,14 @@ extension MirageClientService {
                 return
             }
 
-            availableApps = orderedAvailableAppBundleIdentifiers.compactMap {
+            let completedBundleIdentifiers = orderedAvailableAppBundleIdentifiers.filter {
+                activeAppListReceivedBundleIdentifiers.contains($0)
+            }
+            availableApps = completedBundleIdentifiers.compactMap {
                 availableAppsByBundleIdentifier[$0]
             }
+            rebuildAvailableAppAccumulator(from: availableApps)
+            activeAppListReceivedBundleIdentifiers.removeAll(keepingCapacity: true)
             hasReceivedAppList = true
             if availableApps.count != complete.totalAppCount {
                 MirageLogger.client(
@@ -284,7 +290,6 @@ extension MirageClientService {
 
     struct AppIconPayload: Sendable {
         let iconData: Data
-        let iconSignature: String
     }
 
     private struct PreparedAppListProgress: Sendable {
@@ -298,13 +303,10 @@ extension MirageClientService {
     }
 
     private enum RejectedAppIconReason: Sendable {
-        case signatureMismatch
         case invalidImagePayload
 
         var logDescription: String {
             switch self {
-            case .signatureMismatch:
-                "signature mismatch"
             case .invalidImagePayload:
                 "invalid image payload"
             }
@@ -313,15 +315,13 @@ extension MirageClientService {
 
     nonisolated private static func appWithUpdatedIconData(
         _ app: MirageInstalledApp,
-        iconData: Data?,
-        iconSignature: String?
+        iconData: Data?
     ) -> MirageInstalledApp {
         MirageInstalledApp(
             bundleIdentifier: app.bundleIdentifier,
             name: app.name,
             path: app.path,
             iconData: iconData,
-            iconSignature: iconSignature,
             version: app.version,
             isRunning: app.isRunning,
             isBeingStreamed: app.isBeingStreamed
@@ -331,6 +331,7 @@ extension MirageClientService {
     func rebuildAvailableAppAccumulator(from apps: [MirageInstalledApp]) {
         availableAppsByBundleIdentifier.removeAll(keepingCapacity: true)
         orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: true)
+        activeAppListReceivedBundleIdentifiers.removeAll(keepingCapacity: true)
 
         for app in apps {
             let normalizedBundleID = app.bundleIdentifier.lowercased()
@@ -348,11 +349,7 @@ extension MirageClientService {
 
         for (bundleIdentifier, app) in availableAppsByBundleIdentifier {
             guard let iconData = app.iconData else { continue }
-            let iconSignature = Self.normalizedIconSignature(app.iconSignature) ?? Self.sha256Hex(iconData)
-            iconPayloadsByBundleIdentifier[bundleIdentifier] = AppIconPayload(
-                iconData: iconData,
-                iconSignature: iconSignature
-            )
+            iconPayloadsByBundleIdentifier[bundleIdentifier] = AppIconPayload(iconData: iconData)
         }
         return iconPayloadsByBundleIdentifier
     }
@@ -369,25 +366,6 @@ extension MirageClientService {
             let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
 
             if let iconData = app.iconData {
-                let computedSignature = sha256Hex(iconData)
-                let iconSignature = normalizedIconSignature(app.iconSignature) ?? computedSignature
-
-                guard iconSignature == computedSignature else {
-                    rejectedIcons.append(
-                        RejectedAppIconPayload(
-                            bundleIdentifier: app.bundleIdentifier,
-                            reason: .signatureMismatch
-                        )
-                    )
-                    preparedApps.append(
-                        appWithFallbackIconData(
-                            app,
-                            previousIcon: previousIconsByBundleIdentifier[normalizedBundleIdentifier]
-                        )
-                    )
-                    continue
-                }
-
                 guard isValidImagePayload(iconData) else {
                     rejectedIcons.append(
                         RejectedAppIconPayload(
@@ -407,8 +385,7 @@ extension MirageClientService {
                 preparedApps.append(
                     appWithUpdatedIconData(
                         app,
-                        iconData: iconData,
-                        iconSignature: iconSignature
+                        iconData: iconData
                     )
                 )
             } else {
@@ -429,21 +406,13 @@ extension MirageClientService {
         previousIcon: AppIconPayload?
     ) -> MirageInstalledApp {
         guard let previousIcon,
-              previousIcon.iconSignature == sha256Hex(previousIcon.iconData),
               isValidImagePayload(previousIcon.iconData) else {
-            return appWithUpdatedIconData(app, iconData: nil, iconSignature: nil)
+            return appWithUpdatedIconData(app, iconData: nil)
         }
         return appWithUpdatedIconData(
             app,
-            iconData: previousIcon.iconData,
-            iconSignature: previousIcon.iconSignature
+            iconData: previousIcon.iconData
         )
-    }
-
-    nonisolated private static func normalizedIconSignature(_ iconSignature: String?) -> String? {
-        guard let iconSignature else { return nil }
-        let normalized = iconSignature.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized.isEmpty ? nil : normalized
     }
 
     nonisolated private static func isValidImagePayload(_ data: Data) -> Bool {
@@ -451,9 +420,5 @@ extension MirageClientService {
             return false
         }
         return CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
-    }
-
-    nonisolated private static func sha256Hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
