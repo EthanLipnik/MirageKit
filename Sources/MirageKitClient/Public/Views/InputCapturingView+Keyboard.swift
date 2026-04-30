@@ -247,7 +247,7 @@ extension InputCapturingView {
         modifiers: MirageModifierFlags
     ) -> MirageClientShortcut? {
         let normalizedModifiers = modifiers.normalizedForShortcutMatching
-        clientShortcuts.first { shortcut in
+        return clientShortcuts.first { shortcut in
             shortcut.keyCode == keyCode &&
                 shortcut.modifiers.normalizedForShortcutMatching == normalizedModifiers
         }
