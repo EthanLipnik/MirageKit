@@ -48,4 +48,58 @@ struct MirageActionPreferencesTests {
         #expect(missionControlAction?.sfSymbolName == storedMissionControl.sfSymbolName)
         #expect(normalizedActions.contains(customAction))
     }
+
+    @Test("Custom host key bindings are modeled and matched by normalized shortcut")
+    func customHostKeyBindingsAreModeledAndMatchedByNormalizedShortcut() throws {
+        let action = MirageAction.customHostKeyBinding(
+            id: "customHyperEscape",
+            displayName: "Hyper Escape",
+            hostKeyEvent: MirageKeyEvent(keyCode: 0x35, modifiers: [.control, .option]),
+            shortcut: MirageClientShortcutBinding(
+                keyCode: 0x35,
+                modifiers: [.control, .option, .shift]
+            ),
+            showInControlBar: true,
+            sfSymbolName: "escape"
+        )
+        let preferences = MirageActionPreferences(actions: [action])
+        let keyEvent = MirageKeyEvent(
+            keyCode: 0x35,
+            modifiers: [.control, .option, .shift, .capsLock, .numericPad, .function]
+        )
+
+        let matchedAction = try #require(preferences.matchingAction(for: keyEvent))
+
+        #expect(action.target == .hostKeyInject)
+        #expect(action.hostKeyEvent?.keyCode == 0x35)
+        #expect(action.hostKeyEvent?.modifiers == [.control, .option])
+        #expect(!action.isBuiltIn)
+        #expect(matchedAction.id == action.id)
+    }
+
+    @Test("Shortcut conflicts normalize Hyper modifier state")
+    func shortcutConflictsNormalizeHyperModifierState() throws {
+        let existingAction = MirageAction.customHostKeyBinding(
+            id: "existingHyperAction",
+            displayName: "Existing Hyper Action",
+            hostKeyEvent: MirageKeyEvent(keyCode: 0x7E, modifiers: .control),
+            shortcut: MirageClientShortcutBinding(
+                keyCode: 0x23,
+                modifiers: [.control, .option, .shift]
+            )
+        )
+        let preferences = MirageActionPreferences(actions: [existingAction])
+
+        let conflictingAction = try #require(
+            preferences.conflictingAction(
+                for: MirageClientShortcutBinding(
+                    keyCode: 0x23,
+                    modifiers: [.control, .option, .shift, .capsLock, .numericPad, .function]
+                ),
+                excludingActionID: "editedAction"
+            )
+        )
+
+        #expect(conflictingAction.id == existingAction.id)
+    }
 }

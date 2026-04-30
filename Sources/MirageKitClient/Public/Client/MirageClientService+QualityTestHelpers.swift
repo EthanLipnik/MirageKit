@@ -359,6 +359,7 @@ extension MirageClientService {
     func runQualityTestStage(
         testID: UUID,
         stageID: Int,
+        probeKind: MirageQualityTestPlan.ProbeKind = .transport,
         targetBitrateBps: Int,
         durationMs: Int,
         payloadBytes: Int,
@@ -366,13 +367,13 @@ extension MirageClientService {
     ) async throws -> MirageQualityTestSummary.StageResult {
         let stage = MirageQualityTestPlan.Stage(
             id: stageID,
-            probeKind: .transport,
+            probeKind: probeKind,
             targetBitrateBps: targetBitrateBps,
             durationMs: durationMs
         )
         let targetMbps = Double(targetBitrateBps) / 1_000_000.0
         MirageLogger.client(
-            "Quality test stage \(stageID) start: target \(targetMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, duration \(durationMs)ms, payload \(payloadBytes)B"
+            "Quality test stage \(stageID) start: kind \(probeKind.rawValue), target \(targetMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, duration \(durationMs)ms, payload \(payloadBytes)B"
         )
         let results = try await runQualityTestSession(
             testID: testID,

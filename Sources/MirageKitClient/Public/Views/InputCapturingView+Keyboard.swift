@@ -211,6 +211,12 @@ extension InputCapturingView {
         return result
     }
 
+    private static func uiKeyShortcutModifierFlags(
+        from modifiers: MirageModifierFlags
+    ) -> UIKeyModifierFlags {
+        uiKeyModifierFlags(from: modifiers.normalizedForShortcutMatching)
+    }
+
     static func resolvedHardwareKeyModifiers(
         reportedModifiers: MirageModifierFlags?,
         trackedModifiers: MirageModifierFlags
@@ -240,10 +246,10 @@ extension InputCapturingView {
         keyCode: UInt16,
         modifiers: MirageModifierFlags
     ) -> MirageClientShortcut? {
+        let normalizedModifiers = modifiers.normalizedForShortcutMatching
         clientShortcuts.first { shortcut in
             shortcut.keyCode == keyCode &&
-                MirageClientShortcut.normalizedShortcutModifiers(shortcut.modifiers) ==
-                MirageClientShortcut.normalizedShortcutModifiers(modifiers)
+                shortcut.modifiers.normalizedForShortcutMatching == normalizedModifiers
         }
     }
 
@@ -262,11 +268,11 @@ extension InputCapturingView {
         keyCode: UInt16,
         modifiers: MirageModifierFlags
     ) -> MirageAction? {
-        let normalized = MirageClientShortcutBinding.normalizedModifiers(modifiers)
+        let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return actions.first { action in
             guard let binding = action.shortcut else { return false }
             return binding.keyCode == keyCode &&
-                MirageClientShortcutBinding.normalizedModifiers(binding.modifiers) == normalized
+                binding.modifiers.normalizedForShortcutMatching == normalizedModifiers
         }
     }
 
@@ -332,8 +338,7 @@ extension InputCapturingView {
                 from: event,
                 fallbackFlags: fallbackFlags
             )
-            let normalizedResolvedShortcutModifiers = MirageClientShortcut
-                .normalizedShortcutModifiers(resolvedModifiers)
+            let normalizedResolvedShortcutModifiers = resolvedModifiers.normalizedForShortcutMatching
 
             // Escape without modifiers clears any stuck modifier state as a recovery mechanism
             if key.keyCode == .keyboardEscape {
@@ -893,13 +898,13 @@ extension InputCapturingView {
             guard let input = keyCommandInput(for: asShortcut) else { continue }
             let identity = ShortcutCommandIdentity(
                 input: input,
-                modifiers: MirageClientShortcutBinding.normalizedModifiers(binding.modifiers)
+                modifiers: binding.modifiers.normalizedForShortcutMatching
             )
             guard claimedShortcutCommands.insert(identity).inserted else { continue }
             let command = UIKeyCommand(
                 action: #selector(handleClientShortcutCommand(_:)),
                 input: input,
-                modifierFlags: Self.uiKeyModifierFlags(from: binding.modifiers)
+                modifierFlags: Self.uiKeyShortcutModifierFlags(from: binding.modifiers)
             )
             command.wantsPriorityOverSystemBehavior = true
             commands.append(command)
@@ -909,13 +914,13 @@ extension InputCapturingView {
             guard let input = keyCommandInput(for: shortcut) else { continue }
             let identity = ShortcutCommandIdentity(
                 input: input,
-                modifiers: MirageClientShortcut.normalizedShortcutModifiers(shortcut.modifiers)
+                modifiers: shortcut.modifiers.normalizedForShortcutMatching
             )
             guard claimedShortcutCommands.insert(identity).inserted else { continue }
             let command = UIKeyCommand(
                 action: #selector(handleClientShortcutCommand(_:)),
                 input: input,
-                modifierFlags: Self.uiKeyModifierFlags(from: shortcut.modifiers)
+                modifierFlags: Self.uiKeyShortcutModifierFlags(from: shortcut.modifiers)
             )
             command.wantsPriorityOverSystemBehavior = true
             commands.append(command)
@@ -930,7 +935,7 @@ extension InputCapturingView {
             let command = UIKeyCommand(
                 action: #selector(handlePassthroughShortcut(_:)),
                 input: shortcut.input,
-                modifierFlags: Self.uiKeyModifierFlags(from: shortcut.modifiers)
+                modifierFlags: Self.uiKeyShortcutModifierFlags(from: shortcut.modifiers)
             )
             command.wantsPriorityOverSystemBehavior = true
             commands.append(command)
@@ -1060,7 +1065,7 @@ extension InputCapturingView {
         case UIKeyCommand.inputUpArrow:
             0x7E
         default:
-            nil
+            MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode(input)
         }
     }
 }

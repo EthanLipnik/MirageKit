@@ -9,6 +9,7 @@
 @testable import MirageKitClient
 import MirageKit
 import Testing
+import UIKit
 
 @Suite("Input capturing view shortcut modifier resolution")
 struct InputCapturingViewShortcutModifierResolutionTests {
@@ -70,6 +71,33 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         )
 
         #expect(decision == .ignore)
+    }
+
+    @Test("Key command registration normalizes Hyper shortcut modifiers")
+    @MainActor
+    func keyCommandRegistrationNormalizesHyperShortcutModifiers() throws {
+        let view = InputCapturingView(frame: .zero)
+        view.actions = [
+            .customHostKeyBinding(
+                id: "hyperEscape",
+                displayName: "Hyper Escape",
+                hostKeyEvent: MirageKeyEvent(keyCode: 0x35),
+                shortcut: MirageClientShortcutBinding(
+                    keyCode: 0x35,
+                    modifiers: [.control, .option, .shift, .capsLock, .numericPad, .function]
+                )
+            ),
+        ]
+
+        let command = try #require(
+            view.keyCommands?.first { $0.input == UIKeyCommand.inputEscape }
+        )
+
+        #expect(command.modifierFlags.contains(.control))
+        #expect(command.modifierFlags.contains(.alternate))
+        #expect(command.modifierFlags.contains(.shift))
+        #expect(!command.modifierFlags.contains(.alphaShift))
+        #expect(!command.modifierFlags.contains(.numericPad))
     }
 }
 #endif

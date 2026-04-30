@@ -21,6 +21,22 @@ public struct MirageReceiverHealthController: Sendable {
         case probe(targetBitrateBps: Int)
     }
 
+    struct Diagnostics: Sendable, Equatable {
+        let healthySampleCount: Int
+        let stressSampleCount: Int
+        let nextProbeAllowedAt: CFAbsoluteTime
+
+        init(
+            healthySampleCount: Int,
+            stressSampleCount: Int,
+            nextProbeAllowedAt: CFAbsoluteTime
+        ) {
+            self.healthySampleCount = healthySampleCount
+            self.stressSampleCount = stressSampleCount
+            self.nextProbeAllowedAt = nextProbeAllowedAt
+        }
+    }
+
     private static let minimumBitrateBps = 2_000_000
     private static let severeBackoffStep = 0.75
     private static let normalBackoffStep = 0.85
@@ -28,10 +44,12 @@ public struct MirageReceiverHealthController: Sendable {
     private static let recoveryHealthySampleThreshold = 2
     private static let probeHealthySampleThreshold = 3
     private static let fastStartProbeHealthySampleThreshold = 2
-    private static let probeIncreaseFloorBps = 40_000_000
-    private static let probeIncreasePercent = 120
-    private static let fastStartProbeIncreaseFloorBps = 80_000_000
-    private static let fastStartProbeIncreasePercent = 135
+    private static let probeIncreaseFloorBps = 6_000_000
+    private static let probeIncreasePercent = 110
+    private static let probeIncreaseMaximumStepBps = 24_000_000
+    private static let fastStartProbeIncreaseFloorBps = 12_000_000
+    private static let fastStartProbeIncreasePercent = 120
+    private static let fastStartProbeIncreaseMaximumStepBps = 32_000_000
     private static let successfulProbeCooldownSeconds: CFAbsoluteTime = 8
     private static let failedProbeCooldownSeconds: CFAbsoluteTime = 12
     private static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
@@ -57,13 +75,22 @@ public struct MirageReceiverHealthController: Sendable {
 
     public init() {}
 
-    public mutating func reset() {
+    var diagnostics: Diagnostics {
+        Diagnostics(
+            healthySampleCount: healthySampleCount,
+            stressSampleCount: stressSampleCount,
+            nextProbeAllowedAt: nextProbeAllowedAt
+        )
+    }
+
+    public mutating func reset(preservingProbeCooldown: Bool = true) {
+        let preservedNextProbeAllowedAt = preservingProbeCooldown ? nextProbeAllowedAt : 0
         state = .stable
         lastTransitionAt = nil
         sessionStartedAt = nil
         healthySampleCount = 0
         stressSampleCount = 0
-        nextProbeAllowedAt = 0
+        nextProbeAllowedAt = preservedNextProbeAllowedAt
     }
 
     public mutating func noteProbeSucceeded(
@@ -239,11 +266,16 @@ public struct MirageReceiverHealthController: Sendable {
         let probeIncreasePercent = fastStartActive
             ? Self.fastStartProbeIncreasePercent
             : Self.probeIncreasePercent
+        let probeIncreaseMaximumStepBps = fastStartActive
+            ? Self.fastStartProbeIncreaseMaximumStepBps
+            : Self.probeIncreaseMaximumStepBps
         let scaledIncrease = Int(
             (Int64(currentBitrateBps) * Int64(probeIncreasePercent) + 99) / 100
         )
+        let cappedStep = currentBitrateBps + probeIncreaseMaximumStepBps
         let nextBitrate = min(
             ceilingBps,
+            cappedStep,
             max(currentBitrateBps + probeIncreaseFloorBps, scaledIncrease)
         )
         guard nextBitrate > currentBitrateBps else { return nil }

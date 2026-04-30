@@ -130,6 +130,16 @@ public struct MirageModifierFlags: OptionSet, Codable, Sendable, Hashable {
     public static let function = MirageModifierFlags(rawValue: 1 << 6)
 }
 
+public extension MirageModifierFlags {
+    /// Modifiers that participate in shortcut matching.
+    static let shortcutMatchingMask: MirageModifierFlags = [.shift, .control, .option, .command]
+
+    /// Removes state-only modifiers that should not affect shortcut identity.
+    var normalizedForShortcutMatching: MirageModifierFlags {
+        intersection(Self.shortcutMatchingMask)
+    }
+}
+
 /// Mouse button enumeration
 public enum MirageMouseButton: Int, Codable, Sendable {
     case left = 0

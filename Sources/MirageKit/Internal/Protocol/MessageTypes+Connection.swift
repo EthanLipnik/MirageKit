@@ -18,21 +18,25 @@ package enum MirageSessionBootstrapRejectionReason: String, Codable, Sendable {
     case hostUpdateInProgress
     case rejected
     case unauthorized
+    case takeoverRequiresTrustedRequester
 }
 
 package struct MirageSessionBootstrapRequest: Codable, Sendable {
     package let protocolVersion: Int
     package let requestedFeatures: MirageFeatureSet
     package let requestHostUpdateOnProtocolMismatch: Bool?
+    package let requestTakeoverIfBusy: Bool?
 
     package init(
         protocolVersion: Int,
         requestedFeatures: MirageFeatureSet,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
+        requestHostUpdateOnProtocolMismatch: Bool? = nil,
+        requestTakeoverIfBusy: Bool? = nil
     ) {
         self.protocolVersion = protocolVersion
         self.requestedFeatures = requestedFeatures
         self.requestHostUpdateOnProtocolMismatch = requestHostUpdateOnProtocolMismatch
+        self.requestTakeoverIfBusy = requestTakeoverIfBusy
     }
 }
 
@@ -100,6 +104,8 @@ package struct DisconnectMessage: Codable {
         case hostShutdown
         case hostUpdateInProgress
         case authFailed
+        case takenOver
+        case backgroundLeaseExpired
     }
 
     package init(reason: DisconnectReason, message: String? = nil) {
@@ -121,5 +127,21 @@ package struct TransportRefreshRequestMessage: Codable, Sendable {
         self.streamID = streamID
         self.reason = reason
         self.requestedAtNs = requestedAtNs
+    }
+}
+
+package struct ClientBackgroundLeaseMessage: Codable, Sendable, Equatable {
+    package let leaseID: UUID
+    package let durationSeconds: TimeInterval
+    package let requestedAt: Date
+
+    package init(
+        leaseID: UUID = UUID(),
+        durationSeconds: TimeInterval,
+        requestedAt: Date = Date()
+    ) {
+        self.leaseID = leaseID
+        self.durationSeconds = durationSeconds
+        self.requestedAt = requestedAt
     }
 }

@@ -91,6 +91,7 @@ extension MirageHostService {
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
         sharedClipboardStatusByClientID.removeValue(forKey: client.id)
         clearClientActivityRecord(clientID: client.id)
+        cancelBackgroundLease(clientID: client.id)
         if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
         if let removedSessionID {
             streamSetupLifecycleBySessionID.removeValue(forKey: removedSessionID)

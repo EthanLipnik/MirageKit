@@ -59,11 +59,11 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
         for shortcut: MirageClientShortcutBinding,
         excludingActionID: String
     ) -> MirageAction? {
-        actions.first { action in
+        let normalizedModifiers = shortcut.modifiers.normalizedForShortcutMatching
+        return actions.first { action in
             action.id != excludingActionID &&
                 action.shortcut?.keyCode == shortcut.keyCode &&
-                MirageClientShortcutBinding.normalizedModifiers(action.shortcut?.modifiers ?? []) ==
-                MirageClientShortcutBinding.normalizedModifiers(shortcut.modifiers)
+                (action.shortcut?.modifiers.normalizedForShortcutMatching ?? []) == normalizedModifiers
         }
     }
 }

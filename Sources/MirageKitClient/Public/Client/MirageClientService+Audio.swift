@@ -14,6 +14,7 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     func stopAudioConnection() {
+        _ = advanceAudioStreamConfigurationGeneration()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         audioRegisteredStreamID = nil
@@ -40,6 +41,7 @@ extension MirageClientService {
         audioRegisteredStreamID = streamID
 
         if streamChanged {
+            _ = advanceAudioStreamConfigurationGeneration()
             if activeAudioStreamMessage?.streamID != streamID {
                 activeAudioStreamMessage = nil
             }
@@ -147,6 +149,7 @@ extension MirageClientService {
             let isReplacingActiveAudioStream = previous != nil && previous != started
             let audioPlaybackController = resolveAudioPlaybackController()
             let preferredChannels = audioPlaybackController.preferredChannelCount(for: Int(started.channelCount))
+            let configurationGeneration = advanceAudioStreamConfigurationGeneration()
 
             MirageLogger
                 .client(
@@ -160,19 +163,24 @@ extension MirageClientService {
                 audioPacketIngressQueue.invalidatePendingPackets()
                 Task { @MainActor [weak self, audioPlaybackController] in
                     guard let self else { return }
+                    guard self.isAudioStreamConfigurationCurrent(configurationGeneration) else { return }
                     await self.audioPacketIngressQueue.reset()
+                    guard self.isAudioStreamConfigurationCurrent(configurationGeneration) else { return }
                     await audioPlaybackController.reset()
+                    guard self.isAudioStreamConfigurationCurrent(configurationGeneration) else { return }
                     self.publishAudioStreamStarted(
                         started,
                         preferredChannels: preferredChannels,
-                        audioPlaybackController: audioPlaybackController
+                        audioPlaybackController: audioPlaybackController,
+                        generation: configurationGeneration
                     )
                 }
             } else {
                 publishAudioStreamStarted(
                     started,
                     preferredChannels: preferredChannels,
-                    audioPlaybackController: audioPlaybackController
+                    audioPlaybackController: audioPlaybackController,
+                    generation: configurationGeneration
                 )
             }
         } catch {
@@ -183,18 +191,22 @@ extension MirageClientService {
     private func publishAudioStreamStarted(
         _ started: AudioStreamStartedMessage,
         preferredChannels: Int,
-        audioPlaybackController: AudioPlaybackController
+        audioPlaybackController: AudioPlaybackController,
+        generation: UInt64
     ) {
+        guard isAudioStreamConfigurationCurrent(generation) else { return }
         activeAudioStreamMessage = started
         setActiveAudioStreamIDForFiltering(started.streamID)
         setAudioDecodeTargetChannelCountForPipeline(preferredChannels)
 
         Task { @MainActor [weak self, audioPlaybackController] in
             guard let self else { return }
+            guard self.isAudioStreamConfigurationCurrent(generation) else { return }
             _ = await audioPlaybackController.prepareForIncomingFormat(
                 sampleRate: started.sampleRate,
                 channelCount: preferredChannels
             )
+            guard self.isAudioStreamConfigurationCurrent(generation) else { return }
             self.flushPendingDecodedAudioFrames(
                 for: started.streamID,
                 into: audioPlaybackController
@@ -209,6 +221,7 @@ extension MirageClientService {
             let shouldReset = activeAudioStreamMessage?.streamID == stopped.streamID
             guard shouldReset else { return }
 
+            _ = advanceAudioStreamConfigurationGeneration()
             activeAudioStreamMessage = nil
             resetPendingDecodedAudioFrames(for: stopped.streamID)
             if audioRegisteredStreamID == stopped.streamID {
@@ -300,5 +313,14 @@ extension MirageClientService {
         }
 
         audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+    }
+
+    private func advanceAudioStreamConfigurationGeneration() -> UInt64 {
+        audioStreamConfigurationGeneration &+= 1
+        return audioStreamConfigurationGeneration
+    }
+
+    private func isAudioStreamConfigurationCurrent(_ generation: UInt64) -> Bool {
+        audioStreamConfigurationGeneration == generation
     }
 }

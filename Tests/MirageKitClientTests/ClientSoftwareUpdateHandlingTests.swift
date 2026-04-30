@@ -78,6 +78,12 @@ struct ClientSoftwareUpdateHandlingTests {
             installDisposition: .updateAvailable,
             lastBlockReason: nil,
             lastInstallResultCode: .noUpdateAvailable,
+            canCancelUpdate: true,
+            downloadExpectedBytes: 2_000,
+            downloadReceivedBytes: 1_000,
+            extractionProgress: 0.5,
+            lastErrorSummary: "Previous check failed.",
+            lastErrorDetails: "Network timeout.",
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
@@ -96,6 +102,12 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedStatus?.channel == .nightly)
         #expect(receivedStatus?.automationMode == .metadataOnly)
         #expect(receivedStatus?.installDisposition == .updateAvailable)
+        #expect(receivedStatus?.canCancelUpdate == true)
+        #expect(receivedStatus?.downloadExpectedBytes == 2_000)
+        #expect(receivedStatus?.downloadReceivedBytes == 1_000)
+        #expect(receivedStatus?.extractionProgress == 0.5)
+        #expect(receivedStatus?.lastErrorSummary == "Previous check failed.")
+        #expect(receivedStatus?.lastErrorDetails == "Network timeout.")
         #expect(receivedStatus?.currentVersion == "1.0.0")
         #expect(receivedStatus?.availableVersion == "1.1.0")
         #expect(receivedStatus?.releaseNotesFormat == .plainText)
@@ -119,6 +131,12 @@ struct ClientSoftwareUpdateHandlingTests {
             installDisposition: .installing,
             lastBlockReason: nil,
             lastInstallResultCode: .started,
+            canCancelUpdate: false,
+            downloadExpectedBytes: 4_096,
+            downloadReceivedBytes: 4_096,
+            extractionProgress: nil,
+            lastErrorSummary: nil,
+            lastErrorDetails: nil,
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
@@ -145,6 +163,7 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedResult?.status?.isInstallInProgress == true)
         #expect(receivedResult?.status?.channel == .release)
         #expect(receivedResult?.status?.installDisposition == .installing)
+        #expect(receivedResult?.status?.downloadReceivedBytes == 4_096)
     }
 
     @MainActor

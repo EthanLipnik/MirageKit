@@ -40,13 +40,22 @@ A normal interactive session looks like this:
 
 1. A client establishes a control connection to the host.
 2. The peers authenticate, negotiate capabilities, and agree on stream parameters.
-3. The host starts capture for the requested desktop or app content.
-4. Captured frames are converted into the format expected by the active encoder.
-5. The host encodes video, packetizes media, and sends it over the media plane.
-6. The client receives packets, reassembles frames, decodes video and audio, and schedules presentation.
-7. Local keyboard, pointer, touch, and system actions are translated into host-side input events and sent back over the control plane.
+3. The host confirms that the session can occupy the single interactive client slot.
+4. The host starts capture for the requested desktop or app content.
+5. Captured frames are converted into the format expected by the active encoder.
+6. The host encodes video, packetizes media, and sends it over the media plane.
+7. The client receives packets, reassembles frames, decodes video and audio, and schedules presentation.
+8. Local keyboard, pointer, touch, and system actions are translated into host-side input events and sent back over the control plane.
 
 That loop continues until the stream is stopped or the session ends.
+
+## Session Availability
+
+Host availability is part of the shared session contract rather than a UI-only hint.
+
+The host publishes whether it can accept a new interactive client, whether it is temporarily busy, and whether it is in software-update maintenance. A client may request takeover of a busy host during bootstrap. The host remains the authority: trusted takeover requests can replace the existing client, while untrusted or non-takeover requests are rejected with an explicit reason.
+
+Short client backgrounding is modeled as a bounded lease. During that lease the host can preserve quick resume semantics without leaving an unbounded stale reservation. When the lease expires or reconciliation fails, the host releases the slot and republishes availability.
 
 ## Host Pipeline
 
@@ -85,7 +94,9 @@ The host remains the authority for:
 - when a stream starts and stops
 - what content is currently being captured
 - bitrate, frame-rate, and quality policy
-- host-side session state such as cursor mode and clipboard availability
+- host-side session state such as cursor mode, clipboard availability, and host maintenance status
+
+Adaptive quality changes use live receiver and host telemetry first. Active-stream promotion probes are shaped like streaming traffic, remain subordinate to media, climb gradually, and keep cooldown history when probing is suppressed. A probe that overlaps frame gaps, freezes, or loss is treated as a negative signal for future targets.
 
 ## Client Pipeline
 
@@ -105,6 +116,8 @@ At a high level, the client is responsible for:
 - reconstructing encoded frames
 - decoding into presentation-ready media buffers
 - handling timing and frame replacement under real network conditions
+
+Audio playback is generation-gated across reconnects. Decoded audio is only scheduled after the playback graph is configured for the active stream generation and format; stale or mismatched frames are discarded.
 
 ### 3. Display
 
@@ -135,8 +148,18 @@ The host receives those commands and injects them into the local macOS environme
 This keeps Mirage's model clean:
 
 - the client owns local interaction capture
-- the protocol carries normalized intent across the control plane
+- the protocol carries normalized intent and custom action bindings across the control plane
 - the host owns final input injection against real host state
+
+Keyboard translation separates special keys from printable text. Platform-specific key strings such as Escape use host key codes, while Unicode fallback is reserved for actual text input. Custom bindings are represented as Mirage actions so shortcuts, display metadata, and host key injection share the same preference model as built-in controls.
+
+## Host Software Updates
+
+Software updates are coordinated through the control plane.
+
+The host owns Sparkle interaction and publishes software-update status snapshots to clients. Those snapshots include the operation phase, progress, cancellability, available version metadata, and terminal error details. Client-triggered updates keep the requesting control connection alive through checking, download, and extraction; the host enters maintenance and disconnects clients only when install or relaunch handoff is ready.
+
+Checking for updates is distinct from installing updates. A host-side watchdog turns a stuck checking session into a terminal idle or failed state so clients and discovery never have to infer update state from silence.
 
 ## Shared Responsibilities
 
@@ -146,6 +169,7 @@ Some responsibilities are shared across host and client because both sides have 
 - stream identifiers and lifecycle semantics
 - media security and session keys
 - geometry and stream-configuration contracts
+- host availability, takeover, background lease, and update-status semantics
 - diagnostics vocabulary
 
 These shared contracts live in `MirageKit` so the host and client remain aligned.
@@ -159,6 +183,7 @@ The following rules should remain true unless the architecture itself is being c
 - control traffic and media traffic stay logically separate
 - shared protocol, security, and stream contracts live in `MirageKit`, not in host- or client-only targets
 - session negotiation completes before interactive media starts flowing
+- host availability is resolved by the host during bootstrap, not inferred only from stale discovery state
 - input is transported as protocol-level intent and resolved against real host state on the host side
 
 ## Design Intent

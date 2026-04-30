@@ -50,12 +50,7 @@ public struct MirageClientShortcut: Codable, Sendable, Hashable {
     }
 
     public static func normalizedShortcutModifiers(_ flags: MirageModifierFlags) -> MirageModifierFlags {
-        var normalized: MirageModifierFlags = []
-        if flags.contains(.command) { normalized.insert(.command) }
-        if flags.contains(.shift) { normalized.insert(.shift) }
-        if flags.contains(.option) { normalized.insert(.option) }
-        if flags.contains(.control) { normalized.insert(.control) }
-        return normalized
+        flags.normalizedForShortcutMatching
     }
 
     func keyDownEvent(isRepeat: Bool = false) -> MirageKeyEvent {

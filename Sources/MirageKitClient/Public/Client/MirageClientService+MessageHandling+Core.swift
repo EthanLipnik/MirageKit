@@ -124,6 +124,8 @@ extension MirageClientService {
             return .rejected
         case .unauthorized:
             return .unauthorized
+        case .takeoverRequiresTrustedRequester:
+            return .unauthorized
         case .none:
             return .unknown
         }
@@ -148,6 +150,8 @@ extension MirageClientService {
             return "Host update is in progress."
         case .unauthorized:
             return "Connection rejected by host authorization policy."
+        case .takeoverRequiresTrustedRequester:
+            return "Host is busy and takeover requires a trusted client."
         case .rejected:
             return "Connection rejected by host."
         case .protocolVersionMismatch:
@@ -739,6 +743,8 @@ extension MirageClientService {
         case .rejected:
             return .rejected
         case .unauthorized:
+            return .unauthorized
+        case .takeoverRequiresTrustedRequester:
             return .unauthorized
         case .none:
             return .unknown

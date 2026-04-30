@@ -116,11 +116,11 @@ extension MirageHostService {
             .sharedClipboardUpdate: { [weak self] message, clientContext in
                 await self?.handleSharedClipboardUpdate(message, from: clientContext)
             },
-            .streamPauseAll: { [weak self] _, _ in
-                await self?.handleStreamPauseAll()
+            .streamPauseAll: { [weak self] message, clientContext in
+                await self?.handleStreamPauseAll(message, from: clientContext)
             },
-            .streamResumeAll: { [weak self] _, _ in
-                await self?.handleStreamResumeAll()
+            .streamResumeAll: { [weak self] _, clientContext in
+                await self?.handleStreamResumeAll(from: clientContext)
             },
             .cancelStreamSetup: { [weak self] message, clientContext in
                 await self?.handleCancelStreamSetup(message, from: clientContext)
@@ -429,7 +429,12 @@ extension MirageHostService {
 
     // MARK: - Stream Pause/Resume (Client Backgrounding)
 
-    private func handleStreamPauseAll() async {
+    private func handleStreamPauseAll(_ message: ControlMessage, from clientContext: ClientContext) async {
+        if !message.payload.isEmpty,
+           let lease = try? message.decode(ClientBackgroundLeaseMessage.self) {
+            scheduleBackgroundLease(lease, for: clientContext)
+        }
+
         let contextCount = streamsByID.count
         guard contextCount > 0 else { return }
         MirageLogger.host("Pausing all streams (\(contextCount)) for client background")
@@ -439,7 +444,9 @@ extension MirageHostService {
         }
     }
 
-    private func handleStreamResumeAll() async {
+    private func handleStreamResumeAll(from clientContext: ClientContext) async {
+        cancelBackgroundLease(clientID: clientContext.client.id)
+
         let contextCount = streamsByID.count
         guard contextCount > 0 else { return }
         MirageLogger.host("Resuming all streams (\(contextCount)) after client foreground")

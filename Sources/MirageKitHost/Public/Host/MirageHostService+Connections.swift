@@ -273,17 +273,21 @@ extension MirageHostService {
             singleClientSessionID = nil
         }
 
-        guard reserveSingleClientSlot(for: sessionID) else {
-            MirageLogger.host(
-                "Connection rejected: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
-                + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
-            )
-            await rejectIncomingSession(session, reason: .hostBusy)
-            return
+        var reservedSingleClientSlot = false
+        if busyClientContext(forIncomingSessionID: sessionID) == nil {
+            guard reserveSingleClientSlot(for: sessionID) else {
+                MirageLogger.host(
+                    "Connection rejected: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
+                    + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
+                )
+                await rejectIncomingSession(session, reason: .hostBusy)
+                return
+            }
+            reservedSingleClientSlot = true
         }
 
         defer {
-            if clientsBySessionID[sessionID] == nil {
+            if reservedSingleClientSlot, clientsBySessionID[sessionID] == nil {
                 releaseSingleClientSlot(for: sessionID)
             }
         }
@@ -314,15 +318,7 @@ extension MirageHostService {
                 MirageLogger.host("Connection from \(peerIdentity.name) rejected by delegate (origin=\(origin))")
                 let controlChannel = try? await MirageControlChannel.accept(from: session)
                 if let controlChannel {
-                    let rejection = MirageSessionBootstrapResponse(
-                        accepted: false,
-                        hostID: hostID,
-                        hostName: serviceName,
-                        selectedFeatures: [],
-                        mediaEncryptionEnabled: false,
-                        udpRegistrationToken: Data(),
-                        rejectionReason: .unauthorized
-                    )
+                    let rejection = makeRejectedBootstrapResponse(reason: .unauthorized)
                     try? await controlChannel.send(.sessionBootstrapResponse, content: rejection)
                     try? await controlChannel.closeStream()
                 } else {
@@ -347,6 +343,48 @@ extension MirageHostService {
                 try await self.receiveBootstrapRequest(from: controlChannel)
             }
             MirageLogger.host("Received Mirage bootstrap request from \(peerIdentity.name)")
+
+            if let busyClientContext = busyClientContext(forIncomingSessionID: sessionID) {
+                if let rejectionReason = busyHostTakeoverRejectionReason(
+                    for: bootstrap,
+                    trustEvaluation: context.trustEvaluation
+                ) {
+                    MirageLogger.host(
+                        "Connection from \(peerIdentity.name) rejected while host is busy reason=\(rejectionReason.rawValue)"
+                    )
+                    let rejection = makeRejectedBootstrapResponse(reason: rejectionReason)
+                    try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    try? await controlChannel.closeStream()
+                    return
+                }
+
+                MirageLogger.host(
+                    "Authorizing busy-host takeover by trusted client \(peerIdentity.name); disconnecting \(busyClientContext.client.name)"
+                )
+                await disconnectClient(
+                    busyClientContext.client,
+                    sessionID: busyClientContext.sessionID,
+                    notifyClient: true,
+                    reason: .takenOver,
+                    message: "Disconnected because a trusted client connected to this host."
+                )
+                delegate?.hostService(self, didDisconnectClient: busyClientContext.client)
+            }
+
+            if !reservedSingleClientSlot {
+                guard reserveSingleClientSlot(for: sessionID) else {
+                    MirageLogger.host(
+                        "Connection rejected after takeover check: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
+                            + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
+                    )
+                    let rejection = makeRejectedBootstrapResponse(reason: .hostBusy)
+                    try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    try? await controlChannel.closeStream()
+                    return
+                }
+                reservedSingleClientSlot = true
+            }
+
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,
                 peerIdentity: peerIdentity,
@@ -612,6 +650,41 @@ extension MirageHostService {
         } else {
             await session.cancel()
         }
+    }
+
+    func makeRejectedBootstrapResponse(
+        reason: MirageSessionBootstrapRejectionReason
+    ) -> MirageSessionBootstrapResponse {
+        MirageSessionBootstrapResponse(
+            accepted: false,
+            hostID: hostID,
+            hostName: serviceName,
+            selectedFeatures: [],
+            mediaEncryptionEnabled: false,
+            udpRegistrationToken: Data(),
+            rejectionReason: reason
+        )
+    }
+
+    func busyClientContext(forIncomingSessionID sessionID: UUID) -> ClientContext? {
+        clientsBySessionID.values.first { context in
+            context.sessionID != sessionID
+        }
+    }
+
+    func busyHostTakeoverRejectionReason(
+        for request: MirageSessionBootstrapRequest,
+        trustEvaluation: LoomTrustEvaluation
+    ) -> MirageSessionBootstrapRejectionReason? {
+        guard request.requestTakeoverIfBusy == true else {
+            return .hostBusy
+        }
+
+        guard trustEvaluation.decision == .trusted else {
+            return .takeoverRequiresTrustedRequester
+        }
+
+        return nil
     }
 
     func shouldPreemptExistingClient(

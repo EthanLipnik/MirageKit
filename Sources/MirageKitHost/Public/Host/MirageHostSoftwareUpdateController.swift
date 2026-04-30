@@ -74,6 +74,12 @@ public struct MirageHostSoftwareUpdateStatusSnapshot: Sendable, Codable, Equatab
     public let installDisposition: MirageHostSoftwareUpdateInstallDisposition
     public let lastBlockReason: MirageHostSoftwareUpdateBlockReason?
     public let lastInstallResultCode: MirageHostSoftwareUpdateInstallResultCode?
+    public let canCancelUpdate: Bool
+    public let downloadExpectedBytes: UInt64?
+    public let downloadReceivedBytes: UInt64
+    public let extractionProgress: Double?
+    public let lastErrorSummary: String?
+    public let lastErrorDetails: String?
     public let currentVersion: String
     public let availableVersion: String?
     public let availableVersionTitle: String?
@@ -92,6 +98,12 @@ public struct MirageHostSoftwareUpdateStatusSnapshot: Sendable, Codable, Equatab
         installDisposition: MirageHostSoftwareUpdateInstallDisposition,
         lastBlockReason: MirageHostSoftwareUpdateBlockReason?,
         lastInstallResultCode: MirageHostSoftwareUpdateInstallResultCode?,
+        canCancelUpdate: Bool,
+        downloadExpectedBytes: UInt64?,
+        downloadReceivedBytes: UInt64,
+        extractionProgress: Double?,
+        lastErrorSummary: String?,
+        lastErrorDetails: String?,
         currentVersion: String,
         availableVersion: String?,
         availableVersionTitle: String?,
@@ -108,6 +120,12 @@ public struct MirageHostSoftwareUpdateStatusSnapshot: Sendable, Codable, Equatab
         self.installDisposition = installDisposition
         self.lastBlockReason = lastBlockReason
         self.lastInstallResultCode = lastInstallResultCode
+        self.canCancelUpdate = canCancelUpdate
+        self.downloadExpectedBytes = downloadExpectedBytes
+        self.downloadReceivedBytes = downloadReceivedBytes
+        self.extractionProgress = extractionProgress
+        self.lastErrorSummary = lastErrorSummary
+        self.lastErrorDetails = lastErrorDetails
         self.currentVersion = currentVersion
         self.availableVersion = availableVersion
         self.availableVersionTitle = availableVersionTitle

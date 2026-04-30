@@ -102,6 +102,31 @@ struct AudioPlaybackControllerInitializationTests {
     }
 
     @MainActor
+    @Test("Pending startup audio is capped before playback starts")
+    func pendingStartupAudioIsCappedBeforePlaybackStarts() {
+        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.25)
+
+        for index in 0 ..< 10 {
+            controller.enqueue(makeDecodedFrame(timestampNs: UInt64(index)))
+        }
+
+        #expect(controller.pendingDurationSecondsForTesting() <= 0.25)
+        #expect(controller.pendingFrameCountForTesting() <= 2)
+    }
+
+    @MainActor
+    @Test("Format changes discard superseded pending startup frames")
+    func formatChangesDiscardSupersededPendingStartupFrames() {
+        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
+
+        controller.enqueue(makeDecodedFrame(sampleRate: 48_000, timestampNs: 1))
+        controller.enqueue(makeDecodedFrame(sampleRate: 44_100, timestampNs: 2))
+
+        #expect(controller.pendingFrameCountForTesting() == 1)
+        #expect(controller.pendingDurationSecondsForTesting() < 0.12)
+    }
+
+    @MainActor
     private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
         for _ in 0 ..< 20 {
             if predicate() { return }
@@ -109,15 +134,17 @@ struct AudioPlaybackControllerInitializationTests {
         }
     }
 
-    private func makeDecodedFrame() -> DecodedPCMFrame {
-        let sampleRate = 48_000
-        let channelCount = 2
-        let frameCount = 4_800
+    private func makeDecodedFrame(
+        sampleRate: Int = 48_000,
+        channelCount: Int = 2,
+        frameCount: Int = 4_800,
+        timestampNs: UInt64 = 1
+    ) -> DecodedPCMFrame {
         return DecodedPCMFrame(
             sampleRate: sampleRate,
             channelCount: channelCount,
             frameCount: frameCount,
-            timestampNs: 1,
+            timestampNs: timestampNs,
             pcmData: Data(count: frameCount * channelCount * MemoryLayout<Float>.size)
         )
     }

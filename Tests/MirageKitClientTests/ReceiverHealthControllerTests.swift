@@ -81,7 +81,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -103,7 +103,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
     }
 
     @Test("Delay-only bursts do not trigger backoff or block probing")
@@ -125,7 +125,7 @@ struct ReceiverHealthControllerTests {
         )
 
         #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -148,7 +148,7 @@ struct ReceiverHealthControllerTests {
         )
 
         #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -171,8 +171,51 @@ struct ReceiverHealthControllerTests {
         )
 
         #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
+    }
+
+    @Test("Successful probe cooldowns climb in bounded steps")
+    func successfulProbeCooldownsClimbInBoundedSteps() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let firstProbe = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+        controller.noteProbeSucceeded(now: 2)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 5
+        )
+        let cooldownAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 5.5
+        )
+        let secondProbe = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 6
+        )
+
+        #expect(firstProbe == .probe(targetBitrateBps: 32_000_000))
+        #expect(cooldownAction == .none)
+        #expect(secondProbe == .probe(targetBitrateBps: 44_000_000))
     }
 
     @Test("Probes stay bounded by the configured ceiling")
@@ -220,7 +263,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(probe == .probe(targetBitrateBps: 472_500_000))
+        #expect(probe == .probe(targetBitrateBps: 382_000_000))
     }
 
     @Test("Encode-bound samples remain transport-clean")
@@ -241,7 +284,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 300_000_000))
+        #expect(action == .probe(targetBitrateBps: 252_000_000))
     }
 
     @Test("Host-cadence-limited samples remain transport-clean but do not probe upward")
@@ -283,7 +326,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 128_000_000))
+        #expect(action == .probe(targetBitrateBps: 60_000_000))
     }
 
     @Test("Delivery cadence collapse without transport pressure does not back off")
@@ -347,7 +390,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 104_000_000))
+        #expect(action == .probe(targetBitrateBps: 36_000_000))
     }
 
     @Test("Transport drops trigger backoff even when decode metrics look healthy")
@@ -424,8 +467,53 @@ struct ReceiverHealthControllerTests {
 
         #expect(firstAction == .backoff(targetBitrateBps: 15_000_000))
         #expect(secondAction == .none)
-        #expect(thirdAction == .probe(targetBitrateBps: 95_000_000))
+        #expect(thirdAction == .probe(targetBitrateBps: 27_000_000))
         #expect(controller.state == .stable)
+    }
+
+    @Test("Failed probe cooldown survives controller reset")
+    func failedProbeCooldownSurvivesControllerReset() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let firstProbe = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+        controller.noteProbeFailed(now: 2)
+        controller.reset()
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 7
+        )
+        let suppressedProbe = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 7.5
+        )
+        let resumedProbe = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 8
+        )
+
+        #expect(firstProbe == .probe(targetBitrateBps: 32_000_000))
+        #expect(controller.diagnostics.nextProbeAllowedAt == 8)
+        #expect(suppressedProbe == .none)
+        #expect(resumedProbe == .probe(targetBitrateBps: 32_000_000))
     }
 
     private func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {

@@ -118,6 +118,20 @@ extension MirageHostService {
         }
     }
 
+    public func broadcastHostSoftwareUpdateStatus(
+        _ snapshot: MirageHostSoftwareUpdateStatusSnapshot
+    ) {
+        guard !clientsBySessionID.isEmpty else { return }
+
+        let message = makeHostSoftwareUpdateStatusMessage(from: snapshot)
+        for clientContext in clientsBySessionID.values {
+            guard clientContext.sendBestEffort(.hostSoftwareUpdateStatus, content: message) else {
+                MirageLogger.host("Failed to encode host software update status for \(clientContext.client.name)")
+                continue
+            }
+        }
+    }
+
     func resolveHostSoftwareUpdateStatus(
         for peer: LoomPeerIdentity?,
         forceRefresh: Bool
@@ -307,6 +321,12 @@ private extension MirageHostService {
             installDisposition: installDisposition,
             lastBlockReason: lastBlockReason,
             lastInstallResultCode: lastInstallResultCode,
+            canCancelUpdate: snapshot.canCancelUpdate,
+            downloadExpectedBytes: snapshot.downloadExpectedBytes,
+            downloadReceivedBytes: snapshot.downloadReceivedBytes,
+            extractionProgress: snapshot.extractionProgress,
+            lastErrorSummary: snapshot.lastErrorSummary,
+            lastErrorDetails: snapshot.lastErrorDetails,
             currentVersion: snapshot.currentVersion,
             availableVersion: snapshot.availableVersion,
             availableVersionTitle: snapshot.availableVersionTitle,
@@ -381,6 +401,12 @@ private extension MirageHostService {
             installDisposition: .idle,
             lastBlockReason: nil,
             lastInstallResultCode: .unavailable,
+            canCancelUpdate: false,
+            downloadExpectedBytes: nil,
+            downloadReceivedBytes: 0,
+            extractionProgress: nil,
+            lastErrorSummary: nil,
+            lastErrorDetails: nil,
             currentVersion: appVersion ?? MirageKit.version,
             availableVersion: nil,
             availableVersionTitle: nil,

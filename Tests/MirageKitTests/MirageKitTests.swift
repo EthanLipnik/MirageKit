@@ -581,6 +581,12 @@ struct MirageKitTests {
             installDisposition: .installing,
             lastBlockReason: nil,
             lastInstallResultCode: .started,
+            canCancelUpdate: true,
+            downloadExpectedBytes: 1_000,
+            downloadReceivedBytes: 250,
+            extractionProgress: 0.25,
+            lastErrorSummary: nil,
+            lastErrorDetails: nil,
             currentVersion: "1.2.0",
             availableVersion: "1.3.0",
             availableVersionTitle: "Mirage 1.3",
@@ -597,6 +603,10 @@ struct MirageKitTests {
         #expect(decodedStatus.isInstallInProgress == true)
         #expect(decodedStatus.automationMode == .autoDownload)
         #expect(decodedStatus.installDisposition == .installing)
+        #expect(decodedStatus.canCancelUpdate == true)
+        #expect(decodedStatus.downloadExpectedBytes == 1_000)
+        #expect(decodedStatus.downloadReceivedBytes == 250)
+        #expect(decodedStatus.extractionProgress == 0.25)
         #expect(decodedStatus.releaseNotesFormat == .html)
 
         let installRequest = HostSoftwareUpdateInstallRequestMessage(trigger: .protocolMismatch)

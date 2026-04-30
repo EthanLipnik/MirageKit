@@ -244,6 +244,7 @@ extension MirageClientService {
         let result = try await runQualityTestStage(
             testID: testID,
             stageID: 0,
+            probeKind: .streamingReplay,
             targetBitrateBps: targetBitrateBps,
             durationMs: durationMs,
             payloadBytes: payloadBytes,

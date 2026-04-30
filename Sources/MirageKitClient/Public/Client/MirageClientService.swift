@@ -148,6 +148,12 @@ public final class MirageClientService {
         public let installDisposition: HostSoftwareUpdateInstallDisposition?
         public let lastBlockReason: HostSoftwareUpdateBlockReason?
         public let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
+        public let canCancelUpdate: Bool
+        public let downloadExpectedBytes: UInt64?
+        public let downloadReceivedBytes: UInt64
+        public let extractionProgress: Double?
+        public let lastErrorSummary: String?
+        public let lastErrorDetails: String?
         public let currentVersion: String
         public let availableVersion: String?
         public let availableVersionTitle: String?
@@ -165,6 +171,12 @@ public final class MirageClientService {
             installDisposition: HostSoftwareUpdateInstallDisposition?,
             lastBlockReason: HostSoftwareUpdateBlockReason?,
             lastInstallResultCode: HostSoftwareUpdateInstallResultCode?,
+            canCancelUpdate: Bool,
+            downloadExpectedBytes: UInt64?,
+            downloadReceivedBytes: UInt64,
+            extractionProgress: Double?,
+            lastErrorSummary: String?,
+            lastErrorDetails: String?,
             currentVersion: String,
             availableVersion: String?,
             availableVersionTitle: String?,
@@ -181,6 +193,12 @@ public final class MirageClientService {
             self.installDisposition = installDisposition
             self.lastBlockReason = lastBlockReason
             self.lastInstallResultCode = lastInstallResultCode
+            self.canCancelUpdate = canCancelUpdate
+            self.downloadExpectedBytes = downloadExpectedBytes
+            self.downloadReceivedBytes = downloadReceivedBytes
+            self.extractionProgress = extractionProgress
+            self.lastErrorSummary = lastErrorSummary
+            self.lastErrorDetails = lastErrorDetails
             self.currentVersion = currentVersion
             self.availableVersion = availableVersion
             self.availableVersionTitle = availableVersionTitle
@@ -616,6 +634,7 @@ public final class MirageClientService {
     // Audio receiving state
     var audioRegisteredStreamID: StreamID?
     var activeAudioStreamMessage: AudioStreamStartedMessage?
+    var audioStreamConfigurationGeneration: UInt64 = 0
     var pendingDecodedAudioFramesByStreamID: [StreamID: [DecodedPCMFrame]] = [:]
     var pendingDecodedAudioDurationByStreamID: [StreamID: Double] = [:]
     let maxPendingDecodedAudioDuration: Double = 0.5

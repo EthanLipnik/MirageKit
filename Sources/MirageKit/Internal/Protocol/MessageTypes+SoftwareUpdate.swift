@@ -77,6 +77,12 @@ package struct HostSoftwareUpdateStatusMessage: Codable, Sendable {
     package let installDisposition: HostSoftwareUpdateInstallDisposition?
     package let lastBlockReason: HostSoftwareUpdateBlockReason?
     package let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
+    package let canCancelUpdate: Bool
+    package let downloadExpectedBytes: UInt64?
+    package let downloadReceivedBytes: UInt64
+    package let extractionProgress: Double?
+    package let lastErrorSummary: String?
+    package let lastErrorDetails: String?
     package let currentVersion: String
     package let availableVersion: String?
     package let availableVersionTitle: String?
@@ -95,6 +101,12 @@ package struct HostSoftwareUpdateStatusMessage: Codable, Sendable {
         installDisposition: HostSoftwareUpdateInstallDisposition?,
         lastBlockReason: HostSoftwareUpdateBlockReason?,
         lastInstallResultCode: HostSoftwareUpdateInstallResultCode?,
+        canCancelUpdate: Bool,
+        downloadExpectedBytes: UInt64?,
+        downloadReceivedBytes: UInt64,
+        extractionProgress: Double?,
+        lastErrorSummary: String?,
+        lastErrorDetails: String?,
         currentVersion: String,
         availableVersion: String?,
         availableVersionTitle: String?,
@@ -111,6 +123,12 @@ package struct HostSoftwareUpdateStatusMessage: Codable, Sendable {
         self.installDisposition = installDisposition
         self.lastBlockReason = lastBlockReason
         self.lastInstallResultCode = lastInstallResultCode
+        self.canCancelUpdate = canCancelUpdate
+        self.downloadExpectedBytes = downloadExpectedBytes
+        self.downloadReceivedBytes = downloadReceivedBytes
+        self.extractionProgress = extractionProgress
+        self.lastErrorSummary = lastErrorSummary
+        self.lastErrorDetails = lastErrorDetails
         self.currentVersion = currentVersion
         self.availableVersion = availableVersion
         self.availableVersionTitle = availableVersionTitle

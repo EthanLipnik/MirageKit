@@ -42,6 +42,27 @@ struct QualityTestQueueBudgetTests {
         )
     }
 
+    @Test("Streaming replay stages use the interactive media queue")
+    func streamingReplayStagesUseInteractiveMediaQueue() {
+        #expect(MirageHostService.qualityTestQueueProfile(for: .streamingReplay) == .interactiveMedia)
+        #expect(MirageHostService.qualityTestQueueProfile(for: .transport) == .throughputProbe)
+    }
+
+    @Test("Streaming replay queue respects the interactive packet cap")
+    func streamingReplayQueueRespectsInteractivePacketCap() {
+        let packetBytes = 1_338
+        let limits = LoomQueuedUnreliableSendProfile.interactiveMedia.recommendedLimits
+
+        #expect(
+            !MirageHostService.qualityTestCanEnqueuePacket(
+                outstandingPackets: limits.maxOutstandingPackets,
+                outstandingBytes: limits.maxOutstandingPackets * packetBytes,
+                packetBytes: packetBytes,
+                profile: .interactiveMedia
+            )
+        )
+    }
+
     @Test("Quality test queue enforces the byte cap once packets are in flight")
     func queueWindowRespectsByteCap() {
         let limits = LoomQueuedUnreliableSendProfile.throughputProbe.recommendedLimits

@@ -20,7 +20,20 @@ struct MirageClientShortcutTests {
             keyCode: 0x02,
             characters: "d",
             charactersIgnoringModifiers: "d",
-            modifiers: [.command, .shift, .capsLock]
+            modifiers: [.command, .shift, .capsLock, .numericPad, .function]
+        )
+
+        #expect(shortcut.matches(event))
+    }
+
+    @Test("Hyper shortcut matching uses only shortcut modifier bits")
+    func hyperShortcutMatchingUsesOnlyShortcutModifierBits() {
+        let shortcut = MirageClientShortcut(keyCode: 0x23, modifiers: [.control, .option, .shift])
+        let event = MirageKeyEvent(
+            keyCode: 0x23,
+            characters: "p",
+            charactersIgnoringModifiers: "p",
+            modifiers: [.control, .option, .shift, .capsLock, .numericPad, .function]
         )
 
         #expect(shortcut.matches(event))

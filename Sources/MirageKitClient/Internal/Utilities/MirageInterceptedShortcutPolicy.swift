@@ -50,13 +50,6 @@ struct MirageInterceptedShortcut: Equatable, Sendable {
 }
 
 enum MirageInterceptedShortcutPolicy {
-    private static let shortcutModifierMask: MirageModifierFlags = [
-        .shift,
-        .control,
-        .option,
-        .command,
-    ]
-
     private static let commandWShortcut = makeShortcut("w", modifiers: [.command])
     private static let commandQShortcut = makeShortcut("q", modifiers: [.command])
     private static let commandHShortcut = makeShortcut("h", modifiers: [.command])
@@ -147,7 +140,7 @@ enum MirageInterceptedShortcutPolicy {
     }
 
     static func normalizedShortcutModifiers(_ modifiers: MirageModifierFlags) -> MirageModifierFlags {
-        modifiers.intersection(shortcutModifierMask)
+        modifiers.normalizedForShortcutMatching
     }
 
     private static func makeShortcut(

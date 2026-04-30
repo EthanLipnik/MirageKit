@@ -74,12 +74,7 @@ public struct MirageClientShortcutBinding: Codable, Sendable, Hashable {
 
     /// Strips non-shortcut modifiers (caps lock, numeric pad, function).
     public static func normalizedModifiers(_ flags: MirageModifierFlags) -> MirageModifierFlags {
-        var normalized: MirageModifierFlags = []
-        if flags.contains(.command) { normalized.insert(.command) }
-        if flags.contains(.shift) { normalized.insert(.shift) }
-        if flags.contains(.option) { normalized.insert(.option) }
-        if flags.contains(.control) { normalized.insert(.control) }
-        return normalized
+        flags.normalizedForShortcutMatching
     }
 
     public var displayString: String {
@@ -104,6 +99,29 @@ public struct MirageClientShortcutBinding: Codable, Sendable, Hashable {
 
     public static func keyName(for keyCode: UInt16) -> String {
         keyNames[keyCode] ?? "Key \(keyCode)"
+    }
+}
+
+public extension MirageAction {
+    /// Creates a custom action that injects a key combination on the remote host.
+    static func customHostKeyBinding(
+        id: String,
+        displayName: String,
+        hostKeyEvent: MirageKeyEvent,
+        shortcut: MirageClientShortcutBinding? = nil,
+        showInControlBar: Bool = false,
+        sfSymbolName: String? = nil
+    ) -> MirageAction {
+        MirageAction(
+            id: id,
+            displayName: displayName,
+            target: .hostKeyInject,
+            hostKeyEvent: hostKeyEvent,
+            shortcut: shortcut,
+            showInControlBar: showInControlBar,
+            isBuiltIn: false,
+            sfSymbolName: sfSymbolName
+        )
     }
 }
 

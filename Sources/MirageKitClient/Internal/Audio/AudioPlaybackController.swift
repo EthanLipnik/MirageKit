@@ -16,6 +16,20 @@ public final class AudioPlaybackController {
     private struct PlaybackConfigurationKey: Equatable {
         let sampleRate: Int
         let channelCount: Int
+
+        init(sampleRate: Int, channelCount: Int) {
+            self.sampleRate = max(1, sampleRate)
+            self.channelCount = max(1, channelCount)
+        }
+
+        init(frame: DecodedPCMFrame) {
+            self.init(sampleRate: frame.sampleRate, channelCount: frame.channelCount)
+        }
+    }
+
+    private struct PendingPlaybackFrame {
+        let frame: DecodedPCMFrame
+        let generation: UInt64
     }
 
     private final class PlaybackGraph {
@@ -35,16 +49,18 @@ public final class AudioPlaybackController {
 
     private var configuredSampleRate: Int = 0
     private var configuredChannelCount: Int = 0
-    private var pendingFrames: [DecodedPCMFrame] = []
+    private var pendingFrames: [PendingPlaybackFrame] = []
     private var pendingDurationSeconds: Double = 0
     private var scheduledDurationSeconds: Double = 0
     private var hasStartedPlayback = false
     private var runtimeExtraDelaySeconds: Double = 0
     private var isDelayHoldActive = false
     private var isConfigured = false
+    private var playbackGeneration: UInt64 = 0
     private var hasPlaybackSessionLease = false
     private var configurationTask: Task<Bool, Never>?
     private var configurationTaskKey: PlaybackConfigurationKey?
+    private var configurationTaskGeneration: UInt64?
 
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
@@ -64,6 +80,12 @@ public final class AudioPlaybackController {
             playbackGraph.engine.disconnectNodeOutput(playbackGraph.playerNode)
         }
         self.playbackGraph = nil
+        scheduledDurationSeconds = 0
+        hasStartedPlayback = false
+        isDelayHoldActive = false
+        isConfigured = false
+        configuredSampleRate = 0
+        configuredChannelCount = 0
     }
 
     private func resolvePlaybackGraph() -> PlaybackGraph {
@@ -80,9 +102,11 @@ public final class AudioPlaybackController {
     }
 
     func reset() async {
+        playbackGeneration &+= 1
         configurationTask?.cancel()
         configurationTask = nil
         configurationTaskKey = nil
+        configurationTaskGeneration = nil
         tearDownPlaybackGraph()
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
@@ -150,9 +174,10 @@ public final class AudioPlaybackController {
     }
 
     func enqueue(_ frame: DecodedPCMFrame) {
-        startConfigurationIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount)
-        pendingFrames.append(frame)
+        let generation = startConfigurationIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount)
+        pendingFrames.append(PendingPlaybackFrame(frame: frame, generation: generation))
         pendingDurationSeconds += frame.durationSeconds
+        trimPendingFramesIfNeeded()
         drainPendingFramesIfNeeded()
     }
 
@@ -162,17 +187,16 @@ public final class AudioPlaybackController {
     }
 
     private func ensureConfigured(sampleRate: Int, channelCount: Int) async -> Bool {
-        let key = PlaybackConfigurationKey(
-            sampleRate: max(1, sampleRate),
-            channelCount: max(1, channelCount)
-        )
+        let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
             return true
         }
 
-        if let configurationTask, configurationTaskKey == key {
+        if let configurationTask,
+           configurationTaskKey == key,
+           configurationTaskGeneration == playbackGeneration {
             return await configurationTask.value
         }
 
@@ -180,49 +204,61 @@ public final class AudioPlaybackController {
         return await task.value
     }
 
-    private func startConfigurationIfNeeded(sampleRate: Int, channelCount: Int) {
-        let key = PlaybackConfigurationKey(
-            sampleRate: max(1, sampleRate),
-            channelCount: max(1, channelCount)
-        )
+    @discardableResult
+    private func startConfigurationIfNeeded(sampleRate: Int, channelCount: Int) -> UInt64 {
+        let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
-            return
+            return playbackGeneration
         }
 
-        if configurationTaskKey == key {
-            return
+        if configurationTaskKey == key,
+           configurationTaskGeneration == playbackGeneration {
+            return playbackGeneration
         }
 
-        if configurationTask != nil {
+        let pendingFramesMatchKey = pendingFrames.allSatisfy { PlaybackConfigurationKey(frame: $0.frame) == key }
+        if configurationTask != nil || isConfigured || !pendingFramesMatchKey {
             configurationTask?.cancel()
             configurationTask = nil
             configurationTaskKey = nil
+            configurationTaskGeneration = nil
+            playbackGeneration &+= 1
             resetPendingPlaybackState()
         }
 
-        _ = startConfigurationTask(for: key)
+        _ = startConfigurationTask(for: key, generation: playbackGeneration)
+        return playbackGeneration
     }
 
     @discardableResult
-    private func startConfigurationTask(for key: PlaybackConfigurationKey) -> Task<Bool, Never> {
+    private func startConfigurationTask(
+        for key: PlaybackConfigurationKey,
+        generation: UInt64? = nil
+    ) -> Task<Bool, Never> {
+        let generation = generation ?? playbackGeneration
         let task = Task { [weak self] in
             guard let self else { return false }
-            return await self.performConfiguration(sampleRate: key.sampleRate, channelCount: key.channelCount)
+            return await self.performConfiguration(key: key, generation: generation)
         }
         configurationTask = task
         configurationTaskKey = key
+        configurationTaskGeneration = generation
         return task
     }
 
-    private func performConfiguration(sampleRate: Int, channelCount: Int) async -> Bool {
-        let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
+    private func performConfiguration(key: PlaybackConfigurationKey, generation: UInt64) async -> Bool {
         defer {
-            if configurationTaskKey == key {
+            if configurationTaskKey == key, configurationTaskGeneration == generation {
                 configurationTask = nil
                 configurationTaskKey = nil
+                configurationTaskGeneration = nil
             }
+        }
+
+        guard isCurrentConfigurationTask(key: key, generation: generation) else {
+            return false
         }
 
         if isConfigured,
@@ -234,11 +270,11 @@ public final class AudioPlaybackController {
         tearDownPlaybackGraph()
         let hadPlaybackSessionLease = hasPlaybackSessionLease
 
-        guard await ensurePlaybackSessionConfigured() else {
+        guard await ensurePlaybackSessionConfigured(generation: generation) else {
             return false
         }
 
-        if Task.isCancelled {
+        if Task.isCancelled || !isCurrentConfigurationTask(key: key, generation: generation) {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
@@ -251,6 +287,13 @@ public final class AudioPlaybackController {
             channels: AVAudioChannelCount(key.channelCount),
             interleaved: false
         ) else {
+            if !hadPlaybackSessionLease {
+                await releasePlaybackSessionIfNeeded()
+            }
+            return false
+        }
+
+        guard isCurrentConfigurationTask(key: key, generation: generation) else {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
@@ -279,10 +322,24 @@ public final class AudioPlaybackController {
         return true
     }
 
-    private func ensurePlaybackSessionConfigured() async -> Bool {
-        guard !hasPlaybackSessionLease else { return true }
+    private func isCurrentConfigurationTask(key: PlaybackConfigurationKey, generation: UInt64) -> Bool {
+        !Task.isCancelled &&
+            playbackGeneration == generation &&
+            configurationTaskKey == key &&
+            configurationTaskGeneration == generation
+    }
+
+    private func ensurePlaybackSessionConfigured(generation: UInt64) async -> Bool {
+        guard !hasPlaybackSessionLease else {
+            return playbackGeneration == generation
+        }
 
         guard await MirageClientAudioSessionCoordinator.shared.requestPlaybackSession() else {
+            return false
+        }
+
+        guard playbackGeneration == generation else {
+            await MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
             return false
         }
 
@@ -305,6 +362,9 @@ public final class AudioPlaybackController {
     }
 
     private func drainPendingFramesIfNeeded() {
+        guard isConfigured else { return }
+        guard playbackGraph != nil else { return }
+
         let requiredBuffered = requiredBufferedSeconds()
         if !hasStartedPlayback {
             guard totalBufferedSeconds() >= requiredBuffered else { return }
@@ -317,9 +377,12 @@ public final class AudioPlaybackController {
         }
 
         while !pendingFrames.isEmpty, scheduledDurationSeconds <= maxQueuedSeconds {
-            let frame = pendingFrames.removeFirst()
+            let pendingFrame = pendingFrames.removeFirst()
+            let frame = pendingFrame.frame
             pendingDurationSeconds = max(0, pendingDurationSeconds - frame.durationSeconds)
-            schedule(frame)
+            guard pendingFrame.generation == playbackGeneration else { continue }
+            guard frameMatchesConfiguredFormat(frame) else { continue }
+            schedule(frame, generation: pendingFrame.generation)
         }
 
         if !isDelayHoldActive {
@@ -335,10 +398,31 @@ public final class AudioPlaybackController {
         pendingDurationSeconds + scheduledDurationSeconds
     }
 
-    private func schedule(_ frame: DecodedPCMFrame) {
+    private func trimPendingFramesIfNeeded() {
+        let pendingLimitSeconds = min(maxQueuedSeconds, max(startupBufferSeconds, 0.500))
+        while pendingDurationSeconds > pendingLimitSeconds, !pendingFrames.isEmpty {
+            let removed = pendingFrames.removeFirst()
+            pendingDurationSeconds = max(0, pendingDurationSeconds - removed.frame.durationSeconds)
+        }
+    }
+
+    private func frameMatchesConfiguredFormat(_ frame: DecodedPCMFrame) -> Bool {
+        frame.sampleRate == configuredSampleRate &&
+            frame.channelCount == configuredChannelCount
+    }
+
+    private func schedule(_ frame: DecodedPCMFrame, generation: UInt64) {
+        guard generation == playbackGeneration else { return }
+        guard isConfigured, frameMatchesConfiguredFormat(frame) else { return }
+        guard let playbackGraph else { return }
+
         let frameCount = max(0, frame.frameCount)
         guard frameCount > 0 else { return }
         let channelCount = max(1, frame.channelCount)
+        let expectedSampleCount = frameCount * channelCount
+        guard frame.pcmData.count >= expectedSampleCount * MemoryLayout<Float>.size else {
+            return
+        }
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: Double(frame.sampleRate),
@@ -360,13 +444,12 @@ public final class AudioPlaybackController {
             return
         }
 
-        let expectedSampleCount = frameCount * channelCount
         frame.pcmData.withUnsafeBytes { raw in
             let samples = raw.bindMemory(to: Float.self)
-            guard samples.count >= expectedSampleCount else { return }
+            guard samples.count >= expectedSampleCount, let baseAddress = samples.baseAddress else { return }
 
             if channelCount == 1 {
-                channelData[0].update(from: samples.baseAddress!, count: frameCount)
+                channelData[0].update(from: baseAddress, count: frameCount)
                 return
             }
 
@@ -380,9 +463,10 @@ public final class AudioPlaybackController {
 
         scheduledDurationSeconds += frame.durationSeconds
         let durationSeconds = frame.durationSeconds
-        resolvePlaybackGraph().playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        playbackGraph.playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard self.playbackGeneration == generation else { return }
                 self.scheduledDurationSeconds = max(0, self.scheduledDurationSeconds - durationSeconds)
                 self.drainPendingFramesIfNeeded()
             }
@@ -390,8 +474,17 @@ public final class AudioPlaybackController {
     }
 
     private func startPlayerIfNeeded() {
+        guard isConfigured else { return }
         guard let playerNode = playbackGraph?.playerNode else { return }
         if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    func pendingFrameCountForTesting() -> Int {
+        pendingFrames.count
+    }
+
+    func pendingDurationSecondsForTesting() -> Double {
+        pendingDurationSeconds
     }
 
 }

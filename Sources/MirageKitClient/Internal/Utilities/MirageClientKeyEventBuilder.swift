@@ -93,12 +93,49 @@ enum MirageClientKeyEventBuilder {
         "~": "`",
     ]
 
+    static let keyCommandInputToMacKeyCodeMap: [String: UInt16] = [
+        "\n": 0x24,
+        "\r": 0x24,
+        "\t": 0x30,
+        " ": 0x31,
+        "\u{8}": 0x33,
+        "\u{7F}": 0x33,
+        "UIKeyInputDelete": 0x33,
+        "UIKeyInputEscape": 0x35,
+        "UIKeyInputTab": 0x30,
+        "UIKeyInputLeftArrow": 0x7B,
+        "UIKeyInputRightArrow": 0x7C,
+        "UIKeyInputDownArrow": 0x7D,
+        "UIKeyInputUpArrow": 0x7E,
+        "UIKeyInputDeleteForward": 0x75,
+    ]
+
+    private static let nonTextHardwareKeyCodes: Set<UInt16> = [
+        0x24, // Return
+        0x30, // Tab
+        0x33, // Delete
+        0x35, // Escape
+        0x73, // Home
+        0x74, // Page Up
+        0x75, // Forward Delete
+        0x77, // End
+        0x79, // Page Down
+        0x7B, // Left Arrow
+        0x7C, // Right Arrow
+        0x7D, // Down Arrow
+        0x7E, // Up Arrow
+    ]
+
     static func characterToMacKeyCode(_ character: String) -> UInt16 {
         characterToMacKeyCodeMap[character.lowercased()] ?? 0x00
     }
 
     static func characterToMacKeyCodeIfKnown(_ character: String) -> UInt16? {
         characterToMacKeyCodeMap[character.lowercased()]
+    }
+
+    static func keyCommandInputToMacKeyCode(_ input: String) -> UInt16? {
+        keyCommandInputToMacKeyCodeMap[input]
     }
 
     static func softwareKeyEvent(
@@ -150,15 +187,18 @@ enum MirageClientKeyEventBuilder {
         modifiers: MirageModifierFlags,
         isRepeat: Bool = false
     ) -> MirageKeyEvent {
+        let normalizedCharacters = normalizedHardwareCharacters(characters)
+        let normalizedCharactersIgnoringModifiers = normalizedHardwareCharacters(charactersIgnoringModifiers)
+
         if shouldUseUnicodeFallbackForHardwareKey(
             keyCode: keyCode,
-            characters: characters,
+            characters: normalizedCharacters,
             modifiers: modifiers
         ) {
             return MirageKeyEvent(
                 keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
-                characters: characters,
-                charactersIgnoringModifiers: charactersIgnoringModifiers ?? characters,
+                characters: normalizedCharacters,
+                charactersIgnoringModifiers: normalizedCharactersIgnoringModifiers ?? normalizedCharacters,
                 modifiers: modifiers,
                 isRepeat: isRepeat
             )
@@ -166,8 +206,8 @@ enum MirageClientKeyEventBuilder {
 
         return MirageKeyEvent(
             keyCode: keyCode,
-            characters: characters,
-            charactersIgnoringModifiers: charactersIgnoringModifiers,
+            characters: normalizedCharacters,
+            charactersIgnoringModifiers: normalizedCharactersIgnoringModifiers,
             modifiers: modifiers,
             isRepeat: isRepeat
         )
@@ -178,6 +218,7 @@ enum MirageClientKeyEventBuilder {
         characters: String?,
         modifiers: MirageModifierFlags
     ) -> Bool {
+        if nonTextHardwareKeyCodes.contains(keyCode) { return false }
         guard let characters, isPrintableText(characters) else { return false }
         guard !modifiers.contains(.command), !modifiers.contains(.control) else { return false }
         if modifiers.contains(.option) { return true }
@@ -185,6 +226,16 @@ enum MirageClientKeyEventBuilder {
             return true
         }
         return represented != keyCode
+    }
+
+    private static func normalizedHardwareCharacters(_ string: String?) -> String? {
+        guard let string else { return nil }
+        if isUIKitSpecialKeyInput(string) { return nil }
+        return string
+    }
+
+    private static func isUIKitSpecialKeyInput(_ string: String) -> Bool {
+        string.hasPrefix("UIKeyInput")
     }
 
     private static func isPrintableText(_ string: String) -> Bool {

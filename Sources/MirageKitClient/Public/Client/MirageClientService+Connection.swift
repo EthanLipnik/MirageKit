@@ -58,12 +58,14 @@ extension MirageClientService {
     }
 
     func makeBootstrapRequest(
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
+        requestHostUpdateOnProtocolMismatch: Bool? = nil,
+        requestTakeoverIfBusy: Bool? = nil
     ) -> MirageSessionBootstrapRequest {
         MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             requestedFeatures: mirageSupportedFeatures,
-            requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+            requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
+            requestTakeoverIfBusy: requestTakeoverIfBusy
         )
     }
 
@@ -248,7 +250,16 @@ extension MirageClientService {
     /// Pause all streams without disconnecting.  The host stops encoding
     /// but keeps virtual displays and stream infrastructure alive so that
     /// `resumeStreaming()` can restart frames immediately with a keyframe.
-    public func pauseStreaming() {
+    public func pauseStreaming(backgroundLeaseDuration: TimeInterval? = nil) {
+        if let backgroundLeaseDuration {
+            let lease = ClientBackgroundLeaseMessage(durationSeconds: backgroundLeaseDuration)
+            _ = sendControlMessageBestEffort(.streamPauseAll, content: lease)
+            MirageLogger.client(
+                "Sent streamPauseAll to host with background lease \(backgroundLeaseDuration)s"
+            )
+            return
+        }
+
         sendControlMessageBestEffort(ControlMessage(type: .streamPauseAll))
         MirageLogger.client("Sent streamPauseAll to host")
     }
@@ -1478,7 +1489,8 @@ extension MirageClientService {
         try await controlChannel.send(
             .sessionBootstrapRequest,
             content: makeBootstrapRequest(
-                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
+                requestTakeoverIfBusy: provisionalHost.advertisement.mirageAcceptingConnections ? nil : true
             )
         )
 

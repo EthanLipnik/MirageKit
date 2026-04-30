@@ -14,16 +14,22 @@ import MirageKit
 #if os(macOS)
 private final class QualityTestStageSendState: @unchecked Sendable {
     private let lock = NSLock()
+    private let queueProfile: LoomQueuedUnreliableSendProfile
     private var outstandingPackets = 0
     private var outstandingBytes = 0
     private var sendErrorDescription: String?
+
+    init(queueProfile: LoomQueuedUnreliableSendProfile) {
+        self.queueProfile = queueProfile
+    }
 
     func tryReserve(packetBytes: Int) -> Bool {
         lock.lock()
         let canReserve = MirageHostService.qualityTestCanEnqueuePacket(
             outstandingPackets: outstandingPackets,
             outstandingBytes: outstandingBytes,
-            packetBytes: packetBytes
+            packetBytes: packetBytes,
+            profile: queueProfile
         )
         if canReserve {
             outstandingPackets += 1
@@ -136,8 +142,10 @@ private struct QualityTestStageSendMetrics {
 
 @MainActor
 extension MirageHostService {
-    nonisolated private static let qualityTestQueueProfile: LoomQueuedUnreliableSendProfile = .throughputProbe
-    nonisolated private static let qualityTestQueueLimits = qualityTestQueueProfile.recommendedLimits
+    nonisolated private static let qualityTestResetQueueProfiles: [LoomQueuedUnreliableSendProfile] = [
+        .interactiveMedia,
+        .throughputProbe,
+    ]
     nonisolated private static let qualityTestMinimumTickIntervalSeconds = 0.00025
     nonisolated private static let qualityTestMaximumBurstPackets = 4_096
     nonisolated private static let qualityTestReplayFrameRate = 60
@@ -147,16 +155,29 @@ extension MirageHostService {
     nonisolated static func qualityTestCanEnqueuePacket(
         outstandingPackets: Int,
         outstandingBytes: Int,
-        packetBytes: Int
+        packetBytes: Int,
+        profile: LoomQueuedUnreliableSendProfile = .throughputProbe
     ) -> Bool {
+        let limits = profile.recommendedLimits
         guard packetBytes > 0 else { return true }
-        if outstandingPackets >= qualityTestQueueLimits.maxOutstandingPackets {
+        if outstandingPackets >= limits.maxOutstandingPackets {
             return false
         }
         if outstandingPackets == 0 {
             return true
         }
-        return outstandingBytes + packetBytes <= qualityTestQueueLimits.maxOutstandingBytes
+        return outstandingBytes + packetBytes <= limits.maxOutstandingBytes
+    }
+
+    nonisolated static func qualityTestQueueProfile(
+        for probeKind: MirageQualityTestPlan.ProbeKind
+    ) -> LoomQueuedUnreliableSendProfile {
+        switch probeKind {
+        case .transport:
+            .throughputProbe
+        case .streamingReplay:
+            .interactiveMedia
+        }
     }
 
     nonisolated static func qualityTestMissedDeliveryWindow(
@@ -263,7 +284,9 @@ extension MirageHostService {
             return
         }
         if resetQueuedSends {
-            await stream.resetQueuedUnreliableSends(profile: Self.qualityTestQueueProfile)
+            for profile in Self.qualityTestResetQueueProfiles {
+                await stream.resetQueuedUnreliableSends(profile: profile)
+            }
         }
         try? await stream.close()
     }
@@ -416,7 +439,8 @@ extension MirageHostService {
         let payloadLength = UInt16(clamping: payloadBytes)
         let payload = Data(repeating: 0, count: payloadBytes)
         let packetBytes = payloadBytes + mirageQualityTestHeaderSize
-        let stageSendState = QualityTestStageSendState()
+        let queueProfile = qualityTestQueueProfile(for: stage.probeKind)
+        let stageSendState = QualityTestStageSendState(queueProfile: queueProfile)
         var sequence: UInt32 = 0
         var stagePacketCount = 0
         var stagePayloadBytes = 0
@@ -464,7 +488,7 @@ extension MirageHostService {
             )
             var packet = header.serialize()
             packet.append(payload)
-            stream.sendUnreliableQueued(packet, profile: qualityTestQueueProfile) { error in
+            stream.sendUnreliableQueued(packet, profile: queueProfile) { error in
                 stageSendState.completePacket(packetBytes: packetBytes, error: error)
             }
             sequence &+= 1
@@ -604,7 +628,7 @@ extension MirageHostService {
             outstandingPacketsAfterSettle: outstandingSnapshot.outstandingPackets
         )
         if deliveryWindowMissed, outstandingSnapshot.outstandingPackets > 0 {
-            await stream.resetQueuedUnreliableSends(profile: qualityTestQueueProfile)
+            await stream.resetQueuedUnreliableSends(profile: queueProfile)
         }
 
         if let stageSendErrorDescription = stageSendState.errorDescription() {

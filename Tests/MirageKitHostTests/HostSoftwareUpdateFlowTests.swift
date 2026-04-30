@@ -121,6 +121,12 @@ struct HostSoftwareUpdateFlowTests {
             installDisposition: .installing,
             lastBlockReason: nil,
             lastInstallResultCode: .started,
+            canCancelUpdate: true,
+            downloadExpectedBytes: 8_000,
+            downloadReceivedBytes: 2_000,
+            extractionProgress: 0.25,
+            lastErrorSummary: "Previous failure",
+            lastErrorDetails: "Previous failure details",
             currentVersion: "1.1.0",
             availableVersion: "1.2.0",
             availableVersionTitle: "Mirage 1.2",
@@ -141,6 +147,12 @@ struct HostSoftwareUpdateFlowTests {
         #expect(status.channel == .nightly)
         #expect(status.automationMode == .autoDownload)
         #expect(status.installDisposition == .installing)
+        #expect(status.canCancelUpdate == true)
+        #expect(status.downloadExpectedBytes == 8_000)
+        #expect(status.downloadReceivedBytes == 2_000)
+        #expect(status.extractionProgress == 0.25)
+        #expect(status.lastErrorSummary == "Previous failure")
+        #expect(status.lastErrorDetails == "Previous failure details")
         #expect(status.currentVersion == "1.1.0")
         #expect(status.availableVersion == "1.2.0")
         #expect(status.availableVersionTitle == "Mirage 1.2")
@@ -161,6 +173,12 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
         installDisposition: .idle,
         lastBlockReason: nil,
         lastInstallResultCode: nil,
+        canCancelUpdate: false,
+        downloadExpectedBytes: nil,
+        downloadReceivedBytes: 0,
+        extractionProgress: nil,
+        lastErrorSummary: nil,
+        lastErrorDetails: nil,
         currentVersion: "1.0.0",
         availableVersion: "1.1.0",
         availableVersionTitle: "Mirage 1.1",
@@ -184,6 +202,12 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
             installDisposition: .installing,
             lastBlockReason: nil,
             lastInstallResultCode: .started,
+            canCancelUpdate: false,
+            downloadExpectedBytes: nil,
+            downloadReceivedBytes: 0,
+            extractionProgress: nil,
+            lastErrorSummary: nil,
+            lastErrorDetails: nil,
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
