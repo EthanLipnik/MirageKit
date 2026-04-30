@@ -456,16 +456,9 @@ extension MirageHostService {
             do {
                 try await desktopContext.updateFrameRate(targetFrameRate)
                 if forceDisplayRefresh {
-                    let encoded = await desktopContext.getEncodedDimensions()
-                    let pixelResolution = CGSize(width: encoded.width, height: encoded.height)
-                    if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
-                        sharedVirtualDisplayScaleFactor = max(1.0, snapshot.scaleFactor)
-                    }
-                    let resolution = virtualDisplayLogicalResolution(
-                        for: pixelResolution,
-                        client: desktopStreamClientContext?.client
+                    MirageLogger.host(
+                        "Desktop stream force refresh applied without deriving display geometry from encoded dimensions"
                     )
-                    await handleDisplayResolutionChange(streamID: streamID, newResolution: resolution)
                 }
                 let appliedRate = await desktopContext.getTargetFrameRate()
                 if appliedRate == targetFrameRate { MirageLogger.host("Desktop stream refresh override applied: \(targetFrameRate)fps") } else {

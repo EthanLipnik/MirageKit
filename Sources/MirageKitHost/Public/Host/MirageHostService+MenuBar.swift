@@ -144,10 +144,19 @@ extension MirageHostService {
                 )
             }
 
-            beginStreamSetup(
+            guard beginStreamSetup(
                 clientSessionID: clientContext.sessionID,
                 startupRequestID: request.startupRequestID
-            )
+            ) else {
+                MirageLogger.host("Ignoring cancelled desktop setup before side effects")
+                return
+            }
+            defer {
+                finishStreamSetup(
+                    clientSessionID: clientContext.sessionID,
+                    startupRequestID: request.startupRequestID
+                )
+            }
             desktopStreamMode = request.mode ?? .unified
             desktopUsesHostResolution = request.useHostResolution == true
             desktopCursorPresentation = request.cursorPresentation ?? .simulatedCursor
@@ -184,10 +193,6 @@ extension MirageHostService {
                 pendingLightsOutSetup = false
                 await endPendingDesktopStreamLightsOutSetup()
             }
-            finishStreamSetup(
-                clientSessionID: clientContext.sessionID,
-                startupRequestID: request.startupRequestID
-            )
         } catch {
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false
@@ -252,6 +257,8 @@ extension MirageHostService {
                 clientSessionID: clientContext.sessionID,
                 startupRequestID: startupRequestID
             )
+        } else {
+            cancelAllStreamSetup(clientSessionID: clientContext.sessionID)
         }
 
         // If desktop stream is already fully set up, stop it directly

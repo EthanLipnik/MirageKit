@@ -92,6 +92,114 @@ struct HostReceiveLoopTests {
         }
     }
 
+    @Test("Cancel setup lifecycle signal bypasses in-flight control dispatch")
+    func cancelSetupLifecycleSignalBypassesInFlightControlDispatch() async throws {
+        let control = try ControlMessage(
+            type: .displayResolutionChange,
+            content: DisplayResolutionChangeMessage(streamID: 7, displayWidth: 1280, displayHeight: 720)
+        )
+        let cancel = try ControlMessage(
+            type: .cancelStreamSetup,
+            content: CancelStreamSetupMessage(startupRequestID: UUID(), kind: .desktop, appSessionID: nil)
+        )
+
+        var initialData = Data()
+        initialData.append(control.serialize())
+        initialData.append(cancel.serialize())
+
+        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let lifecycleTypes = Locked<[ControlMessageType]>([])
+        let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "cancel-lifecycle-test",
+            receiveChunk: { _ in },
+            onInputMessage: { _ in },
+            onPingMessage: { _ in },
+            onLifecycleSignal: { signal in
+                if case let .cancelStreamSetup(message) = signal {
+                    lifecycleTypes.withLock { $0.append(message.type) }
+                }
+            },
+            dispatchControlMessage: { message, completion in
+                dispatchedTypes.withLock { $0.append(message.type) }
+                controlCompletion.withLock { $0 = completion }
+            },
+            onTerminal: { _ in },
+            isFatalError: { _ in false }
+        )
+
+        loop.start(initialBuffer: initialData)
+        try await Task.sleep(for: .milliseconds(40))
+
+        #expect(dispatchedTypes.read { $0 } == [.displayResolutionChange])
+        #expect(lifecycleTypes.read { $0 } == [.cancelStreamSetup])
+
+        controlCompletion.read { $0 }?()
+    }
+
+    @Test("Terminal lifecycle signal bypasses in-flight control dispatch")
+    func terminalLifecycleSignalBypassesInFlightControlDispatch() async throws {
+        let control = try ControlMessage(
+            type: .displayResolutionChange,
+            content: DisplayResolutionChangeMessage(streamID: 9, displayWidth: 1280, displayHeight: 720)
+        )
+
+        struct ReceiveEvent {
+            var data: Data?
+            var isComplete: Bool
+            var error: NWError?
+        }
+
+        let receiveEvents = Locked([
+            ReceiveEvent(data: control.serialize(), isComplete: false, error: nil),
+            ReceiveEvent(data: nil, isComplete: true, error: nil),
+        ])
+        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let lifecycleTerminalCount = Locked(0)
+        let terminalCount = Locked(0)
+        let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "terminal-lifecycle-test",
+            receiveChunk: { completion in
+                let next: ReceiveEvent? = receiveEvents.withLock { events in
+                    if events.isEmpty { return nil }
+                    return events.removeFirst()
+                }
+                guard let next else {
+                    completion(nil, nil, true, nil)
+                    return
+                }
+                completion(next.data, nil, next.isComplete, next.error)
+            },
+            onInputMessage: { _ in },
+            onPingMessage: { _ in },
+            onLifecycleSignal: { signal in
+                if case .terminal = signal {
+                    lifecycleTerminalCount.withLock { $0 += 1 }
+                }
+            },
+            dispatchControlMessage: { message, completion in
+                dispatchedTypes.withLock { $0.append(message.type) }
+                controlCompletion.withLock { $0 = completion }
+            },
+            onTerminal: { _ in
+                terminalCount.withLock { $0 += 1 }
+            },
+            isFatalError: { _ in false }
+        )
+
+        loop.start()
+        try await Task.sleep(for: .milliseconds(40))
+
+        #expect(dispatchedTypes.read { $0 } == [.displayResolutionChange])
+        #expect(lifecycleTerminalCount.read { $0 } == 1)
+        #expect(terminalCount.read { $0 } == 1)
+
+        controlCompletion.read { $0 }?()
+    }
+
     @Test("Clipboard updates are an ordering barrier for following input")
     func clipboardUpdatesOrderBeforeFollowingInput() async throws {
         let streamID: StreamID = 9

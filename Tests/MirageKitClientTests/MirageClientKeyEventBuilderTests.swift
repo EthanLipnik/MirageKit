@@ -40,4 +40,33 @@ struct MirageClientKeyEventBuilderTests {
         #expect(event.charactersIgnoringModifiers == "a")
         #expect(event.modifiers == [.command])
     }
+
+    @Test("Option-produced hardware text uses Unicode fallback")
+    func optionProducedHardwareTextUsesUnicodeFallback() {
+        let event = MirageClientKeyEventBuilder.hardwareKeyEvent(
+            keyCode: 0x1D,
+            characters: "@",
+            charactersIgnoringModifiers: "0",
+            modifiers: [.option]
+        )
+
+        #expect(event.keyCode == MirageKeyEvent.unicodeScalarFallbackKeyCode)
+        #expect(event.characters == "@")
+        #expect(event.charactersIgnoringModifiers == "0")
+        #expect(event.modifiers == [.option])
+    }
+
+    @Test("Command hardware shortcuts stay on virtual-key path")
+    func commandHardwareShortcutsStayOnVirtualKeyPath() {
+        let event = MirageClientKeyEventBuilder.hardwareKeyEvent(
+            keyCode: 0x0B,
+            characters: "b",
+            charactersIgnoringModifiers: "b",
+            modifiers: [.command]
+        )
+
+        #expect(event.keyCode == 0x0B)
+        #expect(event.characters == "b")
+        #expect(event.modifiers == [.command])
+    }
 }

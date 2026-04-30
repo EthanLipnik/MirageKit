@@ -19,8 +19,8 @@ extension MirageHostService {
     func updateAdvertisedConnectionAvailability() {
         expireStaleSingleClientReservationIfNeeded()
 
-        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAcceptingConnections(
-            allowsNewClientConnections,
+        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+            advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
         guard updatedAdvertisement != advertisedPeerAdvertisement else { return }
@@ -49,8 +49,8 @@ extension MirageHostService {
 
         expireStaleSingleClientReservationIfNeeded()
 
-        var updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAcceptingConnections(
-            allowsNewClientConnections,
+        var updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAvailability(
+            advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
         let localNetworkSnapshot = localNetworkMonitor.snapshot()
@@ -63,6 +63,13 @@ extension MirageHostService {
         }
 
         await loomNode.updateAdvertisement(updatedAdvertisement)
+    }
+
+    public func updateAdvertisedSoftwareUpdateMaintenance(_ active: Bool) async {
+        guard softwareUpdateMaintenanceModeActive != active else { return }
+        softwareUpdateMaintenanceModeActive = active
+        await publishCurrentAdvertisement()
+        onConnectionAvailabilityChanged?(allowsNewClientConnections)
     }
 
     func startAdvertisementRefreshLoop() {

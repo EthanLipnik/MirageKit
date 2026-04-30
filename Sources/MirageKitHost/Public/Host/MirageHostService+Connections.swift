@@ -255,6 +255,11 @@ extension MirageHostService {
             await rejectIncomingSession(session, reason: .hostUpdateInProgress)
             return
         }
+        if softwareUpdateMaintenanceModeActive {
+            MirageLogger.host("Connection rejected while host software update maintenance is advertised")
+            await rejectIncomingSession(session, reason: .hostUpdateInProgress)
+            return
+        }
 
         await waitForDisconnectCompletionIfNeeded(for: peerIdentity)
         await preemptExistingClientIfSuperseded(by: peerIdentity)

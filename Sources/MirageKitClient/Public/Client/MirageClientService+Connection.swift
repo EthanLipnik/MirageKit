@@ -265,6 +265,7 @@ extension MirageClientService {
         invalidateCurrentConnectAttempt()
 
         if let controlChannel, case .connected = connectionState {
+            cancelStreamSetup()
             let disconnectMsg = DisconnectMessage(reason: .userRequested, message: nil)
             try? await controlChannel.send(.disconnect, content: disconnectMsg)
         }

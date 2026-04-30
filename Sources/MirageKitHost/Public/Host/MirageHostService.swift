@@ -149,7 +149,14 @@ public final class MirageHostService {
 
     /// Whether the host can currently accept a new client session.
     public var allowsNewClientConnections: Bool {
-        singleClientSessionID == nil
+        !softwareUpdateMaintenanceModeActive && singleClientSessionID == nil
+    }
+
+    var advertisedConnectionAvailabilityReason: MiragePeerAdvertisementMetadata.AvailabilityReason {
+        if softwareUpdateMaintenanceModeActive {
+            return .softwareUpdate
+        }
+        return singleClientSessionID == nil ? .available : .busy
     }
 
     /// Callback fired when host connection availability changes.
@@ -346,6 +353,8 @@ public final class MirageHostService {
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []
+    var streamSetupLifecycleBySessionID: [UUID: StreamSetupSessionLifecycle] = [:]
+    var softwareUpdateMaintenanceModeActive = false
 
     /// Displays mirrored during desktop streaming (for restoration).
     var mirroredDesktopDisplayIDs: Set<CGDirectDisplayID> = []

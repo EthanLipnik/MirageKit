@@ -21,6 +21,12 @@ final class HostReceiveLoop: @unchecked Sendable {
         case receiveBufferOverflow(Int)
     }
 
+    enum LifecycleSignal {
+        case disconnect(ControlMessage)
+        case cancelStreamSetup(ControlMessage)
+        case terminal(TerminalReason)
+    }
+
     private enum QueueEntry {
         case direct(ControlMessage)
         case coalesced(ControlMessageType)
@@ -55,6 +61,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     private let onInputMessage: @Sendable (ControlMessage) -> Void
     private let onPingMessage: @Sendable (ControlMessage) -> Void
+    private let onLifecycleSignal: @Sendable (LifecycleSignal) -> Void
     private let dispatchControlMessage: @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void
     private let onTerminal: @Sendable (TerminalReason) -> Void
     private let isFatalError: @Sendable (NWError) -> Bool
@@ -67,6 +74,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
         isFatalError: @escaping @Sendable (NWError) -> Bool
@@ -77,6 +85,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.onInputMessage = onInputMessage
         self.onPingMessage = onPingMessage
+        self.onLifecycleSignal = onLifecycleSignal
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
         self.isFatalError = isFatalError
@@ -95,6 +104,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         ) -> Void,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
         isFatalError: @escaping @Sendable (NWError) -> Bool
@@ -106,6 +116,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.receiveChunk = receiveChunk
         self.onInputMessage = onInputMessage
         self.onPingMessage = onPingMessage
+        self.onLifecycleSignal = onLifecycleSignal
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
         self.isFatalError = isFatalError
@@ -152,6 +163,7 @@ final class HostReceiveLoop: @unchecked Sendable {
                 }
                 if bufferOverflowed {
                     self.stop()
+                    self.onLifecycleSignal(.terminal(.receiveBufferOverflow(self.maxReceiveBufferBytes)))
                     self.onTerminal(.receiveBufferOverflow(self.maxReceiveBufferBytes))
                     return
                 }
@@ -161,6 +173,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
             if isComplete {
                 self.stop()
+                self.onLifecycleSignal(.terminal(.complete))
                 self.onTerminal(.complete)
                 return
             }
@@ -172,6 +185,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     private func handleReceiveError(_ error: NWError) {
         if isFatalError(error) {
             stop()
+            onLifecycleSignal(.terminal(.fatalError(error)))
             onTerminal(.fatalError(error))
             return
         }
@@ -187,6 +201,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
         if shouldTerminate {
             stop()
+            onLifecycleSignal(.terminal(.persistentError(error)))
             onTerminal(.persistentError(error))
             return
         }
@@ -219,6 +234,7 @@ final class HostReceiveLoop: @unchecked Sendable {
                     } else if message.type == .pong {
                         continue
                     } else {
+                        publishLifecycleSignalIfNeeded(for: message)
                         let enqueued = enqueueControl(message, state: &state)
                         if message.type == .sharedClipboardUpdate, enqueued {
                             state.clipboardInputBarrierDepth += 1
@@ -239,6 +255,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
         if let violationReason {
             stop()
+            onLifecycleSignal(.terminal(.protocolViolation(violationReason)))
             onTerminal(.protocolViolation(violationReason))
             return
         }
@@ -270,6 +287,17 @@ final class HostReceiveLoop: @unchecked Sendable {
             }
             state.entries.append(.direct(message))
             return true
+        }
+    }
+
+    private func publishLifecycleSignalIfNeeded(for message: ControlMessage) {
+        switch message.type {
+        case .disconnect:
+            onLifecycleSignal(.disconnect(message))
+        case .cancelStreamSetup:
+            onLifecycleSignal(.cancelStreamSetup(message))
+        default:
+            break
         }
     }
 

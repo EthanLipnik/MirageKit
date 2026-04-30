@@ -347,6 +347,9 @@ extension MirageClientService {
                 streamID: streamID,
                 targetFrameRate: target.targetFrameRate
             )
+            refreshRateOverridesByStream[streamID] = target.targetFrameRate
+            refreshRateMismatchCounts.removeValue(forKey: streamID)
+            refreshRateFallbackTargets.removeValue(forKey: streamID)
         }
 
         if needsResize, allowsAutomaticResolutionResize {
@@ -373,10 +376,27 @@ extension MirageClientService {
 
     private func automaticDesktopLogicalResolution(forEncodedPixelSize encodedPixelSize: CGSize) -> CGSize {
         let displayScaleFactor = platformDisplayScaleFactor(explicitScaleFactor: nil)
+        let sourceSize = desktopStreamPresentationResolution ?? desktopStreamResolution ?? getMainDisplayResolution()
+        let sourceAspect = sourceSize.width > 0 && sourceSize.height > 0 ?
+            sourceSize.width / sourceSize.height :
+            encodedPixelSize.width / max(1, encodedPixelSize.height)
+        let targetAspect = encodedPixelSize.width / max(1, encodedPixelSize.height)
+        let fittedPixelSize: CGSize
+        if targetAspect > sourceAspect {
+            fittedPixelSize = CGSize(
+                width: encodedPixelSize.height * sourceAspect,
+                height: encodedPixelSize.height
+            )
+        } else {
+            fittedPixelSize = CGSize(
+                width: encodedPixelSize.width,
+                height: encodedPixelSize.width / max(0.001, sourceAspect)
+            )
+        }
         return MirageStreamGeometry.normalizedLogicalSize(
             CGSize(
-                width: encodedPixelSize.width / displayScaleFactor,
-                height: encodedPixelSize.height / displayScaleFactor
+                width: fittedPixelSize.width / displayScaleFactor,
+                height: fittedPixelSize.height / displayScaleFactor
             )
         )
     }

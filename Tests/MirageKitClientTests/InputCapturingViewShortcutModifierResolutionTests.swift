@@ -41,8 +41,8 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         )
     }
 
-    @Test("Modified GC keyboard keys that are not shortcuts are forwarded to the host")
-    func modifiedGCKeyboardKeysWithoutShortcutBindingsAreForwarded() {
+    @Test("Modified GC keyboard keys that are not shortcuts use forward-key decision")
+    func modifiedGCKeyboardKeysWithoutShortcutBindingsUseForwardKeyDecision() {
         let decision = InputCapturingView.gcKeyboardKeyRoutingDecision(
             hasHeldModifiers: true,
             hasAction: false,
@@ -51,6 +51,13 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         )
 
         #expect(decision == .forwardKey)
+    }
+
+    @Test("Option forward keys stay on UIKit path for layout text")
+    func optionForwardKeysStayOnUIKitPathForLayoutText() {
+        #expect(!InputCapturingView.shouldClaimGCForwardKey(modifiers: [.option]))
+        #expect(InputCapturingView.shouldClaimGCForwardKey(modifiers: [.command]))
+        #expect(InputCapturingView.shouldClaimGCForwardKey(modifiers: [.control]))
     }
 
     @Test("Unmodified GC keyboard character keys stay on UIKit responder path")

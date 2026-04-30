@@ -44,6 +44,10 @@ extension InputCapturingView {
         return .forwardKey
     }
 
+    nonisolated static func shouldClaimGCForwardKey(modifiers: MirageModifierFlags) -> Bool {
+        modifiers.contains(.command) || modifiers.contains(.control)
+    }
+
     private func gcKeyboardKeyEvent(
         hidUsage: UIKeyboardHIDUsage,
         modifiers: MirageModifierFlags
@@ -123,6 +127,9 @@ extension InputCapturingView {
             }
 
         case .forwardKey:
+            guard Self.shouldClaimGCForwardKey(modifiers: eventModifiers) else {
+                return
+            }
             gcClaimedKeyCodes.insert(keyCode)
             hideCursorForTypingUntilPointerMovement()
             onInputEvent?(.keyDown(gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: eventModifiers)))
@@ -411,9 +418,7 @@ extension InputCapturingView {
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if !resolvedModifiers.contains(.command) { startKeyRepeat(for: press) }
                 hideCursorForTypingUntilPointerMovement()
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
-                    onInputEvent?(.keyDown(keyEvent))
-                }
+                onInputEvent?(.keyDown(hardwareKeyEvent(for: press, modifiers: resolvedModifiers)))
             }
         }
         updateModifierRefreshTimer()
@@ -476,9 +481,7 @@ extension InputCapturingView {
                 if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
-                    onInputEvent?(.keyUp(keyEvent))
-                }
+                onInputEvent?(.keyUp(hardwareKeyEvent(for: press, modifiers: resolvedModifiers)))
             }
         }
         updateModifierRefreshTimer()
@@ -540,9 +543,7 @@ extension InputCapturingView {
                 if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
-                    onInputEvent?(.keyUp(keyEvent))
-                }
+                onInputEvent?(.keyUp(hardwareKeyEvent(for: press, modifiers: resolvedModifiers)))
             }
         }
         updateModifierRefreshTimer()
@@ -598,12 +599,33 @@ extension InputCapturingView {
             stopKeyRepeat(for: keyCode)
             return
         }
-        guard let press = heldKeyPresses[keyCode],
-              let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers, isRepeat: true) else {
+        guard let press = heldKeyPresses[keyCode] else {
             return
         }
+        let keyEvent = hardwareKeyEvent(for: press, modifiers: keyboardModifiers, isRepeat: true)
         hideCursorForTypingUntilPointerMovement()
         onInputEvent?(.keyDown(keyEvent))
+    }
+
+    private func hardwareKeyEvent(
+        for press: UIPress,
+        modifiers: MirageModifierFlags,
+        isRepeat: Bool = false
+    ) -> MirageKeyEvent {
+        guard let key = press.key else {
+            return MirageKeyEvent(
+                keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+                modifiers: modifiers,
+                isRepeat: isRepeat
+            )
+        }
+        return MirageClientKeyEventBuilder.hardwareKeyEvent(
+            keyCode: MirageKeyEvent.hidToMacKeyCode(key.keyCode),
+            characters: key.characters,
+            charactersIgnoringModifiers: key.charactersIgnoringModifiers,
+            modifiers: modifiers,
+            isRepeat: isRepeat
+        )
     }
 
     /// Stop all active key repeat timers (call when view loses focus)

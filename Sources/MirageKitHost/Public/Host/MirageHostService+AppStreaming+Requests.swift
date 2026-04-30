@@ -416,10 +416,13 @@ extension MirageHostService {
         do {
             let request = try message.decode(SelectAppMessage.self)
             let client = clientContext.client
-            beginStreamSetup(
+            guard beginStreamSetup(
                 clientSessionID: clientContext.sessionID,
                 startupRequestID: request.startupRequestID
-            )
+            ) else {
+                MirageLogger.host("Ignoring cancelled selectApp setup before side effects")
+                return
+            }
             defer {
                 finishStreamSetup(
                     clientSessionID: clientContext.sessionID,

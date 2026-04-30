@@ -7,6 +7,12 @@
 
 import Loom
 
+public enum MirageHostAdvertisementAvailabilityReason: String, Sendable {
+    case available
+    case busy
+    case softwareUpdate
+}
+
 public extension LoomPeerAdvertisement {
     var mirageMaxStreams: Int {
         MiragePeerAdvertisementMetadata.maxStreams(from: self)
@@ -14,6 +20,17 @@ public extension LoomPeerAdvertisement {
 
     var mirageAcceptingConnections: Bool {
         MiragePeerAdvertisementMetadata.acceptingConnections(in: self)
+    }
+
+    var mirageAvailabilityReason: MirageHostAdvertisementAvailabilityReason {
+        switch MiragePeerAdvertisementMetadata.availabilityReason(in: self) {
+        case .available:
+            return .available
+        case .busy:
+            return .busy
+        case .softwareUpdate:
+            return .softwareUpdate
+        }
     }
 
     var mirageVPNAccessEnabled: Bool {

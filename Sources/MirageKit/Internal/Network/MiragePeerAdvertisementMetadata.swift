@@ -9,8 +9,15 @@ import Foundation
 import Loom
 
 package enum MiragePeerAdvertisementMetadata {
+    package enum AvailabilityReason: String, Sendable {
+        case available
+        case busy
+        case softwareUpdate
+    }
+
     private static let maxStreamsKey = "mirage.max-streams"
     private static let acceptingConnectionsKey = "mirage.accepting-connections"
+    private static let availabilityReasonKey = "mirage.availability-reason"
     private static let vpnAccessEnabledKey = "mirage.vpn-access"
     private static let supportsHEVCKey = "mirage.supports-hevc"
     private static let supportsP3Key = "mirage.supports-p3"
@@ -54,6 +61,9 @@ package enum MiragePeerAdvertisementMetadata {
             metadata: [
                 maxStreamsKey: "4",
                 acceptingConnectionsKey: acceptingConnections ? "1" : "0",
+                availabilityReasonKey: acceptingConnections ?
+                    AvailabilityReason.available.rawValue :
+                    AvailabilityReason.busy.rawValue,
                 vpnAccessEnabledKey: vpnAccessEnabled ? "1" : "0",
                 supportsHEVCKey: "1",
                 supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
@@ -84,6 +94,14 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func acceptingConnections(in advertisement: LoomPeerAdvertisement) -> Bool {
         boolValue(acceptingConnectionsKey, in: advertisement, defaultValue: true)
+    }
+
+    package static func availabilityReason(in advertisement: LoomPeerAdvertisement) -> AvailabilityReason {
+        guard let rawValue = advertisement.metadata[availabilityReasonKey],
+              let reason = AvailabilityReason(rawValue: rawValue) else {
+            return acceptingConnections(in: advertisement) ? .available : .busy
+        }
+        return reason
     }
 
     package static func supportsHEVC(in advertisement: LoomPeerAdvertisement) -> Bool {
@@ -142,8 +160,19 @@ package enum MiragePeerAdvertisementMetadata {
         _ acceptingConnections: Bool,
         in advertisement: LoomPeerAdvertisement
     ) -> LoomPeerAdvertisement {
+        updatingAvailability(
+            acceptingConnections ? .available : .busy,
+            in: advertisement
+        )
+    }
+
+    package static func updatingAvailability(
+        _ reason: AvailabilityReason,
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
         var metadata = advertisement.metadata
-        metadata[acceptingConnectionsKey] = acceptingConnections ? "1" : "0"
+        metadata[acceptingConnectionsKey] = reason == .available ? "1" : "0"
+        metadata[availabilityReasonKey] = reason.rawValue
         return rebuildingAdvertisement(advertisement, metadata: metadata)
     }
 

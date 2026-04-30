@@ -142,4 +142,55 @@ enum MirageClientKeyEventBuilder {
             modifiers: modifiers
         )
     }
+
+    static func hardwareKeyEvent(
+        keyCode: UInt16,
+        characters: String?,
+        charactersIgnoringModifiers: String?,
+        modifiers: MirageModifierFlags,
+        isRepeat: Bool = false
+    ) -> MirageKeyEvent {
+        if shouldUseUnicodeFallbackForHardwareKey(
+            keyCode: keyCode,
+            characters: characters,
+            modifiers: modifiers
+        ) {
+            return MirageKeyEvent(
+                keyCode: MirageKeyEvent.unicodeScalarFallbackKeyCode,
+                characters: characters,
+                charactersIgnoringModifiers: charactersIgnoringModifiers ?? characters,
+                modifiers: modifiers,
+                isRepeat: isRepeat
+            )
+        }
+
+        return MirageKeyEvent(
+            keyCode: keyCode,
+            characters: characters,
+            charactersIgnoringModifiers: charactersIgnoringModifiers,
+            modifiers: modifiers,
+            isRepeat: isRepeat
+        )
+    }
+
+    static func shouldUseUnicodeFallbackForHardwareKey(
+        keyCode: UInt16,
+        characters: String?,
+        modifiers: MirageModifierFlags
+    ) -> Bool {
+        guard let characters, isPrintableText(characters) else { return false }
+        guard !modifiers.contains(.command), !modifiers.contains(.control) else { return false }
+        if modifiers.contains(.option) { return true }
+        guard let represented = characterToMacKeyCodeIfKnown(characters.lowercased()) else {
+            return true
+        }
+        return represented != keyCode
+    }
+
+    private static func isPrintableText(_ string: String) -> Bool {
+        guard !string.isEmpty else { return false }
+        return string.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.controlCharacters.contains(scalar)
+        }
+    }
 }

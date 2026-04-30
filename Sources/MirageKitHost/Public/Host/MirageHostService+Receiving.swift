@@ -101,6 +101,37 @@ extension MirageHostService {
             onPingMessage: { _ in
                 clientContext.sendBestEffort(ControlMessage(type: .pong))
             },
+            onLifecycleSignal: { [weak self] signal in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    switch signal {
+                    case .disconnect:
+                        self.markStreamSetupSessionClosing(clientSessionID: clientContext.sessionID)
+                        await self.disconnectClient(
+                            clientContext.client,
+                            sessionID: clientContext.sessionID,
+                            notifyClient: false
+                        )
+                    case let .cancelStreamSetup(message):
+                        let request = (try? message.decode(CancelStreamSetupMessage.self)) ?? CancelStreamSetupMessage()
+                        if let startupRequestID = request.startupRequestID {
+                            self.cancelStreamSetup(
+                                clientSessionID: clientContext.sessionID,
+                                startupRequestID: startupRequestID
+                            )
+                        } else {
+                            self.cancelAllStreamSetup(clientSessionID: clientContext.sessionID)
+                        }
+                    case .terminal:
+                        self.markStreamSetupSessionClosing(clientSessionID: clientContext.sessionID)
+                        await self.disconnectClient(
+                            clientContext.client,
+                            sessionID: clientContext.sessionID,
+                            notifyClient: false
+                        )
+                    }
+                }
+            },
             dispatchControlMessage: { [weak self] message, completion in
                 guard let self else {
                     completion()
