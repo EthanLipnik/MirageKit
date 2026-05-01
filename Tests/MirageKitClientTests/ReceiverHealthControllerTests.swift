@@ -393,6 +393,36 @@ struct ReceiverHealthControllerTests {
         #expect(action == .probe(targetBitrateBps: 36_000_000))
     }
 
+    @Test("Step-up candidate rolls back when transport pressure appears")
+    func stepUpCandidateRollsBackWhenTransportPressureAppears() {
+        var controller = MirageReceiverHealthController()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+        let stressedSnapshot = severeTransportSnapshot()
+
+        _ = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let stepUp = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+        let rollback = controller.advance(
+            snapshots: [stressedSnapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 3
+        )
+
+        #expect(stepUp == .probe(targetBitrateBps: 32_000_000))
+        #expect(rollback == .backoff(targetBitrateBps: 20_000_000))
+        #expect(controller.learnedPromotionCeilingBps == 27_200_000)
+    }
+
     @Test("Transport drops trigger backoff even when decode metrics look healthy")
     func transportDropsTriggerBackoffEvenWhenDecodeLooksHealthy() {
         var controller = MirageReceiverHealthController()
@@ -571,25 +601,25 @@ struct ReceiverHealthControllerTests {
             snapshots: [snapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 7
+            now: 9
         )
         let suppressedProbe = controller.advance(
             snapshots: [snapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 7.5
+            now: 9.5
         )
         let resumedProbe = controller.advance(
             snapshots: [snapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8
+            now: 10
         )
 
         #expect(firstProbe == .probe(targetBitrateBps: 32_000_000))
-        #expect(controller.diagnostics.nextProbeAllowedAt == 8)
+        #expect(controller.diagnostics.nextProbeAllowedAt == 10)
         #expect(suppressedProbe == .none)
-        #expect(resumedProbe == .probe(targetBitrateBps: 32_000_000))
+        #expect(resumedProbe == .probe(targetBitrateBps: 30_400_000))
     }
 
     private func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {

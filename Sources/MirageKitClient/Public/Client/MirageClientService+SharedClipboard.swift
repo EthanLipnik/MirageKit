@@ -47,7 +47,7 @@ extension MirageClientService {
         await refreshSharedClipboardBridgeState()
     }
 
-    /// Reads the local clipboard and sends it to the host. Called on Cmd+V in on-paste mode.
+    /// Reads the local clipboard and sends it to the host. Called on Cmd+V.
     @discardableResult
     public func syncLocalClipboardToHost() async -> Bool {
         guard case .connected = connectionState,
@@ -85,33 +85,19 @@ extension MirageClientService {
               let controlChannel else {
             throw MirageError.protocolError("Shared clipboard unavailable")
         }
-        guard let clipboardText = MirageSharedClipboard.validatedText(localSend.text) else {
-            MirageLogger.client("Ignoring invalid local shared clipboard text")
-            return
-        }
 
-        let chunks = MirageSharedClipboard.chunkText(clipboardText)
-        let chunkCount = chunks.count
-        MirageLogger.client(
-            "Sending shared clipboard update to host: bytes=\(clipboardText.utf8.count), chunks=\(chunkCount)"
+        let messages = try MirageSharedClipboard.makeUpdateMessages(
+            localSend: localSend,
+            sentAtMs: sentAtMs,
+            mediaSecurityContext: mediaSecurityContext,
+            source: .client
         )
-
-        for (index, chunk) in chunks.enumerated() {
-            let encryptedText = try MirageMediaSecurity.encryptClipboardText(
-                chunk,
-                context: mediaSecurityContext
-            )
-            let update = SharedClipboardUpdateMessage(
-                changeID: localSend.orderingToken.changeID,
-                logicalVersion: localSend.orderingToken.logicalVersion,
-                sentAtMs: sentAtMs,
-                encryptedText: encryptedText,
-                chunkIndex: index,
-                chunkCount: chunkCount
-            )
-            let message = try ControlMessage(type: .sharedClipboardUpdate, content: update)
+        MirageLogger.client(
+            "Sending shared clipboard update to host: kind=\(localSend.item.representation.kind.rawValue), bytes=\(localSend.item.representation.byteCount), chunks=\(messages.count), transferable=\(localSend.hasPayload)"
+        )
+        for message in messages {
             try await controlChannel.send(message)
-            if chunkCount > 1 { await Task.yield() }
+            if messages.count > 1 { await Task.yield() }
         }
     }
 

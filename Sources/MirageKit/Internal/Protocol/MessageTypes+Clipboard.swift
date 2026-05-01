@@ -15,11 +15,45 @@ package struct SharedClipboardStatusMessage: Codable, Sendable {
     }
 }
 
+package enum SharedClipboardSource: String, Codable, Sendable {
+    case host
+    case client
+}
+
+package enum SharedClipboardRepresentationKind: String, Codable, Sendable {
+    case text
+    case image
+    case file
+    case unsupported
+}
+
+package struct SharedClipboardRepresentation: Codable, Sendable, Equatable {
+    package let kind: SharedClipboardRepresentationKind
+    package let contentType: String?
+    package let filename: String?
+    package let byteCount: Int
+
+    package init(
+        kind: SharedClipboardRepresentationKind,
+        contentType: String?,
+        filename: String?,
+        byteCount: Int
+    ) {
+        self.kind = kind
+        self.contentType = contentType
+        self.filename = filename
+        self.byteCount = byteCount
+    }
+}
+
 package struct SharedClipboardUpdateMessage: Codable, Sendable {
     package let changeID: UUID
     package let logicalVersion: UInt64
     package let sentAtMs: Int64
-    package let encryptedText: Data
+    package let source: SharedClipboardSource
+    package let representation: SharedClipboardRepresentation
+    package let isPayloadTransferable: Bool
+    package let encryptedPayload: Data?
     package let chunkIndex: Int
     package let chunkCount: Int
 
@@ -27,14 +61,20 @@ package struct SharedClipboardUpdateMessage: Codable, Sendable {
         changeID: UUID,
         logicalVersion: UInt64,
         sentAtMs: Int64,
-        encryptedText: Data,
+        source: SharedClipboardSource,
+        representation: SharedClipboardRepresentation,
+        isPayloadTransferable: Bool,
+        encryptedPayload: Data?,
         chunkIndex: Int = 0,
         chunkCount: Int = 1
     ) {
         self.changeID = changeID
         self.logicalVersion = logicalVersion
         self.sentAtMs = sentAtMs
-        self.encryptedText = encryptedText
+        self.source = source
+        self.representation = representation
+        self.isPayloadTransferable = isPayloadTransferable
+        self.encryptedPayload = encryptedPayload
         self.chunkIndex = chunkIndex
         self.chunkCount = chunkCount
     }

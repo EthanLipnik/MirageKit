@@ -10,7 +10,7 @@ import Foundation
 package struct MirageSharedClipboardChunkBuffer: Sendable {
     struct PendingTransfer: Sendable {
         let chunkCount: Int
-        var chunks: [Int: String]
+        var chunks: [Int: Data]
         let startedAt: ContinuousClock.Instant
     }
 
@@ -19,27 +19,37 @@ package struct MirageSharedClipboardChunkBuffer: Sendable {
 
     package init() {}
 
-    /// Add a decrypted chunk. Returns the full reassembled text when all chunks arrive, nil otherwise.
+    /// Add a decrypted chunk. Returns the full reassembled payload when all chunks arrive, nil otherwise.
     package mutating func addChunk(
         changeID: UUID,
         chunkIndex: Int,
         chunkCount: Int,
-        text: String
-    ) -> String? {
+        payload: Data
+    ) -> Data? {
         evictStale()
 
-        if chunkCount == 1 { return text }
+        if chunkCount == 1 { return payload }
 
         var transfer = pending[changeID] ?? PendingTransfer(
             chunkCount: chunkCount,
             chunks: [:],
             startedAt: .now
         )
-        transfer.chunks[chunkIndex] = text
+        guard transfer.chunkCount == chunkCount,
+              chunkIndex >= 0,
+              chunkIndex < chunkCount else {
+            return nil
+        }
+        transfer.chunks[chunkIndex] = payload
 
         if transfer.chunks.count == chunkCount {
             pending.removeValue(forKey: changeID)
-            return (0 ..< chunkCount).compactMap { transfer.chunks[$0] }.joined()
+            var data = Data()
+            for index in 0 ..< chunkCount {
+                guard let chunk = transfer.chunks[index] else { return nil }
+                data.append(chunk)
+            }
+            return data
         }
 
         pending[changeID] = transfer

@@ -8,30 +8,23 @@
 import Foundation
 
 package enum MirageSharedClipboard {
-    package static let maximumTextBytes = 32 * 1024
+    package static let maximumPayloadBytes = 64 * 1024
     package static let chunkSize = 4 * 1024
 
-    package static func validatedText(_ text: String?) -> String? {
-        guard let text, !text.isEmpty else { return nil }
-        guard text.utf8.count <= maximumTextBytes else { return nil }
-        return text
+    package static func validatedPayload(_ payload: Data?) -> Data? {
+        guard let payload, !payload.isEmpty else { return nil }
+        guard payload.count <= maximumPayloadBytes else { return nil }
+        return payload
     }
 
-    package static func chunkText(_ text: String) -> [String] {
-        let utf8 = Array(text.utf8)
-        guard utf8.count > chunkSize else { return [text] }
+    package static func chunkPayload(_ payload: Data) -> [Data] {
+        guard payload.count > chunkSize else { return [payload] }
 
-        var chunks: [String] = []
+        var chunks: [Data] = []
         var offset = 0
-        while offset < utf8.count {
-            var end = min(offset + chunkSize, utf8.count)
-            // Ensure we split at a character boundary. A valid split is where
-            // utf8[end] is not a continuation byte (0b10xxxxxx).
-            while end > offset, end < utf8.count, utf8[end] & 0xC0 == 0x80 {
-                end -= 1
-            }
-            if end == offset { end = min(offset + chunkSize, utf8.count) }
-            chunks.append(String(decoding: utf8[offset ..< end], as: UTF8.self))
+        while offset < payload.count {
+            let end = min(offset + chunkSize, payload.count)
+            chunks.append(payload.subdata(in: offset ..< end))
             offset = end
         }
         return chunks
@@ -39,6 +32,36 @@ package enum MirageSharedClipboard {
 
     package static func currentTimestampMs() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    package static func makeUpdateMessages(
+        localSend: MirageSharedClipboardLocalSend,
+        sentAtMs: Int64,
+        mediaSecurityContext: MirageMediaSecurityContext,
+        source: SharedClipboardSource
+    ) throws -> [ControlMessage] {
+        let payload = localSend.item.payload.flatMap(validatedPayload)
+        let chunks = payload.map(chunkPayload) ?? [Data()]
+        return try chunks.enumerated().map { index, chunk in
+            let encryptedPayload = try payload.map { _ in
+                try MirageMediaSecurity.encryptClipboardPayload(
+                    chunk,
+                    context: mediaSecurityContext
+                )
+            }
+            let update = SharedClipboardUpdateMessage(
+                changeID: localSend.orderingToken.changeID,
+                logicalVersion: localSend.orderingToken.logicalVersion,
+                sentAtMs: sentAtMs,
+                source: source,
+                representation: localSend.item.representation,
+                isPayloadTransferable: payload != nil,
+                encryptedPayload: encryptedPayload,
+                chunkIndex: index,
+                chunkCount: chunks.count
+            )
+            return try ControlMessage(type: .sharedClipboardUpdate, content: update)
+        }
     }
 }
 
@@ -57,99 +80,126 @@ package struct MirageSharedClipboardOrderingToken: Sendable, Equatable, Comparab
     }
 }
 
+package struct MirageSharedClipboardItem: Sendable, Equatable {
+    package let representation: SharedClipboardRepresentation
+    package let payload: Data?
+
+    package init(representation: SharedClipboardRepresentation, payload: Data?) {
+        self.representation = representation
+        self.payload = payload
+    }
+
+    package static func unsupported(byteCount: Int = 0) -> MirageSharedClipboardItem {
+        MirageSharedClipboardItem(
+            representation: SharedClipboardRepresentation(
+                kind: .unsupported,
+                contentType: nil,
+                filename: nil,
+                byteCount: byteCount
+            ),
+            payload: nil
+        )
+    }
+}
+
 package struct MirageSharedClipboardLocalSend: Sendable, Equatable {
-    package let text: String
+    package let item: MirageSharedClipboardItem
     package let orderingToken: MirageSharedClipboardOrderingToken
+
+    package var hasPayload: Bool {
+        item.payload != nil
+    }
 }
 
 package struct MirageSharedClipboardState: Sendable {
     package private(set) var isActive = false
     package private(set) var lastObservedChangeCount: Int?
-    package private(set) var lastRemoteText: String?
-    package private(set) var lastRemoteChangeCount: Int?
     package private(set) var latestOrderingToken: MirageSharedClipboardOrderingToken?
     package private(set) var maxKnownLogicalVersion: UInt64 = 0
+    package private(set) var suppressLocalSendUntilChangeCount: Int?
 
     package init() {}
 
     package mutating func activate(changeCount: Int) {
         isActive = true
         lastObservedChangeCount = changeCount
-        lastRemoteText = nil
-        lastRemoteChangeCount = nil
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
+        suppressLocalSendUntilChangeCount = nil
     }
 
     package mutating func deactivate() {
         isActive = false
         lastObservedChangeCount = nil
-        lastRemoteText = nil
-        lastRemoteChangeCount = nil
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
+        suppressLocalSendUntilChangeCount = nil
     }
 
-    package func shouldApplyRemoteText(
+    package func shouldApplyRemoteUpdate(
         orderingToken: MirageSharedClipboardOrderingToken
     ) -> Bool {
         guard let latestOrderingToken else { return true }
         return latestOrderingToken < orderingToken
     }
 
-    package mutating func recordRemoteWrite(
-        text: String,
+    package mutating func recordRemoteDeclaration(
         changeCount: Int,
         orderingToken: MirageSharedClipboardOrderingToken
     ) {
-        lastRemoteText = text
-        lastRemoteChangeCount = changeCount
         lastObservedChangeCount = changeCount
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
+        suppressLocalSendUntilChangeCount = changeCount
     }
 
-    package mutating func prepareManualLocalSend(
-        currentText: String?,
+    package mutating func recordRemoteWrite(
+        changeCount: Int,
+        orderingToken: MirageSharedClipboardOrderingToken
+    ) {
+        lastObservedChangeCount = changeCount
+        latestOrderingToken = orderingToken
+        maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
+        suppressLocalSendUntilChangeCount = changeCount
+    }
+
+    package func shouldSuppressLocalSend(changeCount: Int) -> Bool {
+        guard let suppressLocalSendUntilChangeCount else { return false }
+        return changeCount <= suppressLocalSendUntilChangeCount
+    }
+
+    package mutating func recordObservedChangeCount(_ changeCount: Int) {
+        lastObservedChangeCount = changeCount
+    }
+
+    package mutating func prepareLocalSend(
+        currentItem: MirageSharedClipboardItem,
         changeCount: Int
     ) -> MirageSharedClipboardLocalSend? {
-        if let lastRemoteText, let lastRemoteChangeCount, changeCount <= lastRemoteChangeCount,
-           let localSend = makeLocalSend(text: lastRemoteText, changeCount: changeCount) {
-            return localSend
+        guard isActive else { return nil }
+        if let suppressLocalSendUntilChangeCount,
+           changeCount <= suppressLocalSendUntilChangeCount {
+            lastObservedChangeCount = changeCount
+            return nil
         }
-
-        if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
-            lastRemoteText = nil
-            self.lastRemoteChangeCount = nil
-        }
-
-        guard let currentText = MirageSharedClipboard.validatedText(currentText) else { return nil }
-        return makeLocalSend(text: currentText, changeCount: changeCount)
-    }
-
-    private mutating func clearRemoteTextIfLocalChangeCountAdvanced(_ changeCount: Int) {
-        if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
-            lastRemoteText = nil
-            self.lastRemoteChangeCount = nil
-        }
-    }
-
-    private mutating func makeLocalSend(
-        text: String,
-        changeCount: Int
-    ) -> MirageSharedClipboardLocalSend? {
-        guard let validatedText = MirageSharedClipboard.validatedText(text) else { return nil }
 
         lastObservedChangeCount = changeCount
-        lastRemoteText = nil
-        lastRemoteChangeCount = nil
-
         let orderingToken = mintLocalOrderingToken()
         latestOrderingToken = orderingToken
+        suppressLocalSendUntilChangeCount = nil
         return MirageSharedClipboardLocalSend(
-            text: validatedText,
+            item: currentItem,
             orderingToken: orderingToken
         )
+    }
+
+    package mutating func prepareLocalDeclaration(
+        item: MirageSharedClipboardItem,
+        changeCount: Int
+    ) -> MirageSharedClipboardLocalSend? {
+        guard isActive else { return nil }
+        guard lastObservedChangeCount != changeCount else { return nil }
+        return prepareLocalSend(currentItem: item, changeCount: changeCount)
     }
 
     private mutating func mintLocalOrderingToken() -> MirageSharedClipboardOrderingToken {

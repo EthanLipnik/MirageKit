@@ -158,6 +158,14 @@ This keeps Mirage's model clean:
 
 Keyboard translation separates special keys from printable text. Platform-specific key strings such as Escape use host key codes, while Unicode fallback is reserved for actual text input. Custom bindings are represented as Mirage actions so shortcuts, display metadata, and host key injection share the same preference model as built-in controls.
 
+## Shared Clipboard
+
+Shared clipboard state is coordinated over the control plane while media continues on its separate path.
+
+The host and client exchange clipboard declarations with ordering tokens so a newer host copy can suppress stale client pasteboard content without requiring the client to read its local pasteboard. Transferable clipboard contents are sent as encrypted chunks only when the representation is supported and bounded. Oversized or unsupported contents still advance shared clipboard ordering through metadata, so paste into the remote Mac can use the host's current pasteboard directly.
+
+On iPadOS, Mirage watches pasteboard change counts and system pasteboard change notifications while a stream is active, but it reads pasteboard contents only during an explicit paste action that needs to send local client data to the host. Host-side pasteboard observation can inspect macOS pasteboard contents directly and mirrors small supported text, image, and file payloads back to the client OS clipboard.
+
 ## Host Software Updates
 
 Software updates are coordinated through the control plane.

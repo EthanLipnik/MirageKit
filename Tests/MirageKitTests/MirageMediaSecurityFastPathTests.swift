@@ -112,12 +112,12 @@ struct MirageMediaSecurityFastPathTests {
     @Test("Shared clipboard encryption uses AES-GCM combined payloads")
     func sharedClipboardEncryptionUsesCombinedPayload() throws {
         let context = makeSecurityContext()
-        let plaintext = "Mirage clipboard round-trip"
-        let encrypted = try MirageMediaSecurity.encryptClipboardText(plaintext, context: context)
-        let decrypted = try MirageMediaSecurity.decryptClipboardText(encrypted, context: context)
+        let payload = Data("Mirage clipboard round-trip".utf8)
+        let encrypted = try MirageMediaSecurity.encryptClipboardPayload(payload, context: context)
+        let decrypted = try MirageMediaSecurity.decryptClipboardPayload(encrypted, context: context)
 
-        #expect(decrypted == plaintext)
-        #expect(encrypted.count == Data(plaintext.utf8).count + 12 + 16)
+        #expect(decrypted == payload)
+        #expect(encrypted.count == payload.count + 12 + 16)
     }
 
     private func makePayload(byteCount: Int) -> Data {

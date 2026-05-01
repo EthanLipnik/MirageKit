@@ -71,6 +71,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostNonKeyframeHoldDrops: UInt64? = nil
     public var hasHostMetrics: Bool
 
+    public var hostTransportSendQueueBytes: Int? { hostSendQueueBytes }
+    public var hostTransportSendStartDelayAverageMs: Double? { hostSendStartDelayAverageMs }
+    public var hostTransportSendCompletionAverageMs: Double? { hostSendCompletionAverageMs }
+    public var hostTransportPacketPacerAverageSleepMs: Double? { hostPacketPacerAverageSleepMs }
+    public var hostTransportStalePacketDrops: UInt64? { hostStalePacketDrops }
+    public var hostTransportGenerationAbortDrops: UInt64? { hostGenerationAbortDrops }
+    public var hostTransportNonKeyframeHoldDrops: UInt64? { hostNonKeyframeHoldDrops }
+
     public init(
         decodedFPS: Double = 0,
         receivedFPS: Double = 0,

@@ -37,7 +37,6 @@ package enum MirageMediaSecurityError: Error {
     case invalidRegistrationTokenLength
     case invalidEncryptedPayloadLength
     case invalidNonce
-    case invalidClipboardTextEncoding
     case encryptFailed
     case decryptFailed
 }
@@ -232,26 +231,22 @@ package enum MirageMediaSecurity {
         )
     }
 
-    package static func encryptClipboardText(
-        _ plaintext: String,
+    package static func encryptClipboardPayload(
+        _ plaintext: Data,
         context: MirageMediaSecurityContext
     ) throws -> Data {
-        guard let plaintextData = plaintext.data(using: .utf8) else {
-            throw MirageMediaSecurityError.invalidClipboardTextEncoding
-        }
-
-        let sealed = try AES.GCM.seal(plaintextData, using: SymmetricKey(data: context.sessionKey))
+        let sealed = try AES.GCM.seal(plaintext, using: SymmetricKey(data: context.sessionKey))
         guard let combined = sealed.combined else {
             throw MirageMediaSecurityError.encryptFailed
         }
         return combined
     }
 
-    package static func decryptClipboardText<Payload: DataProtocol>(
-        _ encryptedText: Payload,
+    package static func decryptClipboardPayload<Payload: DataProtocol>(
+        _ encryptedPayload: Payload,
         context: MirageMediaSecurityContext
-    ) throws -> String {
-        let combined = Data(encryptedText)
+    ) throws -> Data {
+        let combined = Data(encryptedPayload)
         let box: AES.GCM.SealedBox
         do {
             box = try AES.GCM.SealedBox(combined: combined)
@@ -266,10 +261,7 @@ package enum MirageMediaSecurity {
             throw MirageMediaSecurityError.decryptFailed
         }
 
-        guard let plaintext = String(data: plaintextData, encoding: .utf8) else {
-            throw MirageMediaSecurityError.invalidClipboardTextEncoding
-        }
-        return plaintext
+        return plaintextData
     }
 
     package static func constantTimeEqual(_ lhs: Data, _ rhs: Data) -> Bool {

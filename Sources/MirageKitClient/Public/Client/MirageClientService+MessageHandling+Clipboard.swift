@@ -50,16 +50,18 @@ extension MirageClientService {
         Task.detached(priority: .utility) { [weak self] in
             do {
                 let update = try message.decode(SharedClipboardUpdateMessage.self)
-                let decryptedText = try MirageMediaSecurity.decryptClipboardText(
-                    update.encryptedText,
-                    context: secCtx
-                )
-                guard let chunkText = MirageSharedClipboard.validatedText(decryptedText) else {
-                    MirageLogger.client("Ignoring invalid shared clipboard payload from host")
-                    return
+                let decryptedPayload: Data?
+                if let encryptedPayload = update.encryptedPayload {
+                    decryptedPayload = try MirageMediaSecurity.decryptClipboardPayload(
+                        encryptedPayload,
+                        context: secCtx
+                    )
+                } else {
+                    decryptedPayload = nil
                 }
                 await self?.applyReceivedClipboardChunk(
-                    text: chunkText,
+                    representation: update.representation,
+                    payload: decryptedPayload,
                     orderingToken: update.orderingToken,
                     sentAtMs: update.sentAtMs,
                     chunkIndex: update.chunkIndex,
@@ -72,23 +74,41 @@ extension MirageClientService {
     }
 
     private func applyReceivedClipboardChunk(
-        text: String,
+        representation: SharedClipboardRepresentation,
+        payload: Data?,
         orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
     ) async {
-        guard let fullText = clipboardChunkBuffer.addChunk(
+        guard let payload else {
+            await ensureSharedClipboardBridge().noteRemoteDeclaration(
+                orderingToken: orderingToken,
+                sentAtMs: sentAtMs
+            )
+            return
+        }
+
+        guard let fullPayload = clipboardChunkBuffer.addChunk(
             changeID: orderingToken.changeID,
             chunkIndex: chunkIndex,
             chunkCount: chunkCount,
-            text: text
+            payload: payload
         ) else { return }
 
-        guard let validatedText = MirageSharedClipboard.validatedText(fullText) else { return }
+        guard let validatedPayload = MirageSharedClipboard.validatedPayload(fullPayload) else {
+            await ensureSharedClipboardBridge().noteRemoteDeclaration(
+                orderingToken: orderingToken,
+                sentAtMs: sentAtMs
+            )
+            return
+        }
 
-        await ensureSharedClipboardBridge().applyRemoteText(
-            validatedText,
+        await ensureSharedClipboardBridge().applyRemoteItem(
+            MirageSharedClipboardItem(
+                representation: representation,
+                payload: validatedPayload
+            ),
             orderingToken: orderingToken,
             sentAtMs: sentAtMs
         )

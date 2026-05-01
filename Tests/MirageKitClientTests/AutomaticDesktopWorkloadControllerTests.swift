@@ -12,8 +12,8 @@ import Testing
 #if os(macOS)
 @Suite("Automatic Desktop Workload Controller")
 struct AutomaticDesktopWorkloadControllerTests {
-    @Test("Sustained 4K60 pipeline pressure drops to 4K30")
-    func sustainedFourK60PipelinePressureDropsToFourK30() {
+    @Test("Sustained 4K60 host pipeline pressure preserves 60fps by reducing resolution")
+    func sustainedFourK60HostPipelinePressurePreserves60FPSByReducingResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         let snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -22,15 +22,13 @@ struct AutomaticDesktopWorkloadControllerTests {
             cadenceFPS: 45
         )
 
-        #expect(controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 0) == .none)
-        #expect(controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 1) == .none)
-        let action = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 2)
+        let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
         guard case .reconfigure(let target, _) = action else {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target == .fourK30)
+        #expect(target == .qhd60)
     }
 
     @Test("Sustained 4K30 pipeline pressure drops resolution")
@@ -43,9 +41,7 @@ struct AutomaticDesktopWorkloadControllerTests {
             cadenceFPS: 20
         )
 
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 0)
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 1)
-        let action = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 2)
+        let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
         guard case .reconfigure(let target, _) = action else {
             Issue.record("Expected workload reconfiguration")
@@ -65,9 +61,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.hostSendQueueBytes = 2_000_000
 
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 0)
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 1)
-        let action = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 2)
+        let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
         #expect(action == .none)
     }
@@ -82,9 +76,14 @@ struct AutomaticDesktopWorkloadControllerTests {
             cadenceFPS: 45
         )
 
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: true, now: 0)
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: true, now: 1)
-        let action = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: true, now: 2)
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<8 {
+            action = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: true,
+                now: CFAbsoluteTime(sample)
+            )
+        }
 
         #expect(action == .none)
     }
@@ -99,18 +98,40 @@ struct AutomaticDesktopWorkloadControllerTests {
             cadenceFPS: 45
         )
 
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 0)
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 1)
-        let firstAction = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 2)
+        let firstAction = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
         #expect(firstAction != .none)
 
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 3)
-        _ = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 4)
-        let cooldownAction = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 5)
+        let cooldownAction = advanceThroughPipelinePressure(
+            controller: &controller,
+            snapshot: snapshot,
+            startingAt: 8
+        )
         #expect(cooldownAction == .none)
 
-        let afterCooldownAction = controller.advance(snapshot: snapshot, resizeCriticalSectionActive: false, now: 23)
+        let afterCooldownAction = advanceThroughPipelinePressure(
+            controller: &controller,
+            snapshot: snapshot,
+            startingAt: 28
+        )
         #expect(afterCooldownAction != .none)
+    }
+
+    @Test("Client presentation deficit does not downshift when host remains 60fps")
+    func clientPresentationDeficitDoesNotDownshiftWhenHostRemains60FPS() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 3840,
+            height: 2160,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+        snapshot.decodedFPS = 30
+        snapshot.submittedFPS = 30
+        snapshot.uniqueSubmittedFPS = 30
+
+        let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
+
+        #expect(action == .none)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")
@@ -125,11 +146,14 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
         for sample in 0..<12 {
-            action = controller.advance(
+            let sampleAction = controller.advance(
                 snapshot: snapshot,
                 resizeCriticalSectionActive: false,
                 now: CFAbsoluteTime(sample)
             )
+            if sampleAction != .none {
+                action = sampleAction
+            }
         }
 
         guard case .reconfigure(let target, _) = action else {
@@ -169,6 +193,25 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.hostPacketPacerAverageSleepMs = 0
         snapshot.hostStalePacketDrops = 0
         return snapshot
+    }
+
+    private func advanceThroughPipelinePressure(
+        controller: inout MirageAutomaticDesktopWorkloadController,
+        snapshot: MirageClientMetricsSnapshot,
+        startingAt start: Int = 0
+    ) -> MirageAutomaticDesktopWorkloadController.Action {
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in start..<(start + 8) {
+            let sampleAction = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                now: CFAbsoluteTime(sample)
+            )
+            if sampleAction != .none {
+                action = sampleAction
+            }
+        }
+        return action
     }
 }
 #endif

@@ -33,7 +33,7 @@ struct SharedClipboardTests {
         }
     }
 
-    @Test("Shared clipboard messages serialize")
+    @Test("Shared clipboard messages serialize metadata and payload")
     func sharedClipboardMessageSerialization() throws {
         let statusEnvelope = try ControlMessage(
             type: .sharedClipboardStatus,
@@ -43,13 +43,22 @@ struct SharedClipboardTests {
         let decodedStatus = try decodedStatusEnvelope.decode(SharedClipboardStatusMessage.self)
         #expect(decodedStatus.enabled)
 
+        let representation = SharedClipboardRepresentation(
+            kind: .file,
+            contentType: "public.data",
+            filename: "Support.txt",
+            byteCount: 3
+        )
         let updateEnvelope = try ControlMessage(
             type: .sharedClipboardUpdate,
             content: SharedClipboardUpdateMessage(
                 changeID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
                 logicalVersion: 42,
                 sentAtMs: 1_234_567,
-                encryptedText: Data([0x01, 0x02, 0x03]),
+                source: .host,
+                representation: representation,
+                isPayloadTransferable: true,
+                encryptedPayload: Data([0x01, 0x02, 0x03]),
                 chunkIndex: 2,
                 chunkCount: 5
             )
@@ -58,43 +67,50 @@ struct SharedClipboardTests {
         let decodedUpdate = try decodedUpdateEnvelope.decode(SharedClipboardUpdateMessage.self)
         #expect(decodedUpdate.logicalVersion == 42)
         #expect(decodedUpdate.sentAtMs == 1_234_567)
-        #expect(decodedUpdate.encryptedText == Data([0x01, 0x02, 0x03]))
+        #expect(decodedUpdate.source == .host)
+        #expect(decodedUpdate.representation == representation)
+        #expect(decodedUpdate.isPayloadTransferable)
+        #expect(decodedUpdate.encryptedPayload == Data([0x01, 0x02, 0x03]))
         #expect(decodedUpdate.chunkIndex == 2)
         #expect(decodedUpdate.chunkCount == 5)
     }
 
-    @Test("Shared clipboard messages default to single chunk")
+    @Test("Shared clipboard metadata-only messages default to single chunk")
     func sharedClipboardMessageDefaultChunk() throws {
         let update = SharedClipboardUpdateMessage(
             changeID: UUID(),
             logicalVersion: 7,
             sentAtMs: 100,
-            encryptedText: Data([0xFF])
+            source: .host,
+            representation: MirageSharedClipboardItem.unsupported(byteCount: 90_000).representation,
+            isPayloadTransferable: false,
+            encryptedPayload: nil
         )
         #expect(update.logicalVersion == 7)
         #expect(update.chunkIndex == 0)
         #expect(update.chunkCount == 1)
+        #expect(update.encryptedPayload == nil)
     }
 
-    @Test("Shared clipboard crypto round-trips")
+    @Test("Shared clipboard crypto round-trips binary payloads")
     func sharedClipboardCryptoRoundTrip() throws {
         let context = MirageMediaSecurityContext(
             sessionKey: Data(repeating: 0x4D, count: MirageMediaSecurity.sessionKeyLength),
             udpRegistrationToken: Data(repeating: 0x52, count: MirageMediaSecurity.registrationTokenLength)
         )
-        let plaintext = "Mirage clipboard round-trip"
-        let encrypted = try MirageMediaSecurity.encryptClipboardText(plaintext, context: context)
-        let decrypted = try MirageMediaSecurity.decryptClipboardText(encrypted, context: context)
-        #expect(decrypted == plaintext)
+        let payload = Data([0x00, 0xFE, 0x7A])
+        let encryptedPayload = try MirageMediaSecurity.encryptClipboardPayload(payload, context: context)
+        let decryptedPayload = try MirageMediaSecurity.decryptClipboardPayload(encryptedPayload, context: context)
+        #expect(decryptedPayload == payload)
     }
 
-    @Test("Shared clipboard oversized and empty text are rejected")
+    @Test("Shared clipboard oversized and empty payloads are rejected")
     func sharedClipboardOversizeDropBehavior() {
-        let oversized = String(repeating: "a", count: MirageSharedClipboard.maximumTextBytes + 1)
-        #expect(MirageSharedClipboard.validatedText(nil) == nil)
-        #expect(MirageSharedClipboard.validatedText("") == nil)
-        #expect(MirageSharedClipboard.validatedText(oversized) == nil)
-        #expect(MirageSharedClipboard.validatedText("clipboard") == "clipboard")
+        let oversized = Data(repeating: 0x61, count: MirageSharedClipboard.maximumPayloadBytes + 1)
+        #expect(MirageSharedClipboard.validatedPayload(nil) == nil)
+        #expect(MirageSharedClipboard.validatedPayload(Data()) == nil)
+        #expect(MirageSharedClipboard.validatedPayload(oversized) == nil)
+        #expect(MirageSharedClipboard.validatedPayload(Data("clipboard".utf8)) == Data("clipboard".utf8))
     }
 
     @Test("Shared clipboard accepts newer logical versions despite physical clock skew")
@@ -102,11 +118,11 @@ struct SharedClipboardTests {
         var state = MirageSharedClipboardState()
 
         state.activate(changeCount: 7)
-        let localSend = state.prepareManualLocalSend(currentText: "fresh", changeCount: 8).requiredLocalSend
+        let localSend = state.prepareLocalSend(currentItem: textItem("fresh"), changeCount: 8).requiredLocalSend
         let localToken = localSend.orderingToken
         #expect(localToken.logicalVersion == 1)
         #expect(
-            state.shouldApplyRemoteText(
+            state.shouldApplyRemoteUpdate(
                 orderingToken: MirageSharedClipboardOrderingToken(
                     logicalVersion: 2,
                     changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
@@ -114,7 +130,7 @@ struct SharedClipboardTests {
             )
         )
         #expect(
-            !state.shouldApplyRemoteText(
+            !state.shouldApplyRemoteUpdate(
                 orderingToken: MirageSharedClipboardOrderingToken(
                     logicalVersion: localToken.logicalVersion,
                     changeID: localToken.changeID
@@ -123,23 +139,35 @@ struct SharedClipboardTests {
         )
     }
 
-    @Test("Manual sync prefers the newest remote clipboard until a local change advances")
-    func manualSyncPrefersNewestRemoteClipboard() {
+    @Test("Metadata-only host declarations suppress stale client paste sync")
+    func metadataOnlyHostDeclarationSuppressesStaleClientSync() {
         var state = MirageSharedClipboardState()
-
         state.activate(changeCount: 5)
+
         let remoteToken = MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         )
-        state.recordRemoteWrite(text: "host", changeCount: 5, orderingToken: remoteToken)
-        let preferredRemoteSend = state.prepareManualLocalSend(currentText: "slack", changeCount: 5)
-        #expect(preferredRemoteSend?.text == "host")
-        #expect(preferredRemoteSend?.orderingToken.logicalVersion == 2)
+        state.recordRemoteDeclaration(changeCount: 5, orderingToken: remoteToken)
 
-        let preferredLocalSend = state.prepareManualLocalSend(currentText: "notes", changeCount: 6)
-        #expect(preferredLocalSend?.text == "notes")
-        #expect(preferredLocalSend?.orderingToken.logicalVersion == 3)
+        #expect(state.prepareLocalSend(currentItem: textItem("old-client"), changeCount: 5) == nil)
+        let localSend = state.prepareLocalSend(currentItem: textItem("new-client"), changeCount: 6)
+        #expect(localSend?.text == "new-client")
+        #expect(localSend?.orderingToken.logicalVersion == 2)
+    }
+
+    @Test("Host-applied payload is not sent back on next client paste")
+    func hostAppliedPayloadIsNotEchoed() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 1)
+
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 8,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
+        )
+        state.recordRemoteWrite(changeCount: 2, orderingToken: remoteToken)
+
+        #expect(state.prepareLocalSend(currentItem: textItem("host-value"), changeCount: 2) == nil)
     }
 
     @Test("Manual shared clipboard stays live across repeated client pastes")
@@ -150,20 +178,18 @@ struct SharedClipboardTests {
         clientState.activate(changeCount: 0)
         hostState.activate(changeCount: 0)
 
-        let clientFirst = clientState.prepareManualLocalSend(currentText: "client-1", changeCount: 1).requiredLocalSend
+        let clientFirst = clientState.prepareLocalSend(currentItem: textItem("client-1"), changeCount: 1).requiredLocalSend
         #expect(clientFirst.text == "client-1")
-        #expect(hostState.shouldApplyRemoteText(orderingToken: clientFirst.orderingToken))
+        #expect(hostState.shouldApplyRemoteUpdate(orderingToken: clientFirst.orderingToken))
         hostState.recordRemoteWrite(
-            text: clientFirst.text,
             changeCount: 1,
             orderingToken: clientFirst.orderingToken
         )
 
-        let clientSecond = clientState.prepareManualLocalSend(currentText: "client-2", changeCount: 2).requiredLocalSend
+        let clientSecond = clientState.prepareLocalSend(currentItem: textItem("client-2"), changeCount: 2).requiredLocalSend
         #expect(clientSecond.text == "client-2")
-        #expect(hostState.shouldApplyRemoteText(orderingToken: clientSecond.orderingToken))
+        #expect(hostState.shouldApplyRemoteUpdate(orderingToken: clientSecond.orderingToken))
         hostState.recordRemoteWrite(
-            text: clientSecond.text,
             changeCount: 2,
             orderingToken: clientSecond.orderingToken
         )
@@ -183,72 +209,62 @@ struct SharedClipboardTests {
 
         var leftToRight = MirageSharedClipboardState()
         leftToRight.activate(changeCount: 0)
-        leftToRight.recordRemoteWrite(text: "first", changeCount: 1, orderingToken: tokenA)
-        if leftToRight.shouldApplyRemoteText(orderingToken: tokenB) {
-            leftToRight.recordRemoteWrite(text: "second", changeCount: 2, orderingToken: tokenB)
+        leftToRight.recordRemoteWrite(changeCount: 1, orderingToken: tokenA)
+        if leftToRight.shouldApplyRemoteUpdate(orderingToken: tokenB) {
+            leftToRight.recordRemoteWrite(changeCount: 2, orderingToken: tokenB)
         }
 
         var rightToLeft = MirageSharedClipboardState()
         rightToLeft.activate(changeCount: 0)
-        rightToLeft.recordRemoteWrite(text: "second", changeCount: 1, orderingToken: tokenB)
-        if rightToLeft.shouldApplyRemoteText(orderingToken: tokenA) {
-            rightToLeft.recordRemoteWrite(text: "first", changeCount: 2, orderingToken: tokenA)
+        rightToLeft.recordRemoteWrite(changeCount: 1, orderingToken: tokenB)
+        if rightToLeft.shouldApplyRemoteUpdate(orderingToken: tokenA) {
+            rightToLeft.recordRemoteWrite(changeCount: 2, orderingToken: tokenA)
         }
 
         #expect(leftToRight.latestOrderingToken == expectedWinner)
         #expect(rightToLeft.latestOrderingToken == expectedWinner)
     }
 
-    // MARK: - Chunk Text
+    // MARK: - Chunking
 
-    @Test("chunkText returns single chunk for small text")
-    func chunkTextSmall() {
-        let text = "Hello, world!"
-        let chunks = MirageSharedClipboard.chunkText(text)
+    @Test("chunkPayload returns single chunk for small data")
+    func chunkPayloadSmall() {
+        let payload = Data("Hello, world!".utf8)
+        let chunks = MirageSharedClipboard.chunkPayload(payload)
         #expect(chunks.count == 1)
-        #expect(chunks[0] == text)
+        #expect(chunks[0] == payload)
     }
 
-    @Test("chunkText splits large text into multiple chunks")
-    func chunkTextLarge() {
-        let text = String(repeating: "a", count: 10_000)
-        let chunks = MirageSharedClipboard.chunkText(text)
+    @Test("chunkPayload splits large data")
+    func chunkPayloadLarge() {
+        let payload = Data(repeating: 0x41, count: 10_000)
+        let chunks = MirageSharedClipboard.chunkPayload(payload)
         #expect(chunks.count > 1)
-        #expect(chunks.joined() == text)
+        #expect(chunks.reduce(into: Data()) { $0.append($1) } == payload)
         for chunk in chunks {
-            #expect(chunk.utf8.count <= MirageSharedClipboard.chunkSize)
+            #expect(chunk.count <= MirageSharedClipboard.chunkSize)
         }
-    }
-
-    @Test("chunkText preserves multi-byte characters at boundaries")
-    func chunkTextMultiByte() {
-        // Each emoji is 4 bytes UTF-8. Fill just over one chunk with emojis.
-        let emoji = "\u{1F600}" // 4 bytes
-        let count = (MirageSharedClipboard.chunkSize / 4) + 10
-        let text = String(repeating: emoji, count: count)
-        let chunks = MirageSharedClipboard.chunkText(text)
-        #expect(chunks.count >= 2)
-        #expect(chunks.joined() == text)
     }
 
     // MARK: - Chunk Buffer
 
-    @Test("Chunk buffer returns text immediately for single chunk")
+    @Test("Chunk buffer returns payload immediately for single chunk")
     func chunkBufferSingleChunk() {
         var buffer = MirageSharedClipboardChunkBuffer()
         let id = UUID()
-        let result = buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 1, text: "hello")
-        #expect(result == "hello")
+        let payload = Data("hello".utf8)
+        let result = buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 1, payload: payload)
+        #expect(result == payload)
     }
 
     @Test("Chunk buffer reassembles multiple chunks in order")
     func chunkBufferMultipleChunks() {
         var buffer = MirageSharedClipboardChunkBuffer()
         let id = UUID()
-        #expect(buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 3, text: "aaa") == nil)
-        #expect(buffer.addChunk(changeID: id, chunkIndex: 2, chunkCount: 3, text: "ccc") == nil)
-        let result = buffer.addChunk(changeID: id, chunkIndex: 1, chunkCount: 3, text: "bbb")
-        #expect(result == "aaabbbccc")
+        #expect(buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 3, payload: Data("aaa".utf8)) == nil)
+        #expect(buffer.addChunk(changeID: id, chunkIndex: 2, chunkCount: 3, payload: Data("ccc".utf8)) == nil)
+        let result = buffer.addChunk(changeID: id, chunkIndex: 1, chunkCount: 3, payload: Data("bbb".utf8))
+        #expect(result == Data("aaabbbccc".utf8))
     }
 
     @Test("Chunk buffer handles interleaved transfers")
@@ -256,11 +272,31 @@ struct SharedClipboardTests {
         var buffer = MirageSharedClipboardChunkBuffer()
         let id1 = UUID()
         let id2 = UUID()
-        #expect(buffer.addChunk(changeID: id1, chunkIndex: 0, chunkCount: 2, text: "A") == nil)
-        #expect(buffer.addChunk(changeID: id2, chunkIndex: 0, chunkCount: 2, text: "X") == nil)
-        #expect(buffer.addChunk(changeID: id1, chunkIndex: 1, chunkCount: 2, text: "B") == "AB")
-        #expect(buffer.addChunk(changeID: id2, chunkIndex: 1, chunkCount: 2, text: "Y") == "XY")
+        #expect(buffer.addChunk(changeID: id1, chunkIndex: 0, chunkCount: 2, payload: Data("A".utf8)) == nil)
+        #expect(buffer.addChunk(changeID: id2, chunkIndex: 0, chunkCount: 2, payload: Data("X".utf8)) == nil)
+        #expect(buffer.addChunk(changeID: id1, chunkIndex: 1, chunkCount: 2, payload: Data("B".utf8)) == Data("AB".utf8))
+        #expect(buffer.addChunk(changeID: id2, chunkIndex: 1, chunkCount: 2, payload: Data("Y".utf8)) == Data("XY".utf8))
     }
+}
+
+private extension MirageSharedClipboardLocalSend {
+    var text: String? {
+        guard let payload = item.payload else { return nil }
+        return String(data: payload, encoding: .utf8)
+    }
+}
+
+private func textItem(_ text: String) -> MirageSharedClipboardItem {
+    let payload = Data(text.utf8)
+    return MirageSharedClipboardItem(
+        representation: SharedClipboardRepresentation(
+            kind: .text,
+            contentType: "public.utf8-plain-text",
+            filename: nil,
+            byteCount: payload.count
+        ),
+        payload: payload
+    )
 }
 
 private extension Optional where Wrapped == MirageSharedClipboardLocalSend {
@@ -268,7 +304,7 @@ private extension Optional where Wrapped == MirageSharedClipboardLocalSend {
         guard let self else {
             Issue.record("Expected local clipboard change to produce an outbound send.")
             return MirageSharedClipboardLocalSend(
-                text: "",
+                item: MirageSharedClipboardItem.unsupported(),
                 orderingToken: MirageSharedClipboardOrderingToken(
                     logicalVersion: 0,
                     changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
