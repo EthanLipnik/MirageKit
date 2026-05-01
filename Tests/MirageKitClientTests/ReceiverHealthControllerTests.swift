@@ -440,8 +440,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .backingOff)
     }
 
-    @Test("Healthy windows resume probing after a transient severe transport backoff")
-    func healthyWindowsResumeProbingAfterTransientSevereTransportBackoff() {
+    @Test("Local recovery holds the learned ceiling after a transient severe transport backoff")
+    func localRecoveryHoldsLearnedCeilingAfterTransientSevereTransportBackoff() {
         var controller = MirageReceiverHealthController()
         let stressedSnapshot = severeTransportSnapshot()
         let healthySnapshot = healthySnapshot(activeQuality: 0.62)
@@ -464,11 +464,87 @@ struct ReceiverHealthControllerTests {
             ceilingBps: 200_000_000,
             now: 4
         )
+        let delayedRecoveryAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 12
+        )
+        controller.noteProbeSucceeded(now: 12)
+        for time in stride(from: 13.0, through: 19.0, by: 1.0) {
+            _ = controller.advance(
+                snapshots: [healthySnapshot],
+                currentBitrateBps: 17_000_000,
+                ceilingBps: 200_000_000,
+                now: time
+            )
+        }
+        let heldCeilingAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 17_000_000,
+            ceilingBps: 200_000_000,
+            now: 20
+        )
 
         #expect(firstAction == .backoff(targetBitrateBps: 15_000_000))
         #expect(secondAction == .none)
-        #expect(thirdAction == .probe(targetBitrateBps: 27_000_000))
+        #expect(thirdAction == .none)
+        #expect(delayedRecoveryAction == .probe(targetBitrateBps: 17_000_000))
+        #expect(heldCeilingAction == .none)
+        #expect(controller.diagnostics.promotionCeilingBps == 17_000_000)
         #expect(controller.state == .stable)
+    }
+
+    @Test("Dynamic route recovery can reopen the learned ceiling after sustained clean telemetry")
+    func dynamicRouteRecoveryReopensLearnedCeilingAfterSustainedCleanTelemetry() {
+        var controller = MirageReceiverHealthController(promotionRecoveryMode: .dynamicRoute)
+        let stressedSnapshot = severeTransportSnapshot()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+
+        let firstAction = controller.advance(
+            snapshots: [stressedSnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 200_000_000,
+            now: 0
+        )
+        _ = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 2
+        )
+        _ = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 4
+        )
+        let delayedRecoveryAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 12
+        )
+        controller.noteProbeSucceeded(now: 12)
+        for time in stride(from: 13.0, through: 19.0, by: 1.0) {
+            _ = controller.advance(
+                snapshots: [healthySnapshot],
+                currentBitrateBps: 17_000_000,
+                ceilingBps: 200_000_000,
+                now: time
+            )
+        }
+        let reopenedAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 17_000_000,
+            ceilingBps: 200_000_000,
+            now: 20
+        )
+
+        #expect(firstAction == .backoff(targetBitrateBps: 15_000_000))
+        #expect(delayedRecoveryAction == .probe(targetBitrateBps: 17_000_000))
+        #expect(reopenedAction == .probe(targetBitrateBps: 20_000_000))
+        #expect(controller.diagnostics.promotionCeilingBps == 20_000_000)
     }
 
     @Test("Failed probe cooldown survives controller reset")

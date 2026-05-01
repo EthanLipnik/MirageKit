@@ -15,6 +15,7 @@ import Foundation
 package enum MirageStartupStreamKind: String, Codable, Sendable {
     case window
     case desktop
+    case custom
 }
 
 package struct WindowListMessage: Codable {

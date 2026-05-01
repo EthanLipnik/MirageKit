@@ -69,7 +69,13 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     func setStreamID(_ newStreamID: StreamID?) {
-        guard newStreamID != streamID else { return }
+        if newStreamID == streamID {
+            registerFrameListener(for: newStreamID)
+            if let newStreamID {
+                MirageRenderStreamStore.shared.setTargetFPS(for: newStreamID, targetFPS: maxRenderFPS)
+            }
+            return
+        }
         unregisterFrameListener(for: streamID)
         streamID = newStreamID
         registerFrameListener(for: newStreamID)

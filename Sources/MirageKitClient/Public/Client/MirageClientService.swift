@@ -308,10 +308,8 @@ public final class MirageClientService {
     public internal(set) var hostSessionState: LoomSessionAvailability?
     /// Whether the host currently allows shared clipboard for this connection.
     public internal(set) var sharedClipboardEnabled: Bool = false
-    /// Whether the client-side clipboard sharing setting is enabled (Off = false).
+    /// Whether the client sends its clipboard to the host before forwarding paste commands.
     public var clientClipboardSharingEnabled: Bool = true
-    /// Whether the client should automatically sync clipboard changes (Continuous = true, On Paste = false).
-    public var clientClipboardAutoSync: Bool = true
     /// Selected protocol features from handshake negotiation.
     var negotiatedFeatures: MirageFeatureSet = []
     /// Whether media payload encryption is active for the current host session.
@@ -414,6 +412,8 @@ public final class MirageClientService {
     var pendingStreamSetupRequestID: UUID?
     var pendingStreamSetupKind: StreamSetupKind?
     var pendingStreamSetupAppSessionID: UUID?
+    var customStreamStartedContinuations: [UUID: CheckedContinuation<ClientStreamSession, Error>] = [:]
+    public internal(set) var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
@@ -470,6 +470,12 @@ public final class MirageClientService {
 
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
+
+    /// Callback when a generic custom stream starts.
+    public var onCustomStreamStarted: ((MirageCustomStreamStartedMessage) -> Void)?
+
+    /// Callback when a generic custom stream stops.
+    public var onCustomStreamStopped: ((MirageCustomStreamStoppedMessage) -> Void)?
 
     /// Callback when host publishes app-window slot inventory updates.
     public var onAppWindowInventoryUpdate: ((AppWindowInventoryMessage) -> Void)?

@@ -116,6 +116,13 @@ package enum ControlMessageType: UInt8, Codable {
     case streamResumeAll = 0xC1 // Client → Host: Resume all stream encoding (client foregrounding)
     case cancelStreamSetup = 0xC2 // Client → Host: Cancel in-progress stream setup
 
+    // Generic custom streaming
+    case startCustomStream = 0xD0 // Client -> Host: Start an app-defined custom stream
+    case stopCustomStream = 0xD1 // Client -> Host: Stop an app-defined custom stream
+    case customStreamStarted = 0xD2 // Host -> Client: Custom stream is active
+    case customStreamStopped = 0xD3 // Host -> Client: Custom stream ended
+    case customStreamFailed = 0xD4 // Host -> Client: Custom stream start failed
+
     /// Errors
     case error = 0xFF
 }

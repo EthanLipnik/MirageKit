@@ -158,6 +158,19 @@ extension MirageHostService {
             await stopDesktopStream(reason: .clientRequested, triggeredByExplicitStreamStop: false)
         }
 
+        if let removedSessionID {
+            let customStreamIDs = customStreamClientSessionIDByStreamID
+                .filter { $0.value == removedSessionID }
+                .map(\.key)
+            for streamID in customStreamIDs {
+                await stopCustomStream(
+                    streamID: streamID,
+                    reason: .clientRequested,
+                    notifyClient: false
+                )
+            }
+        }
+
         await stopAudioForDisconnectedClient(client.id)
 
         transportRegistry.unregisterAllStreams(clientID: client.id)

@@ -21,19 +21,27 @@ public struct MirageReceiverHealthController: Sendable {
         case probe(targetBitrateBps: Int)
     }
 
+    public enum PromotionRecoveryMode: String, Sendable, Equatable {
+        case settledCeiling
+        case dynamicRoute
+    }
+
     struct Diagnostics: Sendable, Equatable {
         let healthySampleCount: Int
         let stressSampleCount: Int
         let nextProbeAllowedAt: CFAbsoluteTime
+        let promotionCeilingBps: Int?
 
         init(
             healthySampleCount: Int,
             stressSampleCount: Int,
-            nextProbeAllowedAt: CFAbsoluteTime
+            nextProbeAllowedAt: CFAbsoluteTime,
+            promotionCeilingBps: Int?
         ) {
             self.healthySampleCount = healthySampleCount
             self.stressSampleCount = stressSampleCount
             self.nextProbeAllowedAt = nextProbeAllowedAt
+            self.promotionCeilingBps = promotionCeilingBps
         }
     }
 
@@ -55,6 +63,14 @@ public struct MirageReceiverHealthController: Sendable {
     private static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
     private static let fastStartFailedProbeCooldownSeconds: CFAbsoluteTime = 6
     private static let fastStartDurationSeconds: CFAbsoluteTime = 12
+    private static let normalBackoffPromotionCeilingStep = 0.95
+    private static let severeBackoffPromotionCeilingStep = 0.85
+    private static let normalBackoffPromotionCooldownSeconds: CFAbsoluteTime = 8
+    private static let severeBackoffPromotionCooldownSeconds: CFAbsoluteTime = 12
+    private static let promotionCeilingRecoveryHealthySampleThreshold = 8
+    private static let promotionCeilingRecoveryFloorBps = 3_000_000
+    private static let promotionCeilingRecoveryPercent = 105
+    private static let promotionCeilingRecoveryMaximumStepBps = 12_000_000
     private static let sendQueueStressBytes = 800_000
     private static let sendQueueSevereBytes = 2_000_000
     private static let sendStartDelayStressMs = 2.0
@@ -72,25 +88,32 @@ public struct MirageReceiverHealthController: Sendable {
     private var healthySampleCount: Int = 0
     private var stressSampleCount: Int = 0
     private var nextProbeAllowedAt: CFAbsoluteTime = 0
+    private var promotionCeilingBps: Int?
+    public var promotionRecoveryMode: PromotionRecoveryMode
 
-    public init() {}
+    public init(promotionRecoveryMode: PromotionRecoveryMode = .settledCeiling) {
+        self.promotionRecoveryMode = promotionRecoveryMode
+    }
 
     var diagnostics: Diagnostics {
         Diagnostics(
             healthySampleCount: healthySampleCount,
             stressSampleCount: stressSampleCount,
-            nextProbeAllowedAt: nextProbeAllowedAt
+            nextProbeAllowedAt: nextProbeAllowedAt,
+            promotionCeilingBps: promotionCeilingBps
         )
     }
 
     public mutating func reset(preservingProbeCooldown: Bool = true) {
         let preservedNextProbeAllowedAt = preservingProbeCooldown ? nextProbeAllowedAt : 0
+        let preservedPromotionCeilingBps = preservingProbeCooldown ? promotionCeilingBps : nil
         state = .stable
         lastTransitionAt = nil
         sessionStartedAt = nil
         healthySampleCount = 0
         stressSampleCount = 0
         nextProbeAllowedAt = preservedNextProbeAllowedAt
+        promotionCeilingBps = preservedPromotionCeilingBps
     }
 
     public mutating func noteProbeSucceeded(
@@ -215,6 +238,12 @@ public struct MirageReceiverHealthController: Sendable {
     ) -> Action {
         let step = sample.isSevere ? Self.severeBackoffStep : Self.normalBackoffStep
         let nextBitrate = max(Self.minimumBitrateBps, Int(Double(currentBitrateBps) * step))
+        recordBackoffMemory(
+            sample: sample,
+            currentBitrateBps: currentBitrateBps,
+            nextBitrateBps: nextBitrate,
+            now: now
+        )
         state = .backingOff
         lastTransitionAt = now
         healthySampleCount = 0
@@ -244,7 +273,7 @@ public struct MirageReceiverHealthController: Sendable {
         let allowsProbePromotion: Bool
     }
 
-    private func probeTargetBitrate(
+    private mutating func probeTargetBitrate(
         sample: Sample,
         currentBitrateBps: Int,
         ceilingBps: Int,
@@ -257,8 +286,13 @@ public struct MirageReceiverHealthController: Sendable {
             ? Self.fastStartProbeHealthySampleThreshold
             : Self.probeHealthySampleThreshold
         guard healthySampleCount >= healthySampleThreshold else { return nil }
-        guard currentBitrateBps < ceilingBps else { return nil }
         guard now >= nextProbeAllowedAt else { return nil }
+        let effectiveCeilingBps = effectivePromotionCeiling(
+            configuredCeilingBps: ceilingBps,
+            currentBitrateBps: currentBitrateBps,
+            now: now
+        )
+        guard currentBitrateBps < effectiveCeilingBps else { return nil }
 
         let probeIncreaseFloorBps = fastStartActive
             ? Self.fastStartProbeIncreaseFloorBps
@@ -274,12 +308,73 @@ public struct MirageReceiverHealthController: Sendable {
         )
         let cappedStep = currentBitrateBps + probeIncreaseMaximumStepBps
         let nextBitrate = min(
-            ceilingBps,
+            effectiveCeilingBps,
             cappedStep,
             max(currentBitrateBps + probeIncreaseFloorBps, scaledIncrease)
         )
         guard nextBitrate > currentBitrateBps else { return nil }
         return nextBitrate
+    }
+
+    private mutating func recordBackoffMemory(
+        sample: Sample,
+        currentBitrateBps: Int,
+        nextBitrateBps: Int,
+        now: CFAbsoluteTime
+    ) {
+        let ceilingStep = sample.isSevere
+            ? Self.severeBackoffPromotionCeilingStep
+            : Self.normalBackoffPromotionCeilingStep
+        let cooldown = sample.isSevere
+            ? Self.severeBackoffPromotionCooldownSeconds
+            : Self.normalBackoffPromotionCooldownSeconds
+        let rememberedCeiling = max(nextBitrateBps, Int(Double(currentBitrateBps) * ceilingStep))
+        if let existingPromotionCeiling = promotionCeilingBps {
+            promotionCeilingBps = min(existingPromotionCeiling, rememberedCeiling)
+        } else {
+            promotionCeilingBps = rememberedCeiling
+        }
+        nextProbeAllowedAt = max(nextProbeAllowedAt, now + cooldown)
+    }
+
+    private mutating func effectivePromotionCeiling(
+        configuredCeilingBps: Int,
+        currentBitrateBps: Int,
+        now: CFAbsoluteTime
+    ) -> Int {
+        guard let promotionCeilingBps else { return configuredCeilingBps }
+        guard promotionCeilingBps < configuredCeilingBps else {
+            self.promotionCeilingBps = nil
+            return configuredCeilingBps
+        }
+
+        let clampedCeiling = min(
+            configuredCeilingBps,
+            max(Self.minimumBitrateBps, promotionCeilingBps, currentBitrateBps)
+        )
+        self.promotionCeilingBps = clampedCeiling
+
+        guard promotionRecoveryMode == .dynamicRoute else { return clampedCeiling }
+        guard currentBitrateBps >= clampedCeiling else { return clampedCeiling }
+        guard healthySampleCount >= Self.promotionCeilingRecoveryHealthySampleThreshold else {
+            return clampedCeiling
+        }
+        guard now >= nextProbeAllowedAt else { return clampedCeiling }
+
+        let scaledCeiling = Int(
+            (Int64(clampedCeiling) * Int64(Self.promotionCeilingRecoveryPercent) + 99) / 100
+        )
+        let steppedCeiling = min(
+            configuredCeilingBps,
+            clampedCeiling + Self.promotionCeilingRecoveryMaximumStepBps,
+            max(clampedCeiling + Self.promotionCeilingRecoveryFloorBps, scaledCeiling)
+        )
+        if steppedCeiling >= configuredCeilingBps {
+            self.promotionCeilingBps = nil
+            return configuredCeilingBps
+        }
+        self.promotionCeilingBps = steppedCeiling
+        return steppedCeiling
     }
 
     private static func sample(

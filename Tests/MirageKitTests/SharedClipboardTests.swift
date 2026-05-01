@@ -97,43 +97,12 @@ struct SharedClipboardTests {
         #expect(MirageSharedClipboard.validatedText("clipboard") == "clipboard")
     }
 
-    @Test("Shared clipboard uses changes-only activation baseline")
-    func sharedClipboardUsesChangesOnlyActivationBaseline() {
-        var state = MirageSharedClipboardState()
-
-        state.activate(changeCount: 7)
-        #expect(state.observeLocalText("existing", changeCount: 7) == .ignore)
-        let localSend = state.observeLocalText("fresh", changeCount: 8).requiredLocalSend
-        #expect(localSend.text == "fresh")
-        #expect(localSend.orderingToken.logicalVersion == 1)
-    }
-
-    @Test("Shared clipboard suppresses remote echo once")
-    func sharedClipboardSuppressesRemoteEchoOnce() {
-        var state = MirageSharedClipboardState()
-
-        state.activate(changeCount: 5)
-        state.recordRemoteWrite(
-            text: "remote",
-            changeCount: 6,
-            orderingToken: MirageSharedClipboardOrderingToken(
-                logicalVersion: 1,
-                changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-            )
-        )
-        #expect(state.observeLocalText("remote", changeCount: 6) == .ignore)
-        #expect(state.pendingRemoteText == nil)
-        let localSend = state.observeLocalText("remote", changeCount: 7).requiredLocalSend
-        #expect(localSend.text == "remote")
-        #expect(localSend.orderingToken.logicalVersion == 2)
-    }
-
     @Test("Shared clipboard accepts newer logical versions despite physical clock skew")
     func sharedClipboardAcceptsNewerLogicalVersionsDespiteClockSkew() {
         var state = MirageSharedClipboardState()
 
         state.activate(changeCount: 7)
-        let localSend = state.observeLocalText("fresh", changeCount: 8).requiredLocalSend
+        let localSend = state.prepareManualLocalSend(currentText: "fresh", changeCount: 8).requiredLocalSend
         let localToken = localSend.orderingToken
         #expect(localToken.logicalVersion == 1)
         #expect(
@@ -168,21 +137,20 @@ struct SharedClipboardTests {
         #expect(preferredRemoteSend?.text == "host")
         #expect(preferredRemoteSend?.orderingToken.logicalVersion == 2)
 
-        state.recordObservedLocalChangeCount(6)
         let preferredLocalSend = state.prepareManualLocalSend(currentText: "notes", changeCount: 6)
         #expect(preferredLocalSend?.text == "notes")
-        #expect(preferredLocalSend?.orderingToken.logicalVersion == 4)
+        #expect(preferredLocalSend?.orderingToken.logicalVersion == 3)
     }
 
-    @Test("Shared clipboard stays live across alternating host and client changes")
-    func sharedClipboardStaysLiveAcrossAlternatingHostAndClientChanges() {
+    @Test("Manual shared clipboard stays live across repeated client pastes")
+    func manualSharedClipboardStaysLiveAcrossRepeatedClientPastes() {
         var clientState = MirageSharedClipboardState()
         var hostState = MirageSharedClipboardState()
 
         clientState.activate(changeCount: 0)
         hostState.activate(changeCount: 0)
 
-        let clientFirst = clientState.observeLocalText("client-1", changeCount: 1).requiredLocalSend
+        let clientFirst = clientState.prepareManualLocalSend(currentText: "client-1", changeCount: 1).requiredLocalSend
         #expect(clientFirst.text == "client-1")
         #expect(hostState.shouldApplyRemoteText(orderingToken: clientFirst.orderingToken))
         hostState.recordRemoteWrite(
@@ -190,27 +158,15 @@ struct SharedClipboardTests {
             changeCount: 1,
             orderingToken: clientFirst.orderingToken
         )
-        #expect(hostState.observeLocalText("client-1", changeCount: 1) == .ignore)
 
-        let hostFirst = hostState.observeLocalText("host-1", changeCount: 2).requiredLocalSend
-        #expect(hostFirst.text == "host-1")
-        #expect(clientState.shouldApplyRemoteText(orderingToken: hostFirst.orderingToken))
-        clientState.recordRemoteWrite(
-            text: hostFirst.text,
-            changeCount: 2,
-            orderingToken: hostFirst.orderingToken
-        )
-        #expect(clientState.observeLocalText("host-1", changeCount: 2) == .ignore)
-
-        let clientSecond = clientState.observeLocalText("client-2", changeCount: 3).requiredLocalSend
+        let clientSecond = clientState.prepareManualLocalSend(currentText: "client-2", changeCount: 2).requiredLocalSend
         #expect(clientSecond.text == "client-2")
         #expect(hostState.shouldApplyRemoteText(orderingToken: clientSecond.orderingToken))
         hostState.recordRemoteWrite(
             text: clientSecond.text,
-            changeCount: 3,
+            changeCount: 2,
             orderingToken: clientSecond.orderingToken
         )
-        #expect(hostState.observeLocalText("client-2", changeCount: 3) == .ignore)
     }
 
     @Test("Shared clipboard tie-breaks concurrent logical versions deterministically")
@@ -307,19 +263,9 @@ struct SharedClipboardTests {
     }
 }
 
-private extension MirageSharedClipboardObservationAction {
-    var localSend: MirageSharedClipboardLocalSend? {
-        switch self {
-        case .ignore:
-            nil
-        case let .send(localSend):
-            localSend
-        }
-    }
-
+private extension Optional where Wrapped == MirageSharedClipboardLocalSend {
     var requiredLocalSend: MirageSharedClipboardLocalSend {
-        switch self {
-        case .ignore:
+        guard let self else {
             Issue.record("Expected local clipboard change to produce an outbound send.")
             return MirageSharedClipboardLocalSend(
                 text: "",
@@ -328,8 +274,7 @@ private extension MirageSharedClipboardObservationAction {
                     changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
                 )
             )
-        case let .send(localSend):
-            return localSend
         }
+        return self
     }
 }

@@ -33,8 +33,8 @@ extension MirageClientService {
         )
 
         if shouldEnable {
-            MirageLogger.client("Shared clipboard bridge active, autoSync=\(clientClipboardAutoSync)")
-            await ensureSharedClipboardBridge().setActive(true, autoSync: clientClipboardAutoSync)
+            MirageLogger.client("Shared clipboard bridge active")
+            await ensureSharedClipboardBridge().setActive(true)
         } else {
             MirageLogger.client("Shared clipboard bridge inactive")
             await sharedClipboardBridge?.setActive(false)
@@ -42,9 +42,8 @@ extension MirageClientService {
     }
 
     /// Updates the client-side clipboard sharing preferences and refreshes bridge state.
-    public func updateClipboardPreferences(enabled: Bool, autoSync: Bool) async {
+    public func updateClipboardPreferences(enabled: Bool) async {
         clientClipboardSharingEnabled = enabled
-        clientClipboardAutoSync = autoSync
         await refreshSharedClipboardBridgeState()
     }
 
@@ -74,22 +73,6 @@ extension MirageClientService {
         #else
         return false
         #endif
-    }
-
-    func sendSharedClipboardUpdate(
-        localSend: MirageSharedClipboardLocalSend,
-        sentAtMs: Int64
-    ) {
-        Task { @MainActor [weak self] in
-            do {
-                try await self?.sendSharedClipboardUpdateReliably(
-                    localSend: localSend,
-                    sentAtMs: sentAtMs
-                )
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Failed to send shared clipboard update: ")
-            }
-        }
     }
 
     func sendSharedClipboardUpdateReliably(
@@ -137,12 +120,7 @@ extension MirageClientService {
             return sharedClipboardBridge
         }
 
-        let bridge = MirageClientSharedClipboardBridge { [weak self] localSend, sentAtMs in
-            self?.sendSharedClipboardUpdate(
-                localSend: localSend,
-                sentAtMs: sentAtMs
-            )
-        }
+        let bridge = MirageClientSharedClipboardBridge()
         sharedClipboardBridge = bridge
         return bridge
     }

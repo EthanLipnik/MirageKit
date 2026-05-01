@@ -62,15 +62,9 @@ package struct MirageSharedClipboardLocalSend: Sendable, Equatable {
     package let orderingToken: MirageSharedClipboardOrderingToken
 }
 
-package enum MirageSharedClipboardObservationAction: Equatable, Sendable {
-    case ignore
-    case send(MirageSharedClipboardLocalSend)
-}
-
 package struct MirageSharedClipboardState: Sendable {
     package private(set) var isActive = false
     package private(set) var lastObservedChangeCount: Int?
-    package private(set) var pendingRemoteText: String?
     package private(set) var lastRemoteText: String?
     package private(set) var lastRemoteChangeCount: Int?
     package private(set) var latestOrderingToken: MirageSharedClipboardOrderingToken?
@@ -81,7 +75,6 @@ package struct MirageSharedClipboardState: Sendable {
     package mutating func activate(changeCount: Int) {
         isActive = true
         lastObservedChangeCount = changeCount
-        pendingRemoteText = nil
         lastRemoteText = nil
         lastRemoteChangeCount = nil
         latestOrderingToken = nil
@@ -91,21 +84,10 @@ package struct MirageSharedClipboardState: Sendable {
     package mutating func deactivate() {
         isActive = false
         lastObservedChangeCount = nil
-        pendingRemoteText = nil
         lastRemoteText = nil
         lastRemoteChangeCount = nil
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
-    }
-
-    package mutating func recordObservedLocalChangeCount(_ changeCount: Int) {
-        guard isActive else { return }
-        guard lastObservedChangeCount != changeCount else { return }
-
-        lastObservedChangeCount = changeCount
-        pendingRemoteText = nil
-        clearRemoteTextIfLocalChangeCountAdvanced(changeCount)
-        latestOrderingToken = mintLocalOrderingToken()
     }
 
     package func shouldApplyRemoteText(
@@ -120,7 +102,6 @@ package struct MirageSharedClipboardState: Sendable {
         changeCount: Int,
         orderingToken: MirageSharedClipboardOrderingToken
     ) {
-        pendingRemoteText = text
         lastRemoteText = text
         lastRemoteChangeCount = changeCount
         lastObservedChangeCount = changeCount
@@ -146,42 +127,6 @@ package struct MirageSharedClipboardState: Sendable {
         return makeLocalSend(text: currentText, changeCount: changeCount)
     }
 
-    package mutating func observeLocalText(
-        _ text: String?,
-        changeCount: Int
-    ) -> MirageSharedClipboardObservationAction {
-        guard isActive else { return .ignore }
-
-        if lastObservedChangeCount == changeCount {
-            if let validatedText = MirageSharedClipboard.validatedText(text),
-               pendingRemoteText == validatedText {
-                pendingRemoteText = nil
-            }
-            return .ignore
-        }
-
-        lastObservedChangeCount = changeCount
-        let validatedText = MirageSharedClipboard.validatedText(text)
-
-        if let validatedText, pendingRemoteText == validatedText {
-            pendingRemoteText = nil
-            return .ignore
-        }
-
-        pendingRemoteText = nil
-        clearRemoteTextIfLocalChangeCountAdvanced(changeCount)
-
-        guard let validatedText else {
-            latestOrderingToken = mintLocalOrderingToken()
-            return .ignore
-        }
-
-        guard let localSend = makeLocalSend(text: validatedText, changeCount: changeCount) else {
-            return .ignore
-        }
-        return .send(localSend)
-    }
-
     private mutating func clearRemoteTextIfLocalChangeCountAdvanced(_ changeCount: Int) {
         if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
             lastRemoteText = nil
@@ -196,7 +141,6 @@ package struct MirageSharedClipboardState: Sendable {
         guard let validatedText = MirageSharedClipboard.validatedText(text) else { return nil }
 
         lastObservedChangeCount = changeCount
-        pendingRemoteText = nil
         lastRemoteText = nil
         lastRemoteChangeCount = nil
 

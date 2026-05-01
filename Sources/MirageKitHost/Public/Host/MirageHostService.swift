@@ -253,6 +253,11 @@ public final class MirageHostService {
     var streamStartupRegistrationLogged: Set<StreamID> = []
     var pendingStartupAttemptsByStreamID: [StreamID: PendingStartupAttempt] = [:]
     var startupAttemptTimeoutTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    var customStreamSourcesByKind: [String: any MirageCustomStreamSource] = [:]
+    var customStreamSessionsByStreamID: [StreamID: any MirageCustomStreamSession] = [:]
+    var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
+    var customStreamClientSessionIDByStreamID: [StreamID: UUID] = [:]
+    var customStreamStartupRequestIDByStreamID: [StreamID: UUID] = [:]
     let startupAttemptTimeoutSeconds: Duration = .seconds(5)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"

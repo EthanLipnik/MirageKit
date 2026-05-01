@@ -90,7 +90,7 @@ extension VideoEncoder {
         streamKind: StreamKind
     ) -> Bool {
         switch streamKind {
-        case .desktop, .window:
+        case .custom, .desktop, .window:
             true
         }
     }

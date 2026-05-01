@@ -478,6 +478,40 @@ struct StreamControllerRecoveryTests {
         #expect(signalCounter.value == 1)
     }
 
+    @Test("Clearing render state preserves live frame listeners")
+    func clearingRenderStatePreservesLiveFrameListeners() {
+        let streamID: StreamID = 51
+        let owner = NSObject()
+        let signalCounter = LockedCounter()
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {
+            signalCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(signalCounter.value == 2)
+    }
+
     @Test("Overload signal triggers adaptive fallback after queue drops and recovery requests")
     func overloadTriggersAdaptiveFallback() async throws {
         let keyframeCounter = LockedCounter()

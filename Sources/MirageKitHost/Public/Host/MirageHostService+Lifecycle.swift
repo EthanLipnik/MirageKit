@@ -147,6 +147,9 @@ public extension MirageHostService {
         for stream in activeStreams {
             await stopStream(stream)
         }
+        for streamID in Array(customStreamSessionsByStreamID.keys) {
+            await stopCustomStream(streamID: streamID, reason: .hostShutdown, notifyClient: true)
+        }
         windowVirtualDisplayStateByWindowID.removeAll()
         windowVisibleFrameDriftStateByStreamID.removeAll()
 

@@ -307,13 +307,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     func clear(for streamID: StreamID) {
         stateLock.lock()
-        let state = streams.removeValue(forKey: streamID)
-        stateLock.unlock()
+        let state = streams[streamID]
 
-        guard let state else { return }
+        guard let state else {
+            stateLock.unlock()
+            return
+        }
         state.lock.lock()
         state.pendingFrame = nil
-        state.listeners.removeAll()
         state.nextSequence = 0
         state.lastSubmittedSequence = 0
         state.lastSubmittedTime = 0
@@ -326,7 +327,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.uniqueSubmittedSampleStartIndex = 0
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
+        state.listeners = state.listeners.filter { _, listener in
+            listener.owner.value != nil
+        }
+        if state.listeners.isEmpty {
+            streams.removeValue(forKey: streamID)
+        }
         state.lock.unlock()
+        stateLock.unlock()
     }
 
     private func streamState(for streamID: StreamID) -> StreamState {

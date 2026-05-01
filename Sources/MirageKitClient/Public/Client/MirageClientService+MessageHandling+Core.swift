@@ -719,9 +719,10 @@ extension MirageClientService {
 
     func upsertActiveStreamSession(
         streamID: StreamID,
-        window: MirageWindow
+        window: MirageWindow,
+        kind: MirageStreamKind = .app
     ) {
-        let session = ClientStreamSession(id: streamID, window: window)
+        let session = ClientStreamSession(id: streamID, window: window, kind: kind)
         if let index = activeStreams.firstIndex(where: { $0.id == streamID }) {
             activeStreams[index] = session
         } else {

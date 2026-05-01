@@ -28,6 +28,8 @@ package struct MirageFeatureSet: OptionSet, Sendable, Codable {
     package static let encryptedMediaV1 = MirageFeatureSet(rawValue: 1 << 4)
     /// Endpoints support shared clipboard control messages.
     package static let sharedClipboardV1 = MirageFeatureSet(rawValue: 1 << 5)
+    /// Endpoints support generic app-provided custom streams.
+    package static let customStreamsV1 = MirageFeatureSet(rawValue: 1 << 6)
 }
 
 package struct MirageProtocolNegotiation: Codable, Sendable {

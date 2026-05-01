@@ -351,7 +351,11 @@ extension MirageClientService {
         setControlUpdatePolicy(.normal)
         streamingAppBundleID = nil
         for session in sessions {
-            await stopViewing(session)
+            if session.kind == .custom {
+                await stopCustomStream(session)
+            } else {
+                await stopViewing(session)
+            }
         }
 
         metricsStore.clearAll()
@@ -367,6 +371,11 @@ extension MirageClientService {
         }
         controllersByStream.removeAll()
         startupAttemptIDByStream.removeAll()
+        for continuation in customStreamStartedContinuations.values {
+            continuation.resume(throwing: MirageError.protocolError(reason))
+        }
+        customStreamStartedContinuations.removeAll()
+        customStreamDescriptorsByStreamID.removeAll()
         registeredStreamIDs.removeAll()
         cancelDesktopStreamStopTimeout()
         retiredDesktopSessionIDs.removeAll()

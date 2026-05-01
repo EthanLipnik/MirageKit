@@ -17,6 +17,13 @@ extension MirageHostService {
         do {
             let inputMessage = try InputEventMessage.deserializePayload(message.payload)
 
+            if let customInputHandler = streamRegistry.customInputHandler(streamID: inputMessage.streamID) {
+                Task(priority: .userInitiated) {
+                    await customInputHandler.handleInput(inputMessage.event, streamID: inputMessage.streamID)
+                }
+                return
+            }
+
             guard let cacheEntry = inputStreamCacheActor.get(inputMessage.streamID) else {
                 MirageLogger.host("No cached stream for input: \(inputMessage.streamID)")
                 return

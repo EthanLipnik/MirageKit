@@ -124,6 +124,12 @@ extension MirageHostService {
             },
             .cancelStreamSetup: { [weak self] message, clientContext in
                 await self?.handleCancelStreamSetup(message, from: clientContext)
+            },
+            .startCustomStream: { [weak self] message, clientContext in
+                await self?.handleStartCustomStream(message, from: clientContext)
+            },
+            .stopCustomStream: { [weak self] message, clientContext in
+                await self?.handleStopCustomStream(message, from: clientContext)
             }
         ]
     }

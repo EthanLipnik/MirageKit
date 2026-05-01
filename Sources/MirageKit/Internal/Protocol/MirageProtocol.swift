@@ -13,7 +13,7 @@ package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
 /// Mirage wire-contract version for bootstrap negotiation and media packets.
 /// Increment when Mirage control/media semantics change independently of Loom.
-package let mirageProtocolVersion: UInt8 = 3
+package let mirageProtocolVersion: UInt8 = 4
 package let mirageSupportedFeatures: MirageFeatureSet = [
     .controlMessageRouting,
     .protocolNegotiation,
@@ -21,6 +21,7 @@ package let mirageSupportedFeatures: MirageFeatureSet = [
     .udpRegistrationAuthV1,
     .encryptedMediaV1,
     .sharedClipboardV1,
+    .customStreamsV1,
 ]
 
 /// Registration packet magic values.

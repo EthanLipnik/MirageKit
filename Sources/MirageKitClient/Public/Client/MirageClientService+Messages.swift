@@ -58,7 +58,10 @@ extension MirageClientService {
             .hostApplicationRestartResult: { [weak self] in self?.handleHostApplicationRestartResult($0) },
             .transportRefreshRequest: { [weak self] in self?.handleTransportRefreshRequest($0) },
             .sharedClipboardStatus: { [weak self] in self?.handleSharedClipboardStatus($0) },
-            .sharedClipboardUpdate: { [weak self] in self?.handleSharedClipboardUpdate($0) }
+            .sharedClipboardUpdate: { [weak self] in self?.handleSharedClipboardUpdate($0) },
+            .customStreamStarted: { [weak self] in await self?.handleCustomStreamStarted($0) },
+            .customStreamStopped: { [weak self] in await self?.handleCustomStreamStopped($0) },
+            .customStreamFailed: { [weak self] in self?.handleCustomStreamFailed($0) }
         ]
     }
 

@@ -15,6 +15,7 @@ import Foundation
 package enum StreamSetupKind: String, Codable, Sendable {
     case app
     case desktop
+    case custom
 }
 
 /// Request to start streaming the desktop (Client → Host)

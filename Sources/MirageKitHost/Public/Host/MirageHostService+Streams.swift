@@ -494,7 +494,7 @@ public extension MirageHostService {
         return session
     }
 
-    private func resolveEncoderConfiguration(
+    func resolveEncoderConfiguration(
         keyFrameInterval: Int?,
         targetFrameRate: Int?,
         colorDepth: MirageStreamColorDepth?,

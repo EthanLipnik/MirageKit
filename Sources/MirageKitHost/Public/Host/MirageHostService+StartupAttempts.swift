@@ -76,6 +76,13 @@ extension MirageHostService {
                     "Window startup ready ack accepted for stream \(streamID); encoding enabled"
                 )
             }
+        case .custom:
+            if let context = streamsByID[streamID], loomVideoStreamsByStreamID[streamID] != nil {
+                await context.allowEncodingAfterRegistration()
+                MirageLogger.host(
+                    "Custom startup ready ack accepted for stream \(streamID); encoding enabled"
+                )
+            }
         }
     }
 
@@ -118,6 +125,22 @@ extension MirageHostService {
             }
             MirageLogger.host(
                 "Window startup timed out waiting for client readiness ack stream=\(streamID)"
+            )
+        case .custom:
+            if let clientContext = findClientContext(sessionID: pending.sessionID),
+               clientContext.client.id == pending.clientID,
+               let descriptor = customStreamDescriptorsByStreamID[streamID] {
+                let failed = CustomStreamFailedMessage(
+                    startupRequestID: customStreamStartupRequestIDByStreamID[streamID] ?? pending.startupAttemptID,
+                    kind: descriptor.kind,
+                    reason: "Custom stream startup timed out waiting for client readiness acknowledgement.",
+                    errorCode: .networkError
+                )
+                try? await clientContext.send(.customStreamFailed, content: failed)
+            }
+            await stopCustomStream(streamID: streamID, reason: .error, notifyClient: true)
+            MirageLogger.host(
+                "Custom startup timed out waiting for client readiness ack stream=\(streamID)"
             )
         }
     }

@@ -67,10 +67,13 @@ Depending on the session, that can mean:
 
 - capturing a desktop
 - capturing one or more app windows
+- consuming an application-provided custom source
 - managing a virtual display for remote-only desktops
 - tracking geometry, cursor policy, and stream lifecycle
 
 Capture is host-owned because the host has direct access to the real window server, display topology, and input focus.
+
+Custom streams keep this ownership model but move source-specific capture behind an app-provided `MirageCustomStreamSource`. MirageKit negotiates the stream, owns encoding, transport, decode, presentation, and input forwarding, while the host app owns what the stable custom kind means and how frames are produced.
 
 ### 2. Encode
 
@@ -145,6 +148,8 @@ The client captures local interaction and translates it into host-meaningful inp
 
 The host receives those commands and injects them into the local macOS environment.
 
+For custom streams, the host can register a source-specific input handler. The protocol still carries normalized `MirageInputEvent` values; MirageKit routes those events to the custom handler instead of applying desktop or app-window injection policy.
+
 This keeps Mirage's model clean:
 
 - the client owns local interaction capture
@@ -169,6 +174,7 @@ Some responsibilities are shared across host and client because both sides have 
 - stream identifiers and lifecycle semantics
 - media security and session keys
 - geometry and stream-configuration contracts
+- custom stream descriptors, requests, and frame/input contracts
 - host availability, takeover, background lease, and update-status semantics
 - diagnostics vocabulary
 

@@ -203,4 +203,46 @@ extension MirageClientService {
             MirageLogger.client("Requesting codec: \(codec.rawValue)")
         }
     }
+
+    func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartCustomStreamMessage) {
+        if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
+            request.keyFrameInterval = keyFrameInterval
+        }
+        if let colorDepth = overrides.colorDepth {
+            request.colorDepth = colorDepth
+        }
+        if let bitrate = overrides.bitrate, bitrate > 0 {
+            request.bitrate = bitrate
+        }
+        if let latencyMode = overrides.latencyMode {
+            request.latencyMode = latencyMode
+        }
+        if let performanceMode = overrides.performanceMode {
+            request.performanceMode = performanceMode
+        }
+        if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
+            request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+        }
+        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
+            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+        }
+        if overrides.disableResolutionCap {
+            request.disableResolutionCap = true
+        }
+        if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
+            request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+        }
+        if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
+            request.encoderMaxWidth = encoderMaxWidth
+        }
+        if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
+            request.encoderMaxHeight = encoderMaxHeight
+        }
+        if let upscalingMode = overrides.upscalingMode {
+            request.upscalingMode = upscalingMode
+        }
+        if let codec = overrides.codec {
+            request.codec = codec
+        }
+    }
 }
