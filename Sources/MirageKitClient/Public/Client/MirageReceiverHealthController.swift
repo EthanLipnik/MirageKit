@@ -86,6 +86,7 @@ public struct MirageReceiverHealthController: Sendable {
     private var lastTransitionAt: CFAbsoluteTime?
     private var sessionStartedAt: CFAbsoluteTime?
     private var healthySampleCount: Int = 0
+    private var promotionHealthySampleCount: Int = 0
     private var stressSampleCount: Int = 0
     private var nextProbeAllowedAt: CFAbsoluteTime = 0
     private var promotionCeilingBps: Int?
@@ -113,13 +114,18 @@ public struct MirageReceiverHealthController: Sendable {
         )
     }
 
-    public mutating func reset(preservingProbeCooldown: Bool = true) {
+    public mutating func reset(
+        preservingProbeCooldown: Bool = true,
+        preservingSessionStart: Bool = true
+    ) {
         let preservedNextProbeAllowedAt = preservingProbeCooldown ? nextProbeAllowedAt : 0
         let preservedPromotionCeilingBps = preservingProbeCooldown ? promotionCeilingBps : nil
+        let preservedSessionStartedAt = preservingSessionStart ? sessionStartedAt : nil
         state = .stable
         lastTransitionAt = nil
-        sessionStartedAt = nil
+        sessionStartedAt = preservedSessionStartedAt
         healthySampleCount = 0
+        promotionHealthySampleCount = 0
         stressSampleCount = 0
         nextProbeAllowedAt = preservedNextProbeAllowedAt
         promotionCeilingBps = preservedPromotionCeilingBps
@@ -132,6 +138,7 @@ public struct MirageReceiverHealthController: Sendable {
         state = .stable
         lastTransitionAt = now
         healthySampleCount = 0
+        promotionHealthySampleCount = 0
         stressSampleCount = 0
         nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
         pendingPromotion = nil
@@ -143,6 +150,7 @@ public struct MirageReceiverHealthController: Sendable {
         state = .stable
         lastTransitionAt = now
         healthySampleCount = 0
+        promotionHealthySampleCount = 0
         stressSampleCount = 0
         nextProbeAllowedAt = now + probeCooldown(success: false, now: now)
         if let pendingPromotion {
@@ -200,9 +208,15 @@ public struct MirageReceiverHealthController: Sendable {
 
         if sample.isStress {
             healthySampleCount = 0
+            promotionHealthySampleCount = 0
             stressSampleCount += 1
         } else {
             healthySampleCount += 1
+            if sample.allowsProbePromotion {
+                promotionHealthySampleCount += 1
+            } else {
+                promotionHealthySampleCount = 0
+            }
             stressSampleCount = 0
         }
 
@@ -290,6 +304,7 @@ public struct MirageReceiverHealthController: Sendable {
         state = .backingOff
         lastTransitionAt = now
         healthySampleCount = 0
+        promotionHealthySampleCount = 0
         stressSampleCount = 0
         guard nextBitrate < currentBitrateBps else { return .none }
         return .backoff(targetBitrateBps: nextBitrate)
@@ -345,9 +360,15 @@ public struct MirageReceiverHealthController: Sendable {
             state = .backingOff
             lastTransitionAt = now
             healthySampleCount = 0
+            promotionHealthySampleCount = 0
             stressSampleCount = 0
             guard pendingPromotion.previousBitrateBps < currentBitrateBps else { return nil }
             return .backoff(targetBitrateBps: pendingPromotion.previousBitrateBps)
+        }
+
+        guard sample.allowsProbePromotion else {
+            self.pendingPromotion = pendingPromotion
+            return nil
         }
 
         pendingPromotion.cleanSampleCount += 1
@@ -356,6 +377,7 @@ public struct MirageReceiverHealthController: Sendable {
             state = .stable
             lastTransitionAt = now
             healthySampleCount = 0
+            promotionHealthySampleCount = 0
             stressSampleCount = 0
             nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
         } else {
@@ -376,7 +398,7 @@ public struct MirageReceiverHealthController: Sendable {
         let healthySampleThreshold = fastStartActive
             ? Self.fastStartProbeHealthySampleThreshold
             : Self.probeHealthySampleThreshold
-        guard healthySampleCount >= healthySampleThreshold else { return nil }
+        guard promotionHealthySampleCount >= healthySampleThreshold else { return nil }
         guard now >= nextProbeAllowedAt else { return nil }
         let effectiveCeilingBps = effectivePromotionCeiling(
             configuredCeilingBps: ceilingBps,
@@ -468,7 +490,7 @@ public struct MirageReceiverHealthController: Sendable {
 
         guard promotionRecoveryMode == .dynamicRoute else { return clampedCeiling }
         guard currentBitrateBps >= clampedCeiling else { return clampedCeiling }
-        guard healthySampleCount >= Self.promotionCeilingRecoveryHealthySampleThreshold else {
+        guard promotionHealthySampleCount >= Self.promotionCeilingRecoveryHealthySampleThreshold else {
             return clampedCeiling
         }
         guard now >= nextProbeAllowedAt else { return clampedCeiling }
@@ -517,8 +539,9 @@ public struct MirageReceiverHealthController: Sendable {
             )
         )
         let pacingOnlyStress = transportAssessment.isPacerOnlyStress
-        let severe = transportAssessment.isSevere && !pacingOnlyStress
-        let sustainedLoss = transportAssessment.isStress && !pacingOnlyStress
+        let severeDelayOnly = transportAssessment.isDelayOnlyBurst && transportAssessment.advisoryDelaySevere
+        let severe = (transportAssessment.isSevere || severeDelayOnly) && !pacingOnlyStress
+        let sustainedLoss = (transportAssessment.isStress || severeDelayOnly) && !pacingOnlyStress
         let healthy = !severe && !sustainedLoss
         return Sample(
             isSevere: severe,

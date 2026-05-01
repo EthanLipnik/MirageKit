@@ -23,6 +23,7 @@ struct MirageHostBootstrapConfigurationTests {
         #expect(configuration.sshPort == 22)
         #expect(configuration.controlPort == 9851)
         #expect(configuration.autoEndpoints.isEmpty)
+        #expect(configuration.sshHostKeyFingerprints.isEmpty)
         #expect(configuration.controlAuthSecret.isEmpty == false)
         #expect(configuration.remoteLoginReachable == false)
         #expect(configuration.preloginDaemonReady == false)
@@ -40,6 +41,7 @@ struct MirageHostBootstrapConfigurationTests {
             autoEndpoints: [
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),
             ],
+            sshHostKeyFingerprints: ["SHA256:test-fingerprint"],
             wakeOnLANMACAddress: "AA:BB:CC:DD:EE:FF",
             wakeOnLANBroadcasts: ["192.168.1.255"],
             remoteLoginReachable: true,
@@ -64,6 +66,7 @@ struct MirageHostBootstrapConfigurationTests {
             autoEndpoints: [
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),
             ],
+            sshHostKeyFingerprints: [" SHA256:test-fingerprint ", " "],
             wakeOnLANMACAddress: " AA:BB:CC:DD:EE:FF ",
             wakeOnLANBroadcasts: [" 192.168.1.255 ", " "],
             remoteLoginReachable: true,
@@ -81,6 +84,7 @@ struct MirageHostBootstrapConfigurationTests {
         #expect(metadata?.endpoints.first?.host == "host.local")
         #expect(metadata?.endpoints.first?.port == 2200)
         #expect(metadata?.endpoints.first?.source == .user)
+        #expect(metadata?.sshHostKeyFingerprints == ["SHA256:test-fingerprint"])
         #expect(metadata?.wakeOnLAN?.macAddress == "AA:BB:CC:DD:EE:FF")
         #expect(metadata?.wakeOnLAN?.broadcastAddresses == ["192.168.1.255"])
     }

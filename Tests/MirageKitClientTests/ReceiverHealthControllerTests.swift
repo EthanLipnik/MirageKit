@@ -308,6 +308,125 @@ struct ReceiverHealthControllerTests {
         #expect(action == .none)
     }
 
+    @Test("Host-cadence-limited samples do not seed later promotion")
+    func hostCadenceLimitedSamplesDoNotSeedLaterPromotion() {
+        var controller = MirageReceiverHealthController()
+        let hostCadenceSnapshot = captureBoundButTransportHealthySnapshot()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [hostCadenceSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 0
+        )
+        _ = controller.advance(
+            snapshots: [hostCadenceSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 2
+        )
+        let firstEligibleAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 3
+        )
+        let secondEligibleAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 4
+        )
+
+        #expect(firstEligibleAction == .none)
+        #expect(secondEligibleAction == .probe(targetBitrateBps: 60_000_000))
+    }
+
+    @Test("Host-cadence-limited transport pressure still backs off")
+    func hostCadenceLimitedTransportPressureStillBacksOff() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = captureBoundButTransportHealthySnapshot()
+        snapshot.hostSendCompletionAverageMs = 30
+
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10
+        )
+
+        #expect(action == .backoff(targetBitrateBps: 36_000_000))
+        #expect(controller.state == .backingOff)
+    }
+
+    @Test("Transient resets preserve the original fast-start window")
+    func transientResetsPreserveOriginalFastStartWindow() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        controller.reset()
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 21
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 22
+        )
+        let thirdAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 23
+        )
+
+        #expect(firstAction == .none)
+        #expect(secondAction == .none)
+        #expect(thirdAction == .probe(targetBitrateBps: 26_000_000))
+    }
+
+    @Test("Path resets restart fast-start probing")
+    func pathResetsRestartFastStartProbing() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        controller.reset(preservingProbeCooldown: false, preservingSessionStart: false)
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 21
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 22
+        )
+
+        #expect(firstAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
+    }
+
     @Test("Mixed-bound samples remain transport-clean")
     func mixedBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()

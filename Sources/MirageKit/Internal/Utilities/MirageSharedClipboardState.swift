@@ -147,10 +147,11 @@ package struct MirageSharedClipboardState: Sendable {
         changeCount: Int,
         orderingToken: MirageSharedClipboardOrderingToken
     ) {
+        let localClipboardChanged = lastObservedChangeCount.map { changeCount > $0 } ?? false
         lastObservedChangeCount = changeCount
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
-        suppressLocalSendUntilChangeCount = changeCount
+        suppressLocalSendUntilChangeCount = localClipboardChanged ? nil : changeCount
     }
 
     package mutating func recordRemoteWrite(

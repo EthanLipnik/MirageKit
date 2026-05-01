@@ -23,6 +23,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
     public var controlPort: Int
     public var controlAuthSecret: String
     public var autoEndpoints: [LoomBootstrapEndpoint]
+    public var sshHostKeyFingerprints: [String]
     public var wakeOnLANMACAddress: String
     public var wakeOnLANBroadcasts: [String]
     public var remoteLoginReachable: Bool
@@ -36,6 +37,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         controlPort: Int = 9851,
         controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
         autoEndpoints: [LoomBootstrapEndpoint] = [],
+        sshHostKeyFingerprints: [String] = [],
         wakeOnLANMACAddress: String = "",
         wakeOnLANBroadcasts: [String] = [],
         remoteLoginReachable: Bool = false,
@@ -48,6 +50,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         self.controlPort = controlPort
         self.controlAuthSecret = controlAuthSecret
         self.autoEndpoints = autoEndpoints
+        self.sshHostKeyFingerprints = sshHostKeyFingerprints
         self.wakeOnLANMACAddress = wakeOnLANMACAddress
         self.wakeOnLANBroadcasts = wakeOnLANBroadcasts
         self.remoteLoginReachable = remoteLoginReachable
@@ -62,6 +65,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         case controlPort
         case controlAuthSecret
         case autoEndpoints
+        case sshHostKeyFingerprints
         case wakeOnLANMACAddress
         case wakeOnLANBroadcasts
         case remoteLoginReachable
@@ -78,6 +82,10 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         controlAuthSecret = try container.decodeIfPresent(String.self, forKey: .controlAuthSecret) ??
             Self.makeDefaultControlAuthSecret()
         autoEndpoints = try container.decodeIfPresent([LoomBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []
+        sshHostKeyFingerprints = try container.decodeIfPresent(
+            [String].self,
+            forKey: .sshHostKeyFingerprints
+        ) ?? []
         wakeOnLANMACAddress = try container.decodeIfPresent(String.self, forKey: .wakeOnLANMACAddress) ?? ""
         wakeOnLANBroadcasts = try container.decodeIfPresent([String].self, forKey: .wakeOnLANBroadcasts) ?? []
         remoteLoginReachable = try container.decodeIfPresent(Bool.self, forKey: .remoteLoginReachable) ?? false
@@ -118,6 +126,9 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             endpoints: endpoints,
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),
+            sshHostKeyFingerprints: sshHostKeyFingerprints
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty },
             wakeOnLAN: wakeInfo
         )
     }

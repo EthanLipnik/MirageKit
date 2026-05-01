@@ -156,6 +156,22 @@ struct SharedClipboardTests {
         #expect(localSend?.orderingToken.logicalVersion == 2)
     }
 
+    @Test("Metadata-only host declaration does not suppress existing client clipboard change")
+    func metadataOnlyHostDeclarationDoesNotSuppressExistingClientChange() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 1,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        )
+        state.recordRemoteDeclaration(changeCount: 6, orderingToken: remoteToken)
+
+        let localSend = state.prepareLocalSend(currentItem: textItem("client-newer"), changeCount: 6)
+        #expect(localSend?.text == "client-newer")
+        #expect(localSend?.orderingToken.logicalVersion == 2)
+    }
+
     @Test("Host-applied payload is not sent back on next client paste")
     func hostAppliedPayloadIsNotEchoed() {
         var state = MirageSharedClipboardState()

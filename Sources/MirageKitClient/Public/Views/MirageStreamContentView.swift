@@ -1088,6 +1088,8 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleForegroundRecovery() {
+        scheduleResizeHoldoff()
+
         if isDesktopStream {
             guard let desktopSessionID = activeDesktopSessionID else {
                 MirageLogger.client(
@@ -1103,7 +1105,6 @@ public struct MirageStreamContentView: View {
             }
         }
 
-        scheduleResizeHoldoff()
         guard clientService.controller(for: session.streamID) != nil else {
             MirageLogger.client(
                 "Foreground recovery deferred for stream \(session.streamID) until controller is available"
