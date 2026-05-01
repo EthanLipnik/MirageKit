@@ -381,6 +381,7 @@ extension MirageHostService {
                     let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
                     desktopPrimaryPhysicalDisplayID = primaryDisplayID
                     desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+                    desktopPhysicalDisplayTopologySignature = currentPhysicalDisplayTopologySignature()
                     MirageLogger
                         .host(
                             "Desktop primary physical display: \(primaryDisplayID), bounds=\(desktopPrimaryPhysicalBounds ?? .zero)"
@@ -1008,6 +1009,7 @@ extension MirageHostService {
         desktopDisplayBounds = nil
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
+        desktopPhysicalDisplayTopologySignature = nil
         desktopMirroredVirtualResolution = nil
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = 1.0
@@ -1052,6 +1054,8 @@ extension MirageHostService {
         beginDesktopSharedDisplayTransition()
         defer { endDesktopSharedDisplayTransition() }
         resetDesktopResizeTransactionState()
+        desktopDisplayTopologyRefreshTask?.cancel()
+        desktopDisplayTopologyRefreshTask = nil
 
         let sharedDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID()
 

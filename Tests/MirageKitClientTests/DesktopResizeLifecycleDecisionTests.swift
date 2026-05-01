@@ -11,8 +11,8 @@ import Testing
 #if os(macOS)
 @Suite("Desktop Resize Lifecycle Decision")
 struct DesktopResizeLifecycleDecisionTests {
-    @Test("Only backgrounding suspends resize-metric processing")
-    func onlyBackgroundingSuspendsResizeMetricProcessing() {
+    @Test("Only true backgrounding suspends resize-metric processing")
+    func onlyTrueBackgroundingSuspendsResizeMetricProcessing() {
         let activeContainer = desktopResizeLifecycleDecision(
             state: .active,
             event: .containerSizeChanged
@@ -52,8 +52,25 @@ struct DesktopResizeLifecycleDecisionTests {
             state: .active,
             event: .willResignActive
         )
-        #expect(inactive.nextState == .suspended)
+        #expect(inactive.nextState == .active)
         #expect(inactive.shouldProcessDrawableMetrics == false)
+    }
+
+    @Test("Transient inactive does not keep suspended lifecycle stuck")
+    func transientInactiveDoesNotKeepSuspendedLifecycleStuck() {
+        let inactiveWhileSuspended = desktopResizeLifecycleDecision(
+            state: .suspended,
+            event: .willResignActive
+        )
+        #expect(inactiveWhileSuspended.nextState == .suspended)
+        #expect(inactiveWhileSuspended.shouldProcessDrawableMetrics == false)
+
+        let foregroundHoldoff = desktopResizeLifecycleDecision(
+            state: inactiveWhileSuspended.nextState,
+            event: .foregroundHoldoffElapsed
+        )
+        #expect(foregroundHoldoff.nextState == .active)
+        #expect(foregroundHoldoff.shouldProcessDrawableMetrics == false)
     }
 
     @Test("Foreground holdoff requires a fresh active metrics sample before dispatch resumes")

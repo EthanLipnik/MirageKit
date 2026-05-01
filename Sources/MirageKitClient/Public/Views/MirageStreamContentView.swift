@@ -1017,6 +1017,7 @@ public struct MirageStreamContentView: View {
         } else {
             resizeLifecycleState = lifecycleDecision.nextState
         }
+        guard lifecycleDecision.nextState == .suspended else { return }
         cancelPendingResizeWorkForLifecycleSuspension()
     }
 
@@ -1075,6 +1076,9 @@ public struct MirageStreamContentView: View {
                 event: .foregroundHoldoffElapsed
             )
             updateLifecycleState(lifecycleDecision.nextState)
+            if isDesktopStream, lifecycleDecision.nextState == .active {
+                scheduleDesktopResizeForCurrentMetricsIfNeeded()
+            }
         }
         if isDesktopStream {
             desktopResizeCoordinator.resizeHoldoffTask = holdoffTask

@@ -17,6 +17,7 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 10.1,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: false,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
                 qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
@@ -31,6 +32,7 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 4.9,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: false,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
                 qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
@@ -45,6 +47,7 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 30,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: true,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
                 qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
@@ -59,6 +62,7 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 30,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: false,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: true,
                 qualityTestActive: false,
                 hasInFlightPingOrHostOperation: false
@@ -69,6 +73,7 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 30,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: false,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
                 qualityTestActive: true,
                 hasInFlightPingOrHostOperation: false
@@ -83,9 +88,25 @@ struct ClientHeartbeatPolicyTests {
                 inactivityDuration: 30,
                 inactivityThreshold: 10.0,
                 hasActiveStreams: false,
+                hasPendingStreamSetup: false,
                 isWithinGracePeriod: false,
                 qualityTestActive: false,
                 hasInFlightPingOrHostOperation: true
+            ) == .skipOperationInFlight
+        )
+    }
+
+    @Test("Pending stream setup suppresses heartbeat probes")
+    func pendingStreamSetupSuppressesProbe() {
+        #expect(
+            clientHeartbeatProbeDecision(
+                inactivityDuration: 30,
+                inactivityThreshold: 10.0,
+                hasActiveStreams: false,
+                hasPendingStreamSetup: true,
+                isWithinGracePeriod: false,
+                qualityTestActive: false,
+                hasInFlightPingOrHostOperation: false
             ) == .skipOperationInFlight
         )
     }

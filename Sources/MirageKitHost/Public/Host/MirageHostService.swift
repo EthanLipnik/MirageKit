@@ -357,6 +357,7 @@ public final class MirageHostService {
     var desktopResizeTransactionState: DesktopResizeTransactionState = .idle
     var desktopSharedDisplayTransitionDepth: Int = 0
     var desktopPresentationGeneration: UInt64 = 0
+    @ObservationIgnored nonisolated(unsafe) var desktopDisplayTopologyRefreshTask: Task<Void, Never>?
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []
@@ -372,6 +373,7 @@ public final class MirageHostService {
     /// Primary physical display information captured before mirroring.
     var desktopPrimaryPhysicalDisplayID: CGDirectDisplayID?
     var desktopPrimaryPhysicalBounds: CGRect?
+    var desktopPhysicalDisplayTopologySignature: String?
     var desktopMirroredVirtualResolution: CGSize?
     var activeVirtualDisplaySetupGuard: VirtualDisplaySetupGuardState?
 
@@ -644,6 +646,7 @@ public final class MirageHostService {
         if let screenParametersObserver {
             NotificationCenter.default.removeObserver(screenParametersObserver)
         }
+        desktopDisplayTopologyRefreshTask?.cancel()
         let powerStateMonitor = encoderPowerStateMonitor
         Task { @MainActor in
             powerStateMonitor.stop()

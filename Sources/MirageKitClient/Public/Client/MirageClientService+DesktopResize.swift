@@ -77,20 +77,28 @@ extension MirageClientService {
         guard let target else { return }
         coordinator.latestRequestedTarget = target
         guard coordinator.resizeLifecycleState == .active else {
+            coordinator.queueLatestTarget(target)
             coordinator.cancelPendingResizeDispatch()
+            MirageLogger.client(
+                "Desktop resize queued while lifecycle is suspended for stream \(streamID)"
+            )
             return
         }
 
         if sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.queueLatestTarget(target)
+            MirageLogger.client(
+                "Desktop resize queued while waiting for post-resize frame for stream \(streamID)"
+            )
             return
         }
 
         if let session = sessionStore.sessionByStreamID(streamID),
            session.clientRecoveryStatus != .idle {
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.queueLatestTarget(target)
+            MirageLogger.client(
+                "Desktop resize queued during client recovery for stream \(streamID), status=\(session.clientRecoveryStatus)"
+            )
             return
         }
 
@@ -98,6 +106,10 @@ extension MirageClientService {
             if activeTransition.streamID == streamID, activeTransition.target == target {
                 return
             }
+            coordinator.queueLatestTarget(target)
+            MirageLogger.client(
+                "Desktop resize queued behind active transition for stream \(streamID)"
+            )
             return
         }
 
@@ -135,12 +147,17 @@ extension MirageClientService {
             return
         }
         guard coordinator.resizeLifecycleState == .active else {
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            MirageLogger.client(
+                "Desktop resize dispatch deferred while lifecycle is suspended for stream \(streamID)"
+            )
             return
         }
         guard !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
         guard coordinator.activeTransition == nil else { return }
+        if let session = sessionStore.sessionByStreamID(streamID),
+           session.clientRecoveryStatus != .idle {
+            return
+        }
         guard let target = coordinator.queuedTarget ?? coordinator.latestRequestedTarget else { return }
         guard target.logicalResolution.width > 0, target.logicalResolution.height > 0 else { return }
         guard coordinator.lastSentTarget != target else {
@@ -214,7 +231,7 @@ extension MirageClientService {
             MirageLogger.client(
                 "Clearing local post-resize loading UI for stream \(streamID) after client-side timeout"
             )
-            self.finishPostResizeTransitionWait(streamID: streamID, reason: "timeout", dispatchQueuedResize: false)
+            self.finishPostResizeTransitionWait(streamID: streamID, reason: "timeout")
         }
     }
 

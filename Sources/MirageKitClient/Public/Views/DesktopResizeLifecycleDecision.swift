@@ -30,8 +30,7 @@ func desktopResizeLifecycleDecision(
     event: DesktopResizeLifecycleEvent
 ) -> DesktopResizeLifecycleDecision {
     switch (state, event) {
-    case (_, .willResignActive),
-         (_, .didEnterBackground):
+    case (_, .didEnterBackground):
         return DesktopResizeLifecycleDecision(
             nextState: .suspended,
             shouldProcessDrawableMetrics: false
@@ -50,9 +49,11 @@ func desktopResizeLifecycleDecision(
             shouldProcessDrawableMetrics: true
         )
 
-    case (.active, .foregroundHoldoffElapsed),
+    case (.active, .willResignActive),
+         (.active, .foregroundHoldoffElapsed),
          (.suspended, .containerSizeChanged),
-         (.suspended, .drawableMetricsChanged):
+         (.suspended, .drawableMetricsChanged),
+         (.suspended, .willResignActive):
         return DesktopResizeLifecycleDecision(
             nextState: state,
             shouldProcessDrawableMetrics: false

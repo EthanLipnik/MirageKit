@@ -75,6 +75,12 @@ func desktopResizeShouldDisableResidualMirroring(
     plan == .unchanged && generationChanged && hasResidualMirroringState
 }
 
+func desktopResizeRequiresMirroringRestoreSuccess(
+    desktopStreamMode: MirageDesktopStreamMode
+) -> Bool {
+    desktopStreamMode == .unified
+}
+
 enum DesktopResizeTransactionContinuationDecision: Equatable {
     case continueTransaction
     case abortStreamInactive
@@ -958,9 +964,6 @@ extension MirageHostService {
                 )
 
                 if updateResult.outcome == .requiresRecreation {
-                    guard desktopStreamMode != .unified else {
-                        throw MirageError.protocolError("Unified desktop resize requires display recreation")
-                    }
                     if !shouldRestoreMirroring, desktopResizeShouldSuspendMirroring(
                         plan: mirroringPlan,
                         updateOutcome: updateResult.outcome
@@ -996,16 +999,15 @@ extension MirageHostService {
 
                 if shouldRestoreMirroring,
                    streamID == desktopStreamID,
-                   desktopStreamMode == .unified {
+                   desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: desktopStreamMode) {
                     let mirroringRestored = await restoreDisplayMirroringAfterResize(
                         streamID: streamID,
                         targetDisplayID: activeDisplayID,
                         expectedPixelResolution: effectivePixelResolution
                     )
                     if !mirroringRestored {
-                        MirageLogger.host(
-                            "Desktop stream continuing without display mirroring after resize; " +
-                                "capturing virtual display \(activeDisplayID)"
+                        throw MirageError.protocolError(
+                            "Unified desktop resize could not restore display mirroring"
                         )
                     }
                     shouldRestoreMirroring = false
@@ -1097,7 +1099,21 @@ extension MirageHostService {
                             )
                             resizeCompletionContext = restoredContext
                             resizeOutcome = .rolledBack
-                            shouldRestoreMirroring = false
+                            if shouldRestoreMirroring,
+                               desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: desktopStreamMode),
+                               let restoredSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
+                                let mirroringRestored = await restoreDisplayMirroringAfterResize(
+                                    streamID: streamID,
+                                    targetDisplayID: restoredSnapshot.displayID,
+                                    expectedPixelResolution: restoredSnapshot.resolution
+                                )
+                                if !mirroringRestored {
+                                    throw MirageError.protocolError(
+                                        "Unified desktop resize rollback could not restore display mirroring"
+                                    )
+                                }
+                                shouldRestoreMirroring = false
+                            }
                         } catch {
                             MirageLogger.error(
                                 .host,
@@ -1215,9 +1231,6 @@ extension MirageHostService {
             allowRecreation: false
         )
         if updateResult.outcome == .requiresRecreation {
-            guard desktopStreamMode != .unified else {
-                throw MirageError.protocolError("Unified desktop resize rollback requires display recreation")
-            }
             updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: snapshot.resolution,

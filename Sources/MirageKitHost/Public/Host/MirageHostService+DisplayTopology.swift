@@ -108,9 +108,12 @@ extension MirageHostService {
 
         let previousDisplayBounds = desktopDisplayBounds
         let previousPrimaryPhysicalBounds = desktopPrimaryPhysicalBounds
+        let previousPhysicalTopologySignature = desktopPhysicalDisplayTopologySignature
         let previousVirtualResolution = desktopMirroredVirtualResolution
         let refreshedDisplayBounds = resolveDesktopDisplayBounds()
         let refreshedPhysicalBounds = refreshDesktopPrimaryPhysicalBounds()
+        let refreshedPhysicalTopologySignature = currentPhysicalDisplayTopologySignature()
+        desktopPhysicalDisplayTopologySignature = refreshedPhysicalTopologySignature
         let virtualResolution = await currentDesktopVirtualDisplayPixelResolution(
             fallback: previousVirtualResolution
         )
@@ -126,13 +129,32 @@ extension MirageHostService {
             from: previousVirtualResolution,
             to: geometry.virtualResolution
         )
-        guard displayBoundsChanged || physicalBoundsChanged || virtualResolutionChanged else { return }
+        let physicalTopologyChanged =
+            previousPhysicalTopologySignature != nil &&
+            refreshedPhysicalTopologySignature != previousPhysicalTopologySignature
+        guard displayBoundsChanged || physicalBoundsChanged || physicalTopologyChanged || virtualResolutionChanged else {
+            return
+        }
         let displaySizeChanged = refreshedDisplayBounds?.size != previousDisplayBounds?.size
         let physicalSizeChanged = refreshedPhysicalBounds.size != previousPrimaryPhysicalBounds?.size
 
         MirageLogger.host(
-            "Desktop display topology changed; refreshed input bounds to \(geometry.inputBounds)"
+            "Desktop display topology changed; refreshed input bounds to \(geometry.inputBounds) " +
+                "(physicalTopologyChanged=\(physicalTopologyChanged))"
         )
+
+        let requiresVirtualDisplayRestart =
+            !desktopUsesHostResolution &&
+            (displaySizeChanged || physicalSizeChanged || physicalTopologyChanged || virtualResolutionChanged)
+
+        if requiresVirtualDisplayRestart {
+            scheduleDesktopDisplayTopologyRefresh(
+                streamID: desktopStreamID,
+                virtualResolution: geometry.virtualResolution,
+                reason: "screen_parameters_changed"
+            )
+            return
+        }
 
         if virtualResolutionChanged,
            let virtualResolution = geometry.virtualResolution,
@@ -145,6 +167,189 @@ extension MirageHostService {
 
         if displaySizeChanged || physicalSizeChanged || virtualResolutionChanged {
             await sendStreamScaleUpdate(streamID: desktopStreamID)
+        }
+    }
+
+    func currentPhysicalDisplayTopologySignature() -> String? {
+        var displayCount: UInt32 = 0
+        let countResult = CGGetActiveDisplayList(0, nil, &displayCount)
+        guard countResult == .success, displayCount > 0 else { return nil }
+
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        let listResult = CGGetActiveDisplayList(displayCount, &displayIDs, &displayCount)
+        guard listResult == .success else { return nil }
+
+        let entries = displayIDs
+            .prefix(Int(displayCount))
+            .filter { !CGVirtualDisplayBridge.isMirageDisplay($0) }
+            .sorted()
+            .map { displayID in
+                let bounds = CGDisplayBounds(displayID)
+                let mode = CGDisplayCopyDisplayMode(displayID)
+                let pixelWidth = mode?.pixelWidth ?? 0
+                let pixelHeight = mode?.pixelHeight ?? 0
+                let refreshRate = mode.map { Int($0.refreshRate.rounded()) } ?? 0
+                let isMain = displayID == CGMainDisplayID() ? 1 : 0
+                return [
+                    String(displayID),
+                    String(isMain),
+                    String(Int(bounds.origin.x.rounded())),
+                    String(Int(bounds.origin.y.rounded())),
+                    String(Int(bounds.width.rounded())),
+                    String(Int(bounds.height.rounded())),
+                    String(pixelWidth),
+                    String(pixelHeight),
+                    String(refreshRate)
+                ].joined(separator: ":")
+            }
+
+        return entries.isEmpty ? nil : entries.joined(separator: "|")
+    }
+
+    func scheduleDesktopDisplayTopologyRefresh(
+        streamID: StreamID,
+        virtualResolution: CGSize?,
+        reason: String
+    ) {
+        desktopDisplayTopologyRefreshTask?.cancel()
+        desktopDisplayTopologyRefreshTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+
+            guard let self else { return }
+            await self.restartDesktopVirtualDisplayAfterTopologyChange(
+                streamID: streamID,
+                virtualResolution: virtualResolution,
+                reason: reason
+            )
+        }
+    }
+
+    func restartDesktopVirtualDisplayAfterTopologyChange(
+        streamID: StreamID,
+        virtualResolution requestedVirtualResolution: CGSize?,
+        reason: String
+    )
+    async {
+        desktopDisplayTopologyRefreshTask = nil
+        guard streamID == desktopStreamID,
+              !desktopUsesHostResolution,
+              activeDesktopResizeRequest == nil,
+              !desktopSharedDisplayTransitionInFlight,
+              let desktopContext = desktopStreamContext,
+              let desktopSessionID,
+              let clientContext = desktopStreamClientContext else {
+            return
+        }
+
+        let fallbackResolution = requestedVirtualResolution ?? desktopMirroredVirtualResolution
+        guard let virtualResolution = await currentDesktopVirtualDisplayPixelResolution(
+            fallback: fallbackResolution
+        ) else {
+            await sendStreamScaleUpdate(streamID: streamID)
+            return
+        }
+
+        let transitionID = UUID()
+        beginDesktopSharedDisplayTransition()
+        defer { endDesktopSharedDisplayTransition() }
+
+        await desktopContext.suspendEncodingForDesktopResize()
+
+        do {
+            var displaySnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot()
+            if let displayID = desktopVirtualDisplayID,
+               let observedSnapshot = await SharedVirtualDisplayManager.shared.updateSharedDisplayObservedResolution(
+                   displayID: displayID,
+                   resolution: virtualResolution
+               ) {
+                displaySnapshot = observedSnapshot
+            }
+
+            if let displaySnapshot {
+                desktopVirtualDisplayID = displaySnapshot.displayID
+                sharedVirtualDisplayGeneration = displaySnapshot.generation
+                sharedVirtualDisplayScaleFactor = max(1.0, displaySnapshot.scaleFactor)
+                desktopDisplayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                    displaySnapshot.displayID,
+                    knownResolution: SharedVirtualDisplayManager.logicalResolution(
+                        for: displaySnapshot.resolution,
+                        scaleFactor: max(1.0, displaySnapshot.scaleFactor)
+                    )
+                )
+            } else {
+                desktopDisplayBounds = resolveDesktopDisplayBounds()
+            }
+
+            if desktopStreamMode == .unified {
+                let targetDisplayID = desktopVirtualDisplayID ?? displaySnapshot?.displayID
+                if let targetDisplayID {
+                    await setupDisplayMirroring(
+                        targetDisplayID: targetDisplayID,
+                        expectedPixelResolution: displaySnapshot?.resolution ?? virtualResolution
+                    )
+                }
+            } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                await disableDisplayMirroring(displayID: desktopVirtualDisplayID ?? CGMainDisplayID())
+            }
+
+            await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
+            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 8, delayMs: 60)
+            try await desktopContext.hardResetDesktopDisplayCapture(
+                displayWrapper: captureDisplay,
+                resolution: virtualResolution
+            )
+
+            let inputGeometry = updateDesktopInputGeometry(
+                streamID: streamID,
+                physicalBounds: refreshDesktopPrimaryPhysicalBounds(),
+                virtualResolution: virtualResolution
+            )
+
+            let dimensionToken = await desktopContext.getDimensionToken()
+            let encodedDimensions = await desktopContext.getEncodedDimensions()
+            let displayResolution = await currentDesktopStartedResolution(
+                fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+            )
+            desktopPresentationGeneration &+= 1
+            let message = DesktopStreamStartedMessage(
+                streamID: streamID,
+                desktopSessionID: desktopSessionID,
+                width: Int(displayResolution.width),
+                height: Int(displayResolution.height),
+                frameRate: await desktopContext.getTargetFrameRate(),
+                codec: await desktopContext.getCodec(),
+                displayCount: 1,
+                dimensionToken: dimensionToken,
+                acceptedMediaMaxPacketSize: await desktopContext.getMediaMaxPacketSize(),
+                transitionID: transitionID,
+                transitionPhase: .resize,
+                transitionOutcome: .resized,
+                desktopPresentationGeneration: desktopPresentationGeneration,
+                captureSource: desktopCaptureSource,
+                allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+                presentationWidth: Int(displayResolution.width.rounded()),
+                presentationHeight: Int(displayResolution.height.rounded())
+            )
+
+            if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
+                MirageLogger.error(.host, "Failed to encode desktop topology refresh for stream \(streamID)")
+            }
+            await desktopContext.resumeEncodingAfterDesktopResize()
+            MirageLogger.host(
+                "Desktop display topology refresh restarted virtual display setup " +
+                    "(reason=\(reason), transition=\(transitionID.uuidString), input bounds: \(inputGeometry.inputBounds))"
+            )
+        } catch {
+            await desktopContext.resumeEncodingAfterDesktopResize()
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to restart desktop virtual display after display topology change: "
+            )
         }
     }
 

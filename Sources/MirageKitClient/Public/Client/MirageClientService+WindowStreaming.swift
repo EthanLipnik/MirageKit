@@ -256,6 +256,9 @@ public extension MirageClientService {
             },
             onRecoveryStatusChanged: { [weak self] status in
                 self?.sessionStore.setClientRecoveryStatus(for: capturedStreamID, status: status)
+                if status == .idle {
+                    self?.handleDesktopPresentationReady(streamID: capturedStreamID)
+                }
             },
             onTerminalStartupFailure: { [weak self] failure in
                 Task {

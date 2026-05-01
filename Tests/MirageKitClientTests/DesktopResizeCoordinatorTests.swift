@@ -178,5 +178,22 @@ struct DesktopResizeCoordinatorTests {
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
     }
+
+    @Test("Cancel pending dispatch keeps latest target for lifecycle gates")
+    func cancelPendingDispatchKeepsLatestTargetForLifecycleGates() {
+        let coordinator = DesktopResizeCoordinator()
+        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
+
+        coordinator.queueLatestTarget(queuedTarget)
+        coordinator.isResizing = true
+        coordinator.maskActive = true
+
+        coordinator.cancelPendingResizeDispatch()
+
+        #expect(coordinator.queuedTarget == queuedTarget)
+        #expect(coordinator.latestRequestedTarget == queuedTarget)
+        #expect(!coordinator.isResizing)
+        #expect(!coordinator.maskActive)
+    }
 }
 #endif

@@ -83,6 +83,12 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(plan == .unchanged)
     }
 
+    @Test("Unified resize requires mirroring restore success")
+    func unifiedResizeRequiresMirroringRestoreSuccess() {
+        #expect(desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: .unified))
+        #expect(!desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: .secondary))
+    }
+
     @Test("Mirrored mode suspends mirroring for in-place updates and recreation")
     func mirroredModeSuspendsMirroringForInPlaceUpdatesAndRecreation() {
         #expect(

@@ -23,11 +23,13 @@ func clientHeartbeatProbeDecision(
     inactivityDuration: CFAbsoluteTime,
     inactivityThreshold: CFAbsoluteTime,
     hasActiveStreams: Bool,
+    hasPendingStreamSetup: Bool,
     isWithinGracePeriod: Bool,
     qualityTestActive: Bool,
     hasInFlightPingOrHostOperation: Bool
 ) -> ClientHeartbeatProbeDecision {
     guard !hasActiveStreams else { return .skipActiveStream }
+    guard !hasPendingStreamSetup else { return .skipOperationInFlight }
     guard !isWithinGracePeriod else { return .skipGracePeriod }
     guard !qualityTestActive else { return .skipQualityTest }
     guard !hasInFlightPingOrHostOperation else { return .skipOperationInFlight }
@@ -73,6 +75,7 @@ extension MirageClientService {
                     inactivityDuration: inactivityDuration,
                     inactivityThreshold: Self.heartbeatInactivityThreshold,
                     hasActiveStreams: !self.controllersByStream.isEmpty,
+                    hasPendingStreamSetup: self.pendingStreamSetupRequestID != nil,
                     isWithinGracePeriod: self.heartbeatGraceDeadline.map { ContinuousClock.now < $0 } ?? false,
                     qualityTestActive: self.qualityTestPendingTestID != nil,
                     hasInFlightPingOrHostOperation: !self.pingContinuations.isEmpty || hasInFlightHostOperation

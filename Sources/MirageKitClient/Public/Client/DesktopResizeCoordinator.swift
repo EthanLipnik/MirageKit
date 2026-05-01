@@ -89,8 +89,6 @@ final class DesktopResizeCoordinator {
     func cancelPendingResizeDispatch() {
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
-        latestRequestedTarget = nil
-        queuedTarget = nil
         if activeTransition == nil {
             clearLocalPresentationState()
         }

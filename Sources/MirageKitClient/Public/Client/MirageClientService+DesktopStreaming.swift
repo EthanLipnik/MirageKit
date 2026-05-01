@@ -177,7 +177,7 @@ public extension MirageClientService {
         desktopCursorPresentation = cursorPresentation
     }
 
-    private static let desktopStreamStartTimeoutSeconds: Double = 75
+    private static let desktopStreamStartTimeoutSeconds: Double = 30
 
     private func scheduleDesktopStreamStartTimeout() {
         desktopStreamStartTimeoutTask?.cancel()
@@ -190,6 +190,7 @@ public extension MirageClientService {
                 .client,
                 "Desktop stream start timed out after \(Int(Self.desktopStreamStartTimeoutSeconds))s"
             )
+            cancelStreamSetup()
             clearPendingDesktopStreamStartState()
             delegate?.clientService(
                 self,
