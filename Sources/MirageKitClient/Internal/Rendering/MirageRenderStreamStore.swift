@@ -68,6 +68,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var lastSubmittedMappedPresentationTime: CMTime = .invalid
         var targetFPS: Int = 60
         var listeners: [ObjectIdentifier: FrameListener] = [:]
+        var presentationRecoveryHandlers: [ObjectIdentifier: FrameListener] = [:]
 
         var decodeSamples: [CFAbsoluteTime] = []
         var decodeSampleStartIndex: Int = 0
@@ -353,6 +354,40 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
+    func registerPresentationRecoveryHandler(
+        for streamID: StreamID,
+        owner: AnyObject,
+        callback: @escaping @Sendable () -> Void
+    ) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        let key = ObjectIdentifier(owner)
+        state.presentationRecoveryHandlers[key] = FrameListener(owner: WeakOwner(owner), callback: callback)
+        state.lock.unlock()
+    }
+
+    func unregisterPresentationRecoveryHandler(for streamID: StreamID, owner: AnyObject) {
+        guard let state = streamStateIfPresent(for: streamID) else { return }
+        state.lock.lock()
+        state.presentationRecoveryHandlers.removeValue(forKey: ObjectIdentifier(owner))
+        state.lock.unlock()
+    }
+
+    @discardableResult
+    func requestPresentationRecovery(for streamID: StreamID) -> Bool {
+        guard let state = streamStateIfPresent(for: streamID) else { return false }
+
+        state.lock.lock()
+        let callbacks = activePresentationRecoveryHandlersLocked(state: state)
+        state.lock.unlock()
+
+        for callback in callbacks {
+            callback()
+        }
+
+        return !callbacks.isEmpty
+    }
+
     func clear(for streamID: StreamID) {
         stateLock.lock()
         let state = streams[streamID]
@@ -382,7 +417,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.listeners = state.listeners.filter { _, listener in
             listener.owner.value != nil
         }
-        if state.listeners.isEmpty {
+        state.presentationRecoveryHandlers = state.presentationRecoveryHandlers.filter { _, listener in
+            listener.owner.value != nil
+        }
+        if state.listeners.isEmpty, state.presentationRecoveryHandlers.isEmpty {
             streams.removeValue(forKey: streamID)
         }
         state.lock.unlock()
@@ -425,6 +463,28 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         if !staleKeys.isEmpty {
             for key in staleKeys {
                 state.listeners.removeValue(forKey: key)
+            }
+        }
+
+        return callbacks
+    }
+
+    private func activePresentationRecoveryHandlersLocked(state: StreamState) -> [@Sendable () -> Void] {
+        var callbacks: [@Sendable () -> Void] = []
+        callbacks.reserveCapacity(state.presentationRecoveryHandlers.count)
+
+        var staleKeys: [ObjectIdentifier] = []
+        for (key, listener) in state.presentationRecoveryHandlers {
+            guard listener.owner.value != nil else {
+                staleKeys.append(key)
+                continue
+            }
+            callbacks.append(listener.callback)
+        }
+
+        if !staleKeys.isEmpty {
+            for key in staleKeys {
+                state.presentationRecoveryHandlers.removeValue(forKey: key)
             }
         }
 

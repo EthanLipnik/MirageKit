@@ -114,7 +114,8 @@ extension MirageClientService {
         }
 
         guard hasPresentedFrame else {
-            coordinator.queuedTarget = target
+            coordinator.queueLatestTarget(target)
+            coordinator.cancelPendingResizeDispatch()
             coordinator.clearLocalPresentationState()
             return
         }

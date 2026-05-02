@@ -129,16 +129,34 @@ extension MirageHostService {
     }
 
     func handleLightsOutScreenshotShortcut() async {
-        guard lightsOutController.isActive else { return }
+        _ = await beginLightsOutScreenshotSuspension(monitorNativeScreenshotApp: true)
+    }
+
+    func beginLightsOutScreenshotSuspension(monitorNativeScreenshotApp: Bool) async -> Bool {
+        guard lightsOutController.isActive else { return false }
+        let startedNewSuspension = !lightsOutScreenshotSuspended
 
         lightsOutScreenshotSuspended = true
         lightsOutController.deactivate()
         await refreshLightsOutCaptureExclusions()
 
+        guard monitorNativeScreenshotApp else {
+            return startedNewSuspension
+        }
+
         lightsOutScreenshotSuspendTask?.cancel()
         lightsOutScreenshotSuspendTask = Task { @MainActor [weak self] in
             await self?.monitorLightsOutScreenshotSuspension()
         }
+        return startedNewSuspension
+    }
+
+    func endLightsOutScreenshotSuspensionIfNeeded(startedNewSuspension: Bool) async {
+        guard startedNewSuspension else { return }
+        lightsOutScreenshotSuspendTask?.cancel()
+        lightsOutScreenshotSuspendTask = nil
+        lightsOutScreenshotSuspended = false
+        await updateLightsOutState()
     }
 
     func refreshLightsOutCaptureExclusions() async {

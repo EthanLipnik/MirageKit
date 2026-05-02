@@ -176,6 +176,37 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
+    @Test("Recent interaction defers new probes without consuming cooldown")
+    func recentInteractionDefersNewProbesWithoutConsumingCooldown() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0,
+            allowsNewProbe: false
+        )
+        let deferredAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2,
+            allowsNewProbe: false
+        )
+        let idleAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 3.1,
+            allowsNewProbe: true
+        )
+
+        #expect(deferredAction == .none)
+        #expect(idleAction == .probe(targetBitrateBps: 32_000_000))
+    }
+
     @Test("Successful probe cooldowns climb in bounded steps")
     func successfulProbeCooldownsClimbInBoundedSteps() {
         var controller = MirageReceiverHealthController()

@@ -49,6 +49,20 @@ struct MirageActionPreferencesTests {
         #expect(normalizedActions.contains(customAction))
     }
 
+    @Test("Built-in host screenshot actions expose request styles")
+    func builtInHostScreenshotActionsExposeRequestStyles() throws {
+        let preferences = MirageActionPreferences()
+        let fullScreen = try #require(preferences.action(withID: MirageAction.hostFullScreenScreenshotID))
+        let selection = try #require(preferences.action(withID: MirageAction.hostSelectionScreenshotID))
+
+        #expect(fullScreen.target == .hostScreenshot)
+        #expect(fullScreen.hostScreenshotStyle == .fullScreen)
+        #expect(fullScreen.showInControlBar)
+        #expect(selection.target == .hostScreenshot)
+        #expect(selection.hostScreenshotStyle == .selection)
+        #expect(selection.showInControlBar)
+    }
+
     @Test("Custom host key bindings are modeled and matched by normalized shortcut")
     func customHostKeyBindingsAreModeledAndMatchedByNormalizedShortcut() throws {
         let action = MirageAction.customHostKeyBinding(

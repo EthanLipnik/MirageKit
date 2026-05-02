@@ -651,6 +651,7 @@ extension MirageHostService {
         let metricsClientID = clientContext.client.id
         let metricsSessionID = clientContext.sessionID
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
+            self?.recordClientMediaActivity(clientID: metricsClientID)
             self?.dispatchControlWork(clientID: metricsClientID) { [weak self] in
                 guard let self else { return }
                 guard let clientContext = findClientContext(sessionID: metricsSessionID) else { return }

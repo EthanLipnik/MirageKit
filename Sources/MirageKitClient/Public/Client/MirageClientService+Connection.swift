@@ -282,22 +282,28 @@ extension MirageClientService {
         if let controlChannel, case .connected = connectionState {
             cancelStreamSetup()
             let disconnectMsg = DisconnectMessage(reason: .userRequested, message: nil)
-            try? await controlChannel.send(.disconnect, content: disconnectMsg)
+            controlChannel.sendBestEffort(.disconnect, content: disconnectMsg)
         }
 
         await handleDisconnect(
             reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
             state: .disconnected,
-            notifyDelegate: false
+            notifyDelegate: false,
+            forceCleanup: true
         )
     }
 
-    func handleDisconnect(reason: String, state: ConnectionState, notifyDelegate: Bool) async {
-        if case .disconnected = connectionState {
+    func handleDisconnect(
+        reason: String,
+        state: ConnectionState,
+        notifyDelegate: Bool,
+        forceCleanup: Bool = false
+    ) async {
+        if case .disconnected = connectionState, !forceCleanup {
             return
         }
 
-        if case .error = connectionState {
+        if case .error = connectionState, !forceCleanup {
             if case .error = state {
                 return
             }
@@ -317,11 +323,16 @@ extension MirageClientService {
         loomSession = nil
         transferEngine = nil
         stopTransferObserver()
+        connectionState = state
 
         if let disconnectedControlChannel {
-            await disconnectedControlChannel.cancel()
+            Task {
+                await disconnectedControlChannel.cancel()
+            }
         } else {
-            await disconnectedLoomSession?.cancel()
+            Task {
+                await disconnectedLoomSession?.cancel()
+            }
         }
         cancelPendingConnectTask()
         invalidateCurrentConnectAttempt()

@@ -50,7 +50,10 @@ extension MirageHostService {
     )
     async {
         if let expectedSessionID,
-           findClientContext(sessionID: expectedSessionID)?.client.id != client.id {
+           Self.shouldIgnoreDisconnectForExpectedSession(
+               resolvedClientID: findClientContext(sessionID: expectedSessionID)?.client.id,
+               requestedClientID: client.id
+           ) {
             MirageLogger.host(
                 "Ignoring disconnect for superseded client session \(expectedSessionID.uuidString) (\(client.name))"
             )
@@ -195,6 +198,14 @@ extension MirageHostService {
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
         syncSharedClipboardState(reason: "client_disconnected")
+    }
+
+    nonisolated static func shouldIgnoreDisconnectForExpectedSession(
+        resolvedClientID: UUID?,
+        requestedClientID: UUID
+    ) -> Bool {
+        guard let resolvedClientID else { return false }
+        return resolvedClientID != requestedClientID
     }
 
     private func closeClientControlSession(

@@ -12,18 +12,49 @@ import Loom
 import MirageKit
 import Network
 
+private final class ClientControlPingFastPath: @unchecked Sendable {
+    private var receiveBuffer = Data()
+
+    func inspect(_ data: Data, respondOn controlChannel: MirageControlChannel) {
+        receiveBuffer.append(data)
+
+        var parseOffset = 0
+        while true {
+            switch ControlMessage.deserialize(from: receiveBuffer, offset: parseOffset) {
+            case let .success(message, bytesConsumed):
+                parseOffset += bytesConsumed
+                if message.type == .ping {
+                    controlChannel.sendBestEffort(ControlMessage(type: .pong))
+                }
+            case .needMoreData:
+                if parseOffset > 0 {
+                    receiveBuffer.removeSubrange(0 ..< parseOffset)
+                } else if receiveBuffer.count > LoomMessageLimits.maxReceiveBufferBytes {
+                    receiveBuffer.removeAll(keepingCapacity: false)
+                }
+                return
+            case .invalidFrame:
+                receiveBuffer.removeAll(keepingCapacity: false)
+                return
+            }
+        }
+    }
+}
+
 @MainActor
 extension MirageClientService {
     func startReceiving() {
         guard let controlChannel else { return }
 
         let serviceBox = WeakSendableBox(self)
+        let pingFastPath = ClientControlPingFastPath()
         Task.detached(priority: .userInitiated) { [controlChannel, serviceBox] in
             for await data in controlChannel.incomingBytes {
                 guard !Task.isCancelled else { return }
                 guard let service = serviceBox.value else { return }
                 guard await service.isCurrentControlChannel(controlChannel) else { return }
                 if !data.isEmpty {
+                    pingFastPath.inspect(data, respondOn: controlChannel)
                     await service.handleIncomingControlChunk(
                         data,
                         for: controlChannel

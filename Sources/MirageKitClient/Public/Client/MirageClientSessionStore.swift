@@ -262,6 +262,22 @@ public final class MirageClientSessionStore {
         }
     }
 
+    /// Reset first-frame readiness for a fresh presentation lifecycle on the same stream.
+    public func resetFirstFrameReadiness(for streamID: StreamID) {
+        let matchingSessions = sessionsMatchingStreamOrMediaID(streamID)
+        pendingFirstDecodedFrameStreamIDs.remove(streamID)
+        pendingFirstPresentedFrameStreamIDs.remove(streamID)
+
+        for session in matchingSessions {
+            pendingFirstDecodedFrameStreamIDs.remove(session.streamID)
+            pendingFirstDecodedFrameStreamIDs.remove(session.mediaStreamID)
+            pendingFirstPresentedFrameStreamIDs.remove(session.streamID)
+            pendingFirstPresentedFrameStreamIDs.remove(session.mediaStreamID)
+            session.hasDecodedFrame = false
+            session.hasPresentedFrame = false
+        }
+    }
+
     /// Mark the first presented frame for a stream.
     /// Used to drive UI state without per-frame SwiftUI updates.
     public func markFirstFramePresented(for streamID: StreamID) {

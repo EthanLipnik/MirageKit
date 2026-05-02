@@ -503,6 +503,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.maxDrawableSize = maxDrawableSize
         captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         captureView.ignoresSafeArea = ignoresSafeArea
+        captureView.activateStreamPresentation()
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()

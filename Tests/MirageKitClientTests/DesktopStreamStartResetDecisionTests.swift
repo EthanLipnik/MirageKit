@@ -428,6 +428,21 @@ struct DesktopStreamStartResetDecisionTests {
         service.pendingLocalDesktopStopSessionID = oldDesktopSessionID
         service.desktopDimensionTokenByStream[streamID] = 4
         service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+        let sessionID = service.sessionStore.createSession(
+            streamID: streamID,
+            window: MirageWindow(
+                id: 3101,
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 100, height: 100),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+        service.sessionStore.markFirstFramePresented(for: streamID)
 
         let started = DesktopStreamStartedMessage(
             streamID: streamID,
@@ -458,6 +473,8 @@ struct DesktopStreamStartResetDecisionTests {
         #expect(service.desktopDimensionTokenByStream[streamID] == 8)
         #expect(service.pendingLocalDesktopStopStreamID == nil)
         #expect(service.pendingLocalDesktopStopSessionID == nil)
+        #expect(service.sessionStore.session(for: sessionID)?.hasDecodedFrame == false)
+        #expect(service.sessionStore.session(for: sessionID)?.hasPresentedFrame == false)
 
         if let controller = service.controllersByStream[streamID] {
             await controller.stop()

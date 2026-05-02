@@ -117,6 +117,11 @@ public class InputCapturingView: UIView {
         }
     }
 
+    func activateStreamPresentation() {
+        sampleBufferView.streamID = mediaStreamID ?? streamID
+        sampleBufferView.activateStreamPresentation()
+    }
+
     /// Cursor store for pointer updates (decoupled from SwiftUI observation).
     public var cursorStore: MirageClientCursorStore? {
         didSet {

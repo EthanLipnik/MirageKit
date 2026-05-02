@@ -46,6 +46,7 @@ extension MirageClientService {
             },
             .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },
             .hostWallpaper: { [weak self] in self?.handleHostWallpaper($0) },
+            .hostScreenshotResult: { [weak self] in self?.handleHostScreenshotResult($0) },
             .hostSupportLogArchive: { [weak self] in self?.handleHostSupportLogArchive($0) },
             .ping: { [weak self] in self?.handlePing($0) },
             .pong: { [weak self] in self?.handlePong($0) },

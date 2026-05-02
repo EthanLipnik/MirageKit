@@ -106,6 +106,27 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == true)
     }
 
+    @Test("First-frame readiness can reset for a fresh presentation lifecycle")
+    @MainActor
+    func firstFrameReadinessResetsForFreshPresentationLifecycle() {
+        let store = MirageClientSessionStore()
+        let streamID: StreamID = 22
+        store.createSession(
+            streamID: streamID,
+            window: testWindow(id: 2201),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.markFirstFramePresented(for: streamID)
+        #expect(store.sessionByStreamID(streamID)?.hasDecodedFrame == true)
+        #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == true)
+
+        store.resetFirstFrameReadiness(for: streamID)
+        #expect(store.sessionByStreamID(streamID)?.hasDecodedFrame == false)
+        #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == false)
+    }
+
     @Test("Host policies determine presentation tiers")
     @MainActor
     func hostPoliciesDeterminePresentationTier() {

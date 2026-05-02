@@ -291,6 +291,7 @@ public extension MirageHostService {
         await syncAppListRequestDeferralForInteractiveWorkload()
         let startupSessionID = startupClientContext.sessionID
         await context.setMetricsUpdateHandler { [weak self] metrics in
+            self?.recordClientMediaActivity(clientID: client.id)
             self?.dispatchControlWork(clientID: client.id) { [weak self] in
                 guard let self else { return }
                 guard let clientContext = findClientContext(sessionID: startupSessionID) else { return }

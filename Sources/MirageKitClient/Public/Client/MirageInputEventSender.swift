@@ -23,6 +23,8 @@ public final class MirageInputEventSender: @unchecked Sendable {
     private var sendHandler: (@Sendable (Data, Bool) async throws -> Void)?
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
+    private let interactionLock = NSLock()
+    private var lastInteractionTime: CFAbsoluteTime = 0
 
     /// Whether a continuous-event drain is already scheduled.
     /// Accessed only on `sendQueue`.
@@ -71,6 +73,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
+        recordInteractionIfNeeded(event)
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
             return
         }
@@ -83,6 +86,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     public func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
+        recordInteractionIfNeeded(event)
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
             return
         }
@@ -166,6 +170,26 @@ public final class MirageInputEventSender: @unchecked Sendable {
         )
     }
 
+    public func secondsSinceLastInteraction(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> CFAbsoluteTime? {
+        interactionLock.lock()
+        let lastInteractionTime = self.lastInteractionTime
+        interactionLock.unlock()
+        guard lastInteractionTime > 0 else { return nil }
+        return max(0, now - lastInteractionTime)
+    }
+
+    public func hasRecentInteraction(
+        within duration: CFAbsoluteTime,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) -> Bool {
+        guard let elapsed = secondsSinceLastInteraction(now: now) else { return false }
+        return elapsed < duration
+    }
+
+    func recordInteractionForTesting(_ event: MirageInputEvent, now: CFAbsoluteTime) {
+        recordInteractionIfNeeded(event, now: now)
+    }
+
     private func shouldDropInputForTemporaryCoalescing(
         _ event: MirageInputEvent,
         streamID: StreamID,
@@ -212,6 +236,46 @@ public final class MirageInputEventSender: @unchecked Sendable {
         case .mouseMoved, .mouseDragged, .rightMouseDragged, .otherMouseDragged:
             true
         default:
+            false
+        }
+    }
+
+    private func recordInteractionIfNeeded(
+        _ event: MirageInputEvent,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) {
+        guard event.shouldGateAutomaticProbe else { return }
+        interactionLock.lock()
+        lastInteractionTime = now
+        interactionLock.unlock()
+    }
+}
+
+private extension MirageInputEvent {
+    var shouldGateAutomaticProbe: Bool {
+        switch self {
+        case .keyDown,
+             .keyUp,
+             .flagsChanged,
+             .mouseDown,
+             .mouseUp,
+             .mouseMoved,
+             .mouseDragged,
+             .rightMouseDown,
+             .rightMouseUp,
+             .rightMouseDragged,
+             .otherMouseDown,
+             .otherMouseUp,
+             .otherMouseDragged,
+             .scrollWheel:
+            true
+        case .hostSystemAction,
+             .magnify,
+             .pixelResize,
+             .relativeResize,
+             .rotate,
+             .windowFocus,
+             .windowResize:
             false
         }
     }

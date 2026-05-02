@@ -86,6 +86,9 @@ extension MirageHostService {
             .hostWallpaperRequest: { [weak self] message, clientContext in
                 await self?.handleHostWallpaperRequest(message, from: clientContext)
             },
+            .hostScreenshotRequest: { [weak self] message, clientContext in
+                await self?.handleHostScreenshotRequest(message, from: clientContext)
+            },
             .remoteClientStreamOptionsState: { [weak self] message, clientContext in
                 await self?.handleRemoteClientStreamOptionsState(message, from: clientContext)
             },

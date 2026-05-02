@@ -11,6 +11,34 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+enum HostClientLivenessDecision: Equatable {
+    case wait
+    case ping
+    case deferForActiveMedia
+    case disconnect
+}
+
+func hostClientLivenessDecision(
+    controlIdleSeconds: CFAbsoluteTime,
+    mediaIdleSeconds: CFAbsoluteTime?,
+    hasActiveStreams: Bool,
+    pingThreshold: CFAbsoluteTime,
+    disconnectThreshold: CFAbsoluteTime,
+    activeMediaGraceThreshold: CFAbsoluteTime
+) -> HostClientLivenessDecision {
+    guard controlIdleSeconds >= disconnectThreshold else {
+        return controlIdleSeconds >= pingThreshold ? .ping : .wait
+    }
+
+    if hasActiveStreams,
+       let mediaIdleSeconds,
+       mediaIdleSeconds < activeMediaGraceThreshold {
+        return .deferForActiveMedia
+    }
+
+    return .disconnect
+}
+
 @MainActor
 extension MirageHostService {
     /// How often the liveness monitor checks connected clients.
@@ -22,11 +50,19 @@ extension MirageHostService {
     /// How long since the last received data before disconnecting.
     private static let livenessDisconnectThreshold: CFAbsoluteTime = 20.0
 
+    /// How recent host media activity must be to keep an active stream alive
+    /// while the control channel is otherwise quiet.
+    private static let livenessActiveMediaGraceThreshold: CFAbsoluteTime = 8.0
+
     nonisolated private static let minimumBackgroundLeaseDuration: TimeInterval = 1
     nonisolated private static let maximumBackgroundLeaseDuration: TimeInterval = 30
 
     nonisolated func recordClientActivity(clientID: UUID) {
         clientLastActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
+    }
+
+    nonisolated func recordClientMediaActivity(clientID: UUID) {
+        clientLastMediaActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
     }
 
     nonisolated static func clampedBackgroundLeaseDuration(_ duration: TimeInterval) -> TimeInterval {
@@ -107,11 +143,13 @@ extension MirageHostService {
 
     func clearClientActivityRecord(clientID: UUID) {
         clientLastActivityByID.withLock { $0.removeValue(forKey: clientID) }
+        clientLastMediaActivityByID.withLock { $0.removeValue(forKey: clientID) }
     }
 
     private func checkClientLiveness() async {
         let now = CFAbsoluteTimeGetCurrent()
         let activitySnapshot = clientLastActivityByID.read { $0 }
+        let mediaActivitySnapshot = clientLastMediaActivityByID.read { $0 }
 
         for clientContext in clientsBySessionID.values {
             let clientID = clientContext.client.id
@@ -119,8 +157,27 @@ extension MirageHostService {
 
             let lastActivity = activitySnapshot[clientID] ?? 0
             let elapsed = now - lastActivity
+            let mediaElapsed = mediaActivitySnapshot[clientID].map { now - $0 }
+            let hasActiveStreams = hasActiveStream(forClientID: clientID)
 
-            if elapsed >= Self.livenessDisconnectThreshold {
+            switch hostClientLivenessDecision(
+                controlIdleSeconds: elapsed,
+                mediaIdleSeconds: mediaElapsed,
+                hasActiveStreams: hasActiveStreams,
+                pingThreshold: Self.livenessPingThreshold,
+                disconnectThreshold: Self.livenessDisconnectThreshold,
+                activeMediaGraceThreshold: Self.livenessActiveMediaGraceThreshold
+            ) {
+            case .wait:
+                break
+            case .ping:
+                clientContext.sendBestEffort(ControlMessage(type: .ping))
+            case .deferForActiveMedia:
+                MirageLogger.host(
+                    "Client \(clientContext.client.name) liveness timeout deferred; active media was sent \(Int(mediaElapsed ?? 0))s ago"
+                )
+                clientContext.sendBestEffort(ControlMessage(type: .ping))
+            case .disconnect:
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout (\(Int(elapsed))s idle) — disconnecting"
                 )
@@ -130,10 +187,21 @@ extension MirageHostService {
                     notifyClient: false
                 )
                 delegate?.hostService(self, didDisconnectClient: clientContext.client)
-            } else if elapsed >= Self.livenessPingThreshold {
-                clientContext.sendBestEffort(ControlMessage(type: .ping))
             }
         }
+    }
+
+    private func hasActiveStream(forClientID clientID: UUID) -> Bool {
+        if let desktopClientID = desktopStreamClientContext?.client.id,
+           desktopClientID == clientID,
+           desktopStreamContext != nil {
+            return true
+        }
+
+        return activeSessionByStreamID.values.contains { $0.client.id == clientID } ||
+            customStreamClientSessionIDByStreamID.values.contains { sessionID in
+                clientsBySessionID[sessionID]?.client.id == clientID
+            }
     }
 }
 #endif

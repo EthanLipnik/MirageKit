@@ -19,6 +19,10 @@ struct ClientStreamingAnomalySample: Sendable {
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
     let displayLayerNotReadyCount: UInt64
+    let presentationStallCount: UInt64
+    let worstPresentationGapMs: Double
+    let frameIntervalP95Ms: Double
+    let frameIntervalP99Ms: Double
     let decodeHealthy: Bool
     let decodeSubmissionLimit: Int
     let presentationTier: StreamPresentationTier
@@ -26,6 +30,52 @@ struct ClientStreamingAnomalySample: Sendable {
     let usingHardwareDecoder: Bool?
     let targetFrameRate: Int
     let hostMetrics: StreamMetricsMessage?
+
+    init(
+        streamID: StreamID,
+        trigger: String,
+        decodedFPS: Double,
+        receivedFPS: Double,
+        submittedFPS: Double,
+        uniqueSubmittedFPS: Double,
+        pendingFrameCount: Int,
+        pendingFrameAgeMs: Double,
+        overwrittenPendingFrames: UInt64,
+        displayLayerNotReadyCount: UInt64,
+        presentationStallCount: UInt64 = 0,
+        worstPresentationGapMs: Double = 0,
+        frameIntervalP95Ms: Double = 0,
+        frameIntervalP99Ms: Double = 0,
+        decodeHealthy: Bool,
+        decodeSubmissionLimit: Int,
+        presentationTier: StreamPresentationTier,
+        decoderOutputPixelFormat: String?,
+        usingHardwareDecoder: Bool?,
+        targetFrameRate: Int,
+        hostMetrics: StreamMetricsMessage?
+    ) {
+        self.streamID = streamID
+        self.trigger = trigger
+        self.decodedFPS = decodedFPS
+        self.receivedFPS = receivedFPS
+        self.submittedFPS = submittedFPS
+        self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.pendingFrameCount = pendingFrameCount
+        self.pendingFrameAgeMs = pendingFrameAgeMs
+        self.overwrittenPendingFrames = overwrittenPendingFrames
+        self.displayLayerNotReadyCount = displayLayerNotReadyCount
+        self.presentationStallCount = presentationStallCount
+        self.worstPresentationGapMs = worstPresentationGapMs
+        self.frameIntervalP95Ms = frameIntervalP95Ms
+        self.frameIntervalP99Ms = frameIntervalP99Ms
+        self.decodeHealthy = decodeHealthy
+        self.decodeSubmissionLimit = decodeSubmissionLimit
+        self.presentationTier = presentationTier
+        self.decoderOutputPixelFormat = decoderOutputPixelFormat
+        self.usingHardwareDecoder = usingHardwareDecoder
+        self.targetFrameRate = targetFrameRate
+        self.hostMetrics = hostMetrics
+    }
 
     fileprivate func metricsSnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = MirageClientMetricsSnapshot(
@@ -37,6 +87,10 @@ struct ClientStreamingAnomalySample: Sendable {
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
             clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
+            clientPresentationStallCount: presentationStallCount,
+            clientWorstPresentationGapMs: worstPresentationGapMs,
+            clientFrameIntervalP95Ms: frameIntervalP95Ms,
+            clientFrameIntervalP99Ms: frameIntervalP99Ms,
             decodeHealthy: decodeHealthy,
             hostEncodedFPS: hostMetrics?.encodedFPS ?? 0,
             hostIdleFPS: hostMetrics?.idleEncodedFPS ?? 0,
@@ -143,7 +197,10 @@ func clientStreamingAnomalyDiagnostic(
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
         "sendQueue=\(hostQueueText) sendStart=\(formattedMs(sample.hostMetrics?.sendStartDelayAverageMs))ms " +
         "sendDone=\(formattedMs(sample.hostMetrics?.sendCompletionAverageMs))ms " +
-        "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms transportDrops=\(hostTransportDrops)"
+        "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms transportDrops=\(hostTransportDrops) " +
+        "presentationStalls=\(sample.presentationStallCount) " +
+        "worstPresentationGap=\(formattedMs(sample.worstPresentationGapMs))ms " +
+        "frameP95=\(formattedMs(sample.frameIntervalP95Ms))ms frameP99=\(formattedMs(sample.frameIntervalP99Ms))ms"
 
     return ClientStreamingAnomalyDiagnostic(
         bottleneckKind: bottleneckKind,

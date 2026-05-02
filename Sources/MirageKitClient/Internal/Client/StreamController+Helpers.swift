@@ -52,6 +52,10 @@ extension StreamController {
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
                 displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
+                presentationStallCount: renderTelemetry.presentationStallCount,
+                worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
+                frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
+                frameIntervalP99Ms: renderTelemetry.frameIntervalP99Ms,
                 decodeHealthy: renderTelemetry.decodeHealthy,
                 decodeSubmissionLimit: currentDecodeSubmissionLimit,
                 presentationTier: presentationTier,
@@ -271,6 +275,7 @@ extension StreamController {
         firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
         firstPresentedFrameLastRecoveryRequestTime = 0
         firstPresentedFrameRecoveryAttemptCount = 0
+        firstPresentedFrameRendererRecoveryAttemptCount = 0
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(true)
         if reason != "post-resize", mode == .startup {
             await setClientRecoveryStatus(.startup)
@@ -294,6 +299,7 @@ extension StreamController {
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
         firstPresentedFrameRecoveryAttemptCount = 0
+        firstPresentedFrameRendererRecoveryAttemptCount = 0
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
     }
 
@@ -324,6 +330,7 @@ extension StreamController {
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
         firstPresentedFrameRecoveryAttemptCount = 0
+        firstPresentedFrameRendererRecoveryAttemptCount = 0
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
@@ -425,6 +432,29 @@ extension StreamController {
            let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
            now - pendingKeyframeProgress.lastProgressTime < Self.firstPresentedFramePacketStallThreshold {
             return
+        }
+
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        if Self.shouldAttemptRendererRecoveryBeforeBootstrapReset(
+            pendingFrameCount: pendingFrameCount,
+            submittedSequence: latestSequence,
+            baselineSequence: firstPresentedFrameBaselineSequence,
+            rendererRecoveryAttempts: firstPresentedFrameRendererRecoveryAttemptCount
+        ) {
+            firstPresentedFrameRendererRecoveryAttemptCount &+= 1
+            let didRequestPresenterRecovery = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+            if didRequestPresenterRecovery {
+                firstPresentedFrameLastRecoveryRequestTime = now
+                MirageLogger.client(
+                    "Startup first-frame presenter recovery requested for stream \(streamID) " +
+                        "(pendingFrames=\(pendingFrameCount), submitted=0)"
+                )
+                return
+            }
+            MirageLogger.client(
+                "Startup first-frame presenter recovery had no active handler for stream \(streamID) " +
+                    "(pendingFrames=\(pendingFrameCount), submitted=0)"
+            )
         }
 
         let hasPackets = reassembler.hasReceivedPackets()

@@ -61,6 +61,28 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(dragEvent, streamID: bypassedStreamID, now: 300.005))
     }
 
+    @Test("Input sender tracks probe-gating interaction")
+    func inputSenderTracksProbeGatingInteraction() {
+        let sender = MirageInputEventSender()
+
+        sender.recordInteractionForTesting(.mouseMoved(makeMouseEvent()), now: 400)
+
+        #expect(sender.hasRecentInteraction(within: 3, now: 402.9))
+        #expect(!sender.hasRecentInteraction(within: 3, now: 403.1))
+    }
+
+    @Test("Window resize does not count as probe-gating interaction")
+    func windowResizeDoesNotCountAsProbeGatingInteraction() {
+        let sender = MirageInputEventSender()
+
+        sender.recordInteractionForTesting(
+            .windowResize(MirageResizeEvent(windowID: 1, newSize: CGSize(width: 800, height: 600), scaleFactor: 2)),
+            now: 500
+        )
+
+        #expect(!sender.hasRecentInteraction(within: 3, now: 501))
+    }
+
     private func makeMouseEvent() -> MirageMouseEvent {
         MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5), timestamp: 0)
     }

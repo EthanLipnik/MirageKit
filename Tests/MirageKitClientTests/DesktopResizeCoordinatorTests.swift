@@ -195,5 +195,33 @@ struct DesktopResizeCoordinatorTests {
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
     }
+
+    @Test("Startup desktop resize requests coalesce until first presented frame")
+    func startupDesktopResizeRequestsCoalesceUntilFirstPresentedFrame() {
+        let service = MirageClientService()
+        let streamID: StreamID = 37
+        let firstTarget = target(logicalWidth: 1366, logicalHeight: 1024)
+        let secondTarget = target(logicalWidth: 1512, logicalHeight: 982)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: firstTarget,
+            hasPresentedFrame: false,
+            useHostResolution: false
+        )
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: secondTarget,
+            hasPresentedFrame: false,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == secondTarget)
+        #expect(service.desktopResizeCoordinator.latestRequestedTarget == secondTarget)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
 }
 #endif

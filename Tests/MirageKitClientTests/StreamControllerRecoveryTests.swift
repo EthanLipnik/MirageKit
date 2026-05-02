@@ -902,6 +902,90 @@ struct StreamControllerRecoveryTests {
         )
     }
 
+    @Test("Startup pending decoded frame attempts presenter recovery before reset")
+    func startupPendingDecodedFrameAttemptsPresenterRecoveryBeforeReset() {
+        #expect(
+            StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
+                pendingFrameCount: 1,
+                submittedSequence: 0,
+                baselineSequence: 0,
+                rendererRecoveryAttempts: 0
+            )
+        )
+        #expect(
+            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
+                pendingFrameCount: 0,
+                submittedSequence: 0,
+                baselineSequence: 0,
+                rendererRecoveryAttempts: 0
+            )
+        )
+        #expect(
+            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
+                pendingFrameCount: 1,
+                submittedSequence: 1,
+                baselineSequence: 0,
+                rendererRecoveryAttempts: 0
+            )
+        )
+        #expect(
+            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
+                pendingFrameCount: 1,
+                submittedSequence: 0,
+                baselineSequence: 0,
+                rendererRecoveryAttempts: 1
+            )
+        )
+    }
+
+    @Test("Startup watchdog requests presenter recovery before keyframe recovery when decoded frame is pending")
+    func startupWatchdogRequestsPresenterRecoveryBeforeKeyframeRecovery() async throws {
+        let streamID: StreamID = 147
+        let clock = ManualTimeProvider(start: 6_000)
+        let keyframeCounter = LockedCounter()
+        let presenterRecoveryCounter = LockedCounter()
+        let presenterOwner = NSObject()
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-presentation")
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
+        try await waitUntil("startup presenter recovery request") {
+            presenterRecoveryCounter.value == 1
+        }
+
+        #expect(keyframeCounter.value == 0)
+        #expect(await controller.firstPresentedFrameRendererRecoveryAttemptCount == 1)
+        #expect(await controller.lastHardRecoveryStartTime == 0)
+
+        await controller.stop()
+    }
+
     @Test("Manual recovery re-arms first-frame watchdog after prior presentation")
     func manualRecoveryRearmsFirstFrameWatchdogAfterPriorPresentation() async throws {
         let clock = ManualTimeProvider(start: 3_000)

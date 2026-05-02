@@ -465,6 +465,9 @@ public final class MirageClientService {
     /// Callback when a host application restart request completes.
     public var onHostApplicationRestartResult: ((HostApplicationRestartResult) -> Void)?
 
+    /// Callback when a host screenshot request completes.
+    public var onHostScreenshotResult: ((HostScreenshotResultMessage) -> Void)?
+
     /// Callback when a protocol mismatch rejection includes deterministic mismatch metadata.
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 

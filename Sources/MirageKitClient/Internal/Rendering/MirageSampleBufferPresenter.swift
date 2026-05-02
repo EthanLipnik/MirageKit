@@ -47,6 +47,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private(set) var currentContentReferenceSize: CGSize?
 
     var onFrameAvailable: (() -> Void)?
+    var onPresentationRecoveryRequested: (() -> Void)?
 
     init(displayLayer: AVSampleBufferDisplayLayer) {
         self.displayLayer = displayLayer
@@ -351,11 +352,24 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
                 }
             }
         }
+        if onPresentationRecoveryRequested != nil {
+            MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: self) { [weak self] in
+                guard let self else { return }
+                if Thread.isMainThread {
+                    self.onPresentationRecoveryRequested?()
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.onPresentationRecoveryRequested?()
+                    }
+                }
+            }
+        }
     }
 
     private func unregisterFrameListener(for streamID: StreamID?) {
         guard let streamID else { return }
         MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: self)
+        MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: self)
         if listenerStreamID == streamID {
             listenerStreamID = nil
         }

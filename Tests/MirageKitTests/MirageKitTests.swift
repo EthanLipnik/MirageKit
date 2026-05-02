@@ -334,6 +334,42 @@ struct MirageKitTests {
         #expect(decoded.bytesPerPixelEstimate == 4)
     }
 
+    @Test("Host screenshot messages serialize result metadata without image data")
+    func hostScreenshotMessageSerialization() throws {
+        let requestID = UUID()
+        let request = HostScreenshotRequestMessage(
+            requestID: requestID,
+            style: .selection,
+            streamID: 42
+        )
+        let requestEnvelope = try ControlMessage(type: .hostScreenshotRequest, content: request)
+        let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
+        #expect(decodedRequestEnvelope.type == .hostScreenshotRequest)
+        let decodedRequest = try decodedRequestEnvelope.decode(HostScreenshotRequestMessage.self)
+        #expect(decodedRequest.requestID == requestID)
+        #expect(decodedRequest.style == .selection)
+        #expect(decodedRequest.streamID == 42)
+
+        let result = HostScreenshotResultMessage(
+            requestID: requestID,
+            style: .selection,
+            success: true,
+            source: .activeStreamSelection,
+            filePath: "/Users/ethan/Desktop/Mirage Screenshot.png",
+            fileName: "Mirage Screenshot.png",
+            pixelWidth: 1920,
+            pixelHeight: 1080,
+            byteCount: 123_456,
+            displayID: 1,
+            capturedAtMillisecondsSince1970: 1_777_777_777_000
+        )
+        let resultEnvelope = try ControlMessage(type: .hostScreenshotResult, content: result)
+        let (decodedResultEnvelope, _) = try requireParsedControlMessage(from: resultEnvelope.serialize())
+        #expect(decodedResultEnvelope.type == .hostScreenshotResult)
+        let decodedResult = try decodedResultEnvelope.decode(HostScreenshotResultMessage.self)
+        #expect(decodedResult == result)
+    }
+
     @Test("Bootstrap request optional mismatch update flag serialization")
     func bootstrapRequestOptionalMismatchUpdateFlagSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
@@ -1118,8 +1154,8 @@ struct MirageKitTests {
         #expect(ControlMessageType(rawValue: 0x8A) == .appWindowCloseAlertActionRequest)
         #expect(ControlMessageType(rawValue: 0x8B) == .appWindowCloseAlertActionResult)
         #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
-        #expect(ControlMessageType(rawValue: 0x95) == nil)
-        #expect(ControlMessageType(rawValue: 0x96) == nil)
+        #expect(ControlMessageType(rawValue: 0x95) == .hostScreenshotRequest)
+        #expect(ControlMessageType(rawValue: 0x96) == .hostScreenshotResult)
     }
 
     @Test("App window close-blocked alert payload serialization")

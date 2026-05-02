@@ -203,6 +203,7 @@ extension MirageClientService {
                 beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
             }
             if previousDesktopSessionID != receivedDesktopSessionID {
+                sessionStore.resetFirstFrameReadiness(for: streamID)
                 desktopDimensionTokenByStream.removeValue(forKey: streamID)
                 if let previousDesktopSessionID {
                     desktopPresentationGenerationBySessionID.removeValue(forKey: previousDesktopSessionID)

@@ -260,6 +260,19 @@ actor StreamController {
         return awaitingKeyframe ? .requestKeyframe : .hardRecovery
     }
 
+    nonisolated static func shouldAttemptRendererRecoveryBeforeBootstrapReset(
+        pendingFrameCount: Int,
+        submittedSequence: UInt64,
+        baselineSequence: UInt64,
+        rendererRecoveryAttempts: Int
+    )
+    -> Bool {
+        pendingFrameCount > 0 &&
+            submittedSequence == 0 &&
+            baselineSequence == 0 &&
+            rendererRecoveryAttempts == 0
+    }
+
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
     static let backpressureLogCooldown: CFAbsoluteTime = 1.0
@@ -328,6 +341,8 @@ actor StreamController {
     var firstPresentedFrameLastRecoveryRequestTime: CFAbsoluteTime = 0
     /// Number of bootstrap recovery actions dispatched in the current first-frame wait window.
     var firstPresentedFrameRecoveryAttemptCount: Int = 0
+    /// Number of renderer recovery attempts dispatched while waiting for first presentation.
+    var firstPresentedFrameRendererRecoveryAttemptCount: Int = 0
     /// Number of full hard recoveries consumed while still waiting on the first presented frame.
     var startupHardRecoveryCount: Int = 0
     /// True after the controller has concluded startup recovery cannot succeed.

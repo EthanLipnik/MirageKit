@@ -53,10 +53,7 @@ public class MirageSampleBufferView: UIView {
 
     public var streamID: StreamID? {
         didSet {
-            guard streamID != oldValue else { return }
-            presenter.setStreamID(streamID)
-            presentationScheduler.setStreamID(streamID)
-            requestImmediateSubmission()
+            bindStreamForPresentation(streamID)
         }
     }
 
@@ -174,6 +171,10 @@ public class MirageSampleBufferView: UIView {
         requestImmediateSubmission()
     }
 
+    func activateStreamPresentation() {
+        bindStreamForPresentation(streamID)
+    }
+
     func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
         if resetPresentationState {
             presenter.resetPresentationState()
@@ -228,6 +229,9 @@ public class MirageSampleBufferView: UIView {
         presenter.onFrameAvailable = { [weak self] in
             self?.handleFrameAvailable()
         }
+        presenter.onPresentationRecoveryRequested = { [weak self] in
+            self?.recoverPresentationPipeline()
+        }
 
         refreshRateMonitor.onOverrideChange = { [weak self] override in
             self?.applyRefreshRateOverride(override)
@@ -242,6 +246,30 @@ public class MirageSampleBufferView: UIView {
     }
 
     // MARK: - Draw Path
+
+    private func bindStreamForPresentation(_ streamID: StreamID?) {
+        presenter.setStreamID(streamID)
+        presentationScheduler.setStreamID(streamID)
+        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
+        presentationScheduler.setRenderingSuspended(false)
+        if streamID != nil {
+            startDisplayLinkIfNeeded()
+        }
+        requestImmediateSubmission()
+    }
+
+    private func recoverPresentationPipeline() {
+        presenter.setStreamID(streamID)
+        presentationScheduler.setStreamID(streamID)
+        presenter.resetPresentationState(preserveLoggedLayerFailure: true)
+        presentationScheduler.reset()
+        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
+        presentationScheduler.setRenderingSuspended(false)
+        if streamID != nil {
+            startDisplayLinkIfNeeded()
+        }
+        requestImmediateSubmission()
+    }
 
     func requestImmediateSubmission() {
         presentationScheduler.requestImmediateSubmission(referenceTime: CACurrentMediaTime())

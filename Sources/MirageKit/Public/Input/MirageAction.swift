@@ -13,6 +13,8 @@ public enum MirageActionTarget: String, Codable, Sendable, Hashable {
     case local
     /// Sends a synthetic key event to the host via CGEvent injection.
     case hostKeyInject
+    /// Requests a host-owned screenshot capture and save operation.
+    case hostScreenshot
 }
 
 /// A unified client action that can be triggered by keyboard shortcuts,
@@ -133,6 +135,8 @@ public extension MirageAction {
     static let missionControlID = "missionControl"
     static let appExposeID = "appExpose"
     static let cmdTabID = "cmdTab"
+    static let hostFullScreenScreenshotID = "hostFullScreenScreenshot"
+    static let hostSelectionScreenshotID = "hostSelectionScreenshot"
     static let dictationToggleID = "dictationToggle"
     static let escapeRemapID = "escapeRemap"
 }
@@ -185,6 +189,24 @@ public extension MirageAction {
         sfSymbolName: "command"
     )
 
+    static let hostFullScreenScreenshot = MirageAction(
+        id: hostFullScreenScreenshotID,
+        displayName: "Full-Screen Screenshot",
+        target: .hostScreenshot,
+        shortcut: MirageClientShortcutBinding(keyCode: 0x14, modifiers: [.command, .shift, .option]),
+        showInControlBar: true,
+        sfSymbolName: "camera.viewfinder"
+    )
+
+    static let hostSelectionScreenshot = MirageAction(
+        id: hostSelectionScreenshotID,
+        displayName: "Selection Screenshot",
+        target: .hostScreenshot,
+        shortcut: MirageClientShortcutBinding(keyCode: 0x15, modifiers: [.command, .shift, .option]),
+        showInControlBar: true,
+        sfSymbolName: "rectangle.dashed"
+    )
+
     static let dictationToggle = MirageAction(
         id: dictationToggleID,
         displayName: "Toggle Dictation",
@@ -201,6 +223,20 @@ public extension MirageAction {
 
     static let allBuiltIn: [MirageAction] = [
         .spaceLeft, .spaceRight, .missionControl, .appExpose, .cmdTab,
+        .hostFullScreenScreenshot, .hostSelectionScreenshot,
         .dictationToggle, .escapeRemap,
     ]
+}
+
+public extension MirageAction {
+    var hostScreenshotStyle: MirageHostScreenshotStyle? {
+        switch id {
+        case Self.hostFullScreenScreenshotID:
+            return .fullScreen
+        case Self.hostSelectionScreenshotID:
+            return .selection
+        default:
+            return nil
+        }
+    }
 }

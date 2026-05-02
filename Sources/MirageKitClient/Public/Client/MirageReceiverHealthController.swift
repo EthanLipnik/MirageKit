@@ -168,7 +168,8 @@ public struct MirageReceiverHealthController: Sendable {
         snapshots: [MirageClientMetricsSnapshot],
         currentBitrateBps: Int,
         ceilingBps: Int,
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
+        allowsNewProbe: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0, !snapshots.isEmpty else {
             reset()
@@ -180,7 +181,8 @@ public struct MirageReceiverHealthController: Sendable {
             snapshot: snapshot,
             currentBitrateBps: currentBitrateBps,
             ceilingBps: ceilingBps,
-            now: now
+            now: now,
+            allowsNewProbe: allowsNewProbe
         )
     }
 
@@ -188,7 +190,8 @@ public struct MirageReceiverHealthController: Sendable {
         snapshot: MirageClientMetricsSnapshot?,
         currentBitrateBps: Int,
         ceilingBps: Int,
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
+        allowsNewProbe: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0 else {
             reset()
@@ -240,7 +243,8 @@ public struct MirageReceiverHealthController: Sendable {
                     now: now
                 )
             }
-            if let probeTargetBitrate = probeTargetBitrate(
+            if allowsNewProbe,
+               let probeTargetBitrate = probeTargetBitrate(
                 sample: sample,
                 currentBitrateBps: currentBitrateBps,
                 ceilingBps: ceilingBps,
@@ -269,6 +273,7 @@ public struct MirageReceiverHealthController: Sendable {
                 lastTransitionAt = now
             }
             if state == .stable,
+               allowsNewProbe,
                let probeTargetBitrate = probeTargetBitrate(
                    sample: sample,
                    currentBitrateBps: currentBitrateBps,
