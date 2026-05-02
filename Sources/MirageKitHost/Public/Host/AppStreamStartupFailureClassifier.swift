@@ -49,6 +49,7 @@ enum AppStreamStartupFailureClassifier {
             case .alreadyAdvertising,
                  .notAdvertising,
                  .connectionFailed,
+                 .connectionRejected,
                  .authenticationFailed,
                  .streamNotFound,
                  .encodingError,

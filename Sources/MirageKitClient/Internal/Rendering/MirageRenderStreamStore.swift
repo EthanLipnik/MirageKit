@@ -35,6 +35,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let displayLayerNotReadyCount: UInt64
+        let presentationStallCount: UInt64
+        let worstPresentationGapMs: Double
+        let frameIntervalP95Ms: Double
+        let frameIntervalP99Ms: Double
         let decodeHealthy: Bool
         let severeDecodeUnderrun: Bool
         let targetFPS: Int
@@ -71,14 +75,20 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var submittedSampleStartIndex: Int = 0
         var uniqueSubmittedSamples: [CFAbsoluteTime] = []
         var uniqueSubmittedSampleStartIndex: Int = 0
+        var frameIntervalSamples: [(time: CFAbsoluteTime, intervalMs: Double)] = []
+        var frameIntervalSampleStartIndex: Int = 0
 
         var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
         var displayLayerNotReadyCountSinceLastSnapshot: UInt64 = 0
+        var presentationStallCountSinceLastSnapshot: UInt64 = 0
+        var worstPresentationGapMsSinceLastSnapshot: Double = 0
     }
 
     private let stateLock = NSLock()
     private var streams: [StreamID: StreamState] = [:]
     private let sampleWindowSeconds: CFAbsoluteTime = 1.0
+    private let smoothnessWindowSeconds: CFAbsoluteTime = 30.0
+    private let presentationStallThresholdMs: Double = 500
 
     private init() {}
 
@@ -188,6 +198,24 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             return
         }
 
+        let previousSubmittedTime = state.lastSubmittedTime
+        if previousSubmittedTime > 0 {
+            let intervalMs = max(0, now - previousSubmittedTime) * 1000
+            appendFrameIntervalSampleLocked(
+                time: now,
+                intervalMs: intervalMs,
+                samples: &state.frameIntervalSamples,
+                startIndex: &state.frameIntervalSampleStartIndex
+            )
+            if intervalMs >= presentationStallThresholdMs {
+                state.presentationStallCountSinceLastSnapshot &+= 1
+                state.worstPresentationGapMsSinceLastSnapshot = max(
+                    state.worstPresentationGapMsSinceLastSnapshot,
+                    intervalMs
+                )
+            }
+        }
+
         state.lastSubmittedSequence = sequence
         state.lastSubmittedTime = now
         state.lastSubmittedMappedPresentationTime = mappedPresentationTime
@@ -234,6 +262,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
                 displayLayerNotReadyCount: 0,
+                presentationStallCount: 0,
+                worstPresentationGapMs: 0,
+                frameIntervalP95Ms: 0,
+                frameIntervalP99Ms: 0,
                 decodeHealthy: true,
                 severeDecodeUnderrun: false,
                 targetFPS: 60
@@ -248,6 +280,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             samples: &state.uniqueSubmittedSamples,
             startIndex: &state.uniqueSubmittedSampleStartIndex
         )
+        trimFrameIntervalSamplesLocked(
+            now: now,
+            samples: &state.frameIntervalSamples,
+            startIndex: &state.frameIntervalSampleStartIndex
+        )
 
         let decodeFPS = Double(state.decodeSamples.count - state.decodeSampleStartIndex)
         let submittedFPS = Double(state.submittedSamples.count - state.submittedSampleStartIndex)
@@ -256,8 +293,15 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let displayLayerNotReadyCount = state.displayLayerNotReadyCountSinceLastSnapshot
+        let presentationStallCount = state.presentationStallCountSinceLastSnapshot
+        let worstPresentationGapMs = state.worstPresentationGapMsSinceLastSnapshot
+        let intervalSamples = Array(state.frameIntervalSamples[state.frameIntervalSampleStartIndex...].map(\.intervalMs))
+        let frameIntervalP95Ms = percentile(intervalSamples, percentile: 0.95)
+        let frameIntervalP99Ms = percentile(intervalSamples, percentile: 0.99)
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
+        state.presentationStallCountSinceLastSnapshot = 0
+        state.worstPresentationGapMsSinceLastSnapshot = 0
 
         let targetFPS = max(1, state.targetFPS)
         let decodeRatio = decodeFPS / Double(targetFPS)
@@ -273,6 +317,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             pendingFrameAgeMs: pendingFrameAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             displayLayerNotReadyCount: displayLayerNotReadyCount,
+            presentationStallCount: presentationStallCount,
+            worstPresentationGapMs: worstPresentationGapMs,
+            frameIntervalP95Ms: frameIntervalP95Ms,
+            frameIntervalP99Ms: frameIntervalP99Ms,
             decodeHealthy: decodeHealthy,
             severeDecodeUnderrun: severeDecodeUnderrun,
             targetFPS: targetFPS
@@ -325,8 +373,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.submittedSampleStartIndex = 0
         state.uniqueSubmittedSamples.removeAll(keepingCapacity: false)
         state.uniqueSubmittedSampleStartIndex = 0
+        state.frameIntervalSamples.removeAll(keepingCapacity: false)
+        state.frameIntervalSampleStartIndex = 0
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
+        state.presentationStallCountSinceLastSnapshot = 0
+        state.worstPresentationGapMsSinceLastSnapshot = 0
         state.listeners = state.listeners.filter { _, listener in
             listener.owner.value != nil
         }
@@ -401,6 +453,39 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             samples.removeFirst(startIndex)
             startIndex = 0
         }
+    }
+
+    private func appendFrameIntervalSampleLocked(
+        time: CFAbsoluteTime,
+        intervalMs: Double,
+        samples: inout [(time: CFAbsoluteTime, intervalMs: Double)],
+        startIndex: inout Int
+    ) {
+        samples.append((time: time, intervalMs: intervalMs))
+        trimFrameIntervalSamplesLocked(now: time, samples: &samples, startIndex: &startIndex)
+    }
+
+    private func trimFrameIntervalSamplesLocked(
+        now: CFAbsoluteTime,
+        samples: inout [(time: CFAbsoluteTime, intervalMs: Double)],
+        startIndex: inout Int
+    ) {
+        let cutoff = now - smoothnessWindowSeconds
+        while startIndex < samples.count, samples[startIndex].time < cutoff {
+            startIndex += 1
+        }
+        if startIndex > 256 {
+            samples.removeFirst(startIndex)
+            startIndex = 0
+        }
+    }
+
+    private func percentile(_ values: [Double], percentile: Double) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let clampedPercentile = min(max(percentile, 0), 1)
+        let index = Int((Double(sorted.count - 1) * clampedPercentile).rounded(.up))
+        return sorted[min(max(index, 0), sorted.count - 1)]
     }
 
     private func pendingFrameAgeMsLocked(state: StreamState, now: CFAbsoluteTime) -> Double {

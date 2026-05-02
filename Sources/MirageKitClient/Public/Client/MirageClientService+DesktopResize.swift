@@ -201,9 +201,14 @@ extension MirageClientService {
         }
     }
 
-    func beginPostResizeTransition(streamID: StreamID) {
+    func beginPostResizeTransition(
+        streamID: StreamID,
+        scheduleTimeout: Bool = true
+    ) {
         sessionStore.beginPostResizeTransition(for: streamID)
-        schedulePostResizeTransitionTimeout(streamID: streamID)
+        if scheduleTimeout {
+            schedulePostResizeTransitionTimeoutIfNeeded(streamID: streamID)
+        }
     }
 
     func handlePostResizeFrameDecoded(streamID: StreamID) {
@@ -218,7 +223,12 @@ extension MirageClientService {
         finishPostResizeTransitionWait(streamID: streamID, reason: "presented-frame")
     }
 
-    private func schedulePostResizeTransitionTimeout(streamID: StreamID) {
+    func schedulePostResizeTransitionTimeoutIfNeeded(streamID: StreamID) {
+        guard sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else {
+            postResizeTransitionTimeoutTasks[streamID]?.cancel()
+            postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
+            return
+        }
         postResizeTransitionTimeoutTasks[streamID]?.cancel()
         postResizeTransitionTimeoutTasks[streamID] = Task { @MainActor [weak self] in
             do {

@@ -11,6 +11,7 @@ import SwiftUI
 
 public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public let streamID: StreamID
+    public let mediaStreamID: StreamID
 
     /// Callback for sending input events to the host
     public var onInputEvent: ((MirageInputEvent) -> Void)?
@@ -77,6 +78,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
     public init(
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
@@ -100,6 +102,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         onActionTriggered: ((MirageAction) -> Void)? = nil
     ) {
         self.streamID = streamID
+        self.mediaStreamID = mediaStreamID ?? streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
         self.onContainerSizeChanged = onContainerSizeChanged
@@ -154,7 +157,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         sampleBufferView.maxDrawableSize = maxDrawableSize
         sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize
         sampleBufferView.streamPresentationTier = presentationTier
-        sampleBufferView.streamID = streamID
+        sampleBufferView.streamID = mediaStreamID
         wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
 
         wrapper.cursorStore = cursorStore
@@ -206,7 +209,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         context.coordinator.onInputEvent = onInputEvent
         context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
 
-        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamID = streamID }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamID = mediaStreamID }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.maxDrawableSize = maxDrawableSize }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamPresentationTier = presentationTier }

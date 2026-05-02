@@ -730,14 +730,19 @@ extension StreamController {
         if hasPresentedFirstFrame {
             syncPresentationProgressFromFrameStore(now: now)
             guard lastPresentedProgressTime > 0 else { return false }
+            let lastPacketTime = reassembler.latestPacketReceivedTime()
+            let hasRecentVideoPackets = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
+
+            if hasRecentVideoPackets {
+                return true
+            }
+
             let stalledPresentation = now - lastPresentedProgressTime >= Self.freezeTimeout
             guard stalledPresentation else { return false }
 
             if keyframeStarved { return true }
 
-            let lastPacketTime = reassembler.latestPacketReceivedTime()
-            let hasRecentVideoPackets = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
-            return hasRecentVideoPackets
+            return false
         }
 
         guard awaitingFirstPresentedFrame, firstPresentedFrameWaitStartTime > 0 else { return false }

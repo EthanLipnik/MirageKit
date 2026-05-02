@@ -14,6 +14,7 @@ import SwiftUI
 
 public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public let streamID: StreamID
+    public let mediaStreamID: StreamID
 
     /// Callback for sending input events to the host
     public var onInputEvent: ((MirageInputEvent) -> Void)?
@@ -131,6 +132,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 
     public init(
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
@@ -171,6 +173,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         ignoresSafeArea: Bool = true
     ) {
         self.streamID = streamID
+        self.mediaStreamID = mediaStreamID ?? streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
         self.onContainerSizeChanged = onContainerSizeChanged
@@ -249,6 +252,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         )
         controller.updateState(
             streamID: streamID,
+            mediaStreamID: mediaStreamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
 
@@ -313,6 +317,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 
         uiViewController.updateState(
             streamID: streamID,
+            mediaStreamID: mediaStreamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
 
@@ -446,6 +451,7 @@ public final class MirageStreamViewController: UIViewController {
 
     func updateState(
         streamID: StreamID,
+        mediaStreamID: StreamID,
         directTouchInputMode: MirageDirectTouchInputMode,
         softwareKeyboardVisible: Bool,
         pencilGestureConfiguration: MiragePencilGestureConfiguration,
@@ -470,9 +476,9 @@ public final class MirageStreamViewController: UIViewController {
         prefersLocalAspectFitPresentation: Bool,
         ignoresSafeArea: Bool
     ) {
-        // Set stream ID first so cursor router registration is ready
-        // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
+        // Establish media and logical stream identities before cursor stores refresh.
         currentStreamID = streamID
+        captureView.mediaStreamID = mediaStreamID
         captureView.streamID = streamID
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible

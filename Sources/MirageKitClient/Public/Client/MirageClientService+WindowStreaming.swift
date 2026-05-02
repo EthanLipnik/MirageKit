@@ -223,6 +223,10 @@ public extension MirageClientService {
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
+                    presentationStallCount: metrics.presentationStallCount,
+                    worstPresentationGapMs: metrics.worstPresentationGapMs,
+                    frameIntervalP95Ms: metrics.frameIntervalP95Ms,
+                    frameIntervalP99Ms: metrics.frameIntervalP99Ms,
                     decodeHealthy: metrics.decodeHealthy
                 )
                 metricsStore.updateClientDecoderTelemetry(

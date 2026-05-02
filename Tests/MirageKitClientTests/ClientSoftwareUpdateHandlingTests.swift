@@ -40,6 +40,46 @@ struct ClientSoftwareUpdateHandlingTests {
     }
 
     @MainActor
+    @Test("Protocol mismatch rejection maps to terminal connection rejection")
+    func protocolMismatchRejectionMapsToTerminalConnectionRejection() {
+        let service = MirageClientService()
+        let response = MirageSessionBootstrapResponse(
+            accepted: false,
+            hostID: UUID(),
+            hostName: "Host",
+            selectedFeatures: [],
+            mediaEncryptionEnabled: false,
+            udpRegistrationToken: Data(),
+            rejectionReason: .protocolVersionMismatch,
+            protocolMismatchHostVersion: 3,
+            protocolMismatchClientVersion: 4,
+            protocolMismatchUpdateTriggerAccepted: true,
+            protocolMismatchUpdateTriggerMessage: "Update signal sent."
+        )
+
+        let rejection = service.connectionRejection(from: response)
+
+        #expect(rejection.reason == .protocolVersionMismatch)
+        #expect(rejection.isTerminal)
+        #expect(rejection.hostProtocolVersion == 3)
+        #expect(rejection.clientProtocolVersion == 4)
+        #expect(rejection.hostUpdateTriggerAccepted == true)
+        #expect(rejection.hostUpdateTriggerMessage == "Update signal sent.")
+        #expect(rejection.userFacingMessage == "Protocol mismatch (host 3, client 4).")
+    }
+
+    @Test("Malformed bootstrap rejection is terminal and user-facing")
+    func malformedBootstrapRejectionIsTerminalAndUserFacing() {
+        let rejection = MirageConnectionRejection(
+            reason: .malformedBootstrap,
+            hostName: "Host"
+        )
+
+        #expect(rejection.isTerminal)
+        #expect(rejection.userFacingMessage == "Host: The host received an incompatible Mirage handshake. Update Mirage on both devices.")
+    }
+
+    @MainActor
     @Test("Host update bootstrap rejection maps to update-in-progress message")
     func hostUpdateBootstrapRejectionMapsToUpdateInProgressMessage() {
         let service = MirageClientService()

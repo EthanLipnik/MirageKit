@@ -7,6 +7,7 @@
 
 import CoreMedia
 import CoreVideo
+import Foundation
 @testable import MirageKit
 import Testing
 
@@ -439,13 +440,15 @@ struct MirageKitTests {
         let request = SelectAppMessage(
             bundleIdentifier: "com.apple.mail",
             targetFrameRate: 60,
-            maxConcurrentVisibleWindows: 8
+            maxConcurrentVisibleWindows: 8,
+            bitrateAllocationPolicy: .splitEvenly
         )
         let envelope = try ControlMessage(type: .selectApp, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.bundleIdentifier == "com.apple.mail")
         #expect(decoded.maxConcurrentVisibleWindows == 8)
+        #expect(decoded.bitrateAllocationPolicy == .splitEvenly)
     }
 
     @Test("App list request supports icon reset and priority ordering")
@@ -507,6 +510,20 @@ struct MirageKitTests {
 
     @Test("App window inventory and swap messages serialize")
     func appWindowInventoryAndSwapSerialization() throws {
+        let atlasRegion = MirageAppAtlasRegion(
+            windowID: 9001,
+            x: 32,
+            y: 48,
+            width: 1440,
+            height: 900,
+            zIndex: 1
+        )
+        let atlasLayout = MirageAppAtlasLayout(
+            mediaStreamID: 41,
+            width: 2048,
+            height: 1536,
+            regions: [atlasRegion]
+        )
         let metadata = AppWindowInventoryMessage.WindowMetadata(
             windowID: 9001,
             title: "Inbox",
@@ -518,7 +535,7 @@ struct MirageKitTests {
             bundleIdentifier: "com.apple.mail",
             maxVisibleSlots: 8,
             slots: [
-                .init(slotIndex: 0, streamID: 41, window: metadata),
+                .init(slotIndex: 0, streamID: 141, mediaStreamID: 41, window: metadata, atlasRegion: atlasRegion),
             ],
             hiddenWindows: [
                 .init(
@@ -528,7 +545,8 @@ struct MirageKitTests {
                     height: 860,
                     isResizable: true
                 ),
-            ]
+            ],
+            atlasLayouts: [atlasLayout]
         )
         let inventoryEnvelope = try ControlMessage(type: .appWindowInventory, content: inventory)
         let (decodedInventoryEnvelope, _) = try requireParsedControlMessage(from: inventoryEnvelope.serialize())
@@ -536,32 +554,78 @@ struct MirageKitTests {
         #expect(decodedInventory.bundleIdentifier == "com.apple.mail")
         #expect(decodedInventory.maxVisibleSlots == 8)
         #expect(decodedInventory.slots.count == 1)
+        #expect(decodedInventory.slots[0].mediaStreamID == 41)
+        #expect(decodedInventory.slots[0].streamID == 141)
+        #expect(decodedInventory.slots[0].window.windowID == 9001)
+        #expect(decodedInventory.slots[0].atlasRegion == atlasRegion)
         #expect(decodedInventory.hiddenWindows.count == 1)
+        #expect(decodedInventory.atlasLayouts == [atlasLayout])
 
         let swapRequest = AppWindowSwapRequestMessage(
             bundleIdentifier: "com.apple.mail",
-            targetSlotStreamID: 41,
+            targetSlotStreamID: 141,
             targetWindowID: 9002
         )
         let requestEnvelope = try ControlMessage(type: .appWindowSwapRequest, content: swapRequest)
         let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
         let decodedSwapRequest = try decodedRequestEnvelope.decode(AppWindowSwapRequestMessage.self)
-        #expect(decodedSwapRequest.targetSlotStreamID == 41)
+        #expect(decodedSwapRequest.targetSlotStreamID == 141)
         #expect(decodedSwapRequest.targetWindowID == 9002)
 
+        let swappedRegion = MirageAppAtlasRegion(
+            windowID: 9002,
+            x: 32,
+            y: 48,
+            width: 1280,
+            height: 860,
+            zIndex: 1
+        )
+        let swappedLayout = MirageAppAtlasLayout(
+            mediaStreamID: 41,
+            width: 2048,
+            height: 1536,
+            regions: [swappedRegion]
+        )
         let swapResult = AppWindowSwapResultMessage(
             bundleIdentifier: "com.apple.mail",
-            targetSlotStreamID: 41,
+            targetSlotStreamID: 141,
+            mediaStreamID: 41,
             windowID: 9002,
             success: true,
-            reason: nil
+            reason: nil,
+            atlasRegion: swappedRegion,
+            atlasLayouts: [swappedLayout]
         )
         let resultEnvelope = try ControlMessage(type: .appWindowSwapResult, content: swapResult)
         let (decodedResultEnvelope, _) = try requireParsedControlMessage(from: resultEnvelope.serialize())
         let decodedSwapResult = try decodedResultEnvelope.decode(AppWindowSwapResultMessage.self)
         #expect(decodedSwapResult.success == true)
-        #expect(decodedSwapResult.targetSlotStreamID == 41)
+        #expect(decodedSwapResult.targetSlotStreamID == 141)
+        #expect(decodedSwapResult.mediaStreamID == 41)
         #expect(decodedSwapResult.windowID == 9002)
+        #expect(decodedSwapResult.atlasRegion == swappedRegion)
+        #expect(decodedSwapResult.atlasLayouts == [swappedLayout])
+    }
+
+    @Test("App atlas payload keeps logical and media stream keys distinct")
+    func appAtlasPayloadKeepsLogicalAndMediaStreamKeysDistinct() throws {
+        let window = AppStreamStartedMessage.AppStreamWindow(
+            streamID: 141,
+            mediaStreamID: 41,
+            windowID: 9001,
+            title: "Inbox",
+            width: 1440,
+            height: 900,
+            isResizable: true
+        )
+
+        let encoded = try JSONEncoder().encode(window)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+
+        #expect((object["streamID"] as? NSNumber)?.uint64Value == 141)
+        #expect((object["mediaStreamID"] as? NSNumber)?.uint64Value == 41)
     }
 
     @Test("Host software update control message serialization")
@@ -947,6 +1011,71 @@ struct MirageKitTests {
             hiddenWindows: []
         )
         #expect(emptyInventory.removingWindow(windowID: 12615) == nil)
+    }
+
+    @Test("App window inventory removal prunes atlas regions")
+    func appWindowInventoryRemovalPrunesAtlasRegions() {
+        let remainingRegion = MirageAppAtlasRegion(
+            windowID: 12616,
+            x: 0,
+            y: 0,
+            width: 1280,
+            height: 720
+        )
+        let removedRegion = MirageAppAtlasRegion(
+            windowID: 12615,
+            x: 1280,
+            y: 0,
+            width: 1280,
+            height: 720
+        )
+        let inventory = AppWindowInventoryMessage(
+            bundleIdentifier: "com.apple.dt.Xcode",
+            maxVisibleSlots: 2,
+            slots: [
+                .init(
+                    slotIndex: 0,
+                    streamID: 27,
+                    mediaStreamID: 99,
+                    window: .init(
+                        windowID: 12615,
+                        title: "Editor",
+                        width: 1280,
+                        height: 720,
+                        isResizable: true
+                    ),
+                    atlasRegion: removedRegion
+                ),
+                .init(
+                    slotIndex: 1,
+                    streamID: 28,
+                    mediaStreamID: 99,
+                    window: .init(
+                        windowID: 12616,
+                        title: "Canvas",
+                        width: 1280,
+                        height: 720,
+                        isResizable: true
+                    ),
+                    atlasRegion: remainingRegion
+                ),
+            ],
+            hiddenWindows: [],
+            atlasLayouts: [
+                MirageAppAtlasLayout(
+                    mediaStreamID: 99,
+                    layoutEpoch: 4,
+                    width: 2560,
+                    height: 720,
+                    regions: [remainingRegion, removedRegion]
+                ),
+            ]
+        )
+
+        let updated = inventory.removingWindow(windowID: 12615)
+
+        #expect(updated?.slots.map(\.streamID) == [28])
+        #expect(updated?.atlasLayouts?.first?.regions == [remainingRegion])
     }
 
     @Test("Window stream failed payload serialization")

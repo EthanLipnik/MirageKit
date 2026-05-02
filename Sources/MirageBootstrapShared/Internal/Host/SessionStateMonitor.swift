@@ -333,12 +333,6 @@ package actor SessionStateMonitor {
             return true
         }
 
-        if let allWindows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
-           containsLoginWindow(in: allWindows) {
-            MirageLogger.log(.host, "Login window detected in off-screen window list")
-            return true
-        }
-
         return false
     }
 

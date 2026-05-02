@@ -14,6 +14,8 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    private static let hostSupportLogArchiveProviderTimeout: Duration = .seconds(8)
+
     func handleHostSupportLogArchiveRequest(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -46,7 +48,10 @@ extension MirageHostService {
                 return
             }
 
-            let archiveURL = try await hostSupportLogArchiveProvider()
+            let archiveURL = try await exportHostSupportLogArchive(
+                using: hostSupportLogArchiveProvider,
+                timeout: Self.hostSupportLogArchiveProviderTimeout
+            )
             let response = HostSupportLogArchiveMessage(
                 requestID: request.requestID,
                 fileName: archiveURL.lastPathComponent
@@ -101,6 +106,26 @@ extension MirageHostService {
                     sessionID: clientContext.sessionID
                 )
             }
+        }
+    }
+
+    private func exportHostSupportLogArchive(
+        using provider: @escaping @MainActor @Sendable () async throws -> URL,
+        timeout: Duration
+    ) async throws -> URL {
+        try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask {
+                try await provider()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw MirageError.protocolError("Timed out exporting host support logs")
+            }
+            guard let result = try await group.next() else {
+                throw MirageError.protocolError("Host support log export did not complete")
+            }
+            group.cancelAll()
+            return result
         }
     }
 

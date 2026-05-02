@@ -171,9 +171,14 @@ package struct SelectAppMessage: Codable {
     /// Maximum concurrent visible app windows requested by the client tier policy.
     package let maxConcurrentVisibleWindows: Int
     /// Client-requested shared bitrate allocation policy for multi-window app streaming.
-    package let bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy?
+    private let bitrateAllocationPolicyRawValue: String?
     /// Client-requested virtual display size preset for app streaming.
     package var sizePreset: MirageDisplaySizePreset?
+
+    package var bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? {
+        guard let bitrateAllocationPolicyRawValue else { return nil }
+        return MirageAppStreamBitrateAllocationPolicy(rawValue: bitrateAllocationPolicyRawValue)
+    }
 
     enum CodingKeys: String, CodingKey {
         case startupRequestID
@@ -202,7 +207,7 @@ package struct SelectAppMessage: Codable {
         case upscalingMode
         case codec
         case maxConcurrentVisibleWindows
-        case bitrateAllocationPolicy
+        case bitrateAllocationPolicyRawValue = "bitrateAllocationPolicy"
         case sizePreset
     }
 
@@ -251,7 +256,7 @@ package struct SelectAppMessage: Codable {
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
         self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
-        self.bitrateAllocationPolicy = bitrateAllocationPolicy
+        self.bitrateAllocationPolicyRawValue = bitrateAllocationPolicy?.rawValue
         self.sizePreset = sizePreset
         self.mediaMaxPacketSize = mediaMaxPacketSize
     }
@@ -269,9 +274,12 @@ public struct AppStreamStartedMessage: Codable {
     public let appName: String
     /// Initial windows that are now streaming
     public let windows: [AppStreamWindow]
+    /// Optional atlas layouts for physical media streams carrying logical app-window regions.
+    public let atlasLayouts: [MirageAppAtlasLayout]?
 
     public struct AppStreamWindow: Codable {
         public let streamID: StreamID
+        public let mediaStreamID: StreamID
         public let windowID: WindowID
         public let title: String?
         /// Calibrated stream viewport width in points (derived from dedicated virtual-display visible frame).
@@ -279,21 +287,26 @@ public struct AppStreamStartedMessage: Codable {
         /// Calibrated stream viewport height in points (derived from dedicated virtual-display visible frame).
         public let height: Int
         public let isResizable: Bool
+        public let atlasRegion: MirageAppAtlasRegion?
 
         package init(
             streamID: StreamID,
+            mediaStreamID: StreamID? = nil,
             windowID: WindowID,
             title: String?,
             width: Int,
             height: Int,
-            isResizable: Bool
+            isResizable: Bool,
+            atlasRegion: MirageAppAtlasRegion? = nil
         ) {
             self.streamID = streamID
+            self.mediaStreamID = mediaStreamID ?? streamID
             self.windowID = windowID
             self.title = title
             self.width = width
             self.height = height
             self.isResizable = isResizable
+            self.atlasRegion = atlasRegion
         }
     }
 
@@ -302,13 +315,15 @@ public struct AppStreamStartedMessage: Codable {
         startupRequestID: UUID?,
         bundleIdentifier: String,
         appName: String,
-        windows: [AppStreamWindow]
+        windows: [AppStreamWindow],
+        atlasLayouts: [MirageAppAtlasLayout]? = nil
     ) {
         self.appSessionID = appSessionID
         self.startupRequestID = startupRequestID
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
         self.windows = windows
+        self.atlasLayouts = atlasLayouts
     }
 }
 
@@ -338,12 +353,22 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
     public struct Slot: Codable, Sendable, Equatable {
         public let slotIndex: Int
         public let streamID: StreamID
+        public let mediaStreamID: StreamID
         public let window: WindowMetadata
+        public let atlasRegion: MirageAppAtlasRegion?
 
-        package init(slotIndex: Int, streamID: StreamID, window: WindowMetadata) {
+        package init(
+            slotIndex: Int,
+            streamID: StreamID,
+            mediaStreamID: StreamID? = nil,
+            window: WindowMetadata,
+            atlasRegion: MirageAppAtlasRegion? = nil
+        ) {
             self.slotIndex = slotIndex
             self.streamID = streamID
+            self.mediaStreamID = mediaStreamID ?? streamID
             self.window = window
+            self.atlasRegion = atlasRegion
         }
     }
 
@@ -352,19 +377,22 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
     public let maxVisibleSlots: Int
     public let slots: [Slot]
     public let hiddenWindows: [WindowMetadata]
+    public let atlasLayouts: [MirageAppAtlasLayout]?
 
     package init(
         bundleIdentifier: String,
         appSessionID: UUID? = nil,
         maxVisibleSlots: Int,
         slots: [Slot],
-        hiddenWindows: [WindowMetadata]
+        hiddenWindows: [WindowMetadata],
+        atlasLayouts: [MirageAppAtlasLayout]? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.appSessionID = appSessionID
         self.maxVisibleSlots = max(1, maxVisibleSlots)
         self.slots = slots
         self.hiddenWindows = hiddenWindows
+        self.atlasLayouts = atlasLayouts
     }
 
     public func removingWindow(windowID: WindowID) -> AppWindowInventoryMessage? {
@@ -375,12 +403,25 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
             return nil
         }
 
+        let remainingAtlasLayouts = atlasLayouts?.compactMap { layout -> MirageAppAtlasLayout? in
+            let remainingRegions = layout.regions.filter { $0.windowID != windowID }
+            guard !remainingRegions.isEmpty else { return nil }
+            return MirageAppAtlasLayout(
+                mediaStreamID: layout.mediaStreamID,
+                layoutEpoch: layout.layoutEpoch,
+                width: layout.width,
+                height: layout.height,
+                regions: remainingRegions
+            )
+        }
+
         return AppWindowInventoryMessage(
             bundleIdentifier: bundleIdentifier,
             appSessionID: appSessionID,
             maxVisibleSlots: maxVisibleSlots,
             slots: remainingSlots,
-            hiddenWindows: remainingHiddenWindows
+            hiddenWindows: remainingHiddenWindows,
+            atlasLayouts: remainingAtlasLayouts
         )
     }
 }
@@ -404,22 +445,31 @@ package struct AppWindowSwapRequestMessage: Codable {
 public struct AppWindowSwapResultMessage: Codable, Sendable {
     public let bundleIdentifier: String
     public let targetSlotStreamID: StreamID
+    public let mediaStreamID: StreamID
     public let windowID: WindowID
     public let success: Bool
     public let reason: String?
+    public let atlasRegion: MirageAppAtlasRegion?
+    public let atlasLayouts: [MirageAppAtlasLayout]?
 
     package init(
         bundleIdentifier: String,
         targetSlotStreamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         windowID: WindowID,
         success: Bool,
-        reason: String?
+        reason: String?,
+        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasLayouts: [MirageAppAtlasLayout]? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.targetSlotStreamID = targetSlotStreamID
+        self.mediaStreamID = mediaStreamID ?? targetSlotStreamID
         self.windowID = windowID
         self.success = success
         self.reason = reason
+        self.atlasRegion = atlasRegion
+        self.atlasLayouts = atlasLayouts
     }
 }
 
@@ -506,30 +556,39 @@ public struct WindowAddedToStreamMessage: Codable, Sendable {
     public let appSessionID: UUID?
     /// Details of the new window
     public let streamID: StreamID
+    public let mediaStreamID: StreamID
     public let windowID: WindowID
     public let title: String?
     public let width: Int
     public let height: Int
     public let isResizable: Bool
+    public let atlasRegion: MirageAppAtlasRegion?
+    public let atlasLayouts: [MirageAppAtlasLayout]?
 
     package init(
         bundleIdentifier: String,
         appSessionID: UUID? = nil,
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         windowID: WindowID,
         title: String?,
         width: Int,
         height: Int,
-        isResizable: Bool
+        isResizable: Bool,
+        atlasRegion: MirageAppAtlasRegion? = nil,
+        atlasLayouts: [MirageAppAtlasLayout]? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.appSessionID = appSessionID
         self.streamID = streamID
+        self.mediaStreamID = mediaStreamID ?? streamID
         self.windowID = windowID
         self.title = title
         self.width = width
         self.height = height
         self.isResizable = isResizable
+        self.atlasRegion = atlasRegion
+        self.atlasLayouts = atlasLayouts
     }
 }
 

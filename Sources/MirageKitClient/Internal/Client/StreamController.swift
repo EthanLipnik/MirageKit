@@ -152,6 +152,10 @@ actor StreamController {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let displayLayerNotReadyCount: UInt64
+        let presentationStallCount: UInt64
+        let worstPresentationGapMs: Double
+        let frameIntervalP95Ms: Double
+        let frameIntervalP99Ms: Double
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
         let decoderOutputPixelFormat: String?
@@ -833,6 +837,8 @@ actor StreamController {
                 components.append("\(label).protocol{\(sanitizedDiagnosticDescription(message))}")
             case let .captureSetupFailed(message):
                 components.append("\(label).captureSetup{\(sanitizedDiagnosticDescription(message))}")
+            case let .connectionRejected(rejection):
+                components.append("\(label).rejection{\(rejection.reason.rawValue)}")
             case .alreadyAdvertising,
                  .notAdvertising,
                  .authenticationFailed,
@@ -1099,6 +1105,10 @@ actor StreamController {
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
+            presentationStallCount: renderTelemetry.presentationStallCount,
+            worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
+            frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
+            frameIntervalP99Ms: renderTelemetry.frameIntervalP99Ms,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
             decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),

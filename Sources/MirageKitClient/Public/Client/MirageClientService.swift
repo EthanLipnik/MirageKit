@@ -468,6 +468,9 @@ public final class MirageClientService {
     /// Callback when a protocol mismatch rejection includes deterministic mismatch metadata.
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 
+    /// Callback when Mirage temporarily lowers stream workload to recover from a receiver-side freeze.
+    public var onEmergencyReceiverFallback: ((String) -> Void)?
+
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
 
@@ -618,6 +621,7 @@ public final class MirageClientService {
     var transportRefreshRequests: UInt64 = 0
     var stallEvents: UInt64 = 0
     var activeJitterHoldMs: Int = 0
+    var emergencyReceiverFallbackLastAppliedTimeByStream: [StreamID: CFAbsoluteTime] = [:]
     var lastAwdlTelemetryLogTime: CFAbsoluteTime = 0
     var registrationRefreshTask: Task<Void, Never>?
     let registrationRefreshIntervalMs: UInt64 = 750

@@ -163,7 +163,10 @@ extension MirageClientService {
         }
     }
 
-    public func connect(to host: LoomPeer) async throws {
+    public func connect(
+        to host: LoomPeer,
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
+    ) async throws {
         guard connectionState.canConnect else {
             throw MirageError.protocolError("Already connected or connecting")
         }
@@ -191,7 +194,8 @@ extension MirageClientService {
             let bootstrappedSession = try await connectBootstrappedControlSession(
                 to: host,
                 hello: helloRequest,
-                attemptID: attemptID
+                attemptID: attemptID,
+                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
             )
             let session = bootstrappedSession.session
             let controlChannel = bootstrappedSession.controlChannel
@@ -478,7 +482,8 @@ extension MirageClientService {
     private func connectBootstrappedControlSession(
         to host: LoomPeer,
         hello: LoomSessionHelloRequest,
-        attemptID: UUID
+        attemptID: UUID,
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
     ) async throws -> BootstrappedControlSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
@@ -505,7 +510,11 @@ extension MirageClientService {
                 openedChannel = controlChannel
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
-                try await performBootstrap(over: controlChannel, provisionalHost: host)
+                try await performBootstrap(
+                    over: controlChannel,
+                    provisionalHost: host,
+                    requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+                )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
                 return BootstrappedControlSession(session: session, controlChannel: controlChannel)
@@ -514,6 +523,12 @@ extension MirageClientService {
                     await openedChannel.cancel()
                 } else if let openedSession {
                     await openedSession.cancel()
+                }
+
+                if let rejectionError = error as? MirageError,
+                   case let .connectionRejected(rejection) = rejectionError,
+                   rejection.isTerminal {
+                    throw rejectionError
                 }
 
                 guard let classification = Self.classifyBootstrappedControlSessionFailure(
@@ -563,7 +578,13 @@ extension MirageClientService {
                     MirageLogger.client(
                         "Bootstrap failure diagnosed as local-network mismatch: \(failureReason)"
                     )
-                    throw MirageError.protocolError(networkMismatchReason)
+                    throw MirageError.connectionRejected(
+                        MirageConnectionRejection(
+                            reason: .localNetworkBlocked,
+                            hostName: host.name,
+                            recoveryHint: networkMismatchReason
+                        )
+                    )
                 }
 
                 throw MirageError.protocolError(failureReason)

@@ -120,12 +120,17 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             )
         }()
 
+        let trimmedControlAuthSecret = controlAuthSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+
         return LoomBootstrapMetadata(
             enabled: enabled,
             supportsPreloginDaemon: preloginDaemonReady,
             endpoints: endpoints,
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),
+            controlAuthSecret: preloginDaemonReady && !trimmedControlAuthSecret.isEmpty ?
+                trimmedControlAuthSecret :
+                nil,
             sshHostKeyFingerprints: sshHostKeyFingerprints
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },

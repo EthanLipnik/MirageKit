@@ -134,7 +134,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return false
         }
         displayLayerNotReadyStartTime = 0
-        guard let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID) else {
+        guard let frame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID) else {
             return false
         }
 

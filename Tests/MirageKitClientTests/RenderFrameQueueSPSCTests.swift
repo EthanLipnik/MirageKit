@@ -161,6 +161,33 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamB)?.sequence == 1)
     }
 
+    @Test("Pending frame can be observed by multiple presenters")
+    func pendingFrameCanBeObservedByMultiplePresenters() {
+        let streamID: StreamID = 307
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        let firstPresenterFrame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: firstPresenterFrame?.sequence ?? 0,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+        let secondPresenterFrame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)
+
+        #expect(firstPresenterFrame?.sequence == 1)
+        #expect(secondPresenterFrame?.sequence == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+    }
+
     private func makePixelBuffer() -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(

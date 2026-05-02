@@ -2035,7 +2035,13 @@ extension MirageHostService {
         if sessionState != .ready {
             MirageLogger.host("Session is \(sessionState); deferring app list request until ready")
             Task { @MainActor [weak self] in
-                await self?.sendSessionState(to: clientContext)
+                guard let self else { return }
+                await refreshSessionStateIfNeeded()
+                if sessionState == .ready {
+                    sendPendingAppListRequestIfPossible()
+                    return
+                }
+                await sendSessionState(to: clientContext)
             }
             return
         }

@@ -48,6 +48,8 @@ extension MirageHostService {
             case let .protocolError(message):
                 return message == "Authenticated Loom session closed before Mirage control stream opened" ||
                     message == "Control stream closed before session bootstrap request"
+            case let .connectionRejected(rejection):
+                return rejection.reason == .malformedBootstrap
             case let .connectionFailed(underlyingError):
                 return isExpectedBootstrapConnectionClosure(underlyingError)
             default:
@@ -465,7 +467,13 @@ extension MirageHostService {
             case .needMoreData:
                 continue
             case let .invalidFrame(reason):
-                throw MirageError.protocolError("Invalid control frame: \(reason)")
+                MirageLogger.host("Rejected incompatible Mirage bootstrap frame: \(reason)")
+                throw MirageError.connectionRejected(
+                    MirageConnectionRejection(
+                        reason: .malformedBootstrap,
+                        recoveryHint: "Invalid Mirage bootstrap frame: \(reason)"
+                    )
+                )
             }
         }
 

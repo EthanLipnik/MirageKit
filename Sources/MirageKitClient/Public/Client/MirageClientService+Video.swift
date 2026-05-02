@@ -721,9 +721,57 @@ extension MirageClientService {
 
         switch adaptiveFallbackMode {
         case .disabled:
-            MirageLogger.client("Adaptive fallback skipped (mode disabled) for stream \(streamID)")
+            applyEmergencyReceiverFallback(for: streamID, at: now)
         case .adaptive:
             MirageLogger.client("Adaptive receiver-health recovery is app-owned for stream \(streamID)")
+        }
+    }
+
+    private func applyEmergencyReceiverFallback(for streamID: StreamID, at now: CFAbsoluteTime) {
+        let cooldown: CFAbsoluteTime = 20
+        if let lastApplied = emergencyReceiverFallbackLastAppliedTimeByStream[streamID],
+           now - lastApplied < cooldown {
+            MirageLogger.client("Emergency receiver fallback cooldown active for stream \(streamID)")
+            return
+        }
+
+        guard let snapshot = metricsStore.snapshot(for: streamID) else {
+            MirageLogger.client("Emergency receiver fallback skipped; no metrics for stream \(streamID)")
+            return
+        }
+
+        let currentBitrate = snapshot.hostCurrentBitrate ??
+            snapshot.hostRequestedTargetBitrate ??
+            snapshot.hostEnteredBitrate
+        let targetBitrate = currentBitrate.map { max(8_000_000, Int(Double($0) * 0.65)) }
+        let targetFrameRate: Int? = snapshot.hostTargetFrameRate > 30 ? 30 : nil
+        guard targetBitrate != nil || targetFrameRate != nil else {
+            MirageLogger.client("Emergency receiver fallback skipped; no lower workload available for stream \(streamID)")
+            return
+        }
+
+        emergencyReceiverFallbackLastAppliedTimeByStream[streamID] = now
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await sendStreamEncoderSettingsChange(
+                    streamID: streamID,
+                    bitrate: targetBitrate,
+                    targetFrameRate: targetFrameRate
+                )
+                let bitrateText = targetBitrate.map {
+                    let mbps = Double($0) / 1_000_000.0
+                    return "\(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps"
+                } ?? "current bitrate"
+                let fpsText = targetFrameRate.map { " and \($0)fps" } ?? ""
+                let message = "Mirage reduced stream workload to \(bitrateText)\(fpsText) to recover from a freeze."
+                MirageLogger.client(message)
+                onEmergencyReceiverFallback?(message)
+            } catch {
+                MirageLogger.client(
+                    "Emergency receiver fallback failed for stream \(streamID): \(error.localizedDescription)"
+                )
+            }
         }
     }
 

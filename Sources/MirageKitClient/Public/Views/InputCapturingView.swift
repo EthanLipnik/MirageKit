@@ -93,14 +93,20 @@ public class InputCapturingView: UIView {
         }
     }
 
-    /// Stream ID for direct frame-store access (iOS gesture tracking support)
-    /// Forwards to the underlying sample-buffer view
+    /// Physical media stream used for direct frame-store access.
+    public var mediaStreamID: StreamID? {
+        didSet {
+            sampleBufferView.streamID = mediaStreamID ?? streamID
+        }
+    }
+
+    /// Logical stream ID used for input, cursor routing, and recovery bookkeeping.
     public var streamID: StreamID? {
         didSet {
             if oldValue != streamID {
                 resetPointerSuppressionState(reason: "stream_rebound")
             }
-            sampleBufferView.streamID = streamID
+            sampleBufferView.streamID = mediaStreamID ?? streamID
             let previousID = registeredCursorStreamID
             if let previousID, previousID != streamID { MirageCursorUpdateRouter.shared.unregister(streamID: previousID) }
             registeredCursorStreamID = streamID

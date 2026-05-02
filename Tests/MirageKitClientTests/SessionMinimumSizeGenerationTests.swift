@@ -144,6 +144,126 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.presentationTier(for: 32) == .passiveSnapshot)
     }
 
+    @Test("Media-stream readiness propagates to logical sessions")
+    @MainActor
+    func mediaStreamReadinessPropagatesToLogicalSessions() {
+        let store = MirageClientSessionStore()
+        let mediaStreamID: StreamID = 50
+        let firstSessionID = store.createSession(
+            streamID: 51,
+            mediaStreamID: mediaStreamID,
+            window: testWindow(id: 5101),
+            hostName: "Host",
+            minSize: nil
+        )
+        let secondSessionID = store.createSession(
+            streamID: 52,
+            mediaStreamID: mediaStreamID,
+            window: testWindow(id: 5201),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.markFirstFrameDecoded(for: mediaStreamID)
+        #expect(store.session(for: firstSessionID)?.hasDecodedFrame == true)
+        #expect(store.session(for: secondSessionID)?.hasDecodedFrame == true)
+        #expect(store.session(for: firstSessionID)?.hasPresentedFrame == false)
+
+        store.markFirstFramePresented(for: mediaStreamID)
+        #expect(store.session(for: firstSessionID)?.hasPresentedFrame == true)
+        #expect(store.session(for: secondSessionID)?.hasPresentedFrame == true)
+    }
+
+    @Test("Media-stream recovery status propagates to logical sessions")
+    @MainActor
+    func mediaStreamRecoveryStatusPropagatesToLogicalSessions() {
+        let store = MirageClientSessionStore()
+        let mediaStreamID: StreamID = 60
+        let firstSessionID = store.createSession(
+            streamID: 61,
+            mediaStreamID: mediaStreamID,
+            window: testWindow(id: 6101),
+            hostName: "Host",
+            minSize: nil
+        )
+        let secondSessionID = store.createSession(
+            streamID: 62,
+            mediaStreamID: mediaStreamID,
+            window: testWindow(id: 6201),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.setClientRecoveryStatus(for: mediaStreamID, status: .hardRecovery)
+
+        #expect(store.session(for: firstSessionID)?.clientRecoveryStatus == .hardRecovery)
+        #expect(store.session(for: secondSessionID)?.clientRecoveryStatus == .hardRecovery)
+    }
+
+    @Test("Session presentation tier resolves through media stream")
+    @MainActor
+    func sessionPresentationTierResolvesThroughMediaStream() {
+        let store = MirageClientSessionStore()
+        let sessionID = store.createSession(
+            streamID: 71,
+            mediaStreamID: 70,
+            window: testWindow(id: 7101),
+            hostName: "Host",
+            minSize: nil
+        )
+        store.applyHostStreamPolicies([
+            MirageStreamPolicy(
+                streamID: 70,
+                tier: .passiveSnapshot,
+                targetFPS: 1,
+                targetBitrateBps: 1_000_000
+            ),
+        ])
+
+        let session = store.session(for: sessionID)
+        #expect(session.map { store.presentationTier(for: $0) } == .passiveSnapshot)
+        #expect(store.presentationTier(for: 71) == .activeLive)
+    }
+
+    @Test("Atlas region is stored on logical session")
+    @MainActor
+    func atlasRegionIsStoredOnLogicalSession() {
+        let store = MirageClientSessionStore()
+        let initialRegion = MirageAppAtlasRegion(
+            windowID: 8101,
+            x: 10,
+            y: 20,
+            width: 640,
+            height: 480
+        )
+        let sessionID = store.createSession(
+            streamID: 81,
+            mediaStreamID: 80,
+            window: testWindow(id: 8101),
+            hostName: "Host",
+            atlasRegion: initialRegion,
+            minSize: nil
+        )
+
+        #expect(store.session(for: sessionID)?.atlasRegion == initialRegion)
+
+        let updatedRegion = MirageAppAtlasRegion(
+            windowID: 8102,
+            x: 100,
+            y: 120,
+            width: 800,
+            height: 600
+        )
+        store.updateSessionWindowMetadata(
+            streamID: 81,
+            window: testWindow(id: 8102),
+            atlasRegion: updatedRegion
+        )
+
+        #expect(store.session(for: sessionID)?.window.id == 8102)
+        #expect(store.session(for: sessionID)?.atlasRegion == updatedRegion)
+    }
+
     @Test("Removing session clears post-resize transition state")
     @MainActor
     func removingSessionClearsPostResizeTransitionState() {

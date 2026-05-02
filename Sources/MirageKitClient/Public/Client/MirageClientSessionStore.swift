@@ -72,6 +72,18 @@ public final class MirageClientSessionStore {
         streamSessions.values.first { $0.streamID == streamID }
     }
 
+    /// Get the first session rendering from a physical media stream.
+    /// - Parameter mediaStreamID: Media stream identifier to match.
+    public func sessionByMediaStreamID(_ mediaStreamID: StreamID) -> MirageStreamSessionState? {
+        streamSessions.values.first { $0.mediaStreamID == mediaStreamID }
+    }
+
+    /// Get all sessions rendering from a physical media stream.
+    /// - Parameter mediaStreamID: Media stream identifier to match.
+    public func sessionsByMediaStreamID(_ mediaStreamID: StreamID) -> [MirageStreamSessionState] {
+        streamSessions.values.filter { $0.mediaStreamID == mediaStreamID }
+    }
+
     /// Get all active sessions.
     public var activeSessions: [MirageStreamSessionState] { Array(streamSessions.values) }
 
@@ -85,28 +97,48 @@ public final class MirageClientSessionStore {
     @discardableResult
     public func createSession(
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         window: MirageWindow,
         hostName: String,
         appSessionID: UUID? = nil,
         streamKind: MirageStreamKind = .app,
+        logicalTarget: MirageStreamLogicalTarget? = nil,
+        atlasRegion: MirageAppAtlasRegion? = nil,
         minSize: CGSize?
     ) -> StreamSessionID {
         let sessionID = StreamSessionID()
+        let resolvedMediaStreamID = mediaStreamID ?? streamID
+        let resolvedLogicalTarget = logicalTarget ?? MirageStreamLogicalTarget(
+            streamID: streamID,
+            window: window,
+            streamKind: streamKind,
+            appSessionID: appSessionID
+        )
+        let initialRecoveryStatus = pendingClientRecoveryStatusByStreamID[streamID] ??
+            pendingClientRecoveryStatusByStreamID[resolvedMediaStreamID] ??
+            streamSessions.values.first(where: { $0.mediaStreamID == resolvedMediaStreamID })?.clientRecoveryStatus ??
+            .idle
 
         let state = MirageStreamSessionState(
             id: sessionID,
             streamID: streamID,
+            mediaStreamID: resolvedMediaStreamID,
             window: window,
             hostName: hostName,
             appSessionID: appSessionID,
             streamKind: streamKind,
-            clientRecoveryStatus: pendingClientRecoveryStatusByStreamID[streamID] ?? .idle,
-            hasDecodedFrame: pendingFirstDecodedFrameStreamIDs.contains(streamID),
-            hasPresentedFrame: pendingFirstPresentedFrameStreamIDs.contains(streamID)
+            logicalTarget: resolvedLogicalTarget,
+            atlasRegion: atlasRegion,
+            clientRecoveryStatus: initialRecoveryStatus,
+            hasDecodedFrame: hasDecodedFrameState(streamID: streamID, mediaStreamID: resolvedMediaStreamID),
+            hasPresentedFrame: hasPresentedFrameState(streamID: streamID, mediaStreamID: resolvedMediaStreamID)
         )
         pendingFirstDecodedFrameStreamIDs.remove(streamID)
+        pendingFirstDecodedFrameStreamIDs.remove(resolvedMediaStreamID)
         pendingFirstPresentedFrameStreamIDs.remove(streamID)
+        pendingFirstPresentedFrameStreamIDs.remove(resolvedMediaStreamID)
         pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
+        pendingClientRecoveryStatusByStreamID.removeValue(forKey: resolvedMediaStreamID)
 
         if let minSize {
             state.minWidth = CGFloat(minSize.width)
@@ -121,10 +153,17 @@ public final class MirageClientSessionStore {
     /// - Parameter sessionID: The session identifier to remove.
     public func removeSession(_ sessionID: StreamSessionID) {
         if focusedSessionID == sessionID { focusedSessionID = nil }
-        if let streamID = streamSessions[sessionID]?.streamID {
+        if let session = streamSessions[sessionID] {
+            let streamID = session.streamID
+            let mediaStreamID = session.mediaStreamID
             postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
             presentationTierByStreamID.removeValue(forKey: streamID)
             pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
+            if !hasOtherSessionRenderingMediaStream(mediaStreamID, excluding: sessionID) {
+                postResizeAwaitingFirstFrameStreamIDs.remove(mediaStreamID)
+                presentationTierByStreamID.removeValue(forKey: mediaStreamID)
+                pendingClientRecoveryStatusByStreamID.removeValue(forKey: mediaStreamID)
+            }
         }
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
@@ -137,6 +176,12 @@ public final class MirageClientSessionStore {
         streamSessions[sessionID]?.streamID
     }
 
+    /// Get media stream ID for a session.
+    /// - Parameter sessionID: Session identifier to query.
+    public func mediaStreamID(for sessionID: StreamSessionID) -> StreamID? {
+        streamSessions[sessionID]?.mediaStreamID
+    }
+
     /// Get window for a session.
     /// - Parameter sessionID: Session identifier to query.
     public func window(for sessionID: StreamSessionID) -> MirageWindow? {
@@ -145,9 +190,14 @@ public final class MirageClientSessionStore {
 
     /// Update window metadata for an existing session keyed by stream ID.
     /// Used when the host rebinds a slot to a different window while preserving stream ID.
-    public func updateSessionWindowMetadata(streamID: StreamID, window: MirageWindow) {
+    public func updateSessionWindowMetadata(
+        streamID: StreamID,
+        window: MirageWindow,
+        atlasRegion: MirageAppAtlasRegion? = nil
+    ) {
         guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
         session.window = window
+        session.atlasRegion = atlasRegion
     }
 
     // MARK: - Minimum Size Updates
@@ -157,7 +207,8 @@ public final class MirageClientSessionStore {
     ///   - streamID: Stream identifier to update.
     ///   - minSize: Minimum size in points reported by the host.
     public func updateMinimumSize(for streamID: StreamID, minSize: CGSize) {
-        guard let sessionEntry = streamSessions.first(where: { $0.value.streamID == streamID }) else { return }
+        guard let sessionEntry = streamSessions.first(where: { $0.value.streamID == streamID }) ??
+            streamSessions.first(where: { $0.value.mediaStreamID == streamID }) else { return }
 
         let session = sessionEntry.value
         session.minWidth = max(1, minSize.width)
@@ -181,6 +232,12 @@ public final class MirageClientSessionStore {
         presentationTierByStreamID[streamID] ?? .activeLive
     }
 
+    public func presentationTier(for session: MirageStreamSessionState) -> StreamPresentationTier {
+        presentationTierByStreamID[session.mediaStreamID] ??
+            presentationTierByStreamID[session.streamID] ??
+            .activeLive
+    }
+
     public func applyHostStreamPolicies(_ policies: [MirageStreamPolicy]) {
         let newTiers = Dictionary(uniqueKeysWithValues: policies.map { policy in
             (policy.streamID, policy.tier.presentationTier)
@@ -190,9 +247,15 @@ public final class MirageClientSessionStore {
 
     /// Mark the first decoded frame for a stream.
     public func markFirstFrameDecoded(for streamID: StreamID) {
-        if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
-            if !session.hasDecodedFrame {
-                session.hasDecodedFrame = true
+        let matchingSessions = sessionsMatchingStreamOrMediaID(streamID)
+        if !matchingSessions.isEmpty {
+            pendingFirstDecodedFrameStreamIDs.remove(streamID)
+            for session in matchingSessions {
+                pendingFirstDecodedFrameStreamIDs.remove(session.streamID)
+                pendingFirstDecodedFrameStreamIDs.remove(session.mediaStreamID)
+                if !session.hasDecodedFrame {
+                    session.hasDecodedFrame = true
+                }
             }
         } else {
             pendingFirstDecodedFrameStreamIDs.insert(streamID)
@@ -202,14 +265,23 @@ public final class MirageClientSessionStore {
     /// Mark the first presented frame for a stream.
     /// Used to drive UI state without per-frame SwiftUI updates.
     public func markFirstFramePresented(for streamID: StreamID) {
+        let matchingSessions = sessionsMatchingStreamOrMediaID(streamID)
         postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
 
-        if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
-            if !session.hasDecodedFrame {
-                session.hasDecodedFrame = true
-            }
-            if !session.hasPresentedFrame {
-                session.hasPresentedFrame = true
+        if !matchingSessions.isEmpty {
+            for session in matchingSessions {
+                postResizeAwaitingFirstFrameStreamIDs.remove(session.streamID)
+                postResizeAwaitingFirstFrameStreamIDs.remove(session.mediaStreamID)
+                pendingFirstDecodedFrameStreamIDs.remove(session.streamID)
+                pendingFirstDecodedFrameStreamIDs.remove(session.mediaStreamID)
+                pendingFirstPresentedFrameStreamIDs.remove(session.streamID)
+                pendingFirstPresentedFrameStreamIDs.remove(session.mediaStreamID)
+                if !session.hasDecodedFrame {
+                    session.hasDecodedFrame = true
+                }
+                if !session.hasPresentedFrame {
+                    session.hasPresentedFrame = true
+                }
             }
         } else {
             pendingFirstDecodedFrameStreamIDs.insert(streamID)
@@ -223,8 +295,10 @@ public final class MirageClientSessionStore {
         for streamID: StreamID,
         status: MirageStreamClientRecoveryStatus
     ) {
-        if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
-            if session.clientRecoveryStatus != status {
+        let matchingSessions = sessionsMatchingStreamOrMediaID(streamID)
+        if !matchingSessions.isEmpty {
+            pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
+            for session in matchingSessions where session.clientRecoveryStatus != status {
                 session.clientRecoveryStatus = status
             }
         } else {
@@ -245,6 +319,33 @@ public final class MirageClientSessionStore {
     /// Returns whether the stream is awaiting its first post-resize presented frame.
     public func isAwaitingPostResizeFirstFrame(for streamID: StreamID) -> Bool {
         postResizeAwaitingFirstFrameStreamIDs.contains(streamID)
+    }
+
+    private func sessionsMatchingStreamOrMediaID(_ streamID: StreamID) -> [MirageStreamSessionState] {
+        streamSessions.values.filter {
+            $0.streamID == streamID || $0.mediaStreamID == streamID
+        }
+    }
+
+    private func hasDecodedFrameState(streamID: StreamID, mediaStreamID: StreamID) -> Bool {
+        pendingFirstDecodedFrameStreamIDs.contains(streamID) ||
+            pendingFirstDecodedFrameStreamIDs.contains(mediaStreamID) ||
+            streamSessions.values.contains { $0.mediaStreamID == mediaStreamID && $0.hasDecodedFrame }
+    }
+
+    private func hasPresentedFrameState(streamID: StreamID, mediaStreamID: StreamID) -> Bool {
+        pendingFirstPresentedFrameStreamIDs.contains(streamID) ||
+            pendingFirstPresentedFrameStreamIDs.contains(mediaStreamID) ||
+            streamSessions.values.contains { $0.mediaStreamID == mediaStreamID && $0.hasPresentedFrame }
+    }
+
+    private func hasOtherSessionRenderingMediaStream(
+        _ mediaStreamID: StreamID,
+        excluding sessionID: StreamSessionID
+    ) -> Bool {
+        streamSessions.contains { candidateSessionID, session in
+            candidateSessionID != sessionID && session.mediaStreamID == mediaStreamID
+        }
     }
 
     private func applyResolvedTiers(_ tiers: [StreamID: StreamPresentationTier]) {
@@ -277,11 +378,16 @@ private extension MirageStreamRuntimeTier {
 @MainActor
 public final class MirageStreamSessionState: Identifiable {
     public let id: StreamSessionID
+    /// Logical stream ID used for control, focus, and input.
     public let streamID: StreamID
+    /// Physical media stream ID used for decoded frame presentation.
+    public let mediaStreamID: StreamID
     public var window: MirageWindow
     public let hostName: String
     public let appSessionID: UUID?
     public let streamKind: MirageStreamKind
+    public let logicalTarget: MirageStreamLogicalTarget
+    public var atlasRegion: MirageAppAtlasRegion?
     public var statistics: MirageStreamStatistics?
     public var clientRecoveryStatus: MirageStreamClientRecoveryStatus
     public var hasDecodedFrame: Bool
@@ -293,10 +399,13 @@ public final class MirageStreamSessionState: Identifiable {
     public init(
         id: StreamSessionID,
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         window: MirageWindow,
         hostName: String,
         appSessionID: UUID? = nil,
         streamKind: MirageStreamKind = .app,
+        logicalTarget: MirageStreamLogicalTarget? = nil,
+        atlasRegion: MirageAppAtlasRegion? = nil,
         statistics: MirageStreamStatistics? = nil,
         clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
         hasDecodedFrame: Bool = false,
@@ -306,10 +415,18 @@ public final class MirageStreamSessionState: Identifiable {
     ) {
         self.id = id
         self.streamID = streamID
+        self.mediaStreamID = mediaStreamID ?? streamID
         self.window = window
         self.hostName = hostName
         self.appSessionID = appSessionID
         self.streamKind = streamKind
+        self.logicalTarget = logicalTarget ?? MirageStreamLogicalTarget(
+            streamID: streamID,
+            window: window,
+            streamKind: streamKind,
+            appSessionID: appSessionID
+        )
+        self.atlasRegion = atlasRegion
         self.statistics = statistics
         self.clientRecoveryStatus = clientRecoveryStatus
         self.hasDecodedFrame = hasDecodedFrame

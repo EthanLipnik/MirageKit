@@ -543,13 +543,24 @@ public struct MirageReceiverHealthController: Sendable {
         let severe = (transportAssessment.isSevere || severeDelayOnly) && !pacingOnlyStress
         let sustainedLoss = (transportAssessment.isStress || severeDelayOnly) && !pacingOnlyStress
         let healthy = !severe && !sustainedLoss
+        let targetFrameIntervalMs = 1000.0 / targetFPS
+        let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
+            snapshot.clientWorstPresentationGapMs < max(250, targetFrameIntervalMs * 4) &&
+            (
+                snapshot.clientFrameIntervalP99Ms == 0 ||
+                    snapshot.clientFrameIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
+            )
         return Sample(
             isSevere: severe,
             isStress: severe || sustainedLoss,
             isHealthy: healthy,
             allowsProbePromotion: snapshot.hasHostMetrics &&
                 targetFPS > 0 &&
-                snapshot.bottleneckKind != .hostCadenceLimited
+                snapshot.decodeHealthy &&
+                smoothEnoughForPromotion &&
+                snapshot.bottleneckKind != .hostCadenceLimited &&
+                snapshot.bottleneckKind != .decodeBound &&
+                snapshot.bottleneckKind != .presentationBound
         )
     }
 

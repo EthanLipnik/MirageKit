@@ -151,6 +151,7 @@ struct DesktopVirtualDisplayStartupSession {
             case .alreadyAdvertising,
                  .notAdvertising,
                  .connectionFailed,
+                 .connectionRejected,
                  .authenticationFailed,
                  .streamNotFound,
                  .encodingError,

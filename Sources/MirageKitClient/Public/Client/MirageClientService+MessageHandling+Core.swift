@@ -131,6 +131,44 @@ extension MirageClientService {
         }
     }
 
+    func connectionRejection(from response: MirageSessionBootstrapResponse) -> MirageConnectionRejection {
+        MirageConnectionRejection(
+            reason: Self.mapConnectionRejectionReason(response.rejectionReason),
+            hostName: response.hostName,
+            hostProtocolVersion: response.protocolMismatchHostVersion,
+            clientProtocolVersion: response.protocolMismatchClientVersion,
+            hostUpdateTriggerAccepted: response.protocolMismatchUpdateTriggerAccepted,
+            hostUpdateTriggerMessage: response.protocolMismatchUpdateTriggerMessage,
+            recoveryHint: bootstrapRejectionDescription(
+                for: response,
+                mismatchInfo: protocolMismatchInfo(from: response)
+            )
+        )
+    }
+
+    nonisolated static func mapConnectionRejectionReason(
+        _ reason: MirageSessionBootstrapRejectionReason?
+    ) -> MirageConnectionRejection.Reason {
+        switch reason {
+        case .protocolVersionMismatch:
+            return .protocolVersionMismatch
+        case .protocolFeaturesMismatch:
+            return .protocolFeaturesMismatch
+        case .hostBusy:
+            return .hostBusy
+        case .hostUpdateInProgress:
+            return .hostUpdateInProgress
+        case .rejected:
+            return .rejected
+        case .unauthorized:
+            return .unauthorized
+        case .takeoverRequiresTrustedRequester:
+            return .takeoverRequiresTrustedRequester
+        case .none:
+            return .unknown
+        }
+    }
+
     func bootstrapRejectionDescription(
         for response: MirageSessionBootstrapResponse,
         mismatchInfo: ProtocolMismatchInfo?
@@ -242,10 +280,10 @@ extension MirageClientService {
             if let mismatchInfo {
                 onProtocolMismatch?(mismatchInfo)
             }
-            let rejectionDescription = bootstrapRejectionDescription(for: response, mismatchInfo: mismatchInfo)
-            MirageLogger.client("Connection rejected by host: \(rejectionDescription)")
+            let rejection = connectionRejection(from: response)
+            MirageLogger.client("Connection rejected by host: \(rejection.userFacingMessage)")
             MirageInstrumentation.record(.clientHelloRejected(helloRejectionReason(response.rejectionReason)))
-            throw MirageError.protocolError(rejectionDescription)
+            throw MirageError.connectionRejected(rejection)
         }
     }
 

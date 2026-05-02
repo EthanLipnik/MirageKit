@@ -79,7 +79,7 @@ extension MirageClientService {
         }
 
         if started.allowsClientResize {
-            beginPostResizeTransition(streamID: streamID)
+            beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
         } else {
             sessionStore.clearPostResizeTransition(for: streamID)
         }
@@ -94,6 +94,8 @@ extension MirageClientService {
         if !started.allowsClientResize {
             desktopResizeCoordinator.clearAllState()
             sessionStore.clearPostResizeTransition(for: streamID)
+        } else {
+            schedulePostResizeTransitionTimeoutIfNeeded(streamID: streamID)
         }
         return true
     }
@@ -198,7 +200,7 @@ extension MirageClientService {
                 beginStreamStartupCriticalSection(streamID: streamID)
             }
             if isResizeTokenAdvance {
-                beginPostResizeTransition(streamID: streamID)
+                beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
             }
             if previousDesktopSessionID != receivedDesktopSessionID {
                 desktopDimensionTokenByStream.removeValue(forKey: streamID)
@@ -301,6 +303,9 @@ extension MirageClientService {
             sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
             onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
             await refreshSharedClipboardBridgeState()
+            if isResizeTokenAdvance {
+                schedulePostResizeTransitionTimeoutIfNeeded(streamID: streamID)
+            }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream started: ")
             if desktopStreamRequestStartTime > 0 {

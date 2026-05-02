@@ -18,6 +18,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientPendingFrameAgeMs: Double
     public var clientOverwrittenPendingFrames: UInt64
     public var clientDisplayLayerNotReadyCount: UInt64
+    public var clientPresentationStallCount: UInt64
+    public var clientWorstPresentationGapMs: Double
+    public var clientFrameIntervalP95Ms: Double
+    public var clientFrameIntervalP99Ms: Double
     public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
     public var hostEncodedFPS: Double
@@ -88,6 +92,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientPendingFrameAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
+        clientPresentationStallCount: UInt64 = 0,
+        clientWorstPresentationGapMs: Double = 0,
+        clientFrameIntervalP95Ms: Double = 0,
+        clientFrameIntervalP99Ms: Double = 0,
         decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
         hostEncodedFPS: Double = 0,
@@ -133,6 +141,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
+        self.clientPresentationStallCount = clientPresentationStallCount
+        self.clientWorstPresentationGapMs = clientWorstPresentationGapMs
+        self.clientFrameIntervalP95Ms = clientFrameIntervalP95Ms
+        self.clientFrameIntervalP99Ms = clientFrameIntervalP99Ms
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
         self.hostEncodedFPS = hostEncodedFPS
@@ -189,6 +201,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
         displayLayerNotReadyCount: UInt64,
+        presentationStallCount: UInt64 = 0,
+        worstPresentationGapMs: Double = 0,
+        frameIntervalP95Ms: Double = 0,
+        frameIntervalP99Ms: Double = 0,
         decodeHealthy: Bool
     ) {
         lock.lock()
@@ -201,6 +217,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
         snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
         snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
+        snapshot.clientPresentationStallCount = presentationStallCount
+        snapshot.clientWorstPresentationGapMs = max(0, worstPresentationGapMs)
+        snapshot.clientFrameIntervalP95Ms = max(0, frameIntervalP95Ms)
+        snapshot.clientFrameIntervalP99Ms = max(0, frameIntervalP99Ms)
         snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
         metricsByStream[streamID] = snapshot

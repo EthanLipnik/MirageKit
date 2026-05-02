@@ -116,8 +116,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
-    @Test("Client presentation deficit does not downshift when host remains 60fps")
-    func clientPresentationDeficitDoesNotDownshiftWhenHostRemains60FPS() {
+    @Test("Client presentation deficit downshifts when host remains 60fps")
+    func clientPresentationDeficitDownshiftsWhenHostRemains60FPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -125,13 +125,20 @@ struct AutomaticDesktopWorkloadControllerTests {
             targetFrameRate: 60,
             cadenceFPS: 60
         )
-        snapshot.decodedFPS = 30
+        snapshot.decodedFPS = 60
         snapshot.submittedFPS = 30
         snapshot.uniqueSubmittedFPS = 30
+        snapshot.clientOverwrittenPendingFrames = 2
+        snapshot.clientDisplayLayerNotReadyCount = 1
+        snapshot.clientPendingFrameAgeMs = 24
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        #expect(action == .none)
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected workload reconfiguration")
+            return
+        }
+        #expect(target == .fullHD60)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")

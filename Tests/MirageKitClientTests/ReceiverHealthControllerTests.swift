@@ -63,8 +63,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Presentation-bound samples remain transport-clean")
-    func presentationBoundSamplesRemainTransportClean() {
+    @Test("Presentation-bound samples block promotion without transport backoff")
+    func presentationBoundSamplesBlockPromotionWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
         let snapshot = presentationBoundButTransportHealthySnapshot()
 
@@ -81,12 +81,12 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
+        #expect(secondAction == .none)
         #expect(controller.state == .stable)
     }
 
-    @Test("Decode-bound samples remain transport-clean")
-    func decodeBoundSamplesRemainTransportClean() {
+    @Test("Decode-bound samples block promotion without transport backoff")
+    func decodeBoundSamplesBlockPromotionWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
         let snapshot = decodeStalledButTransportHealthySnapshot()
 
@@ -103,7 +103,8 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
+        #expect(secondAction == .none)
+        #expect(controller.state == .stable)
     }
 
     @Test("Delay-only bursts do not trigger backoff or block probing")
@@ -427,8 +428,8 @@ struct ReceiverHealthControllerTests {
         #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
     }
 
-    @Test("Mixed-bound samples remain transport-clean")
-    func mixedBoundSamplesRemainTransportClean() {
+    @Test("Mixed-bound samples block promotion without transport backoff")
+    func mixedBoundSamplesBlockPromotionWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
         let snapshot = mixedBoundButTransportHealthySnapshot()
 
@@ -445,7 +446,8 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 60_000_000))
+        #expect(action == .none)
+        #expect(controller.state == .stable)
     }
 
     @Test("Delivery cadence collapse without transport pressure does not back off")
