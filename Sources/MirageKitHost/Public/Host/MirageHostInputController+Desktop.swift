@@ -94,6 +94,11 @@ extension MirageHostInputController {
             case let .mouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopPointerEvent(.leftMouseDragged, e, requestedPoint: point)
+            case let .pointerSampleBatch(batch):
+                if batch.phase == .began {
+                    clearUnexpectedSystemModifiers(domain: .hid)
+                }
+                injectDesktopPointerSampleBatch(batch, bounds: bounds)
             case let .rightMouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopPointerEvent(.rightMouseDragged, e, requestedPoint: point)

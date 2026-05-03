@@ -16,7 +16,22 @@ public final class MirageInputEventSender: @unchecked Sendable {
         var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
     }
 
-    private static let pointerCoalescingMinInterval: CFAbsoluteTime = 1.0 / 60.0
+    private struct PendingInput {
+        let event: MirageInputEvent
+        let streamID: StreamID
+    }
+
+    private enum ReplaceableContinuousInputKind: Equatable {
+        case mouseMoved
+        case mouseDragged
+        case rightMouseDragged
+        case otherMouseDragged
+        case scrollWheel
+        case stylusHover
+    }
+
+    private static let maxPendingInputs = 256
+    private static let maxPendingContactSamples = 4096
 
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
     private let connectionLock = NSLock()
@@ -30,14 +45,10 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Accessed only on `sendQueue`.
     private var sendInFlight = false
 
-    /// Last scheduled best-effort send task for preserving event order.
+    /// Pending best-effort input work waiting behind the active send.
+    /// Discrete events stay ordered; replaceable high-rate work is bounded.
     /// Accessed only on `sendQueue`.
-    private var lastBestEffortSendTask: Task<Void, Never>?
-
-    /// Latest continuous event waiting to send (pointer move/drag, scroll changed).
-    /// Replaced on each arrival — only the newest matters.
-    /// Accessed only on `sendQueue`.
-    private var pendingContinuousData: Data?
+    private var pendingInputs: [PendingInput] = []
 
     func updateSendHandler(_ handler: (@Sendable (Data, Bool) async throws -> Void)?) {
         connectionLock.lock()
@@ -47,8 +58,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         if handler == nil {
             sendQueue.async { [weak self] in
                 self?.sendInFlight = false
-                self?.lastBestEffortSendTask = nil
-                self?.pendingContinuousData = nil
+                self?.pendingInputs.removeAll()
             }
         }
     }
@@ -91,56 +101,93 @@ public final class MirageInputEventSender: @unchecked Sendable {
             return
         }
 
-        let data: Data
-        do {
-            data = try makeInputMessageData(event: event, streamID: streamID)
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to encode input: ")
-            return
-        }
-
-        let continuous = isContinuousEvent(event)
-
         sendQueue.async { [weak self] in
             guard let self else { return }
-
-            if continuous {
-                // Coalesce: replace any pending continuous event with the latest.
-                self.pendingContinuousData = data
-                self.scheduleDrain()
-            } else {
-                // Discrete events send immediately — reliability is handled by the transport.
-                self.fireAndForgetSend(data)
-            }
+            self.enqueueBestEffort(PendingInput(event: event, streamID: streamID))
         }
     }
 
     // MARK: - Non-Blocking Send
 
-    /// Sends data immediately without awaiting completion.
-    private func fireAndForgetSend(_ data: Data) {
-        guard let handler = currentSendHandler() else { return }
-        let previousTask = lastBestEffortSendTask
-        let task = Task {
-            await previousTask?.value
-            try? await handler(data, false)
+    private func enqueueBestEffort(_ pending: PendingInput) {
+        guard currentSendHandler() != nil else {
+            pendingInputs.removeAll()
+            return
         }
-        lastBestEffortSendTask = task
+
+        appendPendingInput(pending)
+        trimPendingInputs()
+        scheduleDrain()
     }
 
-    /// Schedules a drain of the pending continuous event on the next run loop tick.
-    /// This naturally coalesces rapid mouse moves into one send per tick.
+    private func appendPendingInput(_ pending: PendingInput) {
+        if let kind = replaceableContinuousKind(for: pending.event),
+           let last = pendingInputs.last,
+           last.streamID == pending.streamID,
+           replaceableContinuousKind(for: last.event) == kind {
+            pendingInputs[pendingInputs.count - 1] = pending
+            return
+        }
+
+        pendingInputs.append(pending)
+    }
+
+    /// Schedules one best-effort send at a time.
     private func scheduleDrain() {
         guard !sendInFlight else { return }
+        guard !pendingInputs.isEmpty else { return }
+        guard let handler = currentSendHandler() else {
+            pendingInputs.removeAll()
+            return
+        }
+
+        let pending = pendingInputs.removeFirst()
         sendInFlight = true
-        sendQueue.async { [weak self] in
+
+        Task { [weak self] in
             guard let self else { return }
-            self.sendInFlight = false
-            if let continuous = self.pendingContinuousData {
-                self.pendingContinuousData = nil
-                self.fireAndForgetSend(continuous)
+            do {
+                let data = try self.makeInputMessageData(event: pending.event, streamID: pending.streamID)
+                try await handler(data, false)
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Failed to send input: ")
+            }
+
+            self.sendQueue.async { [weak self] in
+                guard let self else { return }
+                self.sendInFlight = false
+                self.scheduleDrain()
             }
         }
+    }
+
+    private func trimPendingInputs() {
+        while pendingInputs.count > Self.maxPendingInputs {
+            if removeFirstPendingInput(where: { isLowPriorityStaleInput($0.event) }) { continue }
+            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
+            break
+        }
+
+        while pendingContactSampleCount > Self.maxPendingContactSamples {
+            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
+            break
+        }
+    }
+
+    private var pendingContactSampleCount: Int {
+        pendingInputs.reduce(into: 0) { result, input in
+            guard case let .pointerSampleBatch(batch) = input.event,
+                  batch.phase == .moved else {
+                return
+            }
+            result += batch.samples.count
+        }
+    }
+
+    private func removeFirstPendingInput(where shouldRemove: (PendingInput) -> Bool) -> Bool {
+        guard let index = pendingInputs.firstIndex(where: shouldRemove) else { return false }
+        pendingInputs.remove(at: index)
+        return true
     }
 
     private func makeInputMessageData(event: MirageInputEvent, streamID: StreamID) throws -> Data {
@@ -218,26 +265,48 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return false
     }
 
-    private func isContinuousEvent(_ event: MirageInputEvent) -> Bool {
-        switch event {
-        case .mouseMoved, .mouseDragged, .rightMouseDragged, .otherMouseDragged:
-            return true
-        case let .scrollWheel(e):
-            let isBoundary = e.phase == .began || e.phase == .ended || e.phase == .cancelled
-                || e.momentumPhase == .began || e.momentumPhase == .ended || e.momentumPhase == .cancelled
-            return !isBoundary
-        default:
-            return false
-        }
-    }
-
     private func isPointerMoveOrDragEvent(_ event: MirageInputEvent) -> Bool {
         switch event {
         case .mouseMoved, .mouseDragged, .rightMouseDragged, .otherMouseDragged:
             true
+        case let .pointerSampleBatch(batch):
+            batch.isHover
         default:
             false
         }
+    }
+
+    private func replaceableContinuousKind(for event: MirageInputEvent) -> ReplaceableContinuousInputKind? {
+        switch event {
+        case .mouseMoved:
+            .mouseMoved
+        case .mouseDragged:
+            .mouseDragged
+        case .rightMouseDragged:
+            .rightMouseDragged
+        case .otherMouseDragged:
+            .otherMouseDragged
+        case let .scrollWheel(e):
+            isBoundaryScrollEvent(e) ? nil : .scrollWheel
+        case let .pointerSampleBatch(batch):
+            batch.isHover ? .stylusHover : nil
+        default:
+            nil
+        }
+    }
+
+    private func isBoundaryScrollEvent(_ event: MirageScrollEvent) -> Bool {
+        event.phase == .began || event.phase == .ended || event.phase == .cancelled
+            || event.momentumPhase == .began || event.momentumPhase == .ended || event.momentumPhase == .cancelled
+    }
+
+    private func isLowPriorityStaleInput(_ event: MirageInputEvent) -> Bool {
+        replaceableContinuousKind(for: event) != nil
+    }
+
+    private func isDroppableContactMove(_ event: MirageInputEvent) -> Bool {
+        guard case let .pointerSampleBatch(batch) = event else { return false }
+        return batch.phase == .moved
     }
 
     private func recordInteractionIfNeeded(
@@ -261,6 +330,7 @@ private extension MirageInputEvent {
              .mouseUp,
              .mouseMoved,
              .mouseDragged,
+             .pointerSampleBatch,
              .rightMouseDown,
              .rightMouseUp,
              .rightMouseDragged,

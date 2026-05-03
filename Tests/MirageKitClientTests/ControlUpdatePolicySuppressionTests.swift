@@ -17,6 +17,7 @@ import Testing
 struct ControlUpdatePolicySuppressionTests {
     @Test("Interactive policy drop-set matches non-essential control messages")
     func interactivePolicyDropSet() {
+        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appListProgress))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appListComplete))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostHardwareIcon))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.windowList))

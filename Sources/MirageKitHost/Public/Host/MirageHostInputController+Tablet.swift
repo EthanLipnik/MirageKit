@@ -53,7 +53,9 @@ extension MirageHostInputController {
         if let stylus = event.stylus {
             postTabletProximityIfNeeded(entering: true, at: screenPoint)
             postTabletPointerEvent(from: event, stylus: stylus, type: type, at: screenPoint)
-            postEvent(cgEvent)
+            if isPointerButtonRelease(for: type) {
+                postTabletProximityIfNeeded(entering: false, at: screenPoint)
+            }
         } else {
             postTabletProximityIfNeeded(entering: false, at: screenPoint)
             postEvent(cgEvent)
@@ -103,6 +105,22 @@ extension MirageHostInputController {
         postEvent(tabletEvent)
     }
 
+    func postTabletPointerSample(
+        _ sample: MiragePointerSample,
+        batch: MiragePointerSampleBatch,
+        type: CGEventType,
+        at screenPoint: CGPoint
+    ) {
+        postTabletProximityIfNeeded(entering: true, at: screenPoint)
+        guard let tabletEvent = makeTabletPointerEvent(
+            from: sample,
+            batch: batch,
+            type: type,
+            at: screenPoint
+        ) else { return }
+        postEvent(tabletEvent)
+    }
+
     func makeTabletPointerEvent(
         from event: MirageMouseEvent,
         stylus: MirageStylusEvent,
@@ -130,7 +148,30 @@ extension MirageHostInputController {
         return tabletEvent
     }
 
-    private func postTabletProximityIfNeeded(entering: Bool, at screenPoint: CGPoint) {
+    func makeTabletPointerEvent(
+        from sample: MiragePointerSample,
+        batch: MiragePointerSampleBatch,
+        type: CGEventType,
+        at screenPoint: CGPoint
+    ) -> CGEvent? {
+        let event = MirageMouseEvent(
+            button: batch.button,
+            location: sample.location,
+            clickCount: batch.clickCount,
+            modifiers: batch.modifiers,
+            pressure: sample.pressure,
+            stylus: sample.stylus,
+            timestamp: sample.timestamp
+        )
+        return makeTabletPointerEvent(
+            from: event,
+            stylus: sample.stylus,
+            type: type,
+            at: screenPoint
+        )
+    }
+
+    func postTabletProximityIfNeeded(entering: Bool, at screenPoint: CGPoint) {
         guard tabletProximityActive != entering else { return }
         guard let proximityEvent = makeTabletProximityEvent(entering: entering, at: screenPoint) else { return }
 
@@ -184,6 +225,17 @@ extension MirageHostInputController {
         }
     }
 
+    private func isPointerButtonRelease(for type: CGEventType) -> Bool {
+        switch type {
+        case .leftMouseUp,
+             .rightMouseUp,
+             .otherMouseUp:
+            true
+        default:
+            false
+        }
+    }
+
     private func tabletButtonMask(for button: MirageMouseButton) -> Int64 {
         switch button {
         case .left:
@@ -212,7 +264,6 @@ extension MirageHostInputController {
             0x0040 | // buttons
             0x0080 | // tilt X
             0x0100 | // tilt Y
-            0x0200 | // absolute Z
             0x0400 | // pressure
             0x0800 | // tangential pressure
             0x2000 // rotation

@@ -616,16 +616,24 @@ extension InputCapturingView {
                         noteLockedPointerDragIfNeeded(for: translation)
                         applyLockedCursorDelta(translation)
                         let eventModifiers = modifiers(from: gesture)
-                        sendLockedPointerMovementEvent(
-                            location: lockedCursorPosition,
-                            modifiers: eventModifiers,
-                            pressure: hoverPressure,
-                            stylus: hoverStylus
-                        )
+                        if let hoverStylus {
+                            sendPencilHoverBatch(
+                                location: lockedCursorPosition,
+                                stylus: hoverStylus,
+                                modifiers: eventModifiers
+                            )
+                        } else {
+                            sendLockedPointerMovementEvent(
+                                location: lockedCursorPosition,
+                                modifiers: eventModifiers,
+                                pressure: hoverPressure
+                            )
+                        }
                     }
                 }
                 lockedPointerLastHoverLocation = location
             default:
+                sendPencilHoverExitIfNeeded()
                 lockedPointerLastHoverLocation = nil
                 setLockedCursorVisible(false)
             }
@@ -651,22 +659,32 @@ extension InputCapturingView {
             updateLockedCursorViewVisibility()
             updateLockedCursorViewPosition()
 
-            if Self.shouldEmitPassiveHoverMove(
-                pointerMoved: pointerMoved,
-                isDragging: isDragging
-            ) {
-                let eventModifiers = modifiers(from: gesture)
-                let mouseEvent = MirageMouseEvent(
-                    button: .left,
-                    location: normalized,
-                    modifiers: eventModifiers,
-                    pressure: hoverPressure,
-                    stylus: hoverStylus
+            let shouldEmitHover = (hoverStylus != nil && gesture.state == .began) ||
+                Self.shouldEmitPassiveHoverMove(
+                    pointerMoved: pointerMoved,
+                    isDragging: isDragging
                 )
-                onInputEvent?(.mouseMoved(mouseEvent))
+
+            if shouldEmitHover {
+                let eventModifiers = modifiers(from: gesture)
+                if let hoverStylus {
+                    sendPencilHoverBatch(
+                        location: normalized,
+                        stylus: hoverStylus,
+                        modifiers: eventModifiers
+                    )
+                } else {
+                    let mouseEvent = MirageMouseEvent(
+                        button: .left,
+                        location: normalized,
+                        modifiers: eventModifiers,
+                        pressure: hoverPressure
+                    )
+                    onInputEvent?(.mouseMoved(mouseEvent))
+                }
             }
         default:
-            break
+            sendPencilHoverExitIfNeeded()
         }
     }
 

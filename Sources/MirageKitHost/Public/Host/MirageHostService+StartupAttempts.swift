@@ -83,6 +83,13 @@ extension MirageHostService {
                     "Custom startup ready ack accepted for stream \(streamID); encoding enabled"
                 )
             }
+        case .appAtlas:
+            if let context = streamsByID[streamID], loomVideoStreamsByStreamID[streamID] != nil {
+                await context.allowEncodingAfterRegistration()
+                MirageLogger.host(
+                    "App atlas startup ready ack accepted for stream \(streamID); encoding enabled"
+                )
+            }
         }
     }
 
@@ -141,6 +148,20 @@ extension MirageHostService {
             await stopCustomStream(streamID: streamID, reason: .error, notifyClient: true)
             MirageLogger.host(
                 "Custom startup timed out waiting for client readiness ack stream=\(streamID)"
+            )
+        case .appAtlas:
+            if let clientContext = findClientContext(sessionID: pending.sessionID),
+               clientContext.client.id == pending.clientID {
+                sendControlError(
+                    ErrorMessage.ErrorCode.networkError,
+                    message: "App atlas startup timed out waiting for client readiness acknowledgement.",
+                    streamID: streamID,
+                    to: clientContext
+                )
+            }
+            await stopAppAtlasCoordinator(clientID: pending.clientID)
+            MirageLogger.host(
+                "App atlas startup timed out waiting for client readiness ack stream=\(streamID)"
             )
         }
     }

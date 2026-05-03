@@ -13,6 +13,9 @@ struct ClientStreamingAnomalySample: Sendable {
     let trigger: String
     let decodedFPS: Double
     let receivedFPS: Double
+    let receivedWorstGapMs: Double
+    let receivedFrameIntervalP95Ms: Double
+    let receivedFrameIntervalP99Ms: Double
     let submittedFPS: Double
     let uniqueSubmittedFPS: Double
     let pendingFrameCount: Int
@@ -36,6 +39,9 @@ struct ClientStreamingAnomalySample: Sendable {
         trigger: String,
         decodedFPS: Double,
         receivedFPS: Double,
+        receivedWorstGapMs: Double = 0,
+        receivedFrameIntervalP95Ms: Double = 0,
+        receivedFrameIntervalP99Ms: Double = 0,
         submittedFPS: Double,
         uniqueSubmittedFPS: Double,
         pendingFrameCount: Int,
@@ -58,6 +64,9 @@ struct ClientStreamingAnomalySample: Sendable {
         self.trigger = trigger
         self.decodedFPS = decodedFPS
         self.receivedFPS = receivedFPS
+        self.receivedWorstGapMs = receivedWorstGapMs
+        self.receivedFrameIntervalP95Ms = receivedFrameIntervalP95Ms
+        self.receivedFrameIntervalP99Ms = receivedFrameIntervalP99Ms
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
@@ -81,6 +90,9 @@ struct ClientStreamingAnomalySample: Sendable {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: decodedFPS,
             receivedFPS: receivedFPS,
+            clientReceivedWorstGapMs: receivedWorstGapMs,
+            clientReceivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
+            clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
             submittedFPS: submittedFPS,
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
@@ -139,10 +151,13 @@ struct ClientStreamingAnomalySample: Sendable {
         snapshot.hostSendCompletionAverageMs = hostMetrics?.sendCompletionAverageMs
         snapshot.hostSendCompletionMaxMs = hostMetrics?.sendCompletionMaxMs
         snapshot.hostPacketPacerAverageSleepMs = hostMetrics?.packetPacerAverageSleepMs
+        snapshot.hostPacketPacerTotalSleepMs = hostMetrics?.packetPacerTotalSleepMs
         snapshot.hostPacketPacerMaxSleepMs = hostMetrics?.packetPacerMaxSleepMs
+        snapshot.hostPacketPacerFrameMaxSleepMs = hostMetrics?.packetPacerFrameMaxSleepMs
         snapshot.hostStalePacketDrops = hostMetrics?.stalePacketDrops
         snapshot.hostGenerationAbortDrops = hostMetrics?.generationAbortDrops
         snapshot.hostNonKeyframeHoldDrops = hostMetrics?.nonKeyframeHoldDrops
+        snapshot.applyHostCaptureCadence(hostMetrics?.captureCadence)
         return snapshot
     }
 }
@@ -180,6 +195,10 @@ func clientStreamingAnomalyDiagnostic(
     let hostCaptureText = formattedFPS(sample.hostMetrics?.captureFPS)
     let hostEncodedText = formattedFPS(sample.hostMetrics?.encodedFPS)
     let hostEncodeAttemptText = formattedFPS(sample.hostMetrics?.encodeAttemptFPS)
+    let hostCaptureGapP99Text = formattedMs(sample.hostMetrics?.captureCadence?.deliveredFrameGapP99Ms)
+    let hostCaptureWorstGapText = formattedMs(sample.hostMetrics?.captureCadence?.deliveredFrameGapWorstMs)
+    let hostCaptureDriftText = (sample.hostMetrics?.captureCadence?.displayTimeDriftCount).map(String.init) ?? "--"
+    let virtualTimingText = (sample.hostMetrics?.captureCadence?.virtualDisplayTimingSuspect).map { $0 ? "true" : "false" } ?? "--"
     let captureAdmissionDropsText = sample.hostMetrics?.captureAdmissionDrops.map(String.init) ?? "--"
     let decoderFormat = sample.decoderOutputPixelFormat ?? "unknown"
     let hardwareDecoderText = sample.usingHardwareDecoder.map { $0 ? "true" : "false" } ?? "unknown"
@@ -187,6 +206,8 @@ func clientStreamingAnomalyDiagnostic(
         "Streaming anomaly (\(sample.trigger)): " +
         "stream=\(sample.streamID) classification=\(label) " +
         "decoded=\(formattedFPS(sample.decodedFPS))fps received=\(formattedFPS(sample.receivedFPS))fps " +
+        "receivedWorstGap=\(formattedMs(sample.receivedWorstGapMs))ms " +
+        "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "overwritten=\(sample.overwrittenPendingFrames) layerBackpressure=\(sample.displayLayerNotReadyCount) " +
@@ -195,9 +216,16 @@ func clientStreamingAnomalyDiagnostic(
         "decoderFormat=\(decoderFormat) hardwareDecoder=\(hardwareDecoderText) " +
         "hostEncoded=\(hostEncodedText)fps hostCapture=\(hostCaptureText)fps " +
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
+        "hostCaptureGapP99=\(hostCaptureGapP99Text)ms hostCaptureWorstGap=\(hostCaptureWorstGapText)ms " +
+        "hostDisplayDrift=\(hostCaptureDriftText) virtualTimingSuspect=\(virtualTimingText) " +
         "sendQueue=\(hostQueueText) sendStart=\(formattedMs(sample.hostMetrics?.sendStartDelayAverageMs))ms " +
         "sendDone=\(formattedMs(sample.hostMetrics?.sendCompletionAverageMs))ms " +
-        "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms transportDrops=\(hostTransportDrops) " +
+        "sendStartMax=\(formattedMs(sample.hostMetrics?.sendStartDelayMaxMs))ms " +
+        "sendDoneMax=\(formattedMs(sample.hostMetrics?.sendCompletionMaxMs))ms " +
+        "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms " +
+        "pacerTotal=\(sample.hostMetrics?.packetPacerTotalSleepMs.map(String.init) ?? "--")ms " +
+        "pacerFrameMax=\(sample.hostMetrics?.packetPacerFrameMaxSleepMs.map(String.init) ?? "--")ms " +
+        "transportDrops=\(hostTransportDrops) " +
         "presentationStalls=\(sample.presentationStallCount) " +
         "worstPresentationGap=\(formattedMs(sample.worstPresentationGapMs))ms " +
         "frameP95=\(formattedMs(sample.frameIntervalP95Ms))ms frameP99=\(formattedMs(sample.frameIntervalP99Ms))ms"

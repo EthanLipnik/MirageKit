@@ -122,7 +122,9 @@ public extension AppStreamManager {
         isResizable: Bool,
         slotIndex: Int? = nil,
         isActive: Bool = true,
-        capturedClusterWindowIDs: [WindowID] = []
+        capturedClusterWindowIDs: [WindowID] = [],
+        mediaStreamID: StreamID? = nil,
+        atlasRegion: MirageAppAtlasRegion? = nil
     ) -> Int? {
         let key = bundleIdentifier.lowercased()
         guard var session = sessions[key] else { return nil }
@@ -152,6 +154,7 @@ public extension AppStreamManager {
 
         let windowInfo = WindowStreamInfo(
             streamID: streamID,
+            mediaStreamID: mediaStreamID,
             slotIndex: assignedSlotIndex,
             title: title,
             width: width,
@@ -159,7 +162,8 @@ public extension AppStreamManager {
             isResizable: isResizable,
             isPaused: false,
             isActive: isActive,
-            capturedClusterWindowIDs: capturedClusterWindowIDs
+            capturedClusterWindowIDs: capturedClusterWindowIDs,
+            atlasRegion: atlasRegion
         )
 
         session.windowStreams[windowID] = windowInfo
@@ -183,7 +187,9 @@ public extension AppStreamManager {
         width: Int,
         height: Int,
         isResizable: Bool,
-        capturedClusterWindowIDs: [WindowID] = []
+        capturedClusterWindowIDs: [WindowID] = [],
+        mediaStreamID: StreamID? = nil,
+        atlasRegion: MirageAppAtlasRegion? = nil
     ) -> (oldWindowID: WindowID, slotIndex: Int, isActive: Bool)? {
         let key = bundleIdentifier.lowercased()
         guard var session = sessions[key] else { return nil }
@@ -199,6 +205,7 @@ public extension AppStreamManager {
         session.knownWindowIDs.insert(newWindowID)
         session.windowStreams[newWindowID] = WindowStreamInfo(
             streamID: streamID,
+            mediaStreamID: mediaStreamID ?? oldEntry.value.mediaStreamID,
             slotIndex: slotIndex,
             title: title,
             width: width,
@@ -206,7 +213,8 @@ public extension AppStreamManager {
             isResizable: isResizable,
             isPaused: false,
             isActive: isActive,
-            capturedClusterWindowIDs: capturedClusterWindowIDs
+            capturedClusterWindowIDs: capturedClusterWindowIDs,
+            atlasRegion: atlasRegion ?? oldEntry.value.atlasRegion
         )
         session.streamActivityByStreamID[streamID] = isActive
         sessions[key] = session
@@ -387,13 +395,15 @@ public extension AppStreamManager {
                 AppWindowInventoryMessage.Slot(
                     slotIndex: info.slotIndex,
                     streamID: info.streamID,
+                    mediaStreamID: info.mediaStreamID,
                     window: AppWindowInventoryMessage.WindowMetadata(
                         windowID: windowID,
                         title: info.title,
                         width: info.width,
                         height: info.height,
                         isResizable: info.isResizable
-                    )
+                    ),
+                    atlasRegion: info.atlasRegion
                 )
             }
             .sorted { lhs, rhs in

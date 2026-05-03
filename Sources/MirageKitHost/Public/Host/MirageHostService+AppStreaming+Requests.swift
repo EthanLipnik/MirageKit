@@ -678,12 +678,14 @@ extension MirageHostService {
 
             await appStreamManager.markSessionStreaming(app.bundleIdentifier)
 
+            let sortedStartupWindows = startupResult.windows.sorted { $0.streamID < $1.streamID }
             let response = AppStreamStartedMessage(
                 appSessionID: request.appSessionID,
                 startupRequestID: request.startupRequestID,
                 bundleIdentifier: app.bundleIdentifier,
                 appName: app.name,
-                windows: startupResult.windows.sorted { $0.streamID < $1.streamID }
+                windows: sortedStartupWindows.map(\.asWireWindow),
+                atlasLayouts: sortedStartupWindows.last?.atlasLayouts
             )
             let responseMessage = try ControlMessage(type: .appStreamStarted, content: response)
             clientContext.sendBestEffort(responseMessage)
@@ -781,9 +783,8 @@ extension MirageHostService {
         ) else {
             return failure("Target window is not in hidden inventory")
         }
-        guard let streamSession = activeSessionByStreamID[targetSlotStreamID],
-              let context = streamsByID[targetSlotStreamID] else {
-            return failure("Target slot stream context is unavailable")
+        guard let streamSession = activeSessionByStreamID[targetSlotStreamID] else {
+            return failure("Target slot stream is unavailable")
         }
         let previousWindowInfo = appSession.windowStreams[currentWindowID]
         guard let clientContext = findClientContext(clientID: clientID) else {
@@ -798,6 +799,64 @@ extension MirageHostService {
                 success: true,
                 reason: nil
             )
+        }
+
+        guard let context = streamsByID[targetSlotStreamID] else {
+            do {
+                let started = try await replaceAppAtlasWindowCapture(
+                    streamSession: streamSession,
+                    currentWindowID: currentWindowID,
+                    targetWindowID: targetWindowID,
+                    hiddenInfo: hiddenInfo,
+                    clientContext: clientContext
+                )
+                let targetWindow = started.session.window
+                let attachment = started.attachment
+                let processID = targetWindow.application?.id ?? 0
+                let isResizable = appStreamManager.checkWindowResizability(
+                    windowID: targetWindowID,
+                    processID: processID
+                )
+                await appStreamManager.replaceVisibleWindowForStream(
+                    bundleIdentifier: bundleIdentifier,
+                    streamID: targetSlotStreamID,
+                    newWindowID: targetWindowID,
+                    title: attachment.title,
+                    width: attachment.width,
+                    height: attachment.height,
+                    isResizable: isResizable,
+                    capturedClusterWindowIDs: [],
+                    mediaStreamID: attachment.mediaStreamID,
+                    atlasRegion: attachment.atlasRegion
+                )
+                await appStreamManager.upsertHiddenWindow(
+                    bundleIdentifier: bundleIdentifier,
+                    windowID: currentWindowID,
+                    title: previousWindowInfo?.title ?? streamSession.window.title,
+                    width: previousWindowInfo?.width ?? Int(max(1, streamSession.window.frame.width)),
+                    height: previousWindowInfo?.height ?? Int(max(1, streamSession.window.frame.height)),
+                    isResizable: previousWindowInfo?.isResizable ?? true
+                )
+                await appStreamManager.noteWindowStartupSucceeded(
+                    bundleID: bundleIdentifier,
+                    windowID: targetWindowID
+                )
+                await markAppStreamInteraction(streamID: targetSlotStreamID, reason: "app atlas slot swap")
+                await sendAppWindowInventoryUpdate(bundleIdentifier: bundleIdentifier, clientID: clientID)
+                await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleIdentifier, reason: "app atlas slot swap")
+                return AppWindowSwapResultMessage(
+                    bundleIdentifier: bundleIdentifier,
+                    targetSlotStreamID: targetSlotStreamID,
+                    mediaStreamID: attachment.mediaStreamID,
+                    windowID: targetWindowID,
+                    success: true,
+                    reason: nil,
+                    atlasRegion: attachment.atlasRegion,
+                    atlasLayouts: attachment.atlasLayouts
+                )
+            } catch {
+                return failure("Failed to swap app-atlas window: \(error.localizedDescription)")
+            }
         }
 
         let virtualDisplayState = getVirtualDisplayState(streamID: targetSlotStreamID)
@@ -1122,16 +1181,7 @@ extension MirageHostService {
         let existingStreamID = session.windowStreams.values.map(\.streamID).max()
         let existingContext = existingStreamID.flatMap { streamsByID[$0] }
         let encoderSettings = await existingContext?.getEncoderSettings()
-        let streamScale = await existingContext?.getStreamScale() ?? (selectRequest.streamScale ?? 1.0)
         let inheritedTargetFrameRate = await existingContext?.getTargetFrameRate()
-        let disableResolutionCap = await existingContext?.isResolutionCapDisabled() ?? (selectRequest.disableResolutionCap ?? false)
-        let inheritedClientScaleFactor = existingStreamID.flatMap { clientVirtualDisplayScaleFactor(streamID: $0) }
-        let preferredClientScaleFactor = session.requestedClientScaleFactor ??
-            inheritedClientScaleFactor ??
-            selectRequest.scaleFactor
-        let audioConfiguration = audioConfigurationByClientID[session.clientID] ??
-            selectRequest.audioConfiguration ??
-            .default
         let requestedBitrate: Int? = if let sharedBudgetBps = session.bitrateBudgetBps {
             max(1_000_000, sharedBudgetBps / max(1, session.windowStreams.count + 1))
         } else {
@@ -1156,46 +1206,31 @@ extension MirageHostService {
             ) else {
                 return .cancelled
             }
-            let streamSession = try await startStream(
-                for: selectedWindow,
-                to: clientContext.client,
-                expectedSessionID: clientContext.sessionID,
-                clientDisplayResolution: requestedDisplayResolution,
-                clientScaleFactor: preferredClientScaleFactor,
-                keyFrameInterval: encoderSettings?.keyFrameInterval ?? selectRequest.keyFrameInterval,
-                streamScale: streamScale,
+            let selectedProcessID = selectedWindow.application?.id ?? 0
+            let initialIsResizable = appStreamManager.checkWindowResizability(
+                windowID: selectedWindow.id,
+                processID: selectedProcessID
+            )
+            let started = try await startAppAtlasWindowCapture(
+                app: app,
+                window: selectedWindow,
+                clientContext: clientContext,
+                selectRequest: selectRequest,
                 targetFrameRate: inheritedTargetFrameRate ?? targetFrameRate,
-                colorDepth: encoderSettings?.colorDepth ?? selectRequest.colorDepth,
-                captureQueueDepth: encoderSettings?.captureQueueDepth ?? selectRequest.captureQueueDepth,
-                bitrate: requestedBitrate,
-                latencyMode: encoderSettings?.latencyMode ?? selectRequest.latencyMode ?? .lowestLatency,
-                performanceMode: encoderSettings?.performanceMode ?? selectRequest.performanceMode ?? .standard,
-                allowRuntimeQualityAdjustment: encoderSettings?.runtimeQualityAdjustmentEnabled ??
-                    selectRequest.allowRuntimeQualityAdjustment,
-                lowLatencyHighResolutionCompressionBoost: encoderSettings?
-                    .lowLatencyHighResolutionCompressionBoostEnabled ??
-                    selectRequest.lowLatencyHighResolutionCompressionBoost ??
-                    false,
-                disableResolutionCap: disableResolutionCap,
-                allowBestEffortRemap: true,
-                audioConfiguration: audioConfiguration,
-                bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
-                encoderMaxWidth: selectRequest.encoderMaxWidth,
-                encoderMaxHeight: selectRequest.encoderMaxHeight,
+                requestedBitrate: requestedBitrate,
                 mediaMaxPacketSize: mediaMaxPacketSize,
-                upscalingMode: selectRequest.upscalingMode,
-                codec: selectRequest.codec,
-                sizePreset: selectRequest.sizePreset ?? .standard
+                isResizable: initialIsResizable
             )
             guard !isStreamSetupCancelled(
                 clientSessionID: clientContext.sessionID,
                 startupRequestID: selectRequest.startupRequestID
             ) else {
-                await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+                await stopStream(started.session, minimizeWindow: false, updateAppSession: false)
                 return .cancelled
             }
-            let resolvedWindowEvent = Self.resolvedWindowAddedEvent(from: streamSession)
-            let resolvedWindowID = resolvedWindowEvent.windowID
+            let streamSession = started.session
+            let attachment = started.attachment
+            let resolvedWindowID = attachment.windowID
 
             guard let confirmedSession = await appStreamManager.getSession(bundleIdentifier: app.bundleIdentifier),
                   case .streaming = confirmedSession.state,
@@ -1213,11 +1248,13 @@ extension MirageHostService {
                 bundleIdentifier: app.bundleIdentifier,
                 windowID: resolvedWindowID,
                 streamID: streamSession.id,
-                title: resolvedWindowEvent.title,
-                width: resolvedWindowEvent.width,
-                height: resolvedWindowEvent.height,
+                title: attachment.title,
+                width: attachment.width,
+                height: attachment.height,
                 isResizable: isResizable,
-                slotIndex: preferredSlotIndex
+                slotIndex: preferredSlotIndex,
+                mediaStreamID: attachment.mediaStreamID,
+                atlasRegion: attachment.atlasRegion
             )
             guard !isStreamSetupCancelled(
                 clientSessionID: clientContext.sessionID,
@@ -1255,11 +1292,14 @@ extension MirageHostService {
                     bundleIdentifier: app.bundleIdentifier,
                     appSessionID: session.id,
                     streamID: streamSession.id,
+                    mediaStreamID: attachment.mediaStreamID,
                     windowID: resolvedWindowID,
-                    title: resolvedWindowEvent.title,
-                    width: resolvedWindowEvent.width,
-                    height: resolvedWindowEvent.height,
-                    isResizable: isResizable
+                    title: attachment.title,
+                    width: attachment.width,
+                    height: attachment.height,
+                    isResizable: isResizable,
+                    atlasRegion: attachment.atlasRegion,
+                    atlasLayouts: attachment.atlasLayouts
                 )
             )
         } catch {
@@ -1276,26 +1316,31 @@ extension MirageHostService {
     }
 
     private struct InitialAppWindowStartupResult {
-        let windows: [AppStreamStartedMessage.AppStreamWindow]
+        let windows: [InitialStartedAppWindow]
         let failureSummary: String
     }
 
     private struct InitialStartedAppWindow: Sendable, Equatable {
         let streamID: StreamID
+        let mediaStreamID: StreamID
         let windowID: WindowID
         let title: String?
         let width: Int
         let height: Int
         let isResizable: Bool
+        let atlasRegion: MirageAppAtlasRegion?
+        let atlasLayouts: [MirageAppAtlasLayout]
 
         var asWireWindow: AppStreamStartedMessage.AppStreamWindow {
             AppStreamStartedMessage.AppStreamWindow(
                 streamID: streamID,
+                mediaStreamID: mediaStreamID,
                 windowID: windowID,
                 title: title,
                 width: width,
                 height: height,
-                isResizable: isResizable
+                isResizable: isResizable,
+                atlasRegion: atlasRegion
             )
         }
     }
@@ -1351,7 +1396,7 @@ extension MirageHostService {
         let maxDiscoveryAttempts = 14
         let maxConcurrentWindowStarts = 2
         let normalizedBundleID = app.bundleIdentifier.lowercased()
-        var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
+        var startedWindows: [InitialStartedAppWindow] = []
         var failureNotes: [String] = []
         guard let clientContext = findClientContext(clientID: client.id) else {
             return InitialAppWindowStartupResult(
@@ -1606,7 +1651,7 @@ extension MirageHostService {
                 if !insertedWindow || !insertedStream {
                     continue
                 }
-                startedWindows.append(startedWindow.asWireWindow)
+                startedWindows.append(startedWindow)
             }
         }
 
@@ -1717,14 +1762,7 @@ extension MirageHostService {
                     )
                 }
                 return InitialAppWindowStartAttemptResult(
-                    startedWindow: InitialStartedAppWindow(
-                        streamID: startedWindow.streamID,
-                        windowID: startedWindow.windowID,
-                        title: startedWindow.title,
-                        width: startedWindow.width,
-                        height: startedWindow.height,
-                        isResizable: startedWindow.isResizable
-                    ),
+                    startedWindow: startedWindow,
                     failureNotes: failureNotes
                 )
             } catch is CancellationError {
@@ -1824,42 +1862,32 @@ extension MirageHostService {
         requestedDisplayResolution: CGSize,
         requestedBitrateOverride: Int?,
         mediaMaxPacketSize: Int
-    ) async throws -> AppStreamStartedMessage.AppStreamWindow {
-        let streamSession = try await startStream(
-            for: preferredWindow,
-            to: clientContext.client,
-            expectedSessionID: clientContext.sessionID,
-            clientDisplayResolution: requestedDisplayResolution,
-            clientScaleFactor: selectRequest.scaleFactor,
-            keyFrameInterval: selectRequest.keyFrameInterval,
-            streamScale: selectRequest.streamScale ?? 1.0,
+    ) async throws -> InitialStartedAppWindow {
+        let initialProcessID = preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
+        let initialIsResizable = appStreamManager.checkWindowResizability(
+            windowID: preferredWindow.id,
+            processID: initialProcessID
+        )
+        let started = try await startAppAtlasWindowCapture(
+            app: app,
+            window: preferredWindow,
+            clientContext: clientContext,
+            selectRequest: selectRequest,
             targetFrameRate: targetFrameRate,
-            colorDepth: selectRequest.colorDepth,
-            captureQueueDepth: selectRequest.captureQueueDepth,
-            bitrate: requestedBitrateOverride ?? selectRequest.bitrate,
-            latencyMode: selectRequest.latencyMode ?? .lowestLatency,
-            performanceMode: selectRequest.performanceMode ?? .standard,
-            allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? false,
-            disableResolutionCap: selectRequest.disableResolutionCap ?? false,
-            allowBestEffortRemap: true,
-            audioConfiguration: selectRequest.audioConfiguration ?? .default,
-            bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
-            encoderMaxWidth: selectRequest.encoderMaxWidth,
-            encoderMaxHeight: selectRequest.encoderMaxHeight,
+            requestedBitrate: requestedBitrateOverride ?? selectRequest.bitrate,
             mediaMaxPacketSize: mediaMaxPacketSize,
-            upscalingMode: selectRequest.upscalingMode,
-            codec: selectRequest.codec,
-            sizePreset: selectRequest.sizePreset ?? .standard
+            isResizable: initialIsResizable
         )
         guard !isStreamSetupCancelled(
             clientSessionID: clientContext.sessionID,
             startupRequestID: selectRequest.startupRequestID
         ) else {
-            await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+            await stopStream(started.session, minimizeWindow: false, updateAppSession: false)
             throw CancellationError()
         }
 
+        let streamSession = started.session
+        let attachment = started.attachment
         let resolvedWindow = streamSession.window
         let processID = resolvedWindow.application?.id ?? preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
@@ -1886,7 +1914,9 @@ extension MirageHostService {
             width: Int(resolvedWindow.frame.width),
             height: Int(resolvedWindow.frame.height),
             isResizable: isResizable,
-            slotIndex: preferredSlotIndex
+            slotIndex: preferredSlotIndex,
+            mediaStreamID: attachment.mediaStreamID,
+            atlasRegion: attachment.atlasRegion
         ) != nil else {
             let existingStreamID = await appStreamManager.streamIDForWindow(
                 bundleIdentifier: app.bundleIdentifier,
@@ -1912,13 +1942,16 @@ extension MirageHostService {
             )
         }
 
-        return AppStreamStartedMessage.AppStreamWindow(
+        return InitialStartedAppWindow(
             streamID: streamSession.id,
+            mediaStreamID: attachment.mediaStreamID,
             windowID: resolvedWindow.id,
             title: resolvedWindow.title,
             width: Int(resolvedWindow.frame.width),
             height: Int(resolvedWindow.frame.height),
-            isResizable: isResizable
+            isResizable: isResizable,
+            atlasRegion: attachment.atlasRegion,
+            atlasLayouts: attachment.atlasLayouts
         )
     }
 
@@ -1964,17 +1997,10 @@ extension MirageHostService {
             sendPendingNonEssentialMetadataRequestsIfPossible()
         case .beginDeferral:
             appListRequestDeferredForInteractiveWorkload = true
-            if appListRequestTask != nil {
-                MirageLogger.host("Cancelling app list request while interactive workload is active")
-            }
-            appListRequestTask?.cancel()
-            appListRequestTask = nil
+            cancelAppListRequestForInteractiveWorkload(logCancellation: true)
             await appStreamManager.cancelAppListScans()
         case .remainDeferred:
-            if appListRequestTask != nil {
-                appListRequestTask?.cancel()
-                appListRequestTask = nil
-            }
+            cancelAppListRequestForInteractiveWorkload(logCancellation: false)
             await appStreamManager.cancelAppListScans()
         case .resumeDeferred:
             appListRequestDeferredForInteractiveWorkload = false
@@ -1982,6 +2008,15 @@ extension MirageHostService {
             sendPendingAppListRequestIfPossible()
             sendPendingNonEssentialMetadataRequestsIfPossible()
         }
+    }
+
+    func cancelAppListRequestForInteractiveWorkload(logCancellation: Bool = true) {
+        if logCancellation, appListRequestTask != nil {
+            MirageLogger.host("Cancelling app list request while interactive workload is active")
+        }
+        appListRequestToken = UUID()
+        appListRequestTask?.cancel()
+        appListRequestTask = nil
     }
 
     private func sendPendingNonEssentialMetadataRequestsIfPossible() {
@@ -2066,7 +2101,8 @@ extension MirageHostService {
 
             let orderedApps = orderedAppsForAppListProgress(
                 apps,
-                priorityBundleIdentifiers: priorityBundleIdentifiers
+                priorityBundleIdentifiers: priorityBundleIdentifiers,
+                knownIconBundleIdentifiers: knownIconBundleIdentifiers
             )
             await sendAppListProgress(
                 apps: orderedApps,
@@ -2194,6 +2230,11 @@ extension MirageHostService {
         knownIconBundleIdentifiers: Set<String>
     ) async -> MirageInstalledApp {
         let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
+        if !forceIconReset,
+           knownIconBundleIdentifiers.contains(normalizedBundleIdentifier) {
+            return Self.metadataOnlyApp(app)
+        }
+
         guard let iconPayload = await appIconCatalogStore.payload(
             for: app,
             maxPixelSize: 128,
@@ -2206,11 +2247,6 @@ extension MirageHostService {
                 )
             }
         ) else {
-            return Self.metadataOnlyApp(app)
-        }
-
-        if !forceIconReset,
-           knownIconBundleIdentifiers.contains(normalizedBundleIdentifier) {
             return Self.metadataOnlyApp(app)
         }
 
@@ -2227,10 +2263,12 @@ extension MirageHostService {
 
     func orderedAppsForAppListProgress(
         _ apps: [MirageInstalledApp],
-        priorityBundleIdentifiers: [String]
+        priorityBundleIdentifiers: [String],
+        knownIconBundleIdentifiers: [String] = []
     ) -> [MirageInstalledApp] {
         guard !apps.isEmpty else { return [] }
 
+        let knownIconBundleIdentifierSet = Set(Self.normalizedBundleIdentifierList(knownIconBundleIdentifiers))
         var appsByBundleIdentifier: [String: MirageInstalledApp] = [:]
         appsByBundleIdentifier.reserveCapacity(apps.count)
         for app in apps {
@@ -2252,7 +2290,12 @@ extension MirageHostService {
             .sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
-        orderedApps.append(contentsOf: remainingApps)
+        orderedApps.append(contentsOf: remainingApps.filter {
+            !knownIconBundleIdentifierSet.contains($0.bundleIdentifier.lowercased())
+        })
+        orderedApps.append(contentsOf: remainingApps.filter {
+            knownIconBundleIdentifierSet.contains($0.bundleIdentifier.lowercased())
+        })
         return orderedApps
     }
 

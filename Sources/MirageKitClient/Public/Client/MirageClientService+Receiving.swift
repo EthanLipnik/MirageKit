@@ -165,7 +165,8 @@ extension MirageClientService {
 
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
         switch type {
-        case .appListComplete,
+        case .appListProgress,
+             .appListComplete,
              .hostHardwareIcon,
              .windowList,
              .windowUpdate,
@@ -178,7 +179,7 @@ extension MirageClientService {
 
     private func recordSuppressedControlMessage(_ type: ControlMessageType) {
         switch type {
-        case .appListComplete:
+        case .appListProgress, .appListComplete:
             deferredControlRefreshRequirements.needsAppListRefresh = true
         case .windowList, .windowUpdate:
             deferredControlRefreshRequirements.needsWindowListRefresh = true
@@ -189,7 +190,7 @@ extension MirageClientService {
         }
 
         switch type {
-        case .appListComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
+        case .appListProgress, .appListComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
             break
         default:
             break
@@ -201,6 +202,7 @@ extension MirageClientService {
     }
 
     private func recordHighFrequencyControlMessageSampleIfNeeded(_ type: ControlMessageType) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         guard type == .streamMetricsUpdate else { return }
         streamMetricsMessagesSinceLastSample &+= 1
 

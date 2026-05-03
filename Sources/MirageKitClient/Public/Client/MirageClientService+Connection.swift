@@ -409,7 +409,9 @@ extension MirageClientService {
         pendingDesktopRequestedColorDepth = nil
         pendingAppRequestedColorDepth = nil
         desktopDimensionTokenByStream.removeAll()
+        appDimensionTokenByStream.removeAll()
         appStreamStartAcknowledgementByStreamID.removeAll()
+        appAtlasLayoutsByMediaStreamID.removeAll()
         fastPathState.clearAllStartupPacketPending()
         fastPathState.clearDiagnostics()
         for task in startupRegistrationRetryTasks.values {

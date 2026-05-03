@@ -179,15 +179,99 @@ extension MirageClientService {
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
             streamingAppBundleID = started.bundleIdentifier
             appWindowInventory = nil
+            storeAppAtlasLayouts(started.atlasLayouts)
             onAppStreamStarted?(started)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app stream started: ")
         }
     }
 
+    func handleAppAtlasMediaUpdate(_ message: ControlMessage) async {
+        do {
+            let update = try message.decode(AppAtlasMediaUpdateMessage.self)
+            let mediaStreamID = update.mediaStreamID
+            guard shouldAcceptStartupAttempt(update.startupAttemptID, for: mediaStreamID) else {
+                MirageLogger.client(
+                    "Ignoring stale appAtlasMediaUpdate for media stream \(mediaStreamID) startupAttemptID=\(update.startupAttemptID.uuidString)"
+                )
+                return
+            }
+
+            storeAppAtlasLayout(update.layout)
+            activeStreamCodecs[mediaStreamID] = update.codec
+            appStreamStartAcknowledgementByStreamID[mediaStreamID] = StreamStartAcknowledgement(
+                width: update.width,
+                height: update.height,
+                dimensionToken: update.dimensionToken
+            )
+
+            let hasController = controllersByStream[mediaStreamID] != nil
+            let isExistingStream = activeStreamIDsForFiltering.contains(mediaStreamID) || hasController
+            let previousDimensionToken = appDimensionTokenByStream[mediaStreamID]
+            let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(update.acceptedPacketSize)
+            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[mediaStreamID] ?? mirageDefaultMaxPacketSize
+            let packetSizeChanged = hasController && previousMediaMaxPacketSize != acceptedMediaMaxPacketSize
+            let resetDecision = appStreamStartResetDecision(
+                streamID: mediaStreamID,
+                isExistingStream: isExistingStream,
+                hasController: hasController,
+                requestStartPending: false,
+                previousDimensionToken: previousDimensionToken,
+                receivedDimensionToken: update.dimensionToken
+            )
+            let shouldSetupController = resetDecision == .resetController || packetSizeChanged || !hasController
+
+            if let dimensionToken = update.dimensionToken {
+                appDimensionTokenByStream[mediaStreamID] = dimensionToken
+            }
+            registerStartupAttempt(update.startupAttemptID, for: mediaStreamID)
+
+            if shouldSetupController {
+                streamStartupBaseTimes[mediaStreamID] = CFAbsoluteTimeGetCurrent()
+                streamStartupFirstRegistrationSent.remove(mediaStreamID)
+                streamStartupFirstPacketReceived.remove(mediaStreamID)
+                markStartupPacketPending(mediaStreamID)
+                await setupControllerForStream(
+                    mediaStreamID,
+                    codec: update.codec,
+                    streamDimensions: (width: update.width, height: update.height),
+                    mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                    dimensionToken: update.dimensionToken,
+                    forwardsResizeEvents: false
+                )
+            } else if let dimensionToken = update.dimensionToken,
+                      let controller = controllersByStream[mediaStreamID] {
+                let reassembler = await controller.getReassembler()
+                reassembler.updateExpectedDimensionToken(dimensionToken)
+                await controller.setDecoderCodec(
+                    update.codec,
+                    streamDimensions: (width: update.width, height: update.height)
+                )
+            }
+
+            addActiveStreamID(mediaStreamID)
+            registeredStreamIDs.insert(mediaStreamID)
+            await updateReassemblerSnapshot()
+            await sendStreamReadyAck(
+                streamID: mediaStreamID,
+                startupAttemptID: update.startupAttemptID,
+                kind: .appAtlas
+            )
+            if shouldSetupController {
+                startStartupRegistrationRetry(streamID: mediaStreamID)
+            }
+            MirageLogger.client(
+                "App-atlas media updated stream=\(mediaStreamID) size=\(update.width)x\(update.height) layoutEpoch=\(update.layoutEpoch)"
+            )
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-atlas media update: ")
+        }
+    }
+
     func handleAppWindowInventory(_ message: ControlMessage) {
         do {
             let inventory = try message.decode(AppWindowInventoryMessage.self)
+            storeAppAtlasLayouts(inventory.atlasLayouts)
             appWindowInventory = inventory
             onAppWindowInventoryUpdate?(inventory)
         } catch {
@@ -208,6 +292,7 @@ extension MirageClientService {
         do {
             let added = try message.decode(WindowAddedToStreamMessage.self)
             MirageLogger.client("Window added to stream: \(added.windowID)")
+            storeAppAtlasLayouts(added.atlasLayouts)
             clearPendingStreamSetup(kind: .app)
             onWindowAddedToStream?(added)
         } catch {
@@ -238,6 +323,13 @@ extension MirageClientService {
     func handleAppWindowSwapResult(_ message: ControlMessage) {
         do {
             let result = try message.decode(AppWindowSwapResultMessage.self)
+            storeAppAtlasLayouts(result.atlasLayouts)
+            if result.success {
+                sessionStore.updateSessionAtlasRegion(
+                    streamID: result.targetSlotStreamID,
+                    atlasRegion: result.atlasRegion
+                )
+            }
             if result.success {
                 MirageLogger.client(
                     "App window swap succeeded: stream=\(result.targetSlotStreamID), window=\(result.windowID)"
@@ -288,6 +380,21 @@ extension MirageClientService {
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode stream policy update: ")
         }
+    }
+
+    func storeAppAtlasLayouts(_ layouts: [MirageAppAtlasLayout]?) {
+        guard let layouts else { return }
+        for layout in layouts {
+            storeAppAtlasLayout(layout)
+        }
+    }
+
+    func storeAppAtlasLayout(_ layout: MirageAppAtlasLayout) {
+        appAtlasLayoutsByMediaStreamID[layout.mediaStreamID, default: [:]][layout.layoutEpoch] = layout
+        sessionStore.updateSessionAtlasRegions(
+            mediaStreamID: layout.mediaStreamID,
+            layout: layout
+        )
     }
 
     struct AppIconPayload: Sendable {

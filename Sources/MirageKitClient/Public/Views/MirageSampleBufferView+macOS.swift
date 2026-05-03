@@ -52,6 +52,14 @@ public class MirageSampleBufferView: NSView {
         }
     }
 
+    var contentRectOverride: CGRect? {
+        didSet {
+            guard contentRectOverride != oldValue else { return }
+            presenter.setContentRectOverride(contentRectOverride)
+            requestImmediateSubmission()
+        }
+    }
+
     // MARK: - Rendering State
 
     private let preferencesObserver = MirageUserDefaultsObserver()

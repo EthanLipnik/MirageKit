@@ -12,6 +12,7 @@ import SwiftUI
 public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public let streamID: StreamID
     public let mediaStreamID: StreamID
+    public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
     public var onInputEvent: ((MirageInputEvent) -> Void)?
@@ -79,6 +80,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public init(
         streamID: StreamID,
         mediaStreamID: StreamID? = nil,
+        contentRectOverride: CGRect? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
@@ -103,6 +105,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     ) {
         self.streamID = streamID
         self.mediaStreamID = mediaStreamID ?? streamID
+        self.contentRectOverride = contentRectOverride
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
         self.onContainerSizeChanged = onContainerSizeChanged
@@ -157,6 +160,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         sampleBufferView.maxDrawableSize = maxDrawableSize
         sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize
         sampleBufferView.streamPresentationTier = presentationTier
+        sampleBufferView.contentRectOverride = contentRectOverride
         sampleBufferView.streamID = mediaStreamID
         wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
 
@@ -213,6 +217,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.maxDrawableSize = maxDrawableSize }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamPresentationTier = presentationTier }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.contentRectOverride = contentRectOverride }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore

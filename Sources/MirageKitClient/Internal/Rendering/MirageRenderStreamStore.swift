@@ -24,6 +24,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     struct SubmissionSnapshot: Sendable {
         let sequence: UInt64
         let submittedTime: CFAbsoluteTime
+        let remotePresentationTime: CMTime
         let mappedPresentationTime: CMTime
     }
 
@@ -65,6 +66,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var nextSequence: UInt64 = 0
         var lastSubmittedSequence: UInt64 = 0
         var lastSubmittedTime: CFAbsoluteTime = 0
+        var lastSubmittedRemotePresentationTime: CMTime = .invalid
         var lastSubmittedMappedPresentationTime: CMTime = .invalid
         var targetFPS: Int = 60
         var listeners: [ObjectIdentifier: FrameListener] = [:]
@@ -186,6 +188,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     func markSubmitted(
         sequence: UInt64,
+        remotePresentationTime: CMTime = .invalid,
         mappedPresentationTime: CMTime,
         for streamID: StreamID
     ) {
@@ -219,6 +222,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         state.lastSubmittedSequence = sequence
         state.lastSubmittedTime = now
+        state.lastSubmittedRemotePresentationTime = remotePresentationTime
         state.lastSubmittedMappedPresentationTime = mappedPresentationTime
         appendSampleLocked(
             now,
@@ -230,15 +234,21 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     func submissionSnapshot(for streamID: StreamID) -> SubmissionSnapshot {
         guard let state = streamStateIfPresent(for: streamID) else {
-            return SubmissionSnapshot(sequence: 0, submittedTime: 0, mappedPresentationTime: .invalid)
+            return SubmissionSnapshot(
+                sequence: 0,
+                submittedTime: 0,
+                remotePresentationTime: .invalid,
+                mappedPresentationTime: .invalid
+            )
         }
 
         state.lock.lock()
-        let snapshot = SubmissionSnapshot(
-            sequence: state.lastSubmittedSequence,
-            submittedTime: state.lastSubmittedTime,
-            mappedPresentationTime: state.lastSubmittedMappedPresentationTime
-        )
+            let snapshot = SubmissionSnapshot(
+                sequence: state.lastSubmittedSequence,
+                submittedTime: state.lastSubmittedTime,
+                remotePresentationTime: state.lastSubmittedRemotePresentationTime,
+                mappedPresentationTime: state.lastSubmittedMappedPresentationTime
+            )
         state.lock.unlock()
         return snapshot
     }

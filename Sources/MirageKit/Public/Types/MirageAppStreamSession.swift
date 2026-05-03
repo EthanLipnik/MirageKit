@@ -135,6 +135,9 @@ public struct WindowStreamInfo: Sendable {
     /// The stream ID assigned to this window
     public let streamID: StreamID
 
+    /// Physical media stream carrying this logical window.
+    public var mediaStreamID: StreamID
+
     /// Fixed slot index for this stream/window binding.
     public var slotIndex: Int
 
@@ -157,11 +160,15 @@ public struct WindowStreamInfo: Sendable {
     /// Window IDs currently included in the captured display-filter cluster for this visible slot.
     public var capturedClusterWindowIDs: [WindowID]
 
+    /// Region for this logical window inside an app-atlas media stream.
+    public var atlasRegion: MirageAppAtlasRegion?
+
     /// When this stream started
     public let startTime: Date
 
     public init(
         streamID: StreamID,
+        mediaStreamID: StreamID? = nil,
         slotIndex: Int = 0,
         title: String? = nil,
         width: Int,
@@ -170,9 +177,11 @@ public struct WindowStreamInfo: Sendable {
         isPaused: Bool = false,
         isActive: Bool = true,
         capturedClusterWindowIDs: [WindowID] = [],
+        atlasRegion: MirageAppAtlasRegion? = nil,
         startTime: Date = Date()
     ) {
         self.streamID = streamID
+        self.mediaStreamID = mediaStreamID ?? streamID
         self.slotIndex = slotIndex
         self.title = title
         self.width = width
@@ -181,6 +190,7 @@ public struct WindowStreamInfo: Sendable {
         self.isPaused = isPaused
         self.isActive = isActive
         self.capturedClusterWindowIDs = capturedClusterWindowIDs
+        self.atlasRegion = atlasRegion
         self.startTime = startTime
     }
 }

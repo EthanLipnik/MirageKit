@@ -13,6 +13,41 @@ import Testing
 
 @Suite("App Atlas Layout")
 struct AppAtlasLayoutTests {
+    @Test("Native atlas keeps one window at exact captured size")
+    func nativeAtlasKeepsOneWindowAtExactCapturedSize() {
+        let layout = AppAtlasLayout.nativePackedLayout(
+            windows: [
+                AppAtlasLayout.Window(id: 101, sourceRect: CGRect(x: 0, y: 0, width: 1234, height: 926)),
+            ]
+        )
+
+        #expect(layout.canvasSize == CGSize(width: 1234, height: 926))
+        #expect(layout.placements.count == 1)
+        #expect(layout.placements[0].sourceRect == CGRect(x: 0, y: 0, width: 1234, height: 926))
+        #expect(layout.placements[0].destinationRect == CGRect(x: 0, y: 0, width: 1234, height: 926))
+    }
+
+    @Test("Native atlas packs multiple windows without scaling")
+    func nativeAtlasPacksMultipleWindowsWithoutScaling() {
+        let layout = AppAtlasLayout.nativePackedLayout(
+            windows: [
+                AppAtlasLayout.Window(id: 201, sourceRect: CGRect(x: 0, y: 0, width: 640, height: 400)),
+                AppAtlasLayout.Window(id: 202, sourceRect: CGRect(x: 0, y: 0, width: 320, height: 600)),
+                AppAtlasLayout.Window(id: 203, sourceRect: CGRect(x: 0, y: 0, width: 480, height: 300)),
+            ],
+            spacing: 0
+        )
+
+        #expect(layout.canvasSize == CGSize(width: 800, height: 1000))
+        #expect(layout.placements.map(\.windowID) == [201, 202, 203])
+        #expect(layout.placements[0].destinationRect == CGRect(x: 0, y: 0, width: 640, height: 400))
+        #expect(layout.placements[1].destinationRect == CGRect(x: 0, y: 400, width: 320, height: 600))
+        #expect(layout.placements[2].destinationRect == CGRect(x: 320, y: 400, width: 480, height: 300))
+        #expect(layout.placements[0].sourceRect.size == layout.placements[0].destinationRect.size)
+        #expect(layout.placements[1].sourceRect.size == layout.placements[1].destinationRect.size)
+        #expect(layout.placements[2].sourceRect.size == layout.placements[2].destinationRect.size)
+    }
+
     @Test("Two large windows scale into one stable canvas row")
     func twoLargeWindowsScaleIntoOneStableCanvasRow() {
         let layout = AppAtlasLayout.fixedCanvasLayout(

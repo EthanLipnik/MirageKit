@@ -61,7 +61,6 @@ extension StreamController {
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
-        lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         latestHostMetricsMessage = nil
@@ -112,18 +111,6 @@ extension StreamController {
         reassembler.enterKeyframeOnlyMode()
         await armPostResizeRecoveryWindow(reason: "post-resize")
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
-    }
-
-    func logMetricsIfNeeded(decodedFPS: Double, receivedFPS: Double, droppedFrames: UInt64) {
-        let now = currentTime()
-        guard MirageLogger.isEnabled(.metrics) else { return }
-        guard lastMetricsLogTime == 0 || now - lastMetricsLogTime > 2.0 else { return }
-        let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
-        let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.metrics(
-            "Client FPS: decoded=\(decodedText), received=\(receivedText), dropped=\(droppedFrames), stream=\(streamID)"
-        )
-        lastMetricsLogTime = now
     }
 
     /// Get the reassembler for packet routing

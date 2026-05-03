@@ -16,13 +16,11 @@ final class StreamEncodingCallbackSequencer: @unchecked Sendable {
         let sequenceNumberStart: UInt32
         let totalFragments: Int
         let wireBytes: Int
-        let shouldLogPFrameDiagnostic: Bool
     }
 
     private struct State {
         var nextFrameNumber: UInt32 = 0
         var nextSequenceNumber: UInt32 = 0
-        var pFrameDiagnosticCounter: UInt32 = 0
     }
 
     private let state = Locked(State())
@@ -47,14 +45,6 @@ final class StreamEncodingCallbackSequencer: @unchecked Sendable {
             let totalFragments = dataFragments + parityFragments
             let wireBytes = frameByteCount + parityFragments * payloadSize
 
-            let shouldLogPFrameDiagnostic: Bool
-            if isKeyframe {
-                shouldLogPFrameDiagnostic = false
-            } else {
-                state.pFrameDiagnosticCounter &+= 1
-                shouldLogPFrameDiagnostic = state.pFrameDiagnosticCounter % 60 == 1
-            }
-
             state.nextFrameNumber &+= 1
             if totalFragments > 0 {
                 state.nextSequenceNumber &+= UInt32(totalFragments)
@@ -64,8 +54,7 @@ final class StreamEncodingCallbackSequencer: @unchecked Sendable {
                 frameNumber: frameNumber,
                 sequenceNumberStart: sequenceNumberStart,
                 totalFragments: totalFragments,
-                wireBytes: wireBytes,
-                shouldLogPFrameDiagnostic: shouldLogPFrameDiagnostic
+                wireBytes: wireBytes
             )
         }
     }

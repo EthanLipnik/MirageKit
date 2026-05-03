@@ -49,6 +49,8 @@ actor AppStreamRuntimeOrchestrator {
              .hostSystemAction,
              .keyDown:
             return true
+        case let .pointerSampleBatch(batch):
+            return batch.phase == .began
         case .flagsChanged,
              .mouseMoved,
              .mouseDragged,

@@ -107,6 +107,21 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let presentationGapGrace = max(4.0, targetFPS * 0.10)
         let presentationPendingAgeMsThreshold = max(20.0, (1_000.0 / targetFPS) * 1.5)
         let targetFrameIntervalMs = 1_000.0 / targetFPS
+        let hostCaptureGapP99Ms = max(
+            snapshot.hostCaptureDeliveredFrameGapP99Ms ?? 0,
+            snapshot.hostCaptureWallClockGapP99Ms ?? 0,
+            snapshot.hostCaptureDisplayTimeGapP99Ms ?? 0
+        )
+        let hostCaptureWorstGapMs = max(
+            snapshot.hostCaptureDeliveredFrameGapWorstMs ?? 0,
+            snapshot.hostCaptureWallClockGapWorstMs ?? 0,
+            snapshot.hostCaptureDisplayTimeGapWorstMs ?? 0
+        )
+        let hostCaptureCadenceUneven =
+            hostCaptureGapP99Ms >= max(35.0, targetFrameIntervalMs * 2.0) ||
+            hostCaptureWorstGapMs >= max(60.0, targetFrameIntervalMs * 3.0) ||
+            (snapshot.hostCaptureLongFrameGapCount ?? 0) > 0 ||
+            snapshot.hostCaptureVirtualDisplayTimingSuspect == true
         let unevenPresentationCadence =
             snapshot.clientWorstPresentationGapMs >= max(80.0, targetFrameIntervalMs * 3.0) ||
             snapshot.clientFrameIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0)
@@ -136,7 +151,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let hostCadenceLimited = !networkBound && (
                 (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
                 (captureFPS > 0 && captureFPS < targetFPS * 0.90) ||
-                (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90)
+                (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90) ||
+                hostCaptureCadenceUneven
         )
 
         let captureBound = !hostCadenceLimited && (

@@ -402,8 +402,7 @@ extension VideoEncoder {
 
             let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
-            // Log timing for every frame (first 10, then every 60th)
-            if info.frameNumber < 10 || info.frameNumber % 60 == 0 || isKeyframe {
+            if info.frameNumber < 10 || isKeyframe {
                 let bytesKB = Double(data.count) / 1024.0
                 MirageLogger.debug(
                     .timing,

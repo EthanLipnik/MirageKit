@@ -61,15 +61,6 @@ extension FrameReassembler {
         lastPacketReceivedTime = packetReceivedAt.timeIntervalSinceReferenceDate
         totalPacketsReceived += 1
 
-        // Log stats every 1000 packets
-        if totalPacketsReceived - lastStatsLog >= 1000 {
-            lastStatsLog = totalPacketsReceived
-            MirageLogger.log(
-                .frameAssembly,
-                "STATS: packets=\(totalPacketsReceived), framesDelivered=\(framesDelivered), pending=\(pendingFrames.count), discarded(old=\(packetsDiscardedOld), deliveredKeyframe=\(packetsDiscardedDeliveredKeyframe), crc=\(packetsDiscardedCRC), token=\(packetsDiscardedToken), epoch=\(packetsDiscardedEpoch), awaitKeyframe=\(packetsDiscardedAwaitingKeyframe))"
-            )
-        }
-
         let epochIsNewer = isEpochNewer(header.epoch, than: currentEpoch)
         let epochIsCurrentOrNewer = header.epoch == currentEpoch || epochIsNewer
 
@@ -437,17 +428,14 @@ extension FrameReassembler {
             }
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
 
-            // Diagnostic: log CRC32 of reassembled P-frames (throttled to every 60th)
-            if !frame.isKeyframe, MirageLogger.isEnabled(.frameAssembly) {
-                diagnosticCRCLogCounter += 1
-                if diagnosticCRCLogCounter % 60 == 1 {
-                    let crc = CRC32.calculate(output)
-                    let header = output.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-                    MirageLogger.log(
-                        .frameAssembly,
-                        "Reassembled P-frame CRC=\(String(format: "%08X", crc)), size=\(output.count), expected=\(frame.expectedTotalBytes), header: \(header)"
-                    )
-                }
+            if !frame.isKeyframe {
+                MirageFrameIntegrityDiagnostics.shared.recordPFrame(
+                    source: .reassembledPFrame,
+                    streamID: streamID,
+                    frameNumber: frameNumber,
+                    frameBytes: output,
+                    expectedBytes: frame.expectedTotalBytes
+                )
             }
 
             let buffer = frame.buffer

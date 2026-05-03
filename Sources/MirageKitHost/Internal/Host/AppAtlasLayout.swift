@@ -111,6 +111,12 @@ enum AppAtlasLayout {
         let rowCount: Int
     }
 
+    private struct NativeCandidate: Sendable {
+        let result: Result
+        let area: CGFloat
+        let aspectPenalty: CGFloat
+    }
+
     private static let maxExhaustiveWindowCount = 10
     private static let maxFallbackRows = 6
 
@@ -140,6 +146,39 @@ enum AppAtlasLayout {
 
         guard let best = candidates.max(by: isLowerPriority(_:than:)) else {
             return Result(canvasSize: resolvedCanvasSize, contentRect: .zero, placements: [])
+        }
+
+        return best.result
+    }
+
+    static func nativePackedLayout(
+        windows: [Window],
+        spacing requestedSpacing: CGFloat = 0
+    ) -> Result {
+        let validWindows = windows.filter(\.isValid)
+        guard !validWindows.isEmpty else {
+            return Result(canvasSize: .zero, contentRect: .zero, placements: [])
+        }
+
+        if validWindows.count == 1, let window = validWindows.first {
+            let size = evenSize(window.sourceRect.size)
+            let destinationRect = CGRect(origin: .zero, size: size)
+            let placement = Placement(
+                id: window.id,
+                sourceRect: CGRect(origin: window.sourceRect.origin, size: size),
+                destinationRect: destinationRect,
+                normalizedDestinationRect: CGRect(x: 0, y: 0, width: 1, height: 1)
+            )
+            return Result(canvasSize: size, contentRect: destinationRect, placements: [placement])
+        }
+
+        let spacing = normalizedSpacing(requestedSpacing)
+        let candidates = rowPartitions(for: validWindows).compactMap { rows in
+            nativeLayoutCandidate(rows: rows, spacing: spacing)
+        }
+
+        guard let best = candidates.min(by: isHigherNativePriority(_:than:)) else {
+            return Result(canvasSize: .zero, contentRect: .zero, placements: [])
         }
 
         return best.result
@@ -290,6 +329,76 @@ enum AppAtlasLayout {
         )
     }
 
+    private static func nativeLayoutCandidate(
+        rows: [[Window]],
+        spacing: CGFloat
+    ) -> NativeCandidate? {
+        guard !rows.isEmpty else { return nil }
+
+        var rowLayouts: [(windows: [Window], sizes: [CGSize], width: CGFloat, height: CGFloat)] = []
+        rowLayouts.reserveCapacity(rows.count)
+
+        for row in rows {
+            let sizes = row.map { evenSize($0.sourceRect.size) }
+            guard sizes.allSatisfy({ $0.width > 0 && $0.height > 0 }) else { return nil }
+            let rowWidth = sizes.reduce(CGFloat.zero) { $0 + $1.width } +
+                spacing * CGFloat(max(0, sizes.count - 1))
+            let rowHeight = sizes.map(\.height).max() ?? 0
+            guard rowWidth > 0, rowHeight > 0 else { return nil }
+            rowLayouts.append((row, sizes, rowWidth, rowHeight))
+        }
+
+        let canvasWidth = evenLength(rowLayouts.map(\.width).max() ?? 0)
+        let canvasHeight = evenLength(
+            rowLayouts.reduce(CGFloat.zero) { $0 + $1.height } +
+                spacing * CGFloat(max(0, rowLayouts.count - 1))
+        )
+        guard canvasWidth > 0, canvasHeight > 0 else { return nil }
+
+        var placements: [Placement] = []
+        placements.reserveCapacity(rows.reduce(0) { $0 + $1.count })
+
+        var y: CGFloat = 0
+        for rowLayout in rowLayouts {
+            var x: CGFloat = 0
+            for (index, window) in rowLayout.windows.enumerated() {
+                let size = rowLayout.sizes[index]
+                let destinationRect = CGRect(x: x, y: y, width: size.width, height: size.height)
+                placements.append(
+                    Placement(
+                        id: window.id,
+                        sourceRect: CGRect(origin: window.sourceRect.origin, size: size),
+                        destinationRect: destinationRect,
+                        normalizedDestinationRect: normalizedRect(
+                            destinationRect,
+                            canvasSize: CGSize(width: canvasWidth, height: canvasHeight)
+                        )
+                    )
+                )
+                x += size.width + spacing
+            }
+            y += rowLayout.height + spacing
+        }
+
+        let contentRect = placements.reduce(CGRect.null) { partialResult, placement in
+            partialResult.isNull
+                ? placement.destinationRect
+                : partialResult.union(placement.destinationRect)
+        }
+        let result = Result(
+            canvasSize: CGSize(width: canvasWidth, height: canvasHeight),
+            contentRect: contentRect.isNull ? .zero : contentRect.standardized,
+            placements: placements
+        )
+        let area = canvasWidth * canvasHeight
+        let aspectRatio = canvasHeight > 0 ? canvasWidth / canvasHeight : 1
+        return NativeCandidate(
+            result: result,
+            area: area,
+            aspectPenalty: abs(aspectRatio - 16.0 / 10.0)
+        )
+    }
+
     private static func rowPartitions(for windows: [Window]) -> [[[Window]]] {
         guard !windows.isEmpty else { return [] }
         guard windows.count > 1 else { return [[windows]] }
@@ -355,6 +464,20 @@ enum AppAtlasLayout {
         return false
     }
 
+    private static func isHigherNativePriority(_ lhs: NativeCandidate, than rhs: NativeCandidate) -> Bool {
+        let areaDelta = lhs.area - rhs.area
+        if abs(areaDelta) > 0.5 {
+            return lhs.area < rhs.area
+        }
+
+        let aspectDelta = lhs.aspectPenalty - rhs.aspectPenalty
+        if abs(aspectDelta) > 0.0001 {
+            return lhs.aspectPenalty < rhs.aspectPenalty
+        }
+
+        return lhs.result.placements.count > rhs.result.placements.count
+    }
+
     private static func normalizedRect(
         _ rect: CGRect,
         canvasSize: CGSize
@@ -391,6 +514,17 @@ enum AppAtlasLayout {
     private static func normalizedSpacing(_ spacing: CGFloat) -> CGFloat {
         guard spacing.isFinite, spacing > 0 else { return 0 }
         return floor(spacing)
+    }
+
+    private static func evenSize(_ size: CGSize) -> CGSize {
+        CGSize(width: evenLength(size.width), height: evenLength(size.height))
+    }
+
+    private static func evenLength(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return 0 }
+        let rounded = Int(value.rounded())
+        let even = rounded - (rounded % 2)
+        return CGFloat(max(2, even))
     }
 }
 #endif

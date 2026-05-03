@@ -146,6 +146,7 @@ extension MirageHostService {
         updateDropped: Bool,
         positionDropped: Bool
     ) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         if updateSent { cursorUpdateMessagesSinceLastSample &+= 1 }
         if positionSent { cursorPositionMessagesSinceLastSample &+= 1 }
         if updateDropped { droppedCursorUpdateMessagesSinceLastSample &+= 1 }

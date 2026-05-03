@@ -16,6 +16,7 @@ package enum MirageStartupStreamKind: String, Codable, Sendable {
     case window
     case desktop
     case custom
+    case appAtlas
 }
 
 package struct WindowListMessage: Codable {
@@ -261,6 +262,118 @@ package struct StreamStoppedMessage: Codable {
     }
 }
 
+package struct StreamCaptureCadenceMetrics: Codable, Sendable, Equatable {
+    package let wallClockGapWorstMs: Double
+    package let wallClockGapP95Ms: Double
+    package let wallClockGapP99Ms: Double
+    package let presentationGapWorstMs: Double
+    package let presentationGapP95Ms: Double
+    package let presentationGapP99Ms: Double
+    package let displayTimeGapWorstMs: Double
+    package let displayTimeGapP95Ms: Double
+    package let displayTimeGapP99Ms: Double
+    package let deliveredFrameGapWorstMs: Double
+    package let deliveredFrameGapP95Ms: Double
+    package let deliveredFrameGapP99Ms: Double
+    package let callbackDurationP95Ms: Double
+    package let callbackDurationP99Ms: Double
+    package let longFrameGapCount: UInt64
+    package let displayTimeDriftCount: UInt64
+    package let completeFrameStatusCount: UInt64
+    package let idleFrameStatusCount: UInt64
+    package let blankFrameStatusCount: UInt64
+    package let suspendedFrameStatusCount: UInt64
+    package let startedFrameStatusCount: UInt64
+    package let stoppedFrameStatusCount: UInt64
+    package let unknownFrameStatusCount: UInt64
+    package let cadenceDropCount: UInt64
+    package let admissionDropCount: UInt64
+    package let sampleOverwriteCount: UInt64
+    package let usesDisplayRefreshCadence: Bool?
+    package let usesNativeRefreshMinimumFrameInterval: Bool?
+    package let minimumFrameIntervalRate: Int?
+    package let displayRefreshRate: Int?
+    package let virtualDisplayID: UInt32?
+    package let virtualDisplayRefreshRate: Double?
+    package let virtualDisplayScaleFactor: Double?
+    package let virtualDisplayGeneration: UInt64?
+    package let virtualDisplayTimingSuspect: Bool?
+
+    package init(
+        wallClockGapWorstMs: Double = 0,
+        wallClockGapP95Ms: Double = 0,
+        wallClockGapP99Ms: Double = 0,
+        presentationGapWorstMs: Double = 0,
+        presentationGapP95Ms: Double = 0,
+        presentationGapP99Ms: Double = 0,
+        displayTimeGapWorstMs: Double = 0,
+        displayTimeGapP95Ms: Double = 0,
+        displayTimeGapP99Ms: Double = 0,
+        deliveredFrameGapWorstMs: Double = 0,
+        deliveredFrameGapP95Ms: Double = 0,
+        deliveredFrameGapP99Ms: Double = 0,
+        callbackDurationP95Ms: Double = 0,
+        callbackDurationP99Ms: Double = 0,
+        longFrameGapCount: UInt64 = 0,
+        displayTimeDriftCount: UInt64 = 0,
+        completeFrameStatusCount: UInt64 = 0,
+        idleFrameStatusCount: UInt64 = 0,
+        blankFrameStatusCount: UInt64 = 0,
+        suspendedFrameStatusCount: UInt64 = 0,
+        startedFrameStatusCount: UInt64 = 0,
+        stoppedFrameStatusCount: UInt64 = 0,
+        unknownFrameStatusCount: UInt64 = 0,
+        cadenceDropCount: UInt64 = 0,
+        admissionDropCount: UInt64 = 0,
+        sampleOverwriteCount: UInt64 = 0,
+        usesDisplayRefreshCadence: Bool? = nil,
+        usesNativeRefreshMinimumFrameInterval: Bool? = nil,
+        minimumFrameIntervalRate: Int? = nil,
+        displayRefreshRate: Int? = nil,
+        virtualDisplayID: UInt32? = nil,
+        virtualDisplayRefreshRate: Double? = nil,
+        virtualDisplayScaleFactor: Double? = nil,
+        virtualDisplayGeneration: UInt64? = nil,
+        virtualDisplayTimingSuspect: Bool? = nil
+    ) {
+        self.wallClockGapWorstMs = wallClockGapWorstMs
+        self.wallClockGapP95Ms = wallClockGapP95Ms
+        self.wallClockGapP99Ms = wallClockGapP99Ms
+        self.presentationGapWorstMs = presentationGapWorstMs
+        self.presentationGapP95Ms = presentationGapP95Ms
+        self.presentationGapP99Ms = presentationGapP99Ms
+        self.displayTimeGapWorstMs = displayTimeGapWorstMs
+        self.displayTimeGapP95Ms = displayTimeGapP95Ms
+        self.displayTimeGapP99Ms = displayTimeGapP99Ms
+        self.deliveredFrameGapWorstMs = deliveredFrameGapWorstMs
+        self.deliveredFrameGapP95Ms = deliveredFrameGapP95Ms
+        self.deliveredFrameGapP99Ms = deliveredFrameGapP99Ms
+        self.callbackDurationP95Ms = callbackDurationP95Ms
+        self.callbackDurationP99Ms = callbackDurationP99Ms
+        self.longFrameGapCount = longFrameGapCount
+        self.displayTimeDriftCount = displayTimeDriftCount
+        self.completeFrameStatusCount = completeFrameStatusCount
+        self.idleFrameStatusCount = idleFrameStatusCount
+        self.blankFrameStatusCount = blankFrameStatusCount
+        self.suspendedFrameStatusCount = suspendedFrameStatusCount
+        self.startedFrameStatusCount = startedFrameStatusCount
+        self.stoppedFrameStatusCount = stoppedFrameStatusCount
+        self.unknownFrameStatusCount = unknownFrameStatusCount
+        self.cadenceDropCount = cadenceDropCount
+        self.admissionDropCount = admissionDropCount
+        self.sampleOverwriteCount = sampleOverwriteCount
+        self.usesDisplayRefreshCadence = usesDisplayRefreshCadence
+        self.usesNativeRefreshMinimumFrameInterval = usesNativeRefreshMinimumFrameInterval
+        self.minimumFrameIntervalRate = minimumFrameIntervalRate
+        self.displayRefreshRate = displayRefreshRate
+        self.virtualDisplayID = virtualDisplayID
+        self.virtualDisplayRefreshRate = virtualDisplayRefreshRate
+        self.virtualDisplayScaleFactor = virtualDisplayScaleFactor
+        self.virtualDisplayGeneration = virtualDisplayGeneration
+        self.virtualDisplayTimingSuspect = virtualDisplayTimingSuspect
+    }
+}
+
 /// Host-to-client stream metrics sampled per metrics-update window.
 package struct StreamMetricsMessage: Codable, Sendable {
     package let streamID: StreamID
@@ -286,13 +399,16 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let preEncodeWaitMaxMs: Double?
     package let captureCallbackAverageMs: Double?
     package let captureCallbackMaxMs: Double?
+    package let captureCadence: StreamCaptureCadenceMetrics?
     package let sendQueueBytes: Int?
     package let sendStartDelayAverageMs: Double?
     package let sendStartDelayMaxMs: Double?
     package let sendCompletionAverageMs: Double?
     package let sendCompletionMaxMs: Double?
     package let packetPacerAverageSleepMs: Double?
+    package let packetPacerTotalSleepMs: Int?
     package let packetPacerMaxSleepMs: Int?
+    package let packetPacerFrameMaxSleepMs: Int?
     package let stalePacketDrops: UInt64?
     package let generationAbortDrops: UInt64?
     package let nonKeyframeHoldDrops: UInt64?
@@ -336,13 +452,16 @@ package struct StreamMetricsMessage: Codable, Sendable {
         preEncodeWaitMaxMs: Double? = nil,
         captureCallbackAverageMs: Double? = nil,
         captureCallbackMaxMs: Double? = nil,
+        captureCadence: StreamCaptureCadenceMetrics? = nil,
         sendQueueBytes: Int? = nil,
         sendStartDelayAverageMs: Double? = nil,
         sendStartDelayMaxMs: Double? = nil,
         sendCompletionAverageMs: Double? = nil,
         sendCompletionMaxMs: Double? = nil,
         packetPacerAverageSleepMs: Double? = nil,
+        packetPacerTotalSleepMs: Int? = nil,
         packetPacerMaxSleepMs: Int? = nil,
+        packetPacerFrameMaxSleepMs: Int? = nil,
         stalePacketDrops: UInt64? = nil,
         generationAbortDrops: UInt64? = nil,
         nonKeyframeHoldDrops: UInt64? = nil,
@@ -385,13 +504,16 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.preEncodeWaitMaxMs = preEncodeWaitMaxMs
         self.captureCallbackAverageMs = captureCallbackAverageMs
         self.captureCallbackMaxMs = captureCallbackMaxMs
+        self.captureCadence = captureCadence
         self.sendQueueBytes = sendQueueBytes
         self.sendStartDelayAverageMs = sendStartDelayAverageMs
         self.sendStartDelayMaxMs = sendStartDelayMaxMs
         self.sendCompletionAverageMs = sendCompletionAverageMs
         self.sendCompletionMaxMs = sendCompletionMaxMs
         self.packetPacerAverageSleepMs = packetPacerAverageSleepMs
+        self.packetPacerTotalSleepMs = packetPacerTotalSleepMs
         self.packetPacerMaxSleepMs = packetPacerMaxSleepMs
+        self.packetPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
         self.stalePacketDrops = stalePacketDrops
         self.generationAbortDrops = generationAbortDrops
         self.nonKeyframeHoldDrops = nonKeyframeHoldDrops

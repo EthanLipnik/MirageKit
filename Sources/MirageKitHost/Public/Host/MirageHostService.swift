@@ -248,6 +248,8 @@ public final class MirageHostService {
     var audioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
     // Last audio streamStarted payload acknowledged onto the control channel.
     var sentAudioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
+    // Clients whose current audio transport send failure has already been logged.
+    var audioSendErrorReportedByClientID: Set<UUID> = []
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []
@@ -258,6 +260,7 @@ public final class MirageHostService {
     var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
     var customStreamClientSessionIDByStreamID: [StreamID: UUID] = [:]
     var customStreamStartupRequestIDByStreamID: [StreamID: UUID] = [:]
+    var appAtlasCoordinatorsByClientID: [UUID: AppAtlasMediaCoordinator] = [:]
     let startupAttemptTimeoutSeconds: Duration = .seconds(5)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"

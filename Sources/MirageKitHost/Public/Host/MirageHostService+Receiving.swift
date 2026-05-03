@@ -69,6 +69,179 @@ private final class MirageStreamReceiveSource: @unchecked Sendable {
     }
 }
 
+private final class HostInputMessageScheduler: @unchecked Sendable {
+    private struct PendingMessage {
+        let message: ControlMessage
+        let streamID: StreamID?
+        let priority: Priority
+
+        init(message: ControlMessage, classification: (streamID: StreamID?, priority: Priority)) {
+            self.message = message
+            self.streamID = classification.streamID
+            self.priority = classification.priority
+        }
+    }
+
+    private enum Priority: Equatable {
+        case protected
+        case contactMove
+        case replaceable(ReplaceableKind)
+
+        var isReplaceable: Bool {
+            if case .replaceable = self { return true }
+            return false
+        }
+    }
+
+    private enum ReplaceableKind: Equatable {
+        case mouseMoved
+        case mouseDragged
+        case rightMouseDragged
+        case otherMouseDragged
+        case scrollWheel
+        case stylusHover
+    }
+
+    private static let maxPendingMessages = 256
+    private static let maxPendingContactSamples = 4096
+
+    private let inputQueue: DispatchQueue
+    private let handler: @Sendable (ControlMessage) -> Void
+    private let lock = NSLock()
+    private var pendingMessages: [PendingMessage] = []
+    private var drainScheduled = false
+
+    init(
+        inputQueue: DispatchQueue,
+        handler: @escaping @Sendable (ControlMessage) -> Void
+    ) {
+        self.inputQueue = inputQueue
+        self.handler = handler
+    }
+
+    func enqueue(_ message: ControlMessage) {
+        let pending = PendingMessage(message: message, classification: Self.classification(for: message))
+
+        lock.lock()
+        append(pending)
+        trimPendingMessages()
+        guard !drainScheduled else {
+            lock.unlock()
+            return
+        }
+        drainScheduled = true
+        lock.unlock()
+
+        scheduleDrain()
+    }
+
+    private func scheduleDrain() {
+        inputQueue.async { [weak self] in
+            self?.drainOne()
+        }
+    }
+
+    private func drainOne() {
+        lock.lock()
+        guard !pendingMessages.isEmpty else {
+            drainScheduled = false
+            lock.unlock()
+            return
+        }
+        let pending = pendingMessages.removeFirst()
+        lock.unlock()
+
+        handler(pending.message)
+
+        lock.lock()
+        let hasMore = !pendingMessages.isEmpty
+        if !hasMore {
+            drainScheduled = false
+        }
+        lock.unlock()
+
+        if hasMore {
+            scheduleDrain()
+        }
+    }
+
+    private func append(_ pending: PendingMessage) {
+        if case let .replaceable(kind) = pending.priority,
+           let last = pendingMessages.last,
+           last.streamID == pending.streamID,
+           last.priority == .replaceable(kind) {
+            pendingMessages[pendingMessages.count - 1] = pending
+            return
+        }
+
+        pendingMessages.append(pending)
+    }
+
+    private func trimPendingMessages() {
+        while pendingMessages.count > Self.maxPendingMessages {
+            if removeFirstPendingMessage(where: { $0.priority.isReplaceable }) { continue }
+            if removeFirstPendingMessage(where: { $0.priority == .contactMove }) { continue }
+            break
+        }
+
+        while pendingContactSampleCount > Self.maxPendingContactSamples {
+            if removeFirstPendingMessage(where: { $0.priority == .contactMove }) { continue }
+            break
+        }
+    }
+
+    private var pendingContactSampleCount: Int {
+        pendingMessages.reduce(into: 0) { result, pending in
+            guard case .contactMove = pending.priority,
+                  let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload),
+                  case let .pointerSampleBatch(batch) = inputMessage.event else {
+                return
+            }
+            result += batch.samples.count
+        }
+    }
+
+    private func removeFirstPendingMessage(where shouldRemove: (PendingMessage) -> Bool) -> Bool {
+        guard let index = pendingMessages.firstIndex(where: shouldRemove) else { return false }
+        pendingMessages.remove(at: index)
+        return true
+    }
+
+    private static func classification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
+        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+            return (nil, .protected)
+        }
+
+        switch inputMessage.event {
+        case .mouseMoved:
+            return (inputMessage.streamID, .replaceable(.mouseMoved))
+        case .mouseDragged:
+            return (inputMessage.streamID, .replaceable(.mouseDragged))
+        case .rightMouseDragged:
+            return (inputMessage.streamID, .replaceable(.rightMouseDragged))
+        case .otherMouseDragged:
+            return (inputMessage.streamID, .replaceable(.otherMouseDragged))
+        case let .scrollWheel(event):
+            return (inputMessage.streamID, isBoundaryScrollEvent(event) ? .protected : .replaceable(.scrollWheel))
+        case let .pointerSampleBatch(batch):
+            if batch.phase == .hover {
+                return (inputMessage.streamID, .replaceable(.stylusHover))
+            }
+            if batch.phase == .moved {
+                return (inputMessage.streamID, .contactMove)
+            }
+            return (inputMessage.streamID, .protected)
+        default:
+            return (inputMessage.streamID, .protected)
+        }
+    }
+
+    private static func isBoundaryScrollEvent(_ event: MirageScrollEvent) -> Bool {
+        event.phase == .began || event.phase == .ended || event.phase == .cancelled
+            || event.momentumPhase == .began || event.momentumPhase == .ended || event.momentumPhase == .cancelled
+    }
+}
+
 @MainActor
 extension MirageHostService {
     /// Continuously receive and handle control messages from a client.
@@ -78,6 +251,10 @@ extension MirageHostService {
         let clientID = clientContext.client.id
         let activityTracker = clientLastActivityByID
         recordClientActivity(clientID: clientID)
+        let inputScheduler = HostInputMessageScheduler(inputQueue: inputQueue) { [weak self] message in
+            guard let self else { return }
+            self.handleInputEventFast(message, from: clientContext.client)
+        }
 
         let receiveLoop = HostReceiveLoop(
             clientName: clientContext.client.name,
@@ -91,12 +268,8 @@ extension MirageHostService {
                     completion(data, context, isComplete, error)
                 }
             },
-            onInputMessage: { [weak self] message in
-                guard let self else { return }
-                self.inputQueue.async { [weak self] in
-                    guard let self else { return }
-                    self.handleInputEventFast(message, from: clientContext.client)
-                }
+            onInputMessage: { message in
+                inputScheduler.enqueue(message)
             },
             onPingMessage: { _ in
                 clientContext.sendBestEffort(ControlMessage(type: .pong))

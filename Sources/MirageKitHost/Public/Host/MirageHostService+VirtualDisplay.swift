@@ -1895,11 +1895,85 @@ extension MirageHostService {
             return
         }
 
+        if streamsByID[streamID] == nil,
+           let appSession = await appStreamManager.getSessionForStreamID(streamID) {
+            await applyAppAtlasLogicalWindowResize(
+                streamID: streamID,
+                newResolution: newResolution,
+                appSession: appSession
+            )
+            return
+        }
+
         guard streamsByID[streamID] != nil else {
             MirageLogger.debug(.host, "No stream found for display resolution change: \(streamID)")
             return
         }
         await enqueueWindowResolutionChange(streamID: streamID, logicalResolution: newResolution)
+    }
+
+    private func applyAppAtlasLogicalWindowResize(
+        streamID: StreamID,
+        newResolution: CGSize,
+        appSession: MirageAppStreamSession
+    ) async {
+        guard let session = activeSessionByStreamID[streamID] else { return }
+        let targetSize = CGSize(
+            width: max(1, newResolution.width),
+            height: max(1, newResolution.height)
+        )
+        let resized = await WindowSpaceManager.shared.resizeWindow(session.window.id, to: targetSize)
+        guard resized else {
+            MirageLogger.host(
+                "App-atlas logical resize did not apply for stream \(streamID): " +
+                    "\(Int(targetSize.width))x\(Int(targetSize.height)) pts"
+            )
+            return
+        }
+
+        let latestFrame = currentWindowFrame(for: session.window.id) ?? CGRect(
+            origin: session.window.frame.origin,
+            size: targetSize
+        )
+        let updatedWindow = MirageWindow(
+            id: session.window.id,
+            title: session.window.title,
+            application: session.window.application,
+            frame: latestFrame,
+            isOnScreen: session.window.isOnScreen,
+            windowLayer: session.window.windowLayer
+        )
+        registerActiveStreamSession(
+            MirageStreamSession(
+                id: streamID,
+                window: updatedWindow,
+                client: session.client
+            )
+        )
+        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedWindow.frame)
+
+        if let windowInfo = appSession.windowStreams[updatedWindow.id] {
+            await appStreamManager.replaceVisibleWindowForStream(
+                bundleIdentifier: appSession.bundleIdentifier,
+                streamID: streamID,
+                newWindowID: updatedWindow.id,
+                title: updatedWindow.title,
+                width: Int(max(1, latestFrame.width.rounded())),
+                height: Int(max(1, latestFrame.height.rounded())),
+                isResizable: windowInfo.isResizable,
+                capturedClusterWindowIDs: [],
+                mediaStreamID: windowInfo.mediaStreamID,
+                atlasRegion: windowInfo.atlasRegion
+            )
+        }
+        await sendAppWindowInventoryUpdate(
+            bundleIdentifier: appSession.bundleIdentifier,
+            clientID: appSession.clientID
+        )
+        MirageLogger.host(
+            "Applied app-atlas logical resize for stream \(streamID): " +
+                "\(Int(targetSize.width))x\(Int(targetSize.height)) pts"
+        )
     }
 }
 

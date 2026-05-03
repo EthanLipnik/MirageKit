@@ -30,6 +30,7 @@ extension MirageClientService {
             .appListProgress: { [weak self] in await self?.handleAppListProgress($0) },
             .appListComplete: { [weak self] in self?.handleAppListComplete($0) },
             .appStreamStarted: { [weak self] in self?.handleAppStreamStarted($0) },
+            .appAtlasMediaUpdate: { [weak self] in await self?.handleAppAtlasMediaUpdate($0) },
             .appWindowInventory: { [weak self] in self?.handleAppWindowInventory($0) },
             .appWindowCloseBlockedAlert: { [weak self] in self?.handleAppWindowCloseBlockedAlert($0) },
             .appWindowCloseAlertActionResult: { [weak self] in self?.handleAppWindowCloseAlertActionResult($0) },

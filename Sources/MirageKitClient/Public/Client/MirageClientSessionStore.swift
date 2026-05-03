@@ -200,6 +200,25 @@ public final class MirageClientSessionStore {
         session.atlasRegion = atlasRegion
     }
 
+    /// Update only the atlas region for an existing logical stream.
+    public func updateSessionAtlasRegion(
+        streamID: StreamID,
+        atlasRegion: MirageAppAtlasRegion?
+    ) {
+        guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
+        session.atlasRegion = atlasRegion
+    }
+
+    /// Apply a physical app-atlas layout to all logical sessions rendering from that media stream.
+    public func updateSessionAtlasRegions(
+        mediaStreamID: StreamID,
+        layout: MirageAppAtlasLayout
+    ) {
+        for session in streamSessions.values where session.mediaStreamID == mediaStreamID {
+            session.atlasRegion = layout.region(for: session.window.id)
+        }
+    }
+
     // MARK: - Minimum Size Updates
 
     /// Update minimum size for a stream.

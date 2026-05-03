@@ -407,7 +407,6 @@ final class FrameReassembler: @unchecked Sendable {
     var packetsDiscardedAwaitingKeyframe: UInt64 = 0
     var packetsDiscardedEpoch: UInt64 = 0
     var packetsDiscardedDeliveredKeyframe: UInt64 = 0
-    var lastStatsLog: UInt64 = 0
     let keyframeFECBlockSize: Int = 8
     let pFrameFECBlockSize: Int = 16
 
@@ -417,9 +416,6 @@ final class FrameReassembler: @unchecked Sendable {
     /// Prevents repeated frame-loss signals for the same forward gap.
     /// Set when a gap timeout fires; reset when `lastCompletedFrame` advances or on `reset()`.
     var hasSignaledGapFrameLoss: Bool = false
-
-    /// Throttle counter for CRC diagnostic logging on reassembled P-frames.
-    var diagnosticCRCLogCounter: UInt64 = 0
 
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer

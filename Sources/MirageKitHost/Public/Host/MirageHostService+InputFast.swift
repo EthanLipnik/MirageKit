@@ -84,6 +84,8 @@ extension MirageHostService {
              .rightMouseDragged,
              .otherMouseDragged:
             true
+        case let .pointerSampleBatch(batch):
+            batch.phase == .hover || batch.phase == .moved
         default:
             false
         }

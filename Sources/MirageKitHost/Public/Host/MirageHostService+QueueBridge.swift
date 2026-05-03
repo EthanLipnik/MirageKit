@@ -113,8 +113,12 @@ extension MirageHostService {
         streamRegistry.unregisterPointerCoalescingRoute(streamID: streamID)
     }
 
-    nonisolated func sendAudioPacketForClient(_ clientID: UUID, data: Data) {
-        transportRegistry.sendAudio(clientID: clientID, data: data)
+    nonisolated func sendAudioPacketForClient(
+        _ clientID: UUID,
+        data: Data,
+        onComplete: @escaping @Sendable (Error?) -> Void = { _ in }
+    ) {
+        transportRegistry.sendAudio(clientID: clientID, data: data, onComplete: onComplete)
     }
 }
 

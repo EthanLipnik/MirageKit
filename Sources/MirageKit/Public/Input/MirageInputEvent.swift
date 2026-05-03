@@ -18,6 +18,7 @@ public enum MirageInputEvent: Codable, Sendable {
     case mouseUp(MirageMouseEvent)
     case mouseMoved(MirageMouseEvent)
     case mouseDragged(MirageMouseEvent)
+    case pointerSampleBatch(MiragePointerSampleBatch)
     case rightMouseDown(MirageMouseEvent)
     case rightMouseUp(MirageMouseEvent)
     case rightMouseDragged(MirageMouseEvent)
@@ -53,6 +54,7 @@ public enum MirageInputEvent: Codable, Sendable {
              let .rightMouseDragged(e),
              let .rightMouseUp(e):
             e.timestamp
+        case let .pointerSampleBatch(e): e.timestamp
         case let .scrollWheel(e): e.timestamp
         case let .magnify(e): e.timestamp
         case let .rotate(e): e.timestamp
@@ -78,6 +80,8 @@ public enum MirageInputEvent: Codable, Sendable {
              let .rightMouseDragged(e),
              let .rightMouseUp(e):
             e.location
+        case let .pointerSampleBatch(e):
+            e.lastLocation
         case let .scrollWheel(e):
             e.location
         case .flagsChanged,
@@ -141,7 +145,7 @@ public extension MirageModifierFlags {
 }
 
 /// Mouse button enumeration
-public enum MirageMouseButton: Int, Codable, Sendable {
+public enum MirageMouseButton: Int, Codable, Sendable, Hashable {
     case left = 0
     case right = 1
     case middle = 2

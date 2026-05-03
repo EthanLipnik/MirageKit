@@ -41,6 +41,10 @@ actor AudioJitterBuffer {
     private var pendingFrames: [UInt32: PendingFrame] = [:]
     private var readyFrames: [AudioEncodedFrame] = []
     private var hasStartedPlayback = false
+    private var lastEmittedTimestampNs: UInt64?
+    private var lastEmittedFrameNumber: UInt32?
+    private var lateDropCount: UInt64 = 0
+    private var lastLateDropLogTime: CFAbsoluteTime = 0
 
     init(startupBufferSeconds: Double = 0.150) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
@@ -50,6 +54,8 @@ actor AudioJitterBuffer {
         pendingFrames.removeAll()
         readyFrames.removeAll()
         hasStartedPlayback = false
+        lastEmittedTimestampNs = nil
+        lastEmittedFrameNumber = nil
     }
 
     @discardableResult
@@ -109,10 +115,14 @@ actor AudioJitterBuffer {
                 samplesPerFrame: max(1, pending.samplesPerFrame),
                 payload: encodedPayload
             )
-            readyFrames.append(frame)
-            readyFrames.sort { lhs, rhs in
-                if lhs.timestampNs == rhs.timestampNs { return lhs.frameNumber < rhs.frameNumber }
-                return lhs.timestampNs < rhs.timestampNs
+            if hasStartedPlayback, isLateFrame(frame) {
+                noteLateDrop()
+            } else {
+                readyFrames.append(frame)
+                readyFrames.sort { lhs, rhs in
+                    if lhs.timestampNs == rhs.timestampNs { return lhs.frameNumber < rhs.frameNumber }
+                    return lhs.timestampNs < rhs.timestampNs
+                }
             }
             pendingFrames.removeValue(forKey: pending.frameNumber)
         }
@@ -131,8 +141,16 @@ actor AudioJitterBuffer {
             hasStartedPlayback = true
         }
 
-        let frames = readyFrames
+        let frames = readyFrames.filter { !isLateFrame($0) }
+        let droppedCount = readyFrames.count - frames.count
+        if droppedCount > 0 {
+            lateDropCount &+= UInt64(droppedCount)
+            logLateDropsIfNeeded()
+        }
         readyFrames.removeAll(keepingCapacity: true)
+        for frame in frames {
+            markEmitted(frame)
+        }
         return frames
     }
 
@@ -149,5 +167,31 @@ actor AudioJitterBuffer {
         guard sampleRate > 0 else { return 0 }
         return Double(max(0, samples)) / Double(sampleRate)
     }
-}
 
+    private func isLateFrame(_ frame: AudioEncodedFrame) -> Bool {
+        guard let lastEmittedTimestampNs, let lastEmittedFrameNumber else { return false }
+        if frame.timestampNs < lastEmittedTimestampNs { return true }
+        if frame.timestampNs == lastEmittedTimestampNs, frame.frameNumber <= lastEmittedFrameNumber {
+            return true
+        }
+        return false
+    }
+
+    private func markEmitted(_ frame: AudioEncodedFrame) {
+        lastEmittedTimestampNs = frame.timestampNs
+        lastEmittedFrameNumber = frame.frameNumber
+    }
+
+    private func noteLateDrop() {
+        lateDropCount &+= 1
+        logLateDropsIfNeeded()
+    }
+
+    private func logLateDropsIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastLateDropLogTime == 0 || now - lastLateDropLogTime > 2.0 else { return }
+        MirageLogger.client("Audio jitter late drop: dropped \(lateDropCount) stale frame(s)")
+        lateDropCount = 0
+        lastLateDropLogTime = now
+    }
+}

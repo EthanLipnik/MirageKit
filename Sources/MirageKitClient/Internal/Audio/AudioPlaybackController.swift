@@ -61,10 +61,17 @@ public final class AudioPlaybackController {
     private var configurationTask: Task<Bool, Never>?
     private var configurationTaskKey: PlaybackConfigurationKey?
     private var configurationTaskGeneration: UInt64?
+    nonisolated(unsafe) private var audioSessionObserverTokens: [NSObjectProtocol] = []
+    private var lastQueueDepthLogTime: CFAbsoluteTime = 0
 
-    init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
+    init(startupBufferSeconds: Double = 0, maxQueuedSeconds: Double = 0.350) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
         self.maxQueuedSeconds = max(0.2, maxQueuedSeconds)
+        installAudioSessionRecoveryObservers()
+    }
+
+    nonisolated deinit {
+        removeAudioSessionRecoveryObservers()
     }
 
     private func tearDownPlaybackGraph() {
@@ -178,6 +185,7 @@ public final class AudioPlaybackController {
         pendingFrames.append(PendingPlaybackFrame(frame: frame, generation: generation))
         pendingDurationSeconds += frame.durationSeconds
         trimPendingFramesIfNeeded()
+        logQueueDepthIfNeeded()
         drainPendingFramesIfNeeded()
     }
 
@@ -353,6 +361,38 @@ public final class AudioPlaybackController {
         await MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
     }
 
+    private func installAudioSessionRecoveryObservers() {
+        #if os(iOS) || os(visionOS)
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        let names: [Notification.Name] = [
+            AVAudioSession.interruptionNotification,
+            AVAudioSession.mediaServicesWereLostNotification,
+            AVAudioSession.mediaServicesWereResetNotification,
+            AVAudioSession.routeChangeNotification,
+        ]
+        audioSessionObserverTokens = names.map { name in
+            center.addObserver(forName: name, object: session, queue: nil) { [weak self] notification in
+                let reason = notification.name.rawValue
+                Task { @MainActor [weak self, reason] in
+                    guard let self else { return }
+                    await self.handleAudioSessionRecovery(reason: reason)
+                }
+            }
+        }
+        #endif
+    }
+
+    private nonisolated func removeAudioSessionRecoveryObservers() {
+        #if os(iOS) || os(visionOS)
+        let center = NotificationCenter.default
+        for token in audioSessionObserverTokens {
+            center.removeObserver(token)
+        }
+        audioSessionObserverTokens.removeAll()
+        #endif
+    }
+
     private func resetPendingPlaybackState() {
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
@@ -376,9 +416,14 @@ public final class AudioPlaybackController {
             isDelayHoldActive = false
         }
 
-        while !pendingFrames.isEmpty, scheduledDurationSeconds <= maxQueuedSeconds {
-            let pendingFrame = pendingFrames.removeFirst()
+        while !pendingFrames.isEmpty {
+            let pendingFrame = pendingFrames[0]
             let frame = pendingFrame.frame
+            if scheduledDurationSeconds > 0,
+               scheduledDurationSeconds + frame.durationSeconds > maxQueuedSeconds {
+                break
+            }
+            pendingFrames.removeFirst()
             pendingDurationSeconds = max(0, pendingDurationSeconds - frame.durationSeconds)
             guard pendingFrame.generation == playbackGeneration else { continue }
             guard frameMatchesConfiguredFormat(frame) else { continue }
@@ -475,8 +520,44 @@ public final class AudioPlaybackController {
 
     private func startPlayerIfNeeded() {
         guard isConfigured else { return }
-        guard let playerNode = playbackGraph?.playerNode else { return }
+        guard let playbackGraph else { return }
+        if !playbackGraph.engine.isRunning {
+            do {
+                try playbackGraph.engine.start()
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Audio playback engine restart failed: ")
+                requestPlaybackGraphRecovery(reason: "engine-start-failed")
+                return
+            }
+        }
+        let playerNode = playbackGraph.playerNode
         if !playerNode.isPlaying { playerNode.play() }
+    }
+
+    private func requestPlaybackGraphRecovery(reason: String) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            MirageLogger.client("Resetting audio playback graph after \(reason)")
+            await self.reset()
+        }
+    }
+
+    func recoverPlaybackGraphForTesting(reason: String = "test") async {
+        await handleAudioSessionRecovery(reason: reason)
+    }
+
+    private func handleAudioSessionRecovery(reason: String) async {
+        MirageLogger.client("Audio playback session recovery: \(reason)")
+        await reset()
+    }
+
+    private func logQueueDepthIfNeeded() {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastQueueDepthLogTime == 0 || now - lastQueueDepthLogTime > 2.0 else { return }
+        let queuedMs = Int((totalBufferedSeconds() * 1000).rounded())
+        MirageLogger.client("Audio playback queued=\(queuedMs)ms")
+        lastQueueDepthLogTime = now
     }
 
     func pendingFrameCountForTesting() -> Int {

@@ -36,6 +36,7 @@ package enum InputEventBinaryCodec {
         case relativeResize = 0x13
         case pixelResize = 0x14
         case windowFocus = 0x15
+        case pointerSampleBatch = 0x16
     }
 
     package static func serialize(_ message: InputEventMessage) throws -> Data {
@@ -88,6 +89,9 @@ package enum InputEventBinaryCodec {
         case let .mouseDragged(mouseEvent):
             writer.appendUInt8(EventType.mouseDragged.rawValue)
             writer.appendMouseEvent(mouseEvent)
+        case let .pointerSampleBatch(batch):
+            writer.appendUInt8(EventType.pointerSampleBatch.rawValue)
+            try writer.appendPointerSampleBatch(batch)
         case let .rightMouseDown(mouseEvent):
             writer.appendUInt8(EventType.rightMouseDown.rawValue)
             writer.appendMouseEvent(mouseEvent)
@@ -147,6 +151,8 @@ package enum InputEventBinaryCodec {
             .mouseMoved(try reader.readMouseEvent())
         case .mouseDragged:
             .mouseDragged(try reader.readMouseEvent())
+        case .pointerSampleBatch:
+            .pointerSampleBatch(try reader.readPointerSampleBatch())
         case .rightMouseDown:
             .rightMouseDown(try reader.readMouseEvent())
         case .rightMouseUp:
@@ -266,6 +272,29 @@ package enum InputEventBinaryCodec {
             appendDouble(Double(event.pressure))
             appendStylusEvent(event.stylus)
             appendDouble(event.timestamp)
+        }
+
+        mutating func appendPointerSampleBatch(_ batch: MiragePointerSampleBatch) throws {
+            appendUInt8(batch.phase.rawValue)
+            appendUInt8(UInt8(clamping: batch.button.rawValue))
+            appendUInt64(UInt64(truncatingIfNeeded: batch.modifiers.rawValue))
+            appendUInt32(UInt32(clamping: batch.clickCount))
+            appendBool(batch.isButtonPressed)
+            appendDouble(batch.timestamp)
+            guard let sampleCount = UInt16(exactly: batch.samples.count) else {
+                throw MirageError.protocolError("Pointer sample batch exceeds \(UInt16.max) samples")
+            }
+            appendUInt16(sampleCount)
+            for sample in batch.samples {
+                appendPointerSample(sample)
+            }
+        }
+
+        mutating func appendPointerSample(_ sample: MiragePointerSample) {
+            appendCGPoint(sample.location)
+            appendDouble(Double(sample.pressure))
+            appendStylusEvent(sample.stylus)
+            appendDouble(sample.timestamp)
         }
 
         mutating func appendStylusEvent(_ event: MirageStylusEvent?) {
@@ -458,6 +487,48 @@ package enum InputEventBinaryCodec {
                 location: location,
                 clickCount: clickCount,
                 modifiers: modifiers,
+                pressure: pressure,
+                stylus: stylus,
+                timestamp: timestamp
+            )
+        }
+
+        mutating func readPointerSampleBatch() throws -> MiragePointerSampleBatch {
+            let phaseRaw = try readUInt8()
+            guard let phase = MiragePointerSampleBatchPhase(rawValue: phaseRaw) else {
+                throw MirageError.protocolError("Unknown pointer sample batch phase \(phaseRaw)")
+            }
+            let buttonRaw = Int(try readUInt8())
+            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
+            let clickCount = Int(try readUInt32())
+            let isButtonPressed = try readBool()
+            let timestamp = try readDouble()
+            let sampleCount = Int(try readUInt16())
+            var samples: [MiragePointerSample] = []
+            samples.reserveCapacity(sampleCount)
+            for _ in 0 ..< sampleCount {
+                samples.append(try readPointerSample())
+            }
+            return MiragePointerSampleBatch(
+                phase: phase,
+                button: MirageMouseButton(rawValue: buttonRaw) ?? .left,
+                modifiers: modifiers,
+                clickCount: clickCount,
+                isButtonPressed: isButtonPressed,
+                samples: samples,
+                timestamp: timestamp
+            )
+        }
+
+        mutating func readPointerSample() throws -> MiragePointerSample {
+            let location = try readCGPoint()
+            let pressure = CGFloat(try readDouble())
+            guard let stylus = try readStylusEvent() else {
+                throw MirageError.protocolError("Pointer sample is missing stylus metadata")
+            }
+            let timestamp = try readDouble()
+            return MiragePointerSample(
+                location: location,
                 pressure: pressure,
                 stylus: stylus,
                 timestamp: timestamp

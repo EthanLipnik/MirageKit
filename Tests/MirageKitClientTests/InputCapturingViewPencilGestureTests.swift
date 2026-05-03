@@ -70,5 +70,43 @@ struct InputCapturingViewPencilGestureTests {
 
         #expect(actions == [.remoteShortcut(shortcut)])
     }
+
+    @Test("Pencil hover ignores sub-pixel jitter and forwards meaningful movement")
+    func pencilHoverJitterGate() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
+        view.lastPencilHoverForwardLocation = CGPoint(x: 0.5, y: 0.5)
+        view.lastPencilHoverForwardTime = 10
+
+        #expect(!view.shouldForwardPencilHover(location: CGPoint(x: 0.501, y: 0.5), now: 10.02))
+        #expect(!view.shouldForwardPencilHover(location: CGPoint(x: 0.52, y: 0.5), now: 10.001))
+        #expect(view.shouldForwardPencilHover(location: CGPoint(x: 0.52, y: 0.5), now: 10.02))
+    }
+
+    @Test("Pencil hover batch sender suppresses jitter below threshold")
+    func pencilHoverBatchSenderSuppressesJitter() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
+        let stylus = MirageStylusEvent(
+            altitudeAngle: .pi / 4,
+            azimuthAngle: .pi / 6,
+            tiltX: 0.1,
+            tiltY: 0.2,
+            zOffset: 0.5,
+            isHovering: true
+        )
+        view.lastPencilHoverForwardLocation = CGPoint(x: 0.5, y: 0.5)
+        view.lastPencilHoverForwardTime = 10
+
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+
+        view.sendPencilHoverBatch(
+            location: CGPoint(x: 0.501, y: 0.5),
+            stylus: stylus,
+            modifiers: [],
+            now: 10.02
+        )
+
+        #expect(events.isEmpty)
+    }
 }
 #endif

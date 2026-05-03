@@ -76,6 +76,44 @@ struct AppStreamManagerAppListProgressTests {
             "com.example.Zed",
         ])
     }
+
+    @MainActor
+    @Test("App-list progress order sends unknown icons before known icons")
+    func appListProgressOrderSendsUnknownIconsBeforeKnownIcons() {
+        let service = MirageHostService(hostName: "Test Host")
+        let apps = [
+            MirageInstalledApp(
+                bundleIdentifier: "com.example.Zed",
+                name: "Zed",
+                path: "/Applications/Zed.app"
+            ),
+            MirageInstalledApp(
+                bundleIdentifier: "com.example.Editor",
+                name: "Editor",
+                path: "/Applications/Editor.app"
+            ),
+            MirageInstalledApp(
+                bundleIdentifier: "com.example.Terminal",
+                name: "Terminal",
+                path: "/Applications/Utilities/Terminal.app"
+            ),
+        ]
+
+        let orderedApps = service.orderedAppsForAppListProgress(
+            apps,
+            priorityBundleIdentifiers: ["com.example.terminal"],
+            knownIconBundleIdentifiers: [
+                "com.example.editor",
+                "com.example.terminal",
+            ]
+        )
+
+        #expect(orderedApps.map(\.bundleIdentifier) == [
+            "com.example.Terminal",
+            "com.example.Zed",
+            "com.example.Editor",
+        ])
+    }
 }
 
 private actor AppReplayRecorder {

@@ -476,6 +476,7 @@ extension MirageClientService {
             clearStartupAttempt(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
             appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
+            appAtlasLayoutsByMediaStreamID.removeValue(forKey: streamID)
             streamStartupBaseTimes.removeValue(forKey: streamID)
             streamStartupFirstRegistrationSent.remove(streamID)
             streamStartupFirstPacketReceived.remove(streamID)
@@ -547,13 +548,16 @@ extension MirageClientService {
                 preEncodeWaitMaxMs: metrics.preEncodeWaitMaxMs,
                 captureCallbackAverageMs: metrics.captureCallbackAverageMs,
                 captureCallbackMaxMs: metrics.captureCallbackMaxMs,
+                captureCadence: metrics.captureCadence,
                 sendQueueBytes: metrics.sendQueueBytes,
                 sendStartDelayAverageMs: metrics.sendStartDelayAverageMs,
                 sendStartDelayMaxMs: metrics.sendStartDelayMaxMs,
                 sendCompletionAverageMs: metrics.sendCompletionAverageMs,
                 sendCompletionMaxMs: metrics.sendCompletionMaxMs,
                 packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs,
+                packetPacerTotalSleepMs: metrics.packetPacerTotalSleepMs,
                 packetPacerMaxSleepMs: metrics.packetPacerMaxSleepMs,
+                packetPacerFrameMaxSleepMs: metrics.packetPacerFrameMaxSleepMs,
                 stalePacketDrops: metrics.stalePacketDrops,
                 generationAbortDrops: metrics.generationAbortDrops,
                 nonKeyframeHoldDrops: metrics.nonKeyframeHoldDrops
@@ -670,6 +674,7 @@ extension MirageClientService {
     }
 
     private func recordCursorControlReceiveSample(updateReceived: Bool, positionReceived: Bool) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         if updateReceived { cursorUpdateMessagesSinceLastSample &+= 1 }
         if positionReceived { cursorPositionMessagesSinceLastSample &+= 1 }
 

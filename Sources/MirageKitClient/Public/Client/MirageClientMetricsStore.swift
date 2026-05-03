@@ -12,6 +12,9 @@ import MirageKit
 public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var decodedFPS: Double
     public var receivedFPS: Double
+    public var clientReceivedWorstGapMs: Double
+    public var clientReceivedFrameIntervalP95Ms: Double
+    public var clientReceivedFrameIntervalP99Ms: Double
     public var submittedFPS: Double
     public var uniqueSubmittedFPS: Double
     public var pendingFrameCount: Int
@@ -63,13 +66,45 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostPreEncodeWaitMaxMs: Double? = nil
     package var hostCaptureCallbackAverageMs: Double? = nil
     package var hostCaptureCallbackMaxMs: Double? = nil
+    public var hostCaptureWallClockGapWorstMs: Double? = nil
+    public var hostCaptureWallClockGapP95Ms: Double? = nil
+    public var hostCaptureWallClockGapP99Ms: Double? = nil
+    public var hostCaptureDisplayTimeGapWorstMs: Double? = nil
+    public var hostCaptureDisplayTimeGapP95Ms: Double? = nil
+    public var hostCaptureDisplayTimeGapP99Ms: Double? = nil
+    public var hostCaptureDeliveredFrameGapWorstMs: Double? = nil
+    public var hostCaptureDeliveredFrameGapP95Ms: Double? = nil
+    public var hostCaptureDeliveredFrameGapP99Ms: Double? = nil
+    public var hostCaptureCallbackP95Ms: Double? = nil
+    public var hostCaptureCallbackP99Ms: Double? = nil
+    public var hostCaptureLongFrameGapCount: UInt64? = nil
+    public var hostCaptureDisplayTimeDriftCount: UInt64? = nil
+    public var hostCaptureVirtualDisplayTimingSuspect: Bool? = nil
+    public var hostCaptureUsesDisplayRefreshCadence: Bool? = nil
+    public var hostCaptureUsesNativeRefreshMinimumFrameInterval: Bool? = nil
+    public var hostCaptureMinimumFrameIntervalRate: Int? = nil
+    public var hostCaptureDisplayRefreshRate: Int? = nil
+    public var hostVirtualDisplayID: UInt32? = nil
+    public var hostVirtualDisplayRefreshRate: Double? = nil
+    public var hostVirtualDisplayScaleFactor: Double? = nil
+    package var hostCaptureStatusCompleteCount: UInt64? = nil
+    package var hostCaptureStatusIdleCount: UInt64? = nil
+    package var hostCaptureStatusBlankCount: UInt64? = nil
+    package var hostCaptureStatusSuspendedCount: UInt64? = nil
+    package var hostCaptureStatusStartedCount: UInt64? = nil
+    package var hostCaptureStatusStoppedCount: UInt64? = nil
+    package var hostCaptureStatusUnknownCount: UInt64? = nil
+    package var hostCaptureCadenceDropCount: UInt64? = nil
+    package var hostCaptureCadenceSampleOverwriteCount: UInt64? = nil
     package var hostSendQueueBytes: Int? = nil
     package var hostSendStartDelayAverageMs: Double? = nil
     package var hostSendStartDelayMaxMs: Double? = nil
     package var hostSendCompletionAverageMs: Double? = nil
     package var hostSendCompletionMaxMs: Double? = nil
     package var hostPacketPacerAverageSleepMs: Double? = nil
+    package var hostPacketPacerTotalSleepMs: Int? = nil
     package var hostPacketPacerMaxSleepMs: Int? = nil
+    package var hostPacketPacerFrameMaxSleepMs: Int? = nil
     package var hostStalePacketDrops: UInt64? = nil
     package var hostGenerationAbortDrops: UInt64? = nil
     package var hostNonKeyframeHoldDrops: UInt64? = nil
@@ -79,6 +114,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTransportSendStartDelayAverageMs: Double? { hostSendStartDelayAverageMs }
     public var hostTransportSendCompletionAverageMs: Double? { hostSendCompletionAverageMs }
     public var hostTransportPacketPacerAverageSleepMs: Double? { hostPacketPacerAverageSleepMs }
+    public var hostTransportPacketPacerTotalSleepMs: Int? { hostPacketPacerTotalSleepMs }
+    public var hostTransportPacketPacerMaxSleepMs: Int? { hostPacketPacerMaxSleepMs }
+    public var hostTransportPacketPacerFrameMaxSleepMs: Int? { hostPacketPacerFrameMaxSleepMs }
     public var hostTransportStalePacketDrops: UInt64? { hostStalePacketDrops }
     public var hostTransportGenerationAbortDrops: UInt64? { hostGenerationAbortDrops }
     public var hostTransportNonKeyframeHoldDrops: UInt64? { hostNonKeyframeHoldDrops }
@@ -86,6 +124,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public init(
         decodedFPS: Double = 0,
         receivedFPS: Double = 0,
+        clientReceivedWorstGapMs: Double = 0,
+        clientReceivedFrameIntervalP95Ms: Double = 0,
+        clientReceivedFrameIntervalP99Ms: Double = 0,
         submittedFPS: Double = 0,
         uniqueSubmittedFPS: Double = 0,
         pendingFrameCount: Int = 0,
@@ -135,6 +176,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     ) {
         self.decodedFPS = decodedFPS
         self.receivedFPS = receivedFPS
+        self.clientReceivedWorstGapMs = clientReceivedWorstGapMs
+        self.clientReceivedFrameIntervalP95Ms = clientReceivedFrameIntervalP95Ms
+        self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
@@ -182,6 +226,39 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientUsingHardwareDecoder = clientUsingHardwareDecoder
         self.hasHostMetrics = hasHostMetrics
     }
+
+    mutating func applyHostCaptureCadence(_ cadence: StreamCaptureCadenceMetrics?) {
+        hostCaptureWallClockGapWorstMs = cadence?.wallClockGapWorstMs
+        hostCaptureWallClockGapP95Ms = cadence?.wallClockGapP95Ms
+        hostCaptureWallClockGapP99Ms = cadence?.wallClockGapP99Ms
+        hostCaptureDisplayTimeGapWorstMs = cadence?.displayTimeGapWorstMs
+        hostCaptureDisplayTimeGapP95Ms = cadence?.displayTimeGapP95Ms
+        hostCaptureDisplayTimeGapP99Ms = cadence?.displayTimeGapP99Ms
+        hostCaptureDeliveredFrameGapWorstMs = cadence?.deliveredFrameGapWorstMs
+        hostCaptureDeliveredFrameGapP95Ms = cadence?.deliveredFrameGapP95Ms
+        hostCaptureDeliveredFrameGapP99Ms = cadence?.deliveredFrameGapP99Ms
+        hostCaptureCallbackP95Ms = cadence?.callbackDurationP95Ms
+        hostCaptureCallbackP99Ms = cadence?.callbackDurationP99Ms
+        hostCaptureLongFrameGapCount = cadence?.longFrameGapCount
+        hostCaptureDisplayTimeDriftCount = cadence?.displayTimeDriftCount
+        hostCaptureVirtualDisplayTimingSuspect = cadence?.virtualDisplayTimingSuspect
+        hostCaptureUsesDisplayRefreshCadence = cadence?.usesDisplayRefreshCadence
+        hostCaptureUsesNativeRefreshMinimumFrameInterval = cadence?.usesNativeRefreshMinimumFrameInterval
+        hostCaptureMinimumFrameIntervalRate = cadence?.minimumFrameIntervalRate
+        hostCaptureDisplayRefreshRate = cadence?.displayRefreshRate
+        hostVirtualDisplayID = cadence?.virtualDisplayID
+        hostVirtualDisplayRefreshRate = cadence?.virtualDisplayRefreshRate
+        hostVirtualDisplayScaleFactor = cadence?.virtualDisplayScaleFactor
+        hostCaptureStatusCompleteCount = cadence?.completeFrameStatusCount
+        hostCaptureStatusIdleCount = cadence?.idleFrameStatusCount
+        hostCaptureStatusBlankCount = cadence?.blankFrameStatusCount
+        hostCaptureStatusSuspendedCount = cadence?.suspendedFrameStatusCount
+        hostCaptureStatusStartedCount = cadence?.startedFrameStatusCount
+        hostCaptureStatusStoppedCount = cadence?.stoppedFrameStatusCount
+        hostCaptureStatusUnknownCount = cadence?.unknownFrameStatusCount
+        hostCaptureCadenceDropCount = cadence?.cadenceDropCount
+        hostCaptureCadenceSampleOverwriteCount = cadence?.sampleOverwriteCount
+    }
 }
 
 public final class MirageClientMetricsStore: @unchecked Sendable {
@@ -194,6 +271,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         streamID: StreamID,
         decodedFPS: Double,
         receivedFPS: Double,
+        receivedWorstGapMs: Double = 0,
+        receivedFrameIntervalP95Ms: Double = 0,
+        receivedFrameIntervalP99Ms: Double = 0,
         droppedFrames: UInt64,
         submittedFPS: Double,
         uniqueSubmittedFPS: Double,
@@ -211,6 +291,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
         snapshot.decodedFPS = decodedFPS
         snapshot.receivedFPS = receivedFPS
+        snapshot.clientReceivedWorstGapMs = max(0, receivedWorstGapMs)
+        snapshot.clientReceivedFrameIntervalP95Ms = max(0, receivedFrameIntervalP95Ms)
+        snapshot.clientReceivedFrameIntervalP99Ms = max(0, receivedFrameIntervalP99Ms)
         snapshot.submittedFPS = submittedFPS
         snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
         snapshot.pendingFrameCount = max(0, pendingFrameCount)
@@ -307,13 +390,16 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         preEncodeWaitMaxMs: Double?,
         captureCallbackAverageMs: Double?,
         captureCallbackMaxMs: Double?,
+        captureCadence: StreamCaptureCadenceMetrics?,
         sendQueueBytes: Int?,
         sendStartDelayAverageMs: Double?,
         sendStartDelayMaxMs: Double?,
         sendCompletionAverageMs: Double?,
         sendCompletionMaxMs: Double?,
         packetPacerAverageSleepMs: Double?,
+        packetPacerTotalSleepMs: Int?,
         packetPacerMaxSleepMs: Int?,
+        packetPacerFrameMaxSleepMs: Int?,
         stalePacketDrops: UInt64?,
         generationAbortDrops: UInt64?,
         nonKeyframeHoldDrops: UInt64?
@@ -326,13 +412,16 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostPreEncodeWaitMaxMs = preEncodeWaitMaxMs
         snapshot.hostCaptureCallbackAverageMs = captureCallbackAverageMs
         snapshot.hostCaptureCallbackMaxMs = captureCallbackMaxMs
+        snapshot.applyHostCaptureCadence(captureCadence)
         snapshot.hostSendQueueBytes = sendQueueBytes
         snapshot.hostSendStartDelayAverageMs = sendStartDelayAverageMs
         snapshot.hostSendStartDelayMaxMs = sendStartDelayMaxMs
         snapshot.hostSendCompletionAverageMs = sendCompletionAverageMs
         snapshot.hostSendCompletionMaxMs = sendCompletionMaxMs
         snapshot.hostPacketPacerAverageSleepMs = packetPacerAverageSleepMs
+        snapshot.hostPacketPacerTotalSleepMs = packetPacerTotalSleepMs
         snapshot.hostPacketPacerMaxSleepMs = packetPacerMaxSleepMs
+        snapshot.hostPacketPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
         snapshot.hostStalePacketDrops = stalePacketDrops
         snapshot.hostGenerationAbortDrops = generationAbortDrops
         snapshot.hostNonKeyframeHoldDrops = nonKeyframeHoldDrops

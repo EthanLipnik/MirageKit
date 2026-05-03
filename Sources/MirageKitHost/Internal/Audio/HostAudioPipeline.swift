@@ -18,16 +18,20 @@ actor HostAudioPipeline {
     private let onPacketsReady: @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     private var sourceStreamID: StreamID
     private var queue: [CapturedAudioBuffer] = []
+    private var queuedDurationSeconds: Double = 0
+    private var pendingDiscontinuity = false
+    private var droppedBufferCount: UInt64 = 0
+    private var lastDropLogTime: CFAbsoluteTime = 0
     private var processingTask: Task<Void, Never>?
     private var isRunning = true
-    private let maxQueuedBuffers: Int
+    private let maxQueuedDurationSeconds: Double
 
     init(
         sourceStreamID: StreamID,
         audioConfiguration: MirageAudioConfiguration,
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext?,
-        maxQueuedBuffers: Int = 48,
+        maxQueuedDurationSeconds: Double = 0.120,
         onPacketsReady: @escaping @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     ) {
         self.sourceStreamID = sourceStreamID
@@ -36,7 +40,7 @@ actor HostAudioPipeline {
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext
         )
-        self.maxQueuedBuffers = max(4, maxQueuedBuffers)
+        self.maxQueuedDurationSeconds = max(0.020, maxQueuedDurationSeconds)
         self.onPacketsReady = onPacketsReady
     }
 
@@ -50,19 +54,43 @@ actor HostAudioPipeline {
 
     func enqueue(_ buffer: CapturedAudioBuffer) {
         guard isRunning else { return }
-        if queue.count >= maxQueuedBuffers {
-            // Under pressure, drop the oldest audio chunk to protect video transport.
-            queue.removeFirst()
-        }
         queue.append(buffer)
+        queuedDurationSeconds += Self.durationSeconds(for: buffer)
+        let droppedCount = Self.trimQueuedBuffers(
+            &queue,
+            queuedDurationSeconds: &queuedDurationSeconds,
+            maxQueuedDurationSeconds: maxQueuedDurationSeconds
+        )
+        if droppedCount > 0 {
+            pendingDiscontinuity = true
+            droppedBufferCount &+= UInt64(droppedCount)
+            logDropsIfNeeded()
+        }
         startProcessingIfNeeded()
     }
 
     func stop() {
         isRunning = false
         queue.removeAll()
+        queuedDurationSeconds = 0
+        pendingDiscontinuity = false
         processingTask?.cancel()
         processingTask = nil
+    }
+
+    nonisolated static func trimQueuedBuffers(
+        _ queue: inout [CapturedAudioBuffer],
+        queuedDurationSeconds: inout Double,
+        maxQueuedDurationSeconds: Double
+    ) -> Int {
+        let budget = max(0.001, maxQueuedDurationSeconds)
+        var droppedCount = 0
+        while queuedDurationSeconds > budget, queue.count > 1 {
+            let removed = queue.removeFirst()
+            queuedDurationSeconds = max(0, queuedDurationSeconds - durationSeconds(for: removed))
+            droppedCount += 1
+        }
+        return droppedCount
     }
 
     private func startProcessingIfNeeded() {
@@ -78,12 +106,36 @@ actor HostAudioPipeline {
         while isRunning {
             guard !queue.isEmpty else { return }
             let captured = queue.removeFirst()
+            queuedDurationSeconds = max(0, queuedDurationSeconds - Self.durationSeconds(for: captured))
             guard let encoded = await encoder.encode(captured) else { continue }
             let currentStreamID = sourceStreamID
-            let packets = await packetizer.packetize(frame: encoded, streamID: currentStreamID)
+            let discontinuity = pendingDiscontinuity
+            let packets = await packetizer.packetize(
+                frame: encoded,
+                streamID: currentStreamID,
+                discontinuity: discontinuity
+            )
+            if discontinuity {
+                pendingDiscontinuity = false
+            }
             guard !packets.isEmpty else { continue }
             await onPacketsReady(packets, encoded, currentStreamID)
         }
+    }
+
+    private static func durationSeconds(for buffer: CapturedAudioBuffer) -> Double {
+        guard buffer.sampleRate > 0, buffer.frameCount > 0 else { return 0.010 }
+        return Double(buffer.frameCount) / buffer.sampleRate
+    }
+
+    private func logDropsIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastDropLogTime == 0 || now - lastDropLogTime > 2.0 else { return }
+        MirageLogger.host(
+            "Audio queue drop: dropped \(droppedBufferCount) stale buffer(s), queuedMs=\(Int((queuedDurationSeconds * 1000).rounded()))"
+        )
+        droppedBufferCount = 0
+        lastDropLogTime = now
     }
 }
 

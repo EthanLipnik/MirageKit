@@ -55,6 +55,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let callbackSampleCount: UInt64
         let cadenceDropCount: UInt64
         let admissionDropCount: UInt64
+        let cadenceMetrics: CaptureCadenceMetricsSnapshot
     }
 
     struct CadenceDecision: Sendable, Equatable {
@@ -65,7 +66,8 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     private let onFrame: @Sendable (CapturedFrame) -> Void
-    private let onAudio: (@Sendable (CapturedAudioBuffer) -> Void)?
+    private var onAudio: (@Sendable (CapturedAudioBuffer) -> Void)?
+    private let audioHandlerLock = NSLock()
     private let onKeyframeRequest: @Sendable (KeyframeRequestReason) -> Void
     private let onCaptureStall: @Sendable (StallSignal) -> Void
     private let shouldDropFrame: (@Sendable () -> Bool)?
@@ -74,31 +76,16 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var frameCount: UInt64 = 0
     private var skippedIdleFrames: UInt64 = 0
 
-    // DIAGNOSTIC: Track all frame statuses to debug drag/menu freeze issue
-    private var statusCounts: [Int: UInt64] = [:]
-    private var lastStatusLogTime: CFAbsoluteTime = 0
-    private var lastFrameTime: CFAbsoluteTime = 0
-    private var maxFrameGap: CFAbsoluteTime = 0
-    private var lastFPSLogTime: CFAbsoluteTime = 0
-    private var presentationWindowCount: UInt64 = 0
-    private var presentationWindowStartTime: Double = 0
-    private var deliveredFrameWindowCount: UInt64 = 0
-    private var deliveredCompleteWindowCount: UInt64 = 0
-    private var deliveredIdleWindowCount: UInt64 = 0
     private var callbackDurationTotalMs: Double = 0
     private var callbackDurationMaxMs: Double = 0
     private var callbackSampleCount: UInt64 = 0
     private var callbackDurationTotalCumulativeMs: Double = 0
     private var callbackDurationMaxCumulativeMs: Double = 0
     private var callbackSampleCountCumulative: UInt64 = 0
-    private var lastCallbackLogTime: CFAbsoluteTime = 0
-    private var audioBufferCount: UInt64 = 0
-    private var lastAudioLogTime: CFAbsoluteTime = 0
     private var softStallSignaled: Bool = false
     private var hardStallSignaled: Bool = false
     private var lastStallTime: CFAbsoluteTime = 0
     private var lastContentRect: CGRect = .zero
-    private var statusBurstDeadline: CFAbsoluteTime = 0
 
     // Frame gap watchdog: when SCK stops delivering frames (during menus/drags),
     // mark fallback mode so resume can trigger a keyframe request
@@ -114,8 +101,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var targetFrameRate: Double
     private let expectationLock = NSLock()
     private let deliveryStateLock = NSLock()
-    private var rawFrameWindowCount: UInt64 = 0
-    private var rawFrameWindowStartTime: CFAbsoluteTime = 0
     private var rawScreenCallbackCountCumulative: UInt64 = 0
     private var validScreenSampleCountCumulative: UInt64 = 0
     private var renderableScreenSampleCountCumulative: UInt64 = 0
@@ -135,7 +120,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var cadencePassCount: UInt64 = 0
     private var cadenceSkewTotalMs: Double = 0
     private var cadenceSkewSampleCount: UInt64 = 0
-    private var lastCadenceLogTime: CFAbsoluteTime = 0
+    private var cadenceMetrics = CaptureCadenceMetricsTracker()
 
     // Menu tracking/alerts can pause window capture for several seconds.
     // Use a longer stall threshold for window-based capture to avoid restart loops.
@@ -144,7 +129,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
     private var admissionDropCount: UInt64 = 0
     private var admissionDropTotalCount: UInt64 = 0
-    private var lastAdmissionLogTime: CFAbsoluteTime = 0
     private let poolLogLock = NSLock()
 
     // Track if we've been in fallback mode - when SCK resumes, we may need a keyframe
@@ -208,12 +192,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         self.expectedFrameRate = expectedFrameRate
         self.targetFrameRate = Double(max(0, targetFrameRate))
+        self.cadenceMetrics = CaptureCadenceMetricsTracker(
+            expectedFrameRate: expectedFrameRate,
+            targetFrameRate: Double(max(0, targetFrameRate))
+        )
         super.init()
         startWatchdogTimer()
     }
 
     deinit {
         stopWatchdogTimer()
+    }
+
+    func setAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) {
+        audioHandlerLock.lock()
+        onAudio = handler
+        audioHandlerLock.unlock()
     }
 
     /// Start the watchdog timer that checks for frame gaps
@@ -273,6 +267,12 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             cadenceSkewTotalMs = 0
             cadenceSkewSampleCount = 0
         }
+        poolLogLock.withLock {
+            cadenceMetrics.updateFrameRates(
+                expectedFrameRate: Double(frameRate),
+                targetFrameRate: Double(max(0, targetFrameRate))
+            )
+        }
         deliveryStateLock.withLock {
             softStallSignaled = false
             hardStallSignaled = false
@@ -308,8 +308,40 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 callbackDurationMaxMs: callbackDurationMaxCumulativeMs,
                 callbackSampleCount: callbackSampleCountCumulative,
                 cadenceDropCount: cadenceDropTotalCount,
-                admissionDropCount: admissionDropTotalCount
+                admissionDropCount: admissionDropTotalCount,
+                cadenceMetrics: cadenceMetrics.snapshot()
             )
+        }
+    }
+
+    func consumeTelemetrySnapshot() -> TelemetrySnapshot {
+        return poolLogLock.withLock {
+            let cadenceSnapshot = cadenceMetrics.consumeSnapshot()
+            let snapshot = TelemetrySnapshot(
+                rawScreenCallbackCount: rawScreenCallbackCountCumulative,
+                validScreenSampleCount: validScreenSampleCountCumulative,
+                renderableScreenSampleCount: renderableScreenSampleCountCumulative,
+                completeFrameCount: completeFrameCountCumulative,
+                idleFrameCount: idleFrameCountCumulative,
+                blankFrameCount: blankFrameCountCumulative,
+                suspendedFrameCount: suspendedFrameCountCumulative,
+                startedFrameCount: startedFrameCountCumulative,
+                stoppedFrameCount: stoppedFrameCountCumulative,
+                cadenceAdmittedFrameCount: cadenceAdmittedFrameCountCumulative,
+                deliveredFrameCount: deliveredFrameCountCumulative,
+                callbackDurationTotalMs: callbackDurationTotalMs,
+                callbackDurationMaxMs: callbackDurationMaxMs,
+                callbackSampleCount: callbackSampleCount,
+                cadenceDropCount: cadenceDropCount,
+                admissionDropCount: admissionDropCount,
+                cadenceMetrics: cadenceSnapshot
+            )
+            callbackDurationTotalMs = 0
+            callbackDurationMaxMs = 0
+            callbackSampleCount = 0
+            cadenceDropCount = 0
+            admissionDropCount = 0
+            return snapshot
         }
     }
 
@@ -557,7 +589,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         #if DEBUG
         dispatchPrecondition(condition: .notOnQueue(.main))
         #endif
-        let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
         let callbackStartTime = CFAbsoluteTimeGetCurrent()
         defer {
             let durationMs = (CFAbsoluteTimeGetCurrent() - callbackStartTime) * 1000
@@ -573,38 +604,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         guard type == .screen else { return }
-        recordRawScreenCallback()
-
-        // DIAGNOSTIC: Track frame delivery gaps to detect drag/menu freeze
-        if lastFrameTime > 0 {
-            let gap = captureTime - lastFrameTime
-            if gap > 0.1 { // Log gaps > 100ms
-                let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.capture("FRAME GAP: \(gapMs)ms since last frame")
-                statusBurstDeadline = max(statusBurstDeadline, captureTime + 2.0)
-            }
-            if gap > maxFrameGap {
-                maxFrameGap = gap
-                if maxFrameGap > 0.2 { // Only log significant new records
-                    let gapMs = (maxFrameGap * 1000).formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.capture("NEW MAX FRAME GAP: \(gapMs)ms")
-                }
-            }
-        }
-        lastFrameTime = captureTime
-
-        if diagnosticsEnabled {
-            rawFrameWindowCount += 1
-            if rawFrameWindowStartTime == 0 { rawFrameWindowStartTime = captureTime } else if captureTime - rawFrameWindowStartTime > 2.0 {
-                let elapsed = captureTime - rawFrameWindowStartTime
-                let rawFPS = Double(rawFrameWindowCount) / elapsed
-                let rawFPSText = rawFPS.formatted(.number.precision(.fractionLength(1)))
-                let targetText = expectedFrameRate.formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.capture("Capture raw fps: \(rawFPSText) (target=\(targetText))")
-                rawFrameWindowCount = 0
-                rawFrameWindowStartTime = captureTime
-            }
-        }
+        recordRawScreenCallback(at: captureTime)
 
         let attachments =
             (CMSampleBufferGetSampleAttachmentsArray(
@@ -619,6 +619,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         } else if tracksFrameStatus, windowID == 0, isValidSampleBuffer {
             noteObservedStartupSample()
         }
+        recordFrameTiming(
+            presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+            displayTimeSeconds: resolvedDisplayTimeSeconds(from: attachments),
+            captureTime: captureTime
+        )
 
         // Validate the sample buffer
         guard isValidSampleBuffer,
@@ -627,10 +632,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
         recordValidScreenSample()
 
-        if diagnosticsEnabled {
-            updatePresentationFPS(presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
-        }
-
         if !tracksFrameStatus {
             if status == nil {
                 noteCaptureStartupSample(status: .complete)
@@ -638,17 +639,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             }
             recordRenderableScreenSample()
             updateDeliveryState(captureTime: captureTime, isComplete: true)
-            if diagnosticsEnabled {
-                deliveredFrameWindowCount += 1
-                if lastFPSLogTime == 0 { lastFPSLogTime = captureTime } else if captureTime - lastFPSLogTime > 2.0 {
-                    let elapsed = captureTime - lastFPSLogTime
-                    let fps = Double(deliveredFrameWindowCount) / elapsed
-                    let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.capture("Capture fps: \(fpsText)")
-                    deliveredFrameWindowCount = 0
-                    lastFPSLogTime = captureTime
-                }
-            }
 
             if let shouldDropFrame, shouldDropFrame() {
                 logAdmissionDrop()
@@ -658,7 +648,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             let bufferWidth = CVPixelBufferGetWidth(pixelBuffer)
             let bufferHeight = CVPixelBufferGetHeight(pixelBuffer)
             frameCount += 1
-            if frameCount == 1 || frameCount % 600 == 0 { MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)") }
+            if frameCount == 1 { MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)") }
 
             let frameInfo = CapturedFrameInfo(
                 contentRect: CGRect(x: 0, y: 0, width: CGFloat(bufferWidth), height: CGFloat(bufferHeight)),
@@ -680,29 +670,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         if let status {
             let resolvedStatus = status
 
-            // DIAGNOSTIC: Track status distribution
-            if diagnosticsEnabled {
-                statusCounts[resolvedStatus.rawValue, default: 0] += 1
-                let logInterval: CFAbsoluteTime = captureTime <= statusBurstDeadline ? 0.5 : 2.0
-                if captureTime - lastStatusLogTime > logInterval {
-                    lastStatusLogTime = captureTime
-                    let statusNames = statusCounts.map { key, count in
-                        let name = switch SCFrameStatus(rawValue: key) {
-                        case .idle: "idle"
-                        case .complete: "complete"
-                        case .blank: "blank"
-                        case .suspended: "suspended"
-                        case .started: "started"
-                        case .stopped: "stopped"
-                        default: "unknown(\(key))"
-                        }
-                        return "\(name):\(count)"
-                    }.joined(separator: ", ")
-                    MirageLogger.capture("Frame status distribution: [\(statusNames)]")
-                    statusCounts.removeAll()
-                }
-            }
-
             // Allow idle frames through instead of filtering them out.
             if resolvedStatus == .idle {
                 skippedIdleFrames += 1
@@ -723,23 +690,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         recordRenderableScreenSample()
 
         updateDeliveryState(captureTime: captureTime, isComplete: effectiveStatus == .complete)
-        if diagnosticsEnabled {
-            deliveredFrameWindowCount += 1
-            if effectiveStatus == .idle { deliveredIdleWindowCount += 1 } else {
-                deliveredCompleteWindowCount += 1
-            }
-            if lastFPSLogTime == 0 { lastFPSLogTime = captureTime } else if captureTime - lastFPSLogTime > 2.0 {
-                let elapsed = captureTime - lastFPSLogTime
-                let fps = Double(deliveredFrameWindowCount) / elapsed
-                let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
-                MirageLogger
-                    .capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteWindowCount), idle=\(deliveredIdleWindowCount))")
-                deliveredFrameWindowCount = 0
-                deliveredCompleteWindowCount = 0
-                deliveredIdleWindowCount = 0
-                lastFPSLogTime = captureTime
-            }
-        }
 
         if let shouldDropFrame, shouldDropFrame() {
             logAdmissionDrop()
@@ -809,9 +759,8 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         // Fallback: if contentRect is zero/invalid, use full buffer dimensions
         if contentRect.isEmpty { contentRect = fullRect }
 
-        // Log frame dimensions periodically (first frame and every 10 seconds at 60fps)
         frameCount += 1
-        if frameCount == 1 || frameCount % 600 == 0 { MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)") }
+        if frameCount == 1 { MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)") }
 
         // Create frame info with minimal capture metadata
         // Keyframe requests are now handled by StreamContext cadence, so don't flag here.
@@ -895,26 +844,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         return SCFrameStatus(rawValue: statusRawValue)
     }
 
-    private func updatePresentationFPS(presentationTime: CMTime) {
-        guard presentationTime.isValid else { return }
-        let seconds = CMTimeGetSeconds(presentationTime)
-        guard seconds.isFinite, seconds >= 0 else { return }
-        presentationWindowCount += 1
-        if presentationWindowStartTime == 0 {
-            presentationWindowStartTime = seconds
-            return
-        }
-        let window = seconds - presentationWindowStartTime
-        guard window > 2.0 else { return }
-        let fps = Double(presentationWindowCount) / window
-        let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.capture("Capture PTS fps: \(fpsText) (window \(window.formatted(.number.precision(.fractionLength(2))))s)")
-        presentationWindowCount = 0
-        presentationWindowStartTime = seconds
-    }
-
     private func recordCallbackDuration(_ durationMs: Double) {
-        let now = CFAbsoluteTimeGetCurrent()
         poolLogLock.withLock {
             callbackDurationTotalMs += durationMs
             callbackDurationMaxMs = max(callbackDurationMaxMs, durationMs)
@@ -922,26 +852,34 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             callbackDurationTotalCumulativeMs += durationMs
             callbackDurationMaxCumulativeMs = max(callbackDurationMaxCumulativeMs, durationMs)
             callbackSampleCountCumulative &+= 1
-            guard MirageLogger.isEnabled(.capture) else { return }
-            if lastCallbackLogTime == 0 {
-                lastCallbackLogTime = now
-                return
-            }
-            guard now - lastCallbackLogTime > 2.0 else { return }
-            let avgMs = callbackSampleCount > 0 ? callbackDurationTotalMs / Double(callbackSampleCount) : 0
-            let avgText = avgMs.formatted(.number.precision(.fractionLength(2)))
-            let maxText = callbackDurationMaxMs.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.capture("Capture callback: avg=\(avgText)ms max=\(maxText)ms")
-            callbackDurationTotalMs = 0
-            callbackDurationMaxMs = 0
-            callbackSampleCount = 0
-            lastCallbackLogTime = now
+            cadenceMetrics.recordCallbackDuration(durationMs)
         }
     }
 
-    private func recordRawScreenCallback() {
+    private func recordRawScreenCallback(at captureTime: CFAbsoluteTime) {
         poolLogLock.withLock {
             rawScreenCallbackCountCumulative &+= 1
+            cadenceMetrics.recordScreenCallback(at: captureTime)
+        }
+    }
+
+    private func recordFrameTiming(
+        presentationTime: CMTime,
+        displayTimeSeconds: Double?,
+        captureTime: CFAbsoluteTime
+    ) {
+        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        let resolvedPresentationTime: Double? = if presentationSeconds.isFinite, presentationSeconds >= 0 {
+            presentationSeconds
+        } else {
+            nil
+        }
+        poolLogLock.withLock {
+            cadenceMetrics.recordFrameTiming(
+                presentationTime: resolvedPresentationTime,
+                displayTime: displayTimeSeconds,
+                wallTime: captureTime
+            )
         }
     }
 
@@ -953,6 +891,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
     private func recordFrameStatus(_ status: SCFrameStatus) {
         poolLogLock.withLock {
+            cadenceMetrics.recordStatus(Self.statusBucket(for: status))
             switch status {
             case .complete:
                 completeFrameCountCumulative &+= 1
@@ -972,6 +911,25 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
     }
 
+    private static func statusBucket(for status: SCFrameStatus) -> CaptureFrameStatusBucket {
+        switch status {
+        case .complete:
+            .complete
+        case .idle:
+            .idle
+        case .blank:
+            .blank
+        case .suspended:
+            .suspended
+        case .started:
+            .started
+        case .stopped:
+            .stopped
+        @unknown default:
+            .unknown
+        }
+    }
+
     private func recordRenderableScreenSample() {
         poolLogLock.withLock {
             renderableScreenSampleCountCumulative &+= 1
@@ -984,14 +942,16 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
     }
 
-    private func recordDeliveredFrame() {
+    private func recordDeliveredFrame(at captureTime: CFAbsoluteTime) {
         poolLogLock.withLock {
             deliveredFrameCountCumulative &+= 1
+            cadenceMetrics.recordDeliveredFrame(at: captureTime)
         }
     }
 
     private func emitAudio(sampleBuffer: CMSampleBuffer) {
-        guard let onAudio else { return }
+        let audioHandler = currentAudioHandler()
+        guard let audioHandler else { return }
         guard CMSampleBufferIsValid(sampleBuffer) else { return }
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
               let asbdPointer = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
@@ -1059,19 +1019,14 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             isInterleaved: (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) == 0,
             presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         )
-        if MirageLogger.isEnabled(.capture) {
-            audioBufferCount += 1
-            let now = CFAbsoluteTimeGetCurrent()
-            if lastAudioLogTime == 0 || now - lastAudioLogTime > 2.0 {
-                MirageLogger
-                    .capture(
-                        "Audio capture: buffers=\(audioBufferCount), rate=\(Int(captured.sampleRate))Hz, channels=\(captured.channelCount), frames=\(captured.frameCount), interleaved=\(captured.isInterleaved)"
-                    )
-                audioBufferCount = 0
-                lastAudioLogTime = now
-            }
-        }
-        onAudio(captured)
+        audioHandler(captured)
+    }
+
+    private func currentAudioHandler() -> (@Sendable (CapturedAudioBuffer) -> Void)? {
+        audioHandlerLock.lock()
+        let handler = onAudio
+        audioHandlerLock.unlock()
+        return handler
     }
 
     private func emitFrame(
@@ -1106,7 +1061,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             info: frameInfo,
             backingSampleBuffer: sampleBuffer
         )
-        recordDeliveredFrame()
+        recordDeliveredFrame(at: captureTime)
         onFrame(frame)
     }
 
@@ -1181,13 +1136,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         poolLogLock.withLock {
             admissionDropCount += 1
             admissionDropTotalCount &+= 1
-            guard MirageLogger.isEnabled(.capture) else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            if lastAdmissionLogTime == 0 || now - lastAdmissionLogTime > 2.0 {
-                MirageLogger.capture("Capture admission drop: dropped \(admissionDropCount) frames")
-                admissionDropCount = 0
-                lastAdmissionLogTime = now
-            }
+            cadenceMetrics.recordAdmissionDrop()
         }
     }
 
@@ -1282,29 +1231,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         poolLogLock.withLock {
             cadenceDropCount += 1
             cadenceDropTotalCount &+= 1
-            guard MirageLogger.isEnabled(.capture) else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            if lastCadenceLogTime == 0 || now - lastCadenceLogTime > 2.0 {
-                let (targetFPS, cadencePasses, meanCadenceSkewMs) = expectationLock.withLock {
-                    let targetFPS = Int(targetFrameRate.rounded())
-                    let cadencePasses = cadencePassCount
-                    let meanCadenceSkewMs = if cadenceSkewSampleCount > 0 {
-                        cadenceSkewTotalMs / Double(cadenceSkewSampleCount)
-                    } else {
-                        0.0
-                    }
-                    cadencePassCount = 0
-                    cadenceSkewTotalMs = 0
-                    cadenceSkewSampleCount = 0
-                    return (targetFPS, cadencePasses, meanCadenceSkewMs)
-                }
-                let meanCadenceSkewText = meanCadenceSkewMs.formatted(.number.precision(.fractionLength(2)))
-                MirageLogger.capture(
-                    "Capture cadence gate: cadenceDrops=\(cadenceDropCount), target=\(targetFPS)fps, cadencePasses=\(cadencePasses), meanCadenceSkewMs=\(meanCadenceSkewText)"
-                )
-                cadenceDropCount = 0
-                lastCadenceLogTime = now
-            }
+            cadenceMetrics.recordCadenceDrop()
         }
     }
 }

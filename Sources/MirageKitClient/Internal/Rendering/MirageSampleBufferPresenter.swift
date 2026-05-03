@@ -34,6 +34,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var listenerStreamID: StreamID?
     private var maxRenderFPS: Int = 60
     private var renderingSuspended = false
+    private var contentRectOverride: CGRect?
 
     private var cachedFormatKey: PixelBufferFormatKey?
     private var cachedFormatDescription: CMVideoFormatDescription?
@@ -84,6 +85,14 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             MirageRenderStreamStore.shared.setTargetFPS(for: newStreamID, targetFPS: maxRenderFPS)
         }
         resetPresentationState()
+    }
+
+    func setContentRectOverride(_ contentRect: CGRect?) {
+        guard contentRectOverride != contentRect else { return }
+        contentRectOverride = contentRect
+        cachedFormatKey = nil
+        cachedFormatDescription = nil
+        currentContentReferenceSize = nil
     }
 
     func setRenderingSuspended(_ suspended: Bool, clearCurrentFrame: Bool) {
@@ -152,7 +161,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             guard frame.sequence > lastSubmittedSequence else { return false }
         }
 
-        updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
+        updateLayerContentRect(contentRectOverride ?? frame.contentRect, pixelBuffer: frame.pixelBuffer)
         guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
             from: frame.pixelBuffer,
             presentationTime: frame.presentationTime,
@@ -167,6 +176,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayerNotReadyStartTime = 0
         MirageRenderStreamStore.shared.markSubmitted(
             sequence: frame.sequence,
+            remotePresentationTime: frame.presentationTime,
             mappedPresentationTime: mappedPresentationTime,
             for: streamID
         )

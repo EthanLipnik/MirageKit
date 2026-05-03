@@ -101,5 +101,32 @@ struct StreamPacketSenderPacingTests {
         #expect(keyframe != nil)
         #expect(steadyState?.burstBytes ?? 0 < keyframe?.burstBytes ?? 0)
     }
+
+    @Test("Non-keyframes can burst for one frame budget while keyframes keep startup pacing")
+    func nonKeyframeFrameBudgetBurstPreservesKeyframePacing() {
+        let nonKeyframe = StreamPacketSender.packetPacingParameters(
+            targetRateBps: 600_000_000,
+            packetBytes: 1400,
+            isKeyframeBurst: false,
+            totalFragments: 1,
+            targetFrameIntervalMs: 1000.0 / 60.0,
+            pacingOverride: nil
+        )
+        let cappedNonKeyframe = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: false,
+            totalFragments: 1,
+            targetFrameIntervalMs: 1000.0 / 30.0
+        )
+        let keyframeWindow = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: true,
+            totalFragments: 100,
+            targetFrameIntervalMs: 1000.0 / 60.0
+        )
+
+        #expect(nonKeyframe != nil)
+        #expect((nonKeyframe?.burstBytes ?? 0) > 1400)
+        #expect(cappedNonKeyframe == 16.7)
+        #expect(keyframeWindow == StreamPacketSender.packetPacerBurstWindowMs)
+    }
 }
 #endif

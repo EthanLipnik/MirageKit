@@ -103,6 +103,74 @@ struct TabletInjectionMappingTests {
         #expect(tabletEvent.getIntegerValueField(.tabletEventPointButtons) == 1)
     }
 
+    @Test("Pointer sample batches create tablet pointer events without mouse subtype path")
+    func pointerSampleBatchCreatesTabletPointerEvent() throws {
+        let controller = MirageHostInputController()
+        let stylus = MirageStylusEvent(
+            altitudeAngle: .pi / 4,
+            azimuthAngle: .pi / 6,
+            tiltX: -0.2,
+            tiltY: 0.35
+        )
+        let sample = MiragePointerSample(
+            location: CGPoint(x: 0.2, y: 0.8),
+            pressure: 0.55,
+            stylus: stylus,
+            timestamp: 2
+        )
+        let batch = MiragePointerSampleBatch(
+            phase: .moved,
+            modifiers: [.shift],
+            clickCount: 1,
+            isButtonPressed: true,
+            samples: [sample],
+            timestamp: 2
+        )
+
+        let tabletEvent = try #require(
+            controller.makeTabletPointerEvent(
+                from: sample,
+                batch: batch,
+                type: MirageHostInputController.pointerEventType(for: batch),
+                at: CGPoint(x: 640, y: 480)
+            )
+        )
+
+        #expect(tabletEvent.type == .tabletPointer)
+        #expect(abs(tabletEvent.getDoubleValueField(.tabletEventPointPressure) - 0.55) < 0.02)
+        #expect(tabletEvent.getIntegerValueField(.tabletEventPointButtons) == 1)
+        #expect(tabletEvent.getIntegerValueField(.tabletEventPointX) == 640)
+        #expect(tabletEvent.getIntegerValueField(.tabletEventPointY) == 480)
+    }
+
+    @Test("Ended and cancelled batches map to button release")
+    func pointerSampleBatchBoundaryPhasesMapToRelease() {
+        let stylus = MirageStylusEvent(
+            altitudeAngle: .pi / 4,
+            azimuthAngle: .pi / 6,
+            tiltX: 0,
+            tiltY: 0
+        )
+        let sample = MiragePointerSample(
+            location: .zero,
+            pressure: 0,
+            stylus: stylus
+        )
+        let ended = MiragePointerSampleBatch(
+            phase: .ended,
+            isButtonPressed: false,
+            samples: [sample]
+        )
+        let cancelled = MiragePointerSampleBatch(
+            phase: .cancelled,
+            isButtonPressed: false,
+            samples: [sample]
+        )
+
+        #expect(MirageHostInputController.pointerEventType(for: ended) == .leftMouseUp)
+        #expect(MirageHostInputController.pointerEventType(for: cancelled) == .leftMouseUp)
+    }
+
     @Test("Tablet proximity events are created as tablet proximity types")
     func tabletProximityEventCreationUsesTabletType() throws {
         let controller = MirageHostInputController()

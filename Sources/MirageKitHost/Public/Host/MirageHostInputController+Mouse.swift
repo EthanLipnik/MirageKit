@@ -124,7 +124,7 @@ extension MirageHostInputController {
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: screenPoint)
     }
 
-    private func cachedDynamicTrafficLightClusterSize(
+    func cachedDynamicTrafficLightClusterSize(
         windowID: WindowID,
         app: MirageApplication?,
         windowFrame: CGRect
@@ -149,7 +149,7 @@ extension MirageHostInputController {
         return dynamicClusterSize
     }
 
-    private func logTrafficLightBlockedEvent(
+    func logTrafficLightBlockedEvent(
         windowID: WindowID,
         eventType: CGEventType,
         localPoint: CGPoint,

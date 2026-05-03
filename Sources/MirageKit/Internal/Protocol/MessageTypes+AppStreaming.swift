@@ -47,6 +47,43 @@ public struct StreamPolicyUpdateMessage: Codable, Sendable, Equatable {
     }
 }
 
+public struct AppAtlasMediaUpdateMessage: Codable, Sendable, Equatable {
+    public let mediaStreamID: StreamID
+    public let width: Int
+    public let height: Int
+    public let codec: MirageVideoCodec
+    public let frameRate: Int
+    public let dimensionToken: UInt16?
+    public let layoutEpoch: UInt64
+    public let acceptedPacketSize: Int?
+    public let layout: MirageAppAtlasLayout
+    public let startupAttemptID: UUID
+
+    package init(
+        mediaStreamID: StreamID,
+        width: Int,
+        height: Int,
+        codec: MirageVideoCodec,
+        frameRate: Int,
+        dimensionToken: UInt16? = nil,
+        layoutEpoch: UInt64,
+        acceptedPacketSize: Int? = nil,
+        layout: MirageAppAtlasLayout,
+        startupAttemptID: UUID
+    ) {
+        self.mediaStreamID = mediaStreamID
+        self.width = width
+        self.height = height
+        self.codec = codec
+        self.frameRate = frameRate
+        self.dimensionToken = dimensionToken
+        self.layoutEpoch = layoutEpoch
+        self.acceptedPacketSize = acceptedPacketSize
+        self.layout = layout
+        self.startupAttemptID = startupAttemptID
+    }
+}
+
 /// Request for list of installed apps (Client → Host)
 package struct AppListRequestMessage: Codable {
     /// Whether host-side app-list caches should be bypassed for this request

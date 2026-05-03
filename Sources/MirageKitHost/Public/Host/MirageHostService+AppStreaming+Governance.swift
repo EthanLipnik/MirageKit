@@ -39,8 +39,34 @@ extension MirageHostService {
     func sendAppWindowInventoryUpdate(bundleIdentifier: String, clientID: UUID) async {
         guard let inventory = await appStreamManager.inventoryMessage(bundleIdentifier: bundleIdentifier) else { return }
         guard let clientContext = findClientContext(clientID: clientID) else { return }
+        let atlasLayouts = if let coordinator = appAtlasCoordinatorsByClientID[clientID] {
+            await coordinator.atlasLayouts()
+        } else {
+            inventory.atlasLayouts ?? []
+        }
+        let slots = inventory.slots.map { slot in
+            guard let layout = atlasLayouts.first(where: { $0.mediaStreamID == slot.mediaStreamID }),
+                  let atlasRegion = layout.region(for: slot.window.windowID) else {
+                return slot
+            }
+            return AppWindowInventoryMessage.Slot(
+                slotIndex: slot.slotIndex,
+                streamID: slot.streamID,
+                mediaStreamID: slot.mediaStreamID,
+                window: slot.window,
+                atlasRegion: atlasRegion
+            )
+        }
+        let outboundInventory = AppWindowInventoryMessage(
+            bundleIdentifier: inventory.bundleIdentifier,
+            appSessionID: inventory.appSessionID,
+            maxVisibleSlots: inventory.maxVisibleSlots,
+            slots: slots,
+            hiddenWindows: inventory.hiddenWindows,
+            atlasLayouts: atlasLayouts.isEmpty ? inventory.atlasLayouts : atlasLayouts
+        )
         do {
-            try await clientContext.send(.appWindowInventory, content: inventory)
+            try await clientContext.send(.appWindowInventory, content: outboundInventory)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to send app window inventory update: ")
         }

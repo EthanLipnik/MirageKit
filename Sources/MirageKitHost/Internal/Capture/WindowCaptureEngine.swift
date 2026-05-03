@@ -49,6 +49,7 @@ actor WindowCaptureEngine {
         let usesNativeRefreshMinimumFrameInterval: Bool
         let sckQueueDepth: Int
         let usesDisplayRefreshCadence: Bool
+        let displayRefreshRate: Int?
 
         var benchmarkPolicy: MirageHostCaptureBenchmarkCapturePolicy {
             MirageHostCaptureBenchmarkCapturePolicy(
@@ -252,12 +253,21 @@ actor WindowCaptureEngine {
         admissionDropper = dropper
     }
 
+    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) {
+        capturedAudioHandler = handler
+        streamOutput?.setAudioHandler(handler)
+    }
+
     func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) {
         captureStallStageHandler = handler
     }
 
     func captureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
         streamOutput?.telemetrySnapshot()
+    }
+
+    func consumeCaptureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
+        streamOutput?.consumeTelemetrySnapshot()
     }
 
     func capturePolicySnapshot() -> CapturePolicySnapshot {
@@ -269,7 +279,8 @@ actor WindowCaptureEngine {
             minimumFrameIntervalRate: minimumFrameIntervalRate,
             usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
             sckQueueDepth: sckQueueDepth,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            displayRefreshRate: currentDisplayRefreshRate
         )
     }
 

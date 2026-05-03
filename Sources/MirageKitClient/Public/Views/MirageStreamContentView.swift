@@ -244,6 +244,7 @@ public struct MirageStreamContentView: View {
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
                     mediaStreamID: session.mediaStreamID,
+                    contentRectOverride: session.atlasRegion?.pixelRect,
                     onInputEvent: { event in
                         sendInputEvent(event)
                     },
@@ -309,6 +310,7 @@ public struct MirageStreamContentView: View {
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
                     mediaStreamID: session.mediaStreamID,
+                    contentRectOverride: session.atlasRegion?.pixelRect,
                     onInputEvent: { event in
                         sendInputEvent(event)
                     },
@@ -618,6 +620,7 @@ public struct MirageStreamContentView: View {
              .mouseUp,
              .mouseMoved,
              .mouseDragged,
+             .pointerSampleBatch,
              .rightMouseDown,
              .rightMouseUp,
              .rightMouseDragged,
@@ -1184,6 +1187,7 @@ private extension MirageInputEvent {
              .mouseUp,
              .mouseMoved,
              .mouseDragged,
+             .pointerSampleBatch,
              .rightMouseDown,
              .rightMouseUp,
              .rightMouseDragged,

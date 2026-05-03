@@ -389,6 +389,64 @@ extension SharedVirtualDisplayManager {
         return false
     }
 
+    func reassertDisplayMode(for consumer: DisplayConsumer) async -> DisplaySnapshot? {
+        guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
+        let refreshRate = switch consumer {
+        case .desktopStream:
+            SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
+        default:
+            resolvedRefreshRate(Int(display.refreshRate.rounded()))
+        }
+        guard let updatedDisplay = await updateDisplayInPlace(
+            display: display,
+            newResolution: display.resolution,
+            refreshRate: refreshRate,
+            colorSpace: display.colorSpace
+        ) else {
+            return nil
+        }
+        sharedDisplay = updatedDisplay
+        syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
+        return snapshot(from: updatedDisplay)
+    }
+
+    func recreateDisplayForCadenceRecovery(
+        for consumer: DisplayConsumer
+    )
+    async throws -> DisplayResolutionUpdateResult {
+        guard let consumerInfo = activeConsumers[consumer], let display = sharedDisplay else {
+            return DisplayResolutionUpdateResult(
+                outcome: .noChange,
+                usedCachedResizeTarget: false,
+                generationChanged: false
+            )
+        }
+
+        let previousGeneration = display.generation
+        let refreshRate = switch consumer {
+        case .desktopStream:
+            SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
+        default:
+            resolvedRefreshRate(Int(display.refreshRate.rounded()))
+        }
+        sharedDisplay = try await recreateDisplay(
+            newResolution: display.resolution,
+            refreshRate: refreshRate,
+            colorSpace: consumerInfo.colorSpace,
+            preferFastRecreate: false
+        )
+        if let updatedDisplay = sharedDisplay {
+            syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
+        }
+        let generationChanged = (sharedDisplay?.generation ?? previousGeneration) != previousGeneration
+        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
+        return DisplayResolutionUpdateResult(
+            outcome: .recreated,
+            usedCachedResizeTarget: false,
+            generationChanged: generationChanged
+        )
+    }
+
     func updateDisplayResolution(
         for consumer: DisplayConsumer,
         newResolution: CGSize,

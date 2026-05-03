@@ -127,6 +127,19 @@ struct AudioPlaybackControllerInitializationTests {
     }
 
     @MainActor
+    @Test("Playback recovery tears down initialized graph")
+    func playbackRecoveryTearsDownInitializedGraph() async {
+        let controller = AudioPlaybackController()
+
+        #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
+        #expect(controller.hasInitializedPlaybackGraphForTesting())
+
+        await controller.recoverPlaybackGraphForTesting()
+
+        #expect(!controller.hasInitializedPlaybackGraphForTesting())
+    }
+
+    @MainActor
     private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
         for _ in 0 ..< 20 {
             if predicate() { return }

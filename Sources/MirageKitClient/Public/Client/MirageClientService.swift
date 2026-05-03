@@ -443,6 +443,8 @@ public final class MirageClientService {
     public internal(set) var streamingAppBundleID: String?
     /// Latest host-owned inventory for the currently streamed app session.
     public internal(set) var appWindowInventory: AppWindowInventoryMessage?
+    /// App-atlas layouts indexed by physical media stream and layout epoch.
+    public internal(set) var appAtlasLayoutsByMediaStreamID: [StreamID: [UInt64: MirageAppAtlasLayout]] = [:]
 
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
@@ -648,6 +650,9 @@ public final class MirageClientService {
     var pendingDecodedAudioFramesByStreamID: [StreamID: [DecodedPCMFrame]] = [:]
     var pendingDecodedAudioDurationByStreamID: [StreamID: Double] = [:]
     let maxPendingDecodedAudioDuration: Double = 0.5
+    var audioSyncDropCount: UInt64 = 0
+    var lastAudioSyncDropLogTime: CFAbsoluteTime = 0
+    var lastAudioSyncAheadLogTime: CFAbsoluteTime = 0
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
     nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
     @ObservationIgnored private var lazyAudioPlaybackController: AudioPlaybackController?
@@ -956,7 +961,28 @@ public final class MirageClientService {
             ),
             "client.primaryStream.hostEncoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
                 primarySnapshot?.hostUsingHardwareEncoder
-            )
+            ),
+            "client.primaryStream.receivedWorstGapMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientReceivedWorstGapMs) } ?? .null,
+            "client.primaryStream.receivedFrameIntervalP95Ms": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP95Ms) } ?? .null,
+            "client.primaryStream.receivedFrameIntervalP99Ms": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP99Ms) } ?? .null,
+            "client.primaryStream.hostSendStartDelayMaxMs": primarySnapshot?.hostSendStartDelayMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostSendCompletionMaxMs": primarySnapshot?.hostSendCompletionMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostPacketPacerTotalSleepMs": primarySnapshot?.hostPacketPacerTotalSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.hostPacketPacerMaxSleepMs": primarySnapshot?.hostPacketPacerMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.hostPacketPacerFrameMaxSleepMs": primarySnapshot?.hostPacketPacerFrameMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.hostCaptureDeliveredGapP99Ms": primarySnapshot?.hostCaptureDeliveredFrameGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostCaptureDeliveredGapWorstMs": primarySnapshot?.hostCaptureDeliveredFrameGapWorstMs.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostCaptureWallGapP99Ms": primarySnapshot?.hostCaptureWallClockGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostCaptureDisplayTimeGapP99Ms": primarySnapshot?.hostCaptureDisplayTimeGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostCaptureLongFrameGaps": primarySnapshot?.hostCaptureLongFrameGapCount.map { .int(Int($0)) } ?? .null,
+            "client.primaryStream.hostCaptureDisplayTimeDrifts": primarySnapshot?.hostCaptureDisplayTimeDriftCount.map { .int(Int($0)) } ?? .null,
+            "client.primaryStream.hostCaptureVirtualTimingSuspect": primarySnapshot?.hostCaptureVirtualDisplayTimingSuspect.map(LoomDiagnosticsValue.bool) ?? .null,
+            "client.primaryStream.hostVirtualDisplayID": primarySnapshot?.hostVirtualDisplayID.map { .int(Int($0)) } ?? .null,
+            "client.primaryStream.hostVirtualDisplayRefreshRate": primarySnapshot?.hostVirtualDisplayRefreshRate.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostVirtualDisplayScaleFactor": primarySnapshot?.hostVirtualDisplayScaleFactor.map(LoomDiagnosticsValue.double) ?? .null
         ]
     }
 

@@ -40,12 +40,16 @@ extension StreamController {
 
         let renderTelemetry = latestRenderTelemetrySnapshot ??
             MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let frameMetrics = metricsTracker.snapshot(now: currentTime())
         let diagnostic = clientStreamingAnomalyDiagnostic(
             sample: ClientStreamingAnomalySample(
                 streamID: streamID,
                 trigger: trigger,
                 decodedFPS: decodedFPS,
                 receivedFPS: receivedFPS,
+                receivedWorstGapMs: frameMetrics.receivedWorstGapMs,
+                receivedFrameIntervalP95Ms: frameMetrics.receivedFrameIntervalP95Ms,
+                receivedFrameIntervalP99Ms: frameMetrics.receivedFrameIntervalP99Ms,
                 submittedFPS: renderTelemetry.submittedFPS,
                 uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
@@ -91,6 +95,11 @@ extension StreamController {
 
     func evaluateAdaptiveJitterHold(receivedFPS: Double) {
         guard awdlExperimentEnabled, awdlTransportActive else {
+            guard adaptiveJitterHoldMs != 0 ||
+                adaptiveJitterStressStreak != 0 ||
+                adaptiveJitterStableStreak != 0 else {
+                return
+            }
             adaptiveJitterHoldMs = 0
             adaptiveJitterStressStreak = 0
             adaptiveJitterStableStreak = 0
@@ -106,6 +115,11 @@ extension StreamController {
             receivedFPS: receivedFPS,
             targetFPS: decodeSchedulerTargetFPS
         )
+        guard state.holdMs != adaptiveJitterHoldMs ||
+            state.stressStreak != adaptiveJitterStressStreak ||
+            state.stableStreak != adaptiveJitterStableStreak else {
+            return
+        }
         adaptiveJitterHoldMs = state.holdMs
         adaptiveJitterStressStreak = state.stressStreak
         adaptiveJitterStableStreak = state.stableStreak

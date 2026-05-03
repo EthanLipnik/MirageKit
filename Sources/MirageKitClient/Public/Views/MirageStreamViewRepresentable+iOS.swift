@@ -15,6 +15,7 @@ import SwiftUI
 public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public let streamID: StreamID
     public let mediaStreamID: StreamID
+    public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
     public var onInputEvent: ((MirageInputEvent) -> Void)?
@@ -133,6 +134,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public init(
         streamID: StreamID,
         mediaStreamID: StreamID? = nil,
+        contentRectOverride: CGRect? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
         onContainerSizeChanged: ((CGSize) -> Void)? = nil,
@@ -174,6 +176,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     ) {
         self.streamID = streamID
         self.mediaStreamID = mediaStreamID ?? streamID
+        self.contentRectOverride = contentRectOverride
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
         self.onContainerSizeChanged = onContainerSizeChanged
@@ -253,6 +256,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         controller.updateState(
             streamID: streamID,
             mediaStreamID: mediaStreamID,
+            contentRectOverride: contentRectOverride,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
 
@@ -318,6 +322,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         uiViewController.updateState(
             streamID: streamID,
             mediaStreamID: mediaStreamID,
+            contentRectOverride: contentRectOverride,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
 
@@ -452,6 +457,7 @@ public final class MirageStreamViewController: UIViewController {
     func updateState(
         streamID: StreamID,
         mediaStreamID: StreamID,
+        contentRectOverride: CGRect?,
         directTouchInputMode: MirageDirectTouchInputMode,
         softwareKeyboardVisible: Bool,
         pencilGestureConfiguration: MiragePencilGestureConfiguration,
@@ -480,6 +486,7 @@ public final class MirageStreamViewController: UIViewController {
         currentStreamID = streamID
         captureView.mediaStreamID = mediaStreamID
         captureView.streamID = streamID
+        captureView.contentRectOverride = contentRectOverride
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilGestureConfiguration = pencilGestureConfiguration

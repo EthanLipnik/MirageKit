@@ -47,8 +47,11 @@ extension StreamContext {
         metricsUpdateHandler = handler
     }
 
-    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) {
+    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) async {
         onCapturedAudioBuffer = handler
+        if let captureEngine {
+            await captureEngine.setCapturedAudioHandler(handler)
+        }
     }
 
     func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) async {

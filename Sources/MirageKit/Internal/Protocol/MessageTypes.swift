@@ -85,6 +85,7 @@ package enum ControlMessageType: UInt8, Codable {
     case remoteClientStreamOptionsState = 0x9C // Client -> Host: Sync client stream-option state
     case remoteClientStreamOptionsCommand = 0x9D // Host -> Client: Execute a client stream-option action
     case appListProgress = 0x9E // Host -> Client: Incremental metadata app-list progress
+    case appAtlasMediaUpdate = 0x9F // Host -> Client: App-atlas media stream update
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream

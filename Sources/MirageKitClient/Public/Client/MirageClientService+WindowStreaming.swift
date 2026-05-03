@@ -128,9 +128,12 @@ public extension MirageClientService {
         codec: MirageVideoCodec = .hevc,
         streamDimensions: (width: Int, height: Int)? = nil,
         mediaMaxPacketSize: Int? = nil,
-        dimensionToken: UInt16? = nil
+        dimensionToken: UInt16? = nil,
+        forwardsResizeEvents: Bool = true,
+        resizeEventStreamID: StreamID? = nil
     )
     async {
+        let resolvedResizeEventStreamID = forwardsResizeEvents ? (resizeEventStreamID ?? streamID) : nil
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
         let payloadSize = miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
@@ -150,7 +153,9 @@ public extension MirageClientService {
                     codec: codec,
                     streamDimensions: streamDimensions,
                     mediaMaxPacketSize: acceptedMediaMaxPacketSize,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    forwardsResizeEvents: forwardsResizeEvents,
+                    resizeEventStreamID: resolvedResizeEventStreamID
                 )
             }
 
@@ -207,7 +212,8 @@ public extension MirageClientService {
                 self?.sendKeyframeRequest(for: capturedStreamID)
             },
             onResizeEvent: { [weak self] event in
-                self?.handleResizeEvent(event, for: capturedStreamID)
+                guard let resolvedResizeEventStreamID else { return }
+                self?.handleResizeEvent(event, for: resolvedResizeEventStreamID)
             },
             onResizeStateChanged: nil,
             onFrameDecoded: { [weak self] metrics in
@@ -216,6 +222,9 @@ public extension MirageClientService {
                     streamID: capturedStreamID,
                     decodedFPS: metrics.decodedFPS,
                     receivedFPS: metrics.receivedFPS,
+                    receivedWorstGapMs: metrics.receivedWorstGapMs,
+                    receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
+                    receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
                     droppedFrames: metrics.droppedFrames,
                     submittedFPS: metrics.submittedFPS,
                     uniqueSubmittedFPS: metrics.uniqueSubmittedFPS,
@@ -234,7 +243,9 @@ public extension MirageClientService {
                     outputPixelFormat: metrics.decoderOutputPixelFormat,
                     usingHardwareDecoder: metrics.usingHardwareDecoder
                 )
-                self.activeJitterHoldMs = metrics.activeJitterHoldMs
+                if self.activeJitterHoldMs != metrics.activeJitterHoldMs {
+                    self.activeJitterHoldMs = metrics.activeJitterHoldMs
+                }
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
             onFirstFrameDecoded: { [weak self] in

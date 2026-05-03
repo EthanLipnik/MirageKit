@@ -51,6 +51,14 @@ public class MirageSampleBufferView: UIView {
         }
     }
 
+    public var contentRectOverride: CGRect? {
+        didSet {
+            guard contentRectOverride != oldValue else { return }
+            presenter.setContentRectOverride(contentRectOverride)
+            requestImmediateSubmission()
+        }
+    }
+
     public var streamID: StreamID? {
         didSet {
             bindStreamForPresentation(streamID)

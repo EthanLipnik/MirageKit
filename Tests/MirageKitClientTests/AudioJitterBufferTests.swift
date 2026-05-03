@@ -71,6 +71,21 @@ struct AudioJitterBufferTests {
         #expect(result[0].frameNumber == 31)
     }
 
+    @Test("Late frames are dropped after playback has started")
+    func lateFramesDropAfterStartup() async {
+        let buffer = AudioJitterBuffer(startupBufferSeconds: 0)
+        let payload = Data(repeating: 0x33, count: 32)
+
+        let newerFrame = makeHeader(frameNumber: 2, timestamp: 2_000)
+        let firstResult = await buffer.ingest(header: newerFrame, payload: payload)
+        #expect(firstResult.count == 1)
+        #expect(firstResult[0].frameNumber == 2)
+
+        let lateFrame = makeHeader(frameNumber: 1, timestamp: 1_000)
+        let lateResult = await buffer.ingest(header: lateFrame, payload: payload)
+        #expect(lateResult.isEmpty)
+    }
+
     private func makeHeader(
         frameNumber: UInt32,
         timestamp: UInt64,
@@ -95,4 +110,3 @@ struct AudioJitterBufferTests {
         )
     }
 }
-

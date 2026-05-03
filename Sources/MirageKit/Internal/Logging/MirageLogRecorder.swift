@@ -94,6 +94,13 @@ public final class MirageLogRecorder: @unchecked Sendable {
     private var sinkToken: LoomDiagnosticsSinkToken?
     private var hasActivated = false
     private var hasPreparedCurrentSessionLogFile = false
+    private var fileHandle: FileHandle?
+    private var pendingLogData = Data()
+    private var flushScheduled = false
+    private var bytesWrittenSinceTrimCheck = 0
+    private let writeBatchBytes = 16 * 1024
+    private let trimCheckBytes = 64 * 1024
+    private let writeBatchDelay: DispatchTimeInterval = .milliseconds(250)
 
     private static let shouldRecordVerboseLogs: Bool = {
         #if DEBUG
@@ -216,6 +223,7 @@ public final class MirageLogRecorder: @unchecked Sendable {
     }
 
     private func currentSessionLogData(emptyStateMessage: String) throws -> Data {
+        try flushPendingLogData(forceTrimCheck: true)
         guard fileManager.fileExists(atPath: logURL.path) else {
             return Data("\(emptyStateMessage)\n".utf8)
         }
@@ -249,21 +257,67 @@ public final class MirageLogRecorder: @unchecked Sendable {
     }
 
     private func appendEntry(_ entry: LoomDiagnosticsLogEvent) {
-        let line = formattedLine(for: entry)
-        guard let data = line.data(using: .utf8) else { return }
-
         queue.async { [weak self] in
             guard let self else { return }
             do {
-                if !fileManager.fileExists(atPath: logURL.path) {
-                    fileManager.createFile(atPath: logURL.path, contents: nil)
+                let line = formattedLine(for: entry)
+                guard let data = line.data(using: .utf8) else { return }
+                pendingLogData.append(data)
+                if pendingLogData.count >= writeBatchBytes {
+                    try flushPendingLogData(forceTrimCheck: false)
+                } else {
+                    scheduleFlushIfNeeded()
                 }
+            } catch {
+                return
+            }
+        }
+    }
 
-                let fileHandle = try FileHandle(forWritingTo: logURL)
-                try fileHandle.seekToEnd()
-                try fileHandle.write(contentsOf: data)
-                try fileHandle.close()
-                trimIfNeeded()
+    private func openFileHandleIfNeeded() throws -> FileHandle {
+        if !fileManager.fileExists(atPath: logURL.path) {
+            fileManager.createFile(atPath: logURL.path, contents: nil)
+        }
+        if let fileHandle { return fileHandle }
+        let handle = try FileHandle(forWritingTo: logURL)
+        try handle.seekToEnd()
+        fileHandle = handle
+        return handle
+    }
+
+    private func closeFileHandleIfNeeded() {
+        guard let fileHandle else { return }
+        try? fileHandle.close()
+        self.fileHandle = nil
+    }
+
+    private func flushPendingLogData(forceTrimCheck: Bool) throws {
+        flushScheduled = false
+        guard !pendingLogData.isEmpty else {
+            if forceTrimCheck { trimIfNeeded() }
+            return
+        }
+
+        let data = pendingLogData
+        pendingLogData.removeAll(keepingCapacity: true)
+        let handle = try openFileHandleIfNeeded()
+        try handle.write(contentsOf: data)
+        bytesWrittenSinceTrimCheck += data.count
+        if forceTrimCheck || bytesWrittenSinceTrimCheck >= trimCheckBytes {
+            bytesWrittenSinceTrimCheck = 0
+            try handle.synchronize()
+            closeFileHandleIfNeeded()
+            trimIfNeeded()
+        }
+    }
+
+    private func scheduleFlushIfNeeded() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        queue.asyncAfter(deadline: .now() + writeBatchDelay) { [weak self] in
+            guard let self else { return }
+            do {
+                try flushPendingLogData(forceTrimCheck: false)
             } catch {
                 return
             }

@@ -105,6 +105,7 @@ public final class MirageStreamViewCoordinator {
     }
 
     func noteRepresentableUpdate(for streamID: StreamID) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         if representableUpdateLogStreamID != streamID {
             representableUpdateLogStreamID = streamID
             representableUpdateCount = 0

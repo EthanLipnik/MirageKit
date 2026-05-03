@@ -19,6 +19,7 @@ actor VideoEncoder {
         case window
         case desktop
         case custom
+        case appAtlas
     }
 
     struct RuntimeValidationSnapshot: Sendable {

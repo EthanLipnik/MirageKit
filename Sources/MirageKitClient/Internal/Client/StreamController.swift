@@ -145,6 +145,9 @@ actor StreamController {
     struct ClientFrameMetrics: Sendable {
         let decodedFPS: Double
         let receivedFPS: Double
+        let receivedWorstGapMs: Double
+        let receivedFrameIntervalP95Ms: Double
+        let receivedFrameIntervalP99Ms: Double
         let droppedFrames: UInt64
         let submittedFPS: Double
         let uniqueSubmittedFPS: Double
@@ -166,6 +169,7 @@ actor StreamController {
 
     /// The stream this controller manages
     let streamID: StreamID
+    nonisolated let diagnosticsBuffer = MirageStreamingDiagnosticsBuffer()
 
     /// HEVC decoder for this stream
     let decoder: VideoDecoder
@@ -398,7 +402,6 @@ actor StreamController {
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
-    var lastMetricsLogTime: CFAbsoluteTime = 0
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let metricsDispatchInterval: Duration = .milliseconds(500)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
@@ -587,10 +590,15 @@ actor StreamController {
                 )
             }
 
-            let firstDecodedFrame = metricsTracker.recordDecodedFrame()
+            let decodedFrameRecord = metricsTracker.recordDecodedFrame(now: decodeTime)
+            self?.diagnosticsBuffer.recordDecodeGap(
+                streamID: capturedStreamID,
+                gapMs: decodedFrameRecord.gapMs,
+                now: decodeTime
+            )
             Task { [weak self] in
                 guard let self else { return }
-                if firstDecodedFrame { await self.markFirstFrameDecoded() }
+                if decodedFrameRecord.isFirstFrame { await self.markFirstFrameDecoded() }
                 await self.recordDecodedFrame()
             }
         }
@@ -622,7 +630,6 @@ actor StreamController {
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         metricsTracker.reset()
-        lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
@@ -660,14 +667,19 @@ actor StreamController {
 
         // Set up reassembler callback - enqueue frames for ordered processing
         let metricsTracker = metricsTracker
-        let recordReceivedFrame: @Sendable () -> Void = {
-            metricsTracker.recordReceivedFrame()
-        }
+        let diagnosticsBuffer = diagnosticsBuffer
         let enqueueOrderAllocator = enqueueOrderAllocator
+        let reassemblerStreamID = streamID
         let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void = { [weak self] _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
                 let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
-                recordReceivedFrame()
+                let receivedRecord = metricsTracker.recordReceivedFrame()
+                diagnosticsBuffer.recordFrameArrivalGap(
+                    streamID: reassemblerStreamID,
+                    gapMs: receivedRecord.gapMs,
+                    frameSizeBytes: frameData.count,
+                    isKeyframe: isKeyframe
+                )
                 let enqueueOrder = enqueueOrderAllocator.allocate()
 
                 let frame = FrameData(
@@ -1105,14 +1117,12 @@ actor StreamController {
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS
         )
-        logMetricsIfNeeded(
-            decodedFPS: snapshot.decodedFPS,
-            receivedFPS: snapshot.receivedFPS,
-            droppedFrames: droppedFrames
-        )
         let metrics = ClientFrameMetrics(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
+            receivedWorstGapMs: snapshot.receivedWorstGapMs,
+            receivedFrameIntervalP95Ms: snapshot.receivedFrameIntervalP95Ms,
+            receivedFrameIntervalP99Ms: snapshot.receivedFrameIntervalP99Ms,
             droppedFrames: droppedFrames,
             submittedFPS: renderTelemetry.submittedFPS,
             uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,

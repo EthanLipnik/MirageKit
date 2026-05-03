@@ -285,6 +285,87 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.session(for: sessionID)?.atlasRegion == updatedRegion)
     }
 
+    @Test("Atlas layout updates logical sessions sharing the media stream")
+    @MainActor
+    func atlasLayoutUpdatesLogicalSessionsSharingMediaStream() {
+        let store = MirageClientSessionStore()
+        let firstSessionID = store.createSession(
+            streamID: 91,
+            mediaStreamID: 90,
+            window: testWindow(id: 9101),
+            hostName: "Host",
+            minSize: nil
+        )
+        let secondSessionID = store.createSession(
+            streamID: 92,
+            mediaStreamID: 90,
+            window: testWindow(id: 9201),
+            hostName: "Host",
+            minSize: nil
+        )
+        let otherSessionID = store.createSession(
+            streamID: 93,
+            mediaStreamID: 93,
+            window: testWindow(id: 9301),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        let firstRegion = MirageAppAtlasRegion(
+            windowID: 9101,
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480
+        )
+        let secondRegion = MirageAppAtlasRegion(
+            windowID: 9201,
+            x: 640,
+            y: 0,
+            width: 800,
+            height: 600
+        )
+        let layout = MirageAppAtlasLayout(
+            mediaStreamID: 90,
+            layoutEpoch: 3,
+            width: 2048,
+            height: 1536,
+            regions: [firstRegion, secondRegion]
+        )
+
+        store.updateSessionAtlasRegions(mediaStreamID: 90, layout: layout)
+
+        #expect(store.session(for: firstSessionID)?.atlasRegion == firstRegion)
+        #expect(store.session(for: secondSessionID)?.atlasRegion == secondRegion)
+        #expect(store.session(for: otherSessionID)?.atlasRegion == nil)
+    }
+
+    @Test("Client service stores atlas layouts by media stream and epoch")
+    @MainActor
+    func clientServiceStoresAtlasLayoutsByMediaStreamAndEpoch() {
+        let service = MirageClientService(deviceName: "Test Client")
+        let firstLayout = MirageAppAtlasLayout(
+            mediaStreamID: 101,
+            layoutEpoch: 1,
+            width: 1024,
+            height: 768,
+            regions: []
+        )
+        let secondLayout = MirageAppAtlasLayout(
+            mediaStreamID: 101,
+            layoutEpoch: 2,
+            width: 2048,
+            height: 1536,
+            regions: []
+        )
+
+        service.storeAppAtlasLayout(firstLayout)
+        service.storeAppAtlasLayout(secondLayout)
+
+        #expect(service.appAtlasLayoutsByMediaStreamID[101]?[1] == firstLayout)
+        #expect(service.appAtlasLayoutsByMediaStreamID[101]?[2] == secondLayout)
+    }
+
     @Test("Removing session clears post-resize transition state")
     @MainActor
     func removingSessionClearsPostResizeTransitionState() {

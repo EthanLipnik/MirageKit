@@ -22,6 +22,15 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .hostCadenceLimited)
     }
 
+    @Test("Host cadence classification uses capture gap telemetry")
+    func hostCadenceClassificationUsesCaptureGapTelemetry() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostCaptureDeliveredFrameGapP99Ms = 55
+        snapshot.hostCaptureDeliveredFrameGapWorstMs = 95
+
+        #expect(snapshot.bottleneckKind == .hostCadenceLimited)
+    }
+
     @Test("Encode-bound classification prefers encode throughput behind healthy source cadence")
     func encodeBoundClassificationPrefersEncodeThroughputBehindHealthySourceCadence() {
         var snapshot = baselineSnapshot()

@@ -112,6 +112,7 @@ extension MirageHostService {
 
         if pendingAppListRequest?.clientID == client.id {
             pendingAppListRequest = nil
+            appListRequestToken = UUID()
             appListRequestTask?.cancel()
             appListRequestTask = nil
             await appStreamManager.cancelAppListScans()

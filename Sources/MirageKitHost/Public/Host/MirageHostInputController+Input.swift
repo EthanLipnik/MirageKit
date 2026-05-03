@@ -59,6 +59,21 @@ extension MirageHostInputController {
                 injectMouseEvent(.mouseMoved, e, windowFrame, windowID: window.id, app: window.application)
             case let .mouseDragged(e):
                 injectMouseEvent(.leftMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
+            case let .pointerSampleBatch(batch):
+                if batch.phase == .began {
+                    performWindowActivation(
+                        windowID: window.id,
+                        app: window.application,
+                        trigger: .windowFocus
+                    )
+                    clearUnexpectedSystemModifiers(domain: .session)
+                }
+                injectPointerSampleBatch(
+                    batch,
+                    windowFrame: windowFrame,
+                    windowID: window.id,
+                    app: window.application
+                )
             case let .rightMouseDragged(e):
                 injectMouseEvent(.rightMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
             case let .otherMouseDragged(e):

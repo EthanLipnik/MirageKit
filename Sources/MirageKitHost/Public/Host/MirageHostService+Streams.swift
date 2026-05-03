@@ -591,7 +591,7 @@ public extension MirageHostService {
         await teardownSharedAppStreamMirroringIfIdle(displayID: mirroredDisplayID)
     }
 
-    private func ensureSharedAppStreamMirroring(
+    internal func ensureSharedAppStreamMirroring(
         preset: MirageDisplaySizePreset,
         refreshRate: Int,
         colorSpace: MirageColorSpace
@@ -612,14 +612,16 @@ public extension MirageHostService {
         virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
             reason: "app_stream_shared_display"
         )
-        let snapshot = try await SharedVirtualDisplayManager.shared.acquireAppStreamDisplay(
-            preset: preset,
+        let snapshot = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+            .appStream,
+            resolution: preset.pixelResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace
         )
         await setupDisplayMirroring(
             targetDisplayID: snapshot.displayID,
-            expectedPixelResolution: snapshot.resolution
+            expectedPixelResolution: snapshot.resolution,
+            requiresResidualMirageDisplaysClear: false
         )
         if let token = virtualDisplaySetupGuardToken {
             await completeVirtualDisplaySetupGuard(
@@ -631,12 +633,14 @@ public extension MirageHostService {
         return snapshot
     }
 
-    private func teardownSharedAppStreamMirroringIfIdle(displayID: CGDirectDisplayID?) async {
+    internal func teardownSharedAppStreamMirroringIfIdle(displayID: CGDirectDisplayID?) async {
         guard activeStreams.isEmpty else { return }
-        let sharedDisplaySnapshot = await SharedVirtualDisplayManager.shared.getAppStreamDisplaySnapshot()
+        let sharedDisplaySnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot()
         let mirroredDisplayID = displayID ?? sharedDisplaySnapshot?.displayID
-        guard let mirroredDisplayID else { return }
-        await disableDisplayMirroring(displayID: mirroredDisplayID)
+        if desktopStreamID == nil, let mirroredDisplayID {
+            await disableDisplayMirroring(displayID: mirroredDisplayID)
+        }
+        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.appStream)
     }
 
     private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
@@ -836,13 +840,13 @@ public extension MirageHostService {
         )
     }
 
-    private struct StreamCaptureSource {
+    struct StreamCaptureSource {
         let window: SCWindow
         let application: SCRunningApplication
         let display: SCDisplay
     }
 
-    private func resolveCaptureSource(
+    func resolveCaptureSource(
         for requestedWindow: MirageWindow,
         from content: SCShareableContent,
         disallowedWindowIDs: Set<WindowID> = [],
@@ -1033,6 +1037,13 @@ public extension MirageHostService {
         windowResizeInFlightStreamIDs.remove(session.id)
         clearAppStreamGovernorState(streamID: session.id)
         stopWindowVisibleFrameMonitor(streamID: session.id)
+
+        if context == nil {
+            await stopAppAtlasWindow(
+                streamID: session.id,
+                clientID: appSessionForStoppedWindow?.clientID ?? session.client.id
+            )
+        }
 
         if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
             await disableDisplayMirroring(displayID: mirroredDisplayID)

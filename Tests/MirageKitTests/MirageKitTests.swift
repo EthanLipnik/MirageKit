@@ -628,6 +628,55 @@ struct MirageKitTests {
         #expect((object["mediaStreamID"] as? NSNumber)?.uint64Value == 41)
     }
 
+    @Test("App atlas media update serializes startup and layout metadata")
+    func appAtlasMediaUpdateSerialization() throws {
+        let startupAttemptID = UUID(uuidString: "00000000-0000-0000-0000-0000000009F0")!
+        let region = MirageAppAtlasRegion(
+            windowID: 9001,
+            x: 128,
+            y: 64,
+            width: 1440,
+            height: 900,
+            zIndex: 2,
+            isFocused: true
+        )
+        let layout = MirageAppAtlasLayout(
+            mediaStreamID: 41,
+            layoutEpoch: 7,
+            width: 4096,
+            height: 2304,
+            regions: [region]
+        )
+        let update = AppAtlasMediaUpdateMessage(
+            mediaStreamID: 41,
+            width: 4096,
+            height: 2304,
+            codec: .hevc,
+            frameRate: 120,
+            dimensionToken: 12,
+            layoutEpoch: 7,
+            acceptedPacketSize: 1180,
+            layout: layout,
+            startupAttemptID: startupAttemptID
+        )
+
+        let envelope = try ControlMessage(type: .appAtlasMediaUpdate, content: update)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(AppAtlasMediaUpdateMessage.self)
+
+        #expect(decodedEnvelope.type == .appAtlasMediaUpdate)
+        #expect(decoded.mediaStreamID == 41)
+        #expect(decoded.width == 4096)
+        #expect(decoded.height == 2304)
+        #expect(decoded.codec == .hevc)
+        #expect(decoded.frameRate == 120)
+        #expect(decoded.dimensionToken == 12)
+        #expect(decoded.layoutEpoch == 7)
+        #expect(decoded.acceptedPacketSize == 1180)
+        #expect(decoded.layout == layout)
+        #expect(decoded.startupAttemptID == startupAttemptID)
+    }
+
     @Test("Host software update control message serialization")
     func hostSoftwareUpdateControlMessageSerialization() throws {
         let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
@@ -1118,6 +1167,7 @@ struct MirageKitTests {
         #expect(ControlMessageType(rawValue: 0x8A) == .appWindowCloseAlertActionRequest)
         #expect(ControlMessageType(rawValue: 0x8B) == .appWindowCloseAlertActionResult)
         #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
+        #expect(ControlMessageType(rawValue: 0x9F) == .appAtlasMediaUpdate)
     }
 
     @Test("App window close-blocked alert payload serialization")
@@ -1289,6 +1339,34 @@ struct MirageKitTests {
 
     @Test("Stream metrics validation payload serialization")
     func streamMetricsValidationPayloadSerialization() throws {
+        let captureCadence = StreamCaptureCadenceMetrics(
+            wallClockGapWorstMs: 80,
+            wallClockGapP95Ms: 40,
+            wallClockGapP99Ms: 60,
+            displayTimeGapWorstMs: 82,
+            displayTimeGapP95Ms: 41,
+            displayTimeGapP99Ms: 61,
+            deliveredFrameGapWorstMs: 84,
+            deliveredFrameGapP95Ms: 42,
+            deliveredFrameGapP99Ms: 62,
+            callbackDurationP95Ms: 2.5,
+            callbackDurationP99Ms: 4.5,
+            longFrameGapCount: 2,
+            displayTimeDriftCount: 3,
+            completeFrameStatusCount: 120,
+            cadenceDropCount: 1,
+            admissionDropCount: 4,
+            sampleOverwriteCount: 5,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 60,
+            displayRefreshRate: 60,
+            virtualDisplayID: 62,
+            virtualDisplayRefreshRate: 60,
+            virtualDisplayScaleFactor: 2,
+            virtualDisplayGeneration: 7,
+            virtualDisplayTimingSuspect: true
+        )
         let metrics = StreamMetricsMessage(
             streamID: 1,
             encodedFPS: 58.0,
@@ -1303,13 +1381,16 @@ struct MirageKitTests {
             preEncodeWaitMaxMs: 12.4,
             captureCallbackAverageMs: 1.8,
             captureCallbackMaxMs: 4.2,
+            captureCadence: captureCadence,
             sendQueueBytes: 262_144,
             sendStartDelayAverageMs: 3.7,
             sendStartDelayMaxMs: 8.8,
             sendCompletionAverageMs: 9.4,
             sendCompletionMaxMs: 21.1,
             packetPacerAverageSleepMs: 1.3,
+            packetPacerTotalSleepMs: 24,
             packetPacerMaxSleepMs: 6,
+            packetPacerFrameMaxSleepMs: 8,
             stalePacketDrops: 1,
             generationAbortDrops: 0,
             nonKeyframeHoldDrops: 4,
@@ -1332,7 +1413,13 @@ struct MirageKitTests {
         #expect(decoded.captureIngressAverageMs == 4.1)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
+        #expect(decoded.packetPacerTotalSleepMs == 24)
+        #expect(decoded.packetPacerFrameMaxSleepMs == 8)
         #expect(decoded.nonKeyframeHoldDrops == 4)
+        #expect(decoded.captureCadence?.deliveredFrameGapP99Ms == 62)
+        #expect(decoded.captureCadence?.displayTimeDriftCount == 3)
+        #expect(decoded.captureCadence?.virtualDisplayID == 62)
+        #expect(decoded.captureCadence?.virtualDisplayTimingSuspect == true)
         #expect(decoded.usingHardwareEncoder == true)
         #expect(decoded.encoderGPURegistryID == 12345)
         #expect(decoded.capturePixelFormat == "xf20")

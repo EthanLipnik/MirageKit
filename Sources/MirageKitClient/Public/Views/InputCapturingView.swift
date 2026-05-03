@@ -79,6 +79,13 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Pixel-space crop override for logical app windows packed into a shared media stream.
+    public var contentRectOverride: CGRect? {
+        didSet {
+            sampleBufferView.contentRectOverride = contentRectOverride
+        }
+    }
+
     /// Callback when the view decides on a refresh rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)? {
         didSet {
@@ -388,6 +395,10 @@ public class InputCapturingView: UIView {
     var lastPencilPressure: CGFloat = 0
     var lastPencilMoveSampleTimestamp: TimeInterval = 0
     var lastPencilMoveSampleLocation: CGPoint?
+    var lastPencilHoverForwardTime: CFTimeInterval = 0
+    var lastPencilHoverForwardLocation: CGPoint?
+    var lastPencilHoverLocation: CGPoint?
+    var lastPencilHoverStylus: MirageStylusEvent?
     #if os(iOS)
     private var pencilInteraction: UIPencilInteraction?
     #endif
@@ -519,6 +530,7 @@ public class InputCapturingView: UIView {
     }
 
     func recordSoftwareModifierSyncResult(visualUpdates: Int) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         softwareModifierSyncRequestCount &+= 1
         if visualUpdates > 0 {
             softwareModifierVisualUpdateCount &+= UInt64(visualUpdates)
@@ -542,6 +554,7 @@ public class InputCapturingView: UIView {
     }
 
     func logOnInputEventRebindSuppressionIfNeeded() {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
         if lastOnInputEventRebindLogTime == 0 {
             lastOnInputEventRebindLogTime = now
@@ -745,13 +758,30 @@ public class InputCapturingView: UIView {
             pencilButtonDown
         guard shouldReleasePrimaryButton else { return }
 
-        let mouseEvent = MirageMouseEvent(
-            button: .left,
-            location: pointerReleaseLocation(),
-            clickCount: max(1, currentClickCount),
-            modifiers: keyboardModifiers
-        )
-        onInputEvent?(.mouseUp(mouseEvent))
+        let releaseLocation = pointerReleaseLocation()
+        if pencilButtonDown, let stylus = pencilCurrentStylus {
+            let sample = MiragePointerSample(
+                location: releaseLocation,
+                pressure: 0,
+                stylus: stylus,
+                timestamp: Date.timeIntervalSinceReferenceDate
+            )
+            sendPencilSampleBatch(
+                phase: .cancelled,
+                modifiers: keyboardModifiers,
+                clickCount: max(1, currentClickCount),
+                isButtonPressed: false,
+                samples: [sample]
+            )
+        } else {
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: releaseLocation,
+                clickCount: max(1, currentClickCount),
+                modifiers: keyboardModifiers
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+        }
         MirageLogger.client("Released active primary pointer state (\(reason))")
 
         longPressButtonDown = false
@@ -972,6 +1002,8 @@ public class InputCapturingView: UIView {
     static let passthroughShortcutDuplicateSuppressionWindow: CFTimeInterval = 0.05
     /// Polling cadence for hardware modifier reconciliation while modifiers are held.
     static let modifierRefreshPollInterval: Duration = .milliseconds(100)
+    static let pencilHoverMinimumInterval: CFTimeInterval = 1.0 / 120.0
+    static let pencilHoverMinimumDistancePoints: CGFloat = 0.5
 
     struct PassthroughShortcutRepeatState {
         let keyCode: UInt16
@@ -2252,57 +2284,76 @@ public class InputCapturingView: UIView {
     func beginPencilInteraction(for touch: UITouch) {
         let rawLocation = touch.preciseLocation(in: self)
         let location = normalizedLocation(rawLocation)
+        let stylus = stylusEvent(from: touch)
+        let pressure = normalizedPencilPressure(for: touch)
         pencilCurrentLocation = location
-        pencilCurrentStylus = stylusEvent(from: touch)
-        lastPencilPressure = normalizedPencilPressure(for: touch)
+        pencilCurrentStylus = stylus
+        lastPencilPressure = pressure
         lastPencilMoveSampleTimestamp = touch.timestamp
         lastPencilMoveSampleLocation = location
         updatePointerLocationForLocalContact(location)
 
         let now = CACurrentMediaTime()
         currentClickCount = nextPrimaryClickCount(at: location, timestamp: now)
-        let mouseEvent = pointerEventForPencil(
+        let sample = pointerSampleForPencil(
             location: location,
-            modifiers: currentPencilModifiers(),
             pressure: max(lastPencilPressure, 0.01),
-            stylus: pencilCurrentStylus,
-            clickCount: currentClickCount
+            stylus: stylus,
+            timestamp: touch.timestamp
         )
-        onInputEvent?(.mouseDown(mouseEvent))
+        sendPencilSampleBatch(
+            phase: .began,
+            modifiers: currentPencilModifiers(),
+            clickCount: currentClickCount,
+            isButtonPressed: true,
+            samples: [sample]
+        )
         pencilButtonDown = true
         isDragging = false
         lastPanLocation = location
     }
 
     func updatePencilInteraction(for touch: UITouch, event: UIEvent?) {
-        let samples = event?.coalescedTouches(for: touch) ?? [touch]
+        let touches = event?.coalescedTouches(for: touch) ?? [touch]
+        var batchSamples: [MiragePointerSample] = []
+        var moved = false
 
-        for sample in samples {
-            let rawLocation = sample.preciseLocation(in: self)
+        for sampleTouch in touches {
+            let rawLocation = sampleTouch.preciseLocation(in: self)
             let location = normalizedLocation(rawLocation)
-            let pressure = normalizedPencilPressure(for: sample)
-            let stylus = stylusEvent(from: sample)
-            guard shouldProcessPencilMoveSample(sample, location: location) else { continue }
+            let pressure = normalizedPencilPressure(for: sampleTouch)
+            let stylus = stylusEvent(from: sampleTouch)
+            guard shouldProcessPencilMoveSample(sampleTouch, location: location) else { continue }
             pencilCurrentLocation = location
             pencilCurrentStylus = stylus
             updatePointerLocationForLocalContact(location)
 
             guard pencilButtonDown else { continue }
 
-            let moved = hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001
-            guard moved else { continue }
-
-            let mouseEvent = pointerEventForPencil(
+            if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                moved = true
+            }
+            batchSamples.append(pointerSampleForPencil(
                 location: location,
-                modifiers: currentPencilModifiers(),
                 pressure: pressure,
-                stylus: stylus
-            )
-            onInputEvent?(.mouseDragged(mouseEvent))
+                stylus: stylus,
+                timestamp: sampleTouch.timestamp
+            ))
+            lastPanLocation = location
+        }
+
+        guard pencilButtonDown, !batchSamples.isEmpty else { return }
+        sendPencilSampleBatch(
+            phase: .moved,
+            modifiers: currentPencilModifiers(),
+            isButtonPressed: true,
+            samples: batchSamples
+        )
+
+        if moved {
             if !isDragging { resetPrimaryClickTracking() }
             revealCursorAfterPointerMovement()
             isDragging = true
-            lastPanLocation = location
         }
     }
 
@@ -2327,14 +2378,19 @@ public class InputCapturingView: UIView {
 
         let modifiers = currentPencilModifiers()
         if pencilButtonDown {
-            let mouseEvent = pointerEventForPencil(
+            let sample = pointerSampleForPencil(
                 location: location,
-                modifiers: modifiers,
                 pressure: 0,
                 stylus: stylus,
-                clickCount: max(1, currentClickCount)
+                timestamp: touch.timestamp
             )
-            onInputEvent?(.mouseUp(mouseEvent))
+            sendPencilSampleBatch(
+                phase: .ended,
+                modifiers: modifiers,
+                clickCount: max(1, currentClickCount),
+                isButtonPressed: false,
+                samples: [sample]
+            )
             if !isDragging {
                 commitPrimaryClick(
                     at: location,
@@ -2357,14 +2413,19 @@ public class InputCapturingView: UIView {
         updatePointerLocationForLocalContact(location)
 
         if pencilButtonDown {
-            let mouseEvent = pointerEventForPencil(
+            let sample = pointerSampleForPencil(
                 location: location,
-                modifiers: currentPencilModifiers(),
                 pressure: 0,
                 stylus: stylus,
-                clickCount: 1
+                timestamp: touch.timestamp
             )
-            onInputEvent?(.mouseUp(mouseEvent))
+            sendPencilSampleBatch(
+                phase: .cancelled,
+                modifiers: currentPencilModifiers(),
+                clickCount: 1,
+                isButtonPressed: false,
+                samples: [sample]
+            )
         }
 
         isDragging = false
@@ -2517,21 +2578,124 @@ public class InputCapturingView: UIView {
         )
     }
 
-    func pointerEventForPencil(
+    func pointerSampleForPencil(
         location: CGPoint,
-        modifiers: MirageModifierFlags,
         pressure: CGFloat,
-        stylus: MirageStylusEvent?,
-        clickCount: Int = 1
-    ) -> MirageMouseEvent {
-        return MirageMouseEvent(
-            button: .left,
+        stylus: MirageStylusEvent,
+        timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) -> MiragePointerSample {
+        MiragePointerSample(
             location: location,
-            clickCount: clickCount,
-            modifiers: modifiers,
-            pressure: pressure,
-            stylus: stylus
+            pressure: min(max(pressure, 0), 1),
+            stylus: stylus,
+            timestamp: timestamp
         )
+    }
+
+    func sendPencilSampleBatch(
+        phase: MiragePointerSampleBatchPhase,
+        modifiers: MirageModifierFlags,
+        clickCount: Int = 1,
+        isButtonPressed: Bool,
+        samples: [MiragePointerSample]
+    ) {
+        guard !samples.isEmpty else { return }
+        let batch = MiragePointerSampleBatch(
+            phase: phase,
+            button: .left,
+            modifiers: modifiers,
+            clickCount: clickCount,
+            isButtonPressed: isButtonPressed,
+            samples: samples
+        )
+        onInputEvent?(.pointerSampleBatch(batch))
+    }
+
+    func sendPencilHoverBatch(
+        location: CGPoint,
+        stylus: MirageStylusEvent,
+        modifiers: MirageModifierFlags,
+        now: CFTimeInterval = CFAbsoluteTimeGetCurrent()
+    ) {
+        lastPencilHoverLocation = location
+        lastPencilHoverStylus = stylus
+
+        guard shouldForwardPencilHover(location: location, now: now) else { return }
+        let timestamp = Date.timeIntervalSinceReferenceDate
+        let sample = MiragePointerSample(
+            location: location,
+            pressure: 0,
+            stylus: stylus,
+            timestamp: timestamp
+        )
+        let batch = MiragePointerSampleBatch(
+            phase: .hover,
+            button: .left,
+            modifiers: modifiers,
+            clickCount: 0,
+            isButtonPressed: false,
+            samples: [sample],
+            timestamp: timestamp
+        )
+        onInputEvent?(.pointerSampleBatch(batch))
+        lastPencilHoverForwardTime = now
+        lastPencilHoverForwardLocation = location
+    }
+
+    func shouldForwardPencilHover(
+        location: CGPoint,
+        now: CFTimeInterval = CFAbsoluteTimeGetCurrent()
+    ) -> Bool {
+        guard let lastLocation = lastPencilHoverForwardLocation else { return true }
+
+        let elapsed = now - lastPencilHoverForwardTime
+        guard elapsed >= Self.pencilHoverMinimumInterval else { return false }
+
+        let distance = clickDistanceInPoints(from: location, to: lastLocation)
+        return distance >= Self.pencilHoverMinimumDistancePoints
+    }
+
+    func sendPencilHoverExitIfNeeded() {
+        guard lastPencilHoverForwardLocation != nil,
+              let location = lastPencilHoverLocation,
+              let stylus = lastPencilHoverStylus else {
+            clearPencilHoverState()
+            return
+        }
+
+        let timestamp = Date.timeIntervalSinceReferenceDate
+        let sample = MiragePointerSample(
+            location: location,
+            pressure: 0,
+            stylus: MirageStylusEvent(
+                altitudeAngle: stylus.altitudeAngle,
+                azimuthAngle: stylus.azimuthAngle,
+                tiltX: stylus.tiltX,
+                tiltY: stylus.tiltY,
+                rollAngle: stylus.rollAngle,
+                zOffset: stylus.zOffset,
+                isHovering: true
+            ),
+            timestamp: timestamp
+        )
+        let batch = MiragePointerSampleBatch(
+            phase: .cancelled,
+            button: .left,
+            modifiers: keyboardModifiers,
+            clickCount: 0,
+            isButtonPressed: false,
+            samples: [sample],
+            timestamp: timestamp
+        )
+        onInputEvent?(.pointerSampleBatch(batch))
+        clearPencilHoverState()
+    }
+
+    func clearPencilHoverState() {
+        lastPencilHoverForwardTime = 0
+        lastPencilHoverForwardLocation = nil
+        lastPencilHoverLocation = nil
+        lastPencilHoverStylus = nil
     }
 
     deinit {

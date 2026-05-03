@@ -94,7 +94,48 @@ actor StreamPacketSender {
         let logPrefix: String
         let generation: UInt32
         let encodedAt: CFAbsoluteTime
+        let targetFrameRate: Int
         let pacingOverride: PacingOverride?
+
+        init(
+            encodedData: Data,
+            frameByteCount: Int,
+            isKeyframe: Bool,
+            presentationTime: CMTime,
+            contentRect: CGRect,
+            streamID: StreamID,
+            frameNumber: UInt32,
+            sequenceNumberStart: UInt32,
+            additionalFlags: FrameFlags,
+            dimensionToken: UInt16,
+            epoch: UInt16,
+            fecBlockSize: Int,
+            wireBytes: Int,
+            logPrefix: String,
+            generation: UInt32,
+            encodedAt: CFAbsoluteTime,
+            targetFrameRate: Int = 60,
+            pacingOverride: PacingOverride?
+        ) {
+            self.encodedData = encodedData
+            self.frameByteCount = frameByteCount
+            self.isKeyframe = isKeyframe
+            self.presentationTime = presentationTime
+            self.contentRect = contentRect
+            self.streamID = streamID
+            self.frameNumber = frameNumber
+            self.sequenceNumberStart = sequenceNumberStart
+            self.additionalFlags = additionalFlags
+            self.dimensionToken = dimensionToken
+            self.epoch = epoch
+            self.fecBlockSize = fecBlockSize
+            self.wireBytes = wireBytes
+            self.logPrefix = logPrefix
+            self.generation = generation
+            self.encodedAt = encodedAt
+            self.targetFrameRate = max(1, targetFrameRate)
+            self.pacingOverride = pacingOverride
+        }
     }
 
     struct PacketBudgetSnapshot: Sendable {
@@ -115,11 +156,19 @@ actor StreamPacketSender {
         let keyframeSendAverageMs: Double
         let keyframeSendMaxMs: Double
         let packetPacerSleepAverageMs: Double
+        let packetPacerSleepTotalMs: Int
         let packetPacerSleepMaxMs: Int
+        let packetPacerFrameMaxSleepMs: Int
         let packetPacerSleepCount: UInt64
         let stalePacketDrops: UInt64
         let generationAbortDrops: UInt64
         let nonKeyframeHoldDrops: UInt64
+    }
+
+    struct PacketPacingSleepSample: Sendable, Equatable {
+        let totalMs: Int
+        let maxMs: Int
+        let count: Int
     }
 
     private struct PacketBudgetSample: Sendable {
@@ -139,6 +188,7 @@ actor StreamPacketSender {
     private let mediaSecurityKey: MirageMediaPacketKey?
     private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
     private let onSendError: (@Sendable (Error) -> Void)?
+    private let diagnosticsBuffer: MirageStreamingDiagnosticsBuffer?
     private let packetBufferPool: PacketBufferPool
     private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     private var sendTask: Task<Void, Never>?
@@ -158,6 +208,7 @@ actor StreamPacketSender {
     private var pacerLastRefillTime: CFAbsoluteTime = 0
     private var pacerSleepTotalMs: Int = 0
     private var pacerSleepMaxMs: Int = 0
+    private var pacerFrameSleepMaxMs: Int = 0
     private var pacerSleepPacketCount: Int = 0
     private var pacerLastLogTime: CFAbsoluteTime = 0
     private var sendStartDelayTotalMs: Double = 0
@@ -191,9 +242,15 @@ actor StreamPacketSender {
 
     nonisolated static func packetPacerBurstWindowMilliseconds(
         isKeyframeBurst: Bool,
-        totalFragments: Int
+        totalFragments: Int,
+        targetFrameIntervalMs: Double? = nil
     ) -> Double {
-        guard isKeyframeBurst else { return packetPacerSteadyStateBurstWindowMs }
+        guard isKeyframeBurst else {
+            guard let targetFrameIntervalMs, targetFrameIntervalMs > 0 else {
+                return packetPacerSteadyStateBurstWindowMs
+            }
+            return min(16.7, max(packetPacerSteadyStateBurstWindowMs, targetFrameIntervalMs))
+        }
         guard totalFragments > 0 else { return packetPacerBurstWindowMs }
         return packetPacerBurstWindowMs
     }
@@ -203,6 +260,7 @@ actor StreamPacketSender {
         packetBytes: Int,
         isKeyframeBurst: Bool,
         totalFragments: Int,
+        targetFrameIntervalMs: Double? = nil,
         pacingOverride: PacingOverride?
     ) -> (bytesPerSecond: Double, burstBytes: Double)? {
         guard packetBytes > 0 else { return nil }
@@ -223,7 +281,8 @@ actor StreamPacketSender {
         let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
         let burstWindowMs = packetPacerBurstWindowMilliseconds(
             isKeyframeBurst: isKeyframeBurst,
-            totalFragments: totalFragments
+            totalFragments: totalFragments,
+            targetFrameIntervalMs: targetFrameIntervalMs
         )
         let computedBurstBytes = max(
             bytesPerMillisecond,
@@ -241,11 +300,13 @@ actor StreamPacketSender {
     init(
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
+        diagnosticsBuffer: MirageStreamingDiagnosticsBuffer? = nil,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map { MirageMediaSecurity.makePacketKey(context: $0) }
+        self.diagnosticsBuffer = diagnosticsBuffer
         self.sendPacket = sendPacket
         self.onSendError = onSendError
         packetBufferPool = PacketBufferPool(
@@ -354,7 +415,9 @@ actor StreamPacketSender {
             keyframeSendAverageMs: keyframeSendAverageMs,
             keyframeSendMaxMs: keyframeSendMaxMs,
             packetPacerSleepAverageMs: packetPacerSleepAverageMs,
+            packetPacerSleepTotalMs: pacerSleepTotalMs,
             packetPacerSleepMaxMs: pacerSleepMaxMs,
+            packetPacerFrameMaxSleepMs: pacerFrameSleepMaxMs,
             packetPacerSleepCount: UInt64(pacerSleepPacketCount),
             stalePacketDrops: stalePacketDropCount,
             generationAbortDrops: generationAbortDropCount,
@@ -399,14 +462,20 @@ actor StreamPacketSender {
         let accountedBytes = max(0, item.wireBytes)
         let estimatedPacketWireBytes = estimatedPacketWireBytes(for: item)
         let now = CFAbsoluteTimeGetCurrent()
-        queueLock.withLock {
+        let queuedBytesSnapshot = queueLock.withLock {
             queuedBytes += accountedBytes
             recordPacketBudgetSampleLocked(bytes: estimatedPacketWireBytes, now: now)
             if item.isKeyframe {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
             }
+            return queuedBytes
         }
+        diagnosticsBuffer?.recordQueueDepth(
+            streamID: item.streamID,
+            queuedBytes: queuedBytesSnapshot,
+            now: now
+        )
         sendContinuation?.yield(item)
     }
 
@@ -478,6 +547,8 @@ actor StreamPacketSender {
         )
 
         var currentSequence = item.sequenceNumberStart
+        var framePacerSleepTotalMs = 0
+        var framePacerSleepMaxMs = 0
         for fragmentIndex in 0 ..< totalFragments {
             if item.generation != generation {
                 generationAbortDropCount &+= 1
@@ -557,12 +628,15 @@ actor StreamPacketSender {
 
                 let packetPayloadLength = wirePayload?.count ?? fragmentSize
                 let packetLength = mirageHeaderSize + packetPayloadLength
-                await paceIfNeeded(
+                let pacingSleep = await paceIfNeeded(
                     packetBytes: packetLength,
                     isKeyframeBurst: item.isKeyframe,
                     totalFragments: totalFragments,
+                    targetFrameRate: item.targetFrameRate,
                     pacingOverride: item.pacingOverride
                 )
+                framePacerSleepTotalMs += pacingSleep.totalMs
+                framePacerSleepMaxMs = max(framePacerSleepMaxMs, pacingSleep.maxMs)
 
                 let packetBuffer = packetBufferPool.acquire()
                 packetBuffer.prepare(length: packetLength)
@@ -706,12 +780,15 @@ actor StreamPacketSender {
                     wirePayload = parityData
                 }
 
-                await paceIfNeeded(
+                let pacingSleep = await paceIfNeeded(
                     packetBytes: mirageHeaderSize + wirePayload.count,
                     isKeyframeBurst: item.isKeyframe,
                     totalFragments: totalFragments,
+                    targetFrameRate: item.targetFrameRate,
                     pacingOverride: item.pacingOverride
                 )
+                framePacerSleepTotalMs += pacingSleep.totalMs
+                framePacerSleepMaxMs = max(framePacerSleepMaxMs, pacingSleep.maxMs)
 
                 let packetBuffer = packetBufferPool.acquire()
                 packetBuffer.prepare(length: mirageHeaderSize + wirePayload.count)
@@ -752,6 +829,11 @@ actor StreamPacketSender {
         }
 
         if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+        recordFramePacerSleep(
+            streamID: item.streamID,
+            totalMs: framePacerSleepTotalMs,
+            maxMs: framePacerSleepMaxMs
+        )
         transportCompletionTracker.close()
     }
 
@@ -881,15 +963,18 @@ actor StreamPacketSender {
         packetBytes: Int,
         isKeyframeBurst: Bool,
         totalFragments: Int,
+        targetFrameRate: Int,
         pacingOverride: PacingOverride?
-    ) async {
+    ) async -> PacketPacingSleepSample {
+        let targetFrameIntervalMs = 1_000.0 / Double(max(1, targetFrameRate))
         guard let parameters = Self.packetPacingParameters(
             targetRateBps: pacerRateBps,
             packetBytes: packetBytes,
             isKeyframeBurst: isKeyframeBurst,
             totalFragments: totalFragments,
+            targetFrameIntervalMs: targetFrameIntervalMs,
             pacingOverride: pacingOverride
-        ) else { return }
+        ) else { return PacketPacingSleepSample(totalMs: 0, maxMs: 0, count: 0) }
 
         let bytesPerSecond = parameters.bytesPerSecond
         let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
@@ -900,6 +985,9 @@ actor StreamPacketSender {
             burstBytes: burstBytes
         )
 
+        var sleepTotalMs = 0
+        var sleepMaxMs = 0
+        var sleepCount = 0
         while true {
             let sleepMs = Self.packetPacerSleepMilliseconds(
                 tokensBeforeSend: pacerTokensBytes,
@@ -912,6 +1000,9 @@ actor StreamPacketSender {
             pacerSleepTotalMs += sleepMs
             pacerSleepMaxMs = max(pacerSleepMaxMs, sleepMs)
             pacerSleepPacketCount += 1
+            sleepTotalMs += sleepMs
+            sleepMaxMs = max(sleepMaxMs, sleepMs)
+            sleepCount += 1
 
             let now = CFAbsoluteTimeGetCurrent()
             refillPacketPacerTokens(
@@ -923,6 +1014,11 @@ actor StreamPacketSender {
         }
 
         pacerTokensBytes -= Double(packetBytes)
+        return PacketPacingSleepSample(
+            totalMs: sleepTotalMs,
+            maxMs: sleepMaxMs,
+            count: sleepCount
+        )
     }
 
     private func resetPacketPacerState(now: CFAbsoluteTime) {
@@ -930,6 +1026,7 @@ actor StreamPacketSender {
         pacerLastRefillTime = 0
         pacerSleepTotalMs = 0
         pacerSleepMaxMs = 0
+        pacerFrameSleepMaxMs = 0
         pacerSleepPacketCount = 0
         pacerLastLogTime = now
     }
@@ -954,6 +1051,7 @@ actor StreamPacketSender {
     }
 
     private func logPacketPacingIfNeeded(now: CFAbsoluteTime) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         guard MirageLogger.isEnabled(.network) else { return }
         guard pacerSleepPacketCount > 0 else { return }
         guard pacerLastLogTime == 0 || now - pacerLastLogTime >= Self.packetPacerLogIntervalSeconds else { return }
@@ -980,10 +1078,21 @@ actor StreamPacketSender {
         keyframeSendCount = 0
         pacerSleepTotalMs = 0
         pacerSleepMaxMs = 0
+        pacerFrameSleepMaxMs = 0
         pacerSleepPacketCount = 0
         stalePacketDropCount = 0
         generationAbortDropCount = 0
         nonKeyframeHoldDropCount = 0
+    }
+
+    private func recordFramePacerSleep(streamID: StreamID, totalMs: Int, maxMs: Int) {
+        guard totalMs > 0 || maxMs > 0 else { return }
+        pacerFrameSleepMaxMs = max(pacerFrameSleepMaxMs, maxMs)
+        diagnosticsBuffer?.recordPacerSleep(
+            streamID: streamID,
+            totalMs: totalMs,
+            maxMs: maxMs
+        )
     }
 
     private func recordSendStartDelay(item: WorkItem, now: CFAbsoluteTime) {
@@ -991,6 +1100,12 @@ actor StreamPacketSender {
         sendStartDelayTotalMs += delayMs
         sendStartDelayMaxMs = max(sendStartDelayMaxMs, delayMs)
         sendStartDelayCount &+= 1
+        diagnosticsBuffer?.recordSenderDelay(
+            streamID: item.streamID,
+            startDelayMs: delayMs,
+            completionDelayMs: 0,
+            now: now
+        )
     }
 
     private func recordSendCompletion(item: WorkItem, startedAt: CFAbsoluteTime, completedAt: CFAbsoluteTime) {
@@ -998,6 +1113,12 @@ actor StreamPacketSender {
         sendCompletionTotalMs += completionMs
         sendCompletionMaxMs = max(sendCompletionMaxMs, completionMs)
         sendCompletionCount &+= 1
+        diagnosticsBuffer?.recordSenderDelay(
+            streamID: item.streamID,
+            startDelayMs: max(0, (startedAt - item.encodedAt) * 1000),
+            completionDelayMs: completionMs,
+            now: completedAt
+        )
 
         if item.isKeyframe {
             let keyframeMs = max(0, (completedAt - startedAt) * 1000)

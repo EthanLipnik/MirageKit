@@ -42,10 +42,18 @@ private struct AudioEncodeSettings: Sendable, Equatable {
     }
 }
 
+private struct AudioConverterKey: Hashable {
+    let codec: MirageAudioCodec
+    let sampleRate: Int
+    let channelCount: UInt32
+    let bitrate: Int?
+}
+
 actor AudioEncoder {
     private var audioConfiguration: MirageAudioConfiguration
     private var activeFallbackSettings: AudioEncodeSettings?
     private var loggedFallbackDescription: String?
+    private var aacConverters: [AudioConverterKey: AVAudioConverter] = [:]
 
     init(audioConfiguration: MirageAudioConfiguration) {
         self.audioConfiguration = audioConfiguration
@@ -55,6 +63,7 @@ actor AudioEncoder {
         audioConfiguration = configuration
         activeFallbackSettings = nil
         loggedFallbackDescription = nil
+        aacConverters.removeAll()
     }
 
     func encode(_ captured: CapturedAudioBuffer) -> EncodedAudioFrame? {
@@ -166,18 +175,12 @@ actor AudioEncoder {
 
         guard let processingBuffer = convert(inputBuffer, to: processingFormat) else { return nil }
 
-        let timestampNs = UInt64(CMTimeGetSeconds(timestamp) * 1_000_000_000)
+        let timestampNs = Self.timestampNanoseconds(from: timestamp)
 
         switch settings.codec {
         case .aacLC:
-            guard let outputFormat = makeAACOutputFormat(
-                sampleRate: settings.sampleRate,
-                channels: settings.channelCount,
-                bitrate: settings.bitrate
-            ) else {
-                return nil
-            }
-            guard let converter = AVAudioConverter(from: processingFormat, to: outputFormat) else { return nil }
+            guard let converter = aacConverter(from: processingFormat, settings: settings) else { return nil }
+            let outputFormat = converter.outputFormat
             let packetCapacity = AVAudioPacketCount(max(1, Int(processingBuffer.frameLength)))
             let maxPacketSize = max(512, converter.maximumOutputPacketSize)
             let compressedBuffer = AVAudioCompressedBuffer(
@@ -298,6 +301,33 @@ actor AudioEncoder {
         return buffer
     }
 
+    private func aacConverter(
+        from inputFormat: AVAudioFormat,
+        settings: AudioEncodeSettings
+    ) -> AVAudioConverter? {
+        let key = AudioConverterKey(
+            codec: settings.codec,
+            sampleRate: Int(settings.sampleRate.rounded()),
+            channelCount: settings.channelCount,
+            bitrate: settings.bitrate
+        )
+        if let converter = aacConverters[key],
+           converter.inputFormat == inputFormat {
+            return converter
+        }
+
+        guard let outputFormat = makeAACOutputFormat(
+            sampleRate: settings.sampleRate,
+            channels: settings.channelCount,
+            bitrate: settings.bitrate
+        ) else {
+            return nil
+        }
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else { return nil }
+        aacConverters[key] = converter
+        return converter
+    }
+
     private func convert(_ inputBuffer: AVAudioPCMBuffer, to outputFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
         guard inputBuffer.format == outputFormat else {
             guard let converter = AVAudioConverter(from: inputBuffer.format, to: outputFormat) else { return nil }
@@ -349,6 +379,13 @@ actor AudioEncoder {
             settings[AVEncoderBitRateKey] = bitrate
         }
         return AVAudioFormat(settings: settings)
+    }
+
+    private nonisolated static func timestampNanoseconds(from timestamp: CMTime) -> UInt64 {
+        guard timestamp.isValid else { return 0 }
+        let seconds = CMTimeGetSeconds(timestamp)
+        guard seconds.isFinite, seconds >= 0 else { return 0 }
+        return UInt64(seconds * 1_000_000_000)
     }
 
     static func encodingParameters(

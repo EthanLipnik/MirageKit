@@ -48,12 +48,17 @@ final class HostTransportRegistry: @unchecked Sendable {
         }
     }
 
-    func sendAudio(clientID: UUID, data: Data) {
+    func sendAudio(
+        clientID: UUID,
+        data: Data,
+        onComplete: @escaping @Sendable (Error?) -> Void = { _ in }
+    ) {
         let stream: LoomMultiplexedStream? = state.read { $0.audioByClientID[clientID] }
-        guard let stream else { return }
-        Task {
-            try? await stream.sendUnreliable(data)
+        guard let stream else {
+            onComplete(nil)
+            return
         }
+        stream.sendUnreliableQueued(data, profile: .interactiveMedia, onComplete: onComplete)
     }
 
     func hasVideoConnection(streamID: StreamID) -> Bool {

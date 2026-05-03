@@ -40,6 +40,7 @@ extension StreamContext {
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext,
+            diagnosticsBuffer: diagnosticsBuffer,
             sendPacket: sendPacket,
             onSendError: onSendError
         )
@@ -111,15 +112,20 @@ extension StreamContext {
                     MirageLogger.stream(
                         "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
                     )
-                } else if reservation.shouldLogPFrameDiagnostic,
-                          MirageLogger.isEnabled(.frameAssembly) {
-                    let crc = CRC32.calculate(encodedData)
-                    let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-                    MirageLogger.log(
-                        .frameAssembly,
-                        "Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)"
+                } else {
+                    MirageFrameIntegrityDiagnostics.shared.recordPFrame(
+                        source: .encodedPFrame,
+                        streamID: streamID,
+                        frameNumber: reservation.frameNumber,
+                        frameBytes: encodedData
                     )
                 }
+                self.diagnosticsBuffer.recordFrameMarker(
+                    streamID: streamID,
+                    frameSizeBytes: encodedData.count,
+                    isKeyframe: isKeyframe,
+                    now: now
+                )
 
                 let contentRect = pinnedContentRect ?? self.currentContentRect
                 let pacingOverride = isKeyframe ? startupKeyframePacingOverride(now: now) : nil
@@ -153,7 +159,8 @@ extension StreamContext {
                     logPrefix: logPrefix,
                     generation: generation,
                     encodedAt: now,
-                    pacingOverride: pacingOverride,
+                    targetFrameRate: self.currentFrameRate,
+                    pacingOverride: pacingOverride
                 )
                 packetSender.enqueue(workItem)
             }, onFrameComplete: { [weak self] in
@@ -226,6 +233,15 @@ extension StreamContext {
     func restartDisplayCaptureForStartupRecovery(reason: String) async {
         guard captureMode == .display else { return }
         await captureEngine?.restartCapture(reason: reason)
+    }
+
+    func restartDisplayCaptureForCadenceRecovery(reason: String) async {
+        guard captureMode == .display, !isResizing, !encodingSuspendedForResize else { return }
+        await captureEngine?.restartCapture(reason: reason)
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Capture cadence recovery",
+            ignoreExistingInFlight: true
+        )
     }
 
     func hasObservedDisplayStartupSample() async -> Bool {

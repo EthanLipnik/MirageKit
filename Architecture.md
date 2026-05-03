@@ -73,6 +73,10 @@ Depending on the session, that can mean:
 
 Capture is host-owned because the host has direct access to the real window server, display topology, and input focus.
 
+App streaming uses direct window capture for active windows. When multiple logical app windows are active for one client, the host composites their captured frames into one physical app-atlas media stream and reports each logical window's atlas region over the control plane. Client views share that media stream and crop to their logical window, while input, resize, focus, and close commands continue to target the logical stream ID.
+
+Capture cadence is measured as part of the host pipeline. The host records compact wall-clock, ScreenCaptureKit timing, status, and callback-duration telemetry for active streams, then reports interval snapshots through stream metrics. If desktop capture cadence remains bad while encode, send, and queue health are otherwise clean, MirageKit first restarts ScreenCaptureKit capture and only escalates to virtual-display timing recovery under cooldown.
+
 Custom streams keep this ownership model but move source-specific capture behind an app-provided `MirageCustomStreamSource`. MirageKit negotiates the stream, owns encoding, transport, decode, presentation, and input forwarding, while the host app owns what the stable custom kind means and how frames are produced.
 
 ### 2. Encode
@@ -98,6 +102,8 @@ The host remains the authority for:
 - what content is currently being captured
 - bitrate, frame-rate, and quality policy
 - host-side session state such as cursor mode, clipboard availability, and host maintenance status
+
+MirageKit keeps media freshness and capture recovery policy above Loom. Loom moves the unreliable packets between peers, while MirageKit's sender still understands frame boundaries, keyframes, startup state, target frame budgets, and host capture cadence. That lets the host pace live media for the current frame interval, preserve keyframe and recovery boundaries, reset stale queued media before asking the encoder for a recovery keyframe, and recover ScreenCaptureKit or virtual-display timing without treating it as a transport problem.
 
 Adaptive quality changes use live receiver and host telemetry first. Active-stream promotion probes are shaped like streaming traffic, remain subordinate to media, climb gradually, and keep cooldown history when probing is suppressed. A probe that overlaps frame gaps, freezes, or loss is treated as a negative signal for future targets.
 
@@ -148,6 +154,8 @@ The client captures local interaction and translates it into host-meaningful inp
 
 The host receives those commands and injects them into the local macOS environment.
 
+High-frequency stylus input is still control-plane intent, but it has live-stream freshness rules. Pencil contact samples are batched in order so drawing strokes preserve coalesced pressure, tilt, roll, and position samples. Hover is batched as lower-priority input: small jitter is ignored, stale hover can be replaced, and bounded queues keep hover from delaying contact drawing or discrete keyboard and click events.
+
 For custom streams, the host can register a source-specific input handler. The protocol still carries normalized `MirageInputEvent` values; MirageKit routes those events to the custom handler instead of applying desktop or app-window injection policy.
 
 This keeps Mirage's model clean:
@@ -165,6 +173,16 @@ Shared clipboard state is coordinated over the control plane while media continu
 The host and client exchange clipboard declarations with ordering tokens so a newer host copy can suppress stale client pasteboard content without requiring the client to read its local pasteboard. Transferable clipboard contents are sent as encrypted chunks only when the representation is supported and bounded. Oversized or unsupported contents still advance shared clipboard ordering through metadata, so paste into the remote Mac can use the host's current pasteboard directly.
 
 On iPadOS, Mirage watches pasteboard change counts and system pasteboard change notifications while a stream is active, but it reads pasteboard contents only during an explicit paste action that needs to send local client data to the host. Host-side pasteboard observation can inspect macOS pasteboard contents directly and mirrors small supported text, image, and file payloads back to the client OS clipboard.
+
+## Diagnostics
+
+Diagnostics are split by their relationship to the live stream.
+
+Hot-path telemetry records compact counters, timings, and fixed-size events into preallocated buffers. Encode, packet send, receive, reassembly, decode, and media delivery paths may record primitive values such as frame gaps, queue depth, pacing sleep, sender delay, and frame-size buckets, but they do not format logs, write files, or perform expensive forensic work synchronously.
+
+Forensic diagnostics are explicit and bounded. Frame integrity checks such as CRC and header capture are collected only through opt-in diagnostic sessions, sampled under limits, and formatted away from the media path. Support-log export can format buffered telemetry later, when producing diagnostic artifacts rather than while frames are moving.
+
+Steady-state aggregate log lines are also explicit diagnostics. Broad logging settings do not make live streams emit fixed-cadence capture, encode, packet, control, or view-update summaries; those human-readable snapshots are reserved for targeted diagnostic sessions.
 
 ## Host Software Updates
 

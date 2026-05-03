@@ -17,6 +17,7 @@ import ScreenCaptureKit
 /// Uses virtual displays for window isolation, with display-level capture cropped to visible bounds
 actor StreamContext {
     let streamID: StreamID
+    nonisolated let diagnosticsBuffer = MirageStreamingDiagnosticsBuffer()
     var windowID: WindowID
     let streamKind: VideoEncoder.StreamKind
     var encoderConfig: MirageEncoderConfiguration
@@ -130,6 +131,7 @@ actor StreamContext {
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
+    var captureCadenceRecoveryPolicy = HostCaptureCadenceRecoveryPolicy()
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
@@ -263,6 +265,8 @@ actor StreamContext {
     let transportSendErrorThreshold: Int = 6
     let transportSendErrorRecoveryCooldown: CFAbsoluteTime = 2.0
     var transportSendErrorBursts: UInt64 = 0
+    var senderFrameBudgetDelayOverrunCount: Int = 0
+    let senderFrameBudgetDelayOverrunThreshold: Int = 2
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -303,7 +307,7 @@ actor StreamContext {
     let pFrameFECLossModeHold: CFAbsoluteTime = 8.0
 
     /// Frame rate for cadence and queue limits
-    var currentFrameRate: Int
+    nonisolated(unsafe) var currentFrameRate: Int
     /// Effective capture cadence reported by ScreenCaptureKit.
     var captureFrameRate: Int
     /// Optional override for capture frame rate.

@@ -7,6 +7,7 @@
 //  Loom stream audio transport and playback handling.
 //
 
+import CoreMedia
 import Foundation
 import Loom
 import MirageKit
@@ -253,9 +254,11 @@ extension MirageClientService {
         }
         guard !decodedFrames.isEmpty else { return }
         let audioPlaybackController = resolveAudioPlaybackController()
-        updateAudioSyncDelay(for: streamID)
+        let liveFrames = liveAudioFramesToEnqueue(decodedFrames, for: streamID)
+        guard !liveFrames.isEmpty else { return }
+        updateAudioSyncDelay(for: streamID, nextFrame: liveFrames.first)
         flushPendingDecodedAudioFrames(for: streamID, into: audioPlaybackController)
-        for decodedFrame in decodedFrames {
+        for decodedFrame in liveFrames {
             audioPlaybackController.enqueue(decodedFrame)
         }
     }
@@ -289,8 +292,9 @@ extension MirageClientService {
         }
 
         pendingDecodedAudioDurationByStreamID.removeValue(forKey: streamID)
-        updateAudioSyncDelay(for: streamID)
-        for frame in frames {
+        let liveFrames = liveAudioFramesToEnqueue(frames, for: streamID)
+        updateAudioSyncDelay(for: streamID, nextFrame: liveFrames.first)
+        for frame in liveFrames {
             audioPlaybackController.enqueue(frame)
         }
     }
@@ -305,14 +309,92 @@ extension MirageClientService {
         }
     }
 
-    private func updateAudioSyncDelay(for streamID: StreamID) {
+    private func liveAudioFramesToEnqueue(
+        _ frames: [DecodedPCMFrame],
+        for streamID: StreamID
+    ) -> [DecodedPCMFrame] {
+        guard !frames.isEmpty else { return [] }
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        guard snapshot.sequence > 0,
+              let videoTimestampNs = Self.nanoseconds(from: snapshot.remotePresentationTime) else {
+            return frames
+        }
+
+        let filtered = Self.filterLiveAudioFramesForLiveSync(frames, videoTimestampNs: videoTimestampNs)
+        let liveFrames = filtered.frames
+        let droppedCount = filtered.droppedCount
+        if droppedCount > 0 {
+            audioSyncDropCount &+= UInt64(droppedCount)
+            logAudioSyncDropsIfNeeded(streamID: streamID)
+        }
+        return liveFrames
+    }
+
+    private func updateAudioSyncDelay(for streamID: StreamID, nextFrame: DecodedPCMFrame?) {
         guard let audioPlaybackController = audioPlaybackControllerIfInitialized else { return }
-        guard metricsStore.snapshot(for: streamID) != nil else {
+        guard let nextFrame else {
             audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
             return
         }
 
-        audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        guard snapshot.sequence > 0,
+              let videoTimestampNs = Self.nanoseconds(from: snapshot.remotePresentationTime) else {
+            audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+            return
+        }
+
+        if nextFrame.timestampNs > videoTimestampNs {
+            let aheadSeconds = Double(nextFrame.timestampNs - videoTimestampNs) / 1_000_000_000
+            let delay = min(max(0, aheadSeconds), 0.250)
+            audioPlaybackController.setRuntimeExtraDelay(seconds: delay)
+            logAudioAheadIfNeeded(streamID: streamID, aheadSeconds: aheadSeconds, delay: delay)
+        } else {
+            audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+        }
+    }
+
+    private func logAudioSyncDropsIfNeeded(streamID: StreamID) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastAudioSyncDropLogTime == 0 || now - lastAudioSyncDropLogTime > 2.0 else { return }
+        MirageLogger.client(
+            "Audio sync drop: stream=\(streamID), dropped=\(audioSyncDropCount) stale decoded frame(s)"
+        )
+        audioSyncDropCount = 0
+        lastAudioSyncDropLogTime = now
+    }
+
+    private func logAudioAheadIfNeeded(streamID: StreamID, aheadSeconds: Double, delay: Double) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard delay > 0.001, lastAudioSyncAheadLogTime == 0 || now - lastAudioSyncAheadLogTime > 2.0 else {
+            return
+        }
+        MirageLogger.client(
+            "Audio sync hold: stream=\(streamID), aheadMs=\(Int((aheadSeconds * 1000).rounded())), delayMs=\(Int((delay * 1000).rounded()))"
+        )
+        lastAudioSyncAheadLogTime = now
+    }
+
+    private nonisolated static func nanoseconds(from time: CMTime) -> UInt64? {
+        guard time.isValid else { return nil }
+        let seconds = CMTimeGetSeconds(time)
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        return UInt64(seconds * 1_000_000_000)
+    }
+
+    nonisolated static func filterLiveAudioFramesForLiveSync(
+        _ frames: [DecodedPCMFrame],
+        videoTimestampNs: UInt64?,
+        maxBehindNs: UInt64 = 180_000_000
+    ) -> (frames: [DecodedPCMFrame], droppedCount: Int) {
+        guard let videoTimestampNs else {
+            return (frames, 0)
+        }
+        let liveFrames = frames.filter { frame in
+            let durationNs = UInt64(max(0, frame.durationSeconds) * 1_000_000_000)
+            return frame.timestampNs + durationNs + maxBehindNs >= videoTimestampNs
+        }
+        return (liveFrames, frames.count - liveFrames.count)
     }
 
     private func advanceAudioStreamConfigurationGeneration() -> UInt64 {
