@@ -52,5 +52,39 @@ struct HostLivenessPolicyTests {
             ) == .disconnect
         )
     }
+
+    @Test("Active recent control work defers disconnect")
+    func activeRecentControlWorkDefersDisconnect() {
+        #expect(
+            hostClientLivenessDecision(
+                controlIdleSeconds: 21,
+                mediaIdleSeconds: nil,
+                hasActiveStreams: false,
+                pingThreshold: 10,
+                disconnectThreshold: 20,
+                activeMediaGraceThreshold: 8,
+                controlWorkIdleSeconds: 2,
+                hasActiveControlWork: true,
+                activeControlWorkGraceThreshold: 8
+            ) == .deferForActiveControlWork
+        )
+    }
+
+    @Test("Stale control work does not defer disconnect")
+    func staleControlWorkDoesNotDeferDisconnect() {
+        #expect(
+            hostClientLivenessDecision(
+                controlIdleSeconds: 21,
+                mediaIdleSeconds: nil,
+                hasActiveStreams: false,
+                pingThreshold: 10,
+                disconnectThreshold: 20,
+                activeMediaGraceThreshold: 8,
+                controlWorkIdleSeconds: 9,
+                hasActiveControlWork: true,
+                activeControlWorkGraceThreshold: 8
+            ) == .disconnect
+        )
+    }
 }
 #endif

@@ -25,6 +25,9 @@ struct MirageInterceptedShortcutPolicyTests {
             ("h", [.command], 0x04),
             ("m", [.command], 0x2E),
             (",", [.command], 0x2B),
+            (" ", [.command], 0x31),
+            ("\t", [.command], 0x30),
+            ("\t", [.command, .shift], 0x30),
         ]
 
         for shortcut in interceptedShortcuts {
@@ -64,6 +67,8 @@ struct MirageInterceptedShortcutPolicyTests {
             ("w", [.command]),
             ("w", [.command, .shift]),
             ("q", [.command]),
+            (" ", [.command]),
+            ("\t", [.command]),
         ]
 
         for shortcut in repeatableShortcuts {

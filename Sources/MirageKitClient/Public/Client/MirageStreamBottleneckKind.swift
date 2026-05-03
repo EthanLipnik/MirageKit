@@ -110,6 +110,9 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let unevenPresentationCadence =
             snapshot.clientWorstPresentationGapMs >= max(80.0, targetFrameIntervalMs * 3.0) ||
             snapshot.clientFrameIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0)
+        let severeUnevenPresentationCadence =
+            snapshot.clientWorstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
+            snapshot.clientFrameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
 
         let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress
 
@@ -126,7 +129,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
         let presentationBound = decodeKeepsUp && (
             submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
-                unevenPresentationCadence && submittedFPS < targetFPS * 0.97
+                unevenPresentationCadence && submittedFPS < targetFPS * 0.97 ||
+                severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
         )
 
         let hostCadenceLimited = !networkBound && (

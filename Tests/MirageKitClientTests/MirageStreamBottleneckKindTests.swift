@@ -115,6 +115,16 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .presentationBound)
     }
 
+    @Test("Presentation-bound classification catches severe cadence spikes near target FPS")
+    func presentationBoundClassificationCatchesSevereCadenceSpikesNearTargetFPS() {
+        var snapshot = baselineSnapshot()
+        snapshot.submittedFPS = 59
+        snapshot.uniqueSubmittedFPS = 59
+        snapshot.clientFrameIntervalP99Ms = 151
+
+        #expect(snapshot.bottleneckKind == .presentationBound)
+    }
+
     @Test("Mixed classification reports multiple active constraints")
     func mixedClassificationReportsMultipleActiveConstraints() {
         var snapshot = baselineSnapshot()

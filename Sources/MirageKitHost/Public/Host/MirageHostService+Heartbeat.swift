@@ -15,6 +15,7 @@ enum HostClientLivenessDecision: Equatable {
     case wait
     case ping
     case deferForActiveMedia
+    case deferForActiveControlWork
     case disconnect
 }
 
@@ -24,7 +25,10 @@ func hostClientLivenessDecision(
     hasActiveStreams: Bool,
     pingThreshold: CFAbsoluteTime,
     disconnectThreshold: CFAbsoluteTime,
-    activeMediaGraceThreshold: CFAbsoluteTime
+    activeMediaGraceThreshold: CFAbsoluteTime,
+    controlWorkIdleSeconds: CFAbsoluteTime? = nil,
+    hasActiveControlWork: Bool = false,
+    activeControlWorkGraceThreshold: CFAbsoluteTime = 8.0
 ) -> HostClientLivenessDecision {
     guard controlIdleSeconds >= disconnectThreshold else {
         return controlIdleSeconds >= pingThreshold ? .ping : .wait
@@ -34,6 +38,12 @@ func hostClientLivenessDecision(
        let mediaIdleSeconds,
        mediaIdleSeconds < activeMediaGraceThreshold {
         return .deferForActiveMedia
+    }
+
+    if hasActiveControlWork,
+       let controlWorkIdleSeconds,
+       controlWorkIdleSeconds < activeControlWorkGraceThreshold {
+        return .deferForActiveControlWork
     }
 
     return .disconnect
@@ -54,6 +64,10 @@ extension MirageHostService {
     /// while the control channel is otherwise quiet.
     private static let livenessActiveMediaGraceThreshold: CFAbsoluteTime = 8.0
 
+    /// How recent host control traffic must be to keep metadata-heavy control
+    /// work from being treated as an idle client.
+    private static let livenessActiveControlWorkGraceThreshold: CFAbsoluteTime = 8.0
+
     nonisolated private static let minimumBackgroundLeaseDuration: TimeInterval = 1
     nonisolated private static let maximumBackgroundLeaseDuration: TimeInterval = 30
 
@@ -63,6 +77,10 @@ extension MirageHostService {
 
     nonisolated func recordClientMediaActivity(clientID: UUID) {
         clientLastMediaActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
+    }
+
+    nonisolated func recordClientControlSendActivity(clientID: UUID) {
+        clientLastControlSendActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
     }
 
     nonisolated static func clampedBackgroundLeaseDuration(_ duration: TimeInterval) -> TimeInterval {
@@ -144,12 +162,14 @@ extension MirageHostService {
     func clearClientActivityRecord(clientID: UUID) {
         clientLastActivityByID.withLock { $0.removeValue(forKey: clientID) }
         clientLastMediaActivityByID.withLock { $0.removeValue(forKey: clientID) }
+        clientLastControlSendActivityByID.withLock { $0.removeValue(forKey: clientID) }
     }
 
     private func checkClientLiveness() async {
         let now = CFAbsoluteTimeGetCurrent()
         let activitySnapshot = clientLastActivityByID.read { $0 }
         let mediaActivitySnapshot = clientLastMediaActivityByID.read { $0 }
+        let controlSendActivitySnapshot = clientLastControlSendActivityByID.read { $0 }
 
         for clientContext in clientsBySessionID.values {
             let clientID = clientContext.client.id
@@ -158,7 +178,9 @@ extension MirageHostService {
             let lastActivity = activitySnapshot[clientID] ?? 0
             let elapsed = now - lastActivity
             let mediaElapsed = mediaActivitySnapshot[clientID].map { now - $0 }
+            let controlWorkElapsed = controlSendActivitySnapshot[clientID].map { now - $0 }
             let hasActiveStreams = hasActiveStream(forClientID: clientID)
+            let hasActiveControlWork = appListRequestTask != nil && pendingAppListRequest?.clientID == clientID
 
             switch hostClientLivenessDecision(
                 controlIdleSeconds: elapsed,
@@ -166,7 +188,10 @@ extension MirageHostService {
                 hasActiveStreams: hasActiveStreams,
                 pingThreshold: Self.livenessPingThreshold,
                 disconnectThreshold: Self.livenessDisconnectThreshold,
-                activeMediaGraceThreshold: Self.livenessActiveMediaGraceThreshold
+                activeMediaGraceThreshold: Self.livenessActiveMediaGraceThreshold,
+                controlWorkIdleSeconds: controlWorkElapsed,
+                hasActiveControlWork: hasActiveControlWork,
+                activeControlWorkGraceThreshold: Self.livenessActiveControlWorkGraceThreshold
             ) {
             case .wait:
                 break
@@ -175,6 +200,11 @@ extension MirageHostService {
             case .deferForActiveMedia:
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout deferred; active media was sent \(Int(mediaElapsed ?? 0))s ago"
+                )
+                clientContext.sendBestEffort(ControlMessage(type: .ping))
+            case .deferForActiveControlWork:
+                MirageLogger.host(
+                    "Client \(clientContext.client.name) liveness timeout deferred; active control work was sent \(Int(controlWorkElapsed ?? 0))s ago"
                 )
                 clientContext.sendBestEffort(ControlMessage(type: .ping))
             case .disconnect:

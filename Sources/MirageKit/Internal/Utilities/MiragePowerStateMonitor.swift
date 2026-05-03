@@ -180,6 +180,7 @@ private extension MiragePowerStateMonitor {
             for source in sources {
                 guard let descriptionRef = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue(),
                       let description = descriptionRef as? [String: Any],
+                      description[kIOPSTypeKey as String] as? String == kIOPSInternalBatteryType,
                       let state = description[kIOPSPowerSourceStateKey as String] as? String else {
                     continue
                 }

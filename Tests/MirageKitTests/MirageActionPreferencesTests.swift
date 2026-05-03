@@ -18,8 +18,8 @@ struct MirageActionPreferencesTests {
             target: .local,
             hostKeyEvent: nil,
             shortcut: MirageClientShortcutBinding(keyCode: 0x23, modifiers: .command),
-            showInControlBar: false,
             isBuiltIn: true,
+            isEnabled: false,
             sfSymbolName: "bolt"
         )
         let customAction = MirageAction(
@@ -28,7 +28,6 @@ struct MirageActionPreferencesTests {
             target: .hostKeyInject,
             hostKeyEvent: MirageKeyEvent(keyCode: 0x30, modifiers: .option),
             shortcut: nil,
-            showInControlBar: true,
             isBuiltIn: false,
             sfSymbolName: "star"
         )
@@ -44,23 +43,28 @@ struct MirageActionPreferencesTests {
         #expect(missionControlAction?.hostKeyEvent == MirageAction.missionControl.hostKeyEvent)
         #expect(missionControlAction?.displayName == storedMissionControl.displayName)
         #expect(missionControlAction?.shortcut == storedMissionControl.shortcut)
-        #expect(missionControlAction?.showInControlBar == storedMissionControl.showInControlBar)
+        #expect(missionControlAction?.isEnabled == storedMissionControl.isEnabled)
         #expect(missionControlAction?.sfSymbolName == storedMissionControl.sfSymbolName)
         #expect(normalizedActions.contains(customAction))
     }
 
-    @Test("Built-in host screenshot actions expose request styles")
-    func builtInHostScreenshotActionsExposeRequestStyles() throws {
+    @Test("Built-in host screenshot actions remap iPadOS-safe shortcuts to host screenshot shortcuts")
+    func builtInHostScreenshotActionsRemapShortcuts() throws {
         let preferences = MirageActionPreferences()
-        let fullScreen = try #require(preferences.action(withID: MirageAction.hostFullScreenScreenshotID))
-        let selection = try #require(preferences.action(withID: MirageAction.hostSelectionScreenshotID))
+        let mappings: [(id: String, keyCode: UInt16)] = [
+            (MirageAction.hostFullScreenScreenshotID, 0x14),
+            (MirageAction.hostSelectionScreenshotID, 0x15),
+            (MirageAction.hostScreenshotOptionsID, 0x17),
+        ]
 
-        #expect(fullScreen.target == .hostScreenshot)
-        #expect(fullScreen.hostScreenshotStyle == .fullScreen)
-        #expect(fullScreen.showInControlBar)
-        #expect(selection.target == .hostScreenshot)
-        #expect(selection.hostScreenshotStyle == .selection)
-        #expect(selection.showInControlBar)
+        for mapping in mappings {
+            let action = try #require(preferences.action(withID: mapping.id))
+            #expect(action.target == .hostKeyInject)
+            #expect(action.hostKeyEvent?.keyCode == mapping.keyCode)
+            #expect(action.hostKeyEvent?.modifiers == [.command, .shift])
+            #expect(action.shortcut?.keyCode == mapping.keyCode)
+            #expect(action.shortcut?.modifiers == [.command, .shift, .option])
+        }
     }
 
     @Test("Custom host key bindings are modeled and matched by normalized shortcut")
@@ -73,7 +77,6 @@ struct MirageActionPreferencesTests {
                 keyCode: 0x35,
                 modifiers: [.control, .option, .shift]
             ),
-            showInControlBar: true,
             sfSymbolName: "escape"
         )
         let preferences = MirageActionPreferences(actions: [action])
@@ -89,6 +92,32 @@ struct MirageActionPreferencesTests {
         #expect(action.hostKeyEvent?.modifiers == [.control, .option])
         #expect(!action.isBuiltIn)
         #expect(matchedAction.id == action.id)
+    }
+
+    @Test("Disabled actions do not match shortcuts or report shortcut conflicts")
+    func disabledActionsDoNotMatchShortcutsOrReportShortcutConflicts() {
+        var action = MirageAction.customHostKeyBinding(
+            id: "disabledAction",
+            displayName: "Disabled Action",
+            hostKeyEvent: MirageKeyEvent(keyCode: 0x35, modifiers: [.control]),
+            shortcut: MirageClientShortcutBinding(
+                keyCode: 0x35,
+                modifiers: [.control, .option, .shift]
+            )
+        )
+        action.isEnabled = false
+        let preferences = MirageActionPreferences(actions: [action])
+        let shortcut = MirageClientShortcutBinding(
+            keyCode: 0x35,
+            modifiers: [.control, .option, .shift]
+        )
+        let keyEvent = MirageKeyEvent(
+            keyCode: shortcut.keyCode,
+            modifiers: shortcut.modifiers
+        )
+
+        #expect(preferences.matchingAction(for: keyEvent) == nil)
+        #expect(preferences.conflictingAction(for: shortcut, excludingActionID: "editedAction") == nil)
     }
 
     @Test("Shortcut conflicts normalize Hyper modifier state")

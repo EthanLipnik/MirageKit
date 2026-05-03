@@ -270,6 +270,7 @@ extension InputCapturingView {
     ) -> MirageAction? {
         let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return actions.first { action in
+            guard action.isEnabled else { return false }
             guard let binding = action.shortcut else { return false }
             return binding.keyCode == keyCode &&
                 binding.modifiers.normalizedForShortcutMatching == normalizedModifiers

@@ -246,7 +246,14 @@ private func resolvedAnomalyBottleneckKind(
     let presentationBackpressure = sample.overwrittenPendingFrames > 0 ||
         sample.displayLayerNotReadyCount > 0 ||
         sample.pendingFrameAgeMs >= pendingAgeThresholdMs
-    if decodeKeepsUp && submissionLaggingDecode && presentationBackpressure {
+    let targetFrameIntervalMs = 1_000.0 / targetFPS
+    let severeUnevenPresentationCadence =
+        sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
+        sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
+    if decodeKeepsUp && (
+        submissionLaggingDecode && presentationBackpressure ||
+            severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90
+    ) {
         return .presentationBound
     }
 

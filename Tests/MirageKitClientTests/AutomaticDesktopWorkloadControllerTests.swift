@@ -141,6 +141,28 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target == .fullHD60)
     }
 
+    @Test("Severe client presentation cadence spikes downshift even near target FPS")
+    func severeClientPresentationCadenceSpikesDownshiftEvenNearTargetFPS() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+        snapshot.submittedFPS = 59
+        snapshot.uniqueSubmittedFPS = 59
+        snapshot.clientFrameIntervalP99Ms = 151
+
+        let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
+
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected workload reconfiguration")
+            return
+        }
+        #expect(target == .qhd60)
+    }
+
     @Test("Sustained clean cadence promotes one tier after cooldown")
     func sustainedCleanCadencePromotesOneTierAfterCooldown() {
         var controller = MirageAutomaticDesktopWorkloadController()

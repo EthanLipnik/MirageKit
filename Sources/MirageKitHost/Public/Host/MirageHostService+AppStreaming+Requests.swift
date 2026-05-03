@@ -2101,6 +2101,7 @@ extension MirageHostService {
                 totalAppCount: appCount
             )
             try await clientContext.send(.appListComplete, content: response)
+            recordClientControlSendActivity(clientID: clientContext.client.id)
             MirageLogger.host("Sent app-list completion with \(appCount) apps to \(clientContext.client.name)")
         } catch {
             await handleControlChannelSendFailure(
@@ -2138,7 +2139,7 @@ extension MirageHostService {
             )
             batch.append(appWithOptionalIcon)
 
-            let batchLimit = index < 24 ? 1 : 8
+            let batchLimit = index < 24 ? 4 : 8
             if batch.count >= batchLimit {
                 await sendAppListProgressBatch(
                     batch,
@@ -2176,6 +2177,7 @@ extension MirageHostService {
                 apps: apps
             )
             try await clientContext.send(.appListProgress, content: progress)
+            recordClientControlSendActivity(clientID: clientID)
         } catch {
             await handleControlChannelSendFailure(
                 client: clientContext.client,

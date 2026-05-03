@@ -13,12 +13,10 @@ public enum MirageActionTarget: String, Codable, Sendable, Hashable {
     case local
     /// Sends a synthetic key event to the host via CGEvent injection.
     case hostKeyInject
-    /// Requests a host-owned screenshot capture and save operation.
-    case hostScreenshot
 }
 
 /// A unified client action that can be triggered by keyboard shortcuts,
-/// the stream control bar, or gestures.
+/// stream options, or gestures.
 public struct MirageAction: Codable, Sendable, Identifiable, Hashable {
     public let id: String
     public var displayName: String
@@ -27,11 +25,11 @@ public struct MirageAction: Codable, Sendable, Identifiable, Hashable {
     public var hostKeyEvent: MirageKeyEvent?
     /// Client-side keyboard shortcut that triggers this action.
     public var shortcut: MirageClientShortcutBinding?
-    /// Whether this action appears in the floating stream control bar.
-    public var showInControlBar: Bool
     /// Built-in actions cannot be deleted, only customized.
     public var isBuiltIn: Bool
-    /// SF Symbol name for the control bar icon.
+    /// Whether this action can currently be triggered by its client shortcut.
+    public var isEnabled: Bool
+    /// SF Symbol name for action UI.
     public var sfSymbolName: String?
 
     public init(
@@ -40,8 +38,8 @@ public struct MirageAction: Codable, Sendable, Identifiable, Hashable {
         target: MirageActionTarget,
         hostKeyEvent: MirageKeyEvent? = nil,
         shortcut: MirageClientShortcutBinding? = nil,
-        showInControlBar: Bool = false,
         isBuiltIn: Bool = true,
+        isEnabled: Bool = true,
         sfSymbolName: String? = nil
     ) {
         self.id = id
@@ -49,9 +47,34 @@ public struct MirageAction: Codable, Sendable, Identifiable, Hashable {
         self.target = target
         self.hostKeyEvent = hostKeyEvent
         self.shortcut = shortcut
-        self.showInControlBar = showInControlBar
         self.isBuiltIn = isBuiltIn
+        self.isEnabled = isEnabled
         self.sfSymbolName = sfSymbolName
+    }
+}
+
+public extension MirageAction {
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName
+        case target
+        case hostKeyEvent
+        case shortcut
+        case isBuiltIn
+        case isEnabled
+        case sfSymbolName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        target = try container.decode(MirageActionTarget.self, forKey: .target)
+        hostKeyEvent = try container.decodeIfPresent(MirageKeyEvent.self, forKey: .hostKeyEvent)
+        shortcut = try container.decodeIfPresent(MirageClientShortcutBinding.self, forKey: .shortcut)
+        isBuiltIn = try container.decodeIfPresent(Bool.self, forKey: .isBuiltIn) ?? true
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        sfSymbolName = try container.decodeIfPresent(String.self, forKey: .sfSymbolName)
     }
 }
 
@@ -111,7 +134,6 @@ public extension MirageAction {
         displayName: String,
         hostKeyEvent: MirageKeyEvent,
         shortcut: MirageClientShortcutBinding? = nil,
-        showInControlBar: Bool = false,
         sfSymbolName: String? = nil
     ) -> MirageAction {
         MirageAction(
@@ -120,8 +142,8 @@ public extension MirageAction {
             target: .hostKeyInject,
             hostKeyEvent: hostKeyEvent,
             shortcut: shortcut,
-            showInControlBar: showInControlBar,
             isBuiltIn: false,
+            isEnabled: true,
             sfSymbolName: sfSymbolName
         )
     }
@@ -137,6 +159,7 @@ public extension MirageAction {
     static let cmdTabID = "cmdTab"
     static let hostFullScreenScreenshotID = "hostFullScreenScreenshot"
     static let hostSelectionScreenshotID = "hostSelectionScreenshot"
+    static let hostScreenshotOptionsID = "hostScreenshotOptions"
     static let dictationToggleID = "dictationToggle"
     static let escapeRemapID = "escapeRemap"
 }
@@ -149,7 +172,6 @@ public extension MirageAction {
         displayName: "Switch Space Left",
         target: .hostKeyInject,
         hostKeyEvent: MirageKeyEvent(keyCode: 0x7B, modifiers: .control),
-        showInControlBar: true,
         sfSymbolName: "chevron.left"
     )
 
@@ -158,7 +180,6 @@ public extension MirageAction {
         displayName: "Switch Space Right",
         target: .hostKeyInject,
         hostKeyEvent: MirageKeyEvent(keyCode: 0x7C, modifiers: .control),
-        showInControlBar: true,
         sfSymbolName: "chevron.right"
     )
 
@@ -167,7 +188,6 @@ public extension MirageAction {
         displayName: "Mission Control",
         target: .hostKeyInject,
         hostKeyEvent: MirageKeyEvent(keyCode: 0x7E, modifiers: .control),
-        showInControlBar: true,
         sfSymbolName: "rectangle.3.group"
     )
 
@@ -176,7 +196,6 @@ public extension MirageAction {
         displayName: "App Exposé",
         target: .hostKeyInject,
         hostKeyEvent: MirageKeyEvent(keyCode: 0x7D, modifiers: .control),
-        showInControlBar: true,
         sfSymbolName: "squares.below.rectangle"
     )
 
@@ -185,26 +204,34 @@ public extension MirageAction {
         displayName: "App Switcher",
         target: .hostKeyInject,
         hostKeyEvent: MirageKeyEvent(keyCode: 0x30, modifiers: .command),
-        showInControlBar: true,
         sfSymbolName: "command"
     )
 
     static let hostFullScreenScreenshot = MirageAction(
         id: hostFullScreenScreenshotID,
         displayName: "Full-Screen Screenshot",
-        target: .hostScreenshot,
+        target: .hostKeyInject,
+        hostKeyEvent: MirageKeyEvent(keyCode: 0x14, modifiers: [.command, .shift]),
         shortcut: MirageClientShortcutBinding(keyCode: 0x14, modifiers: [.command, .shift, .option]),
-        showInControlBar: true,
         sfSymbolName: "camera.viewfinder"
     )
 
     static let hostSelectionScreenshot = MirageAction(
         id: hostSelectionScreenshotID,
         displayName: "Selection Screenshot",
-        target: .hostScreenshot,
+        target: .hostKeyInject,
+        hostKeyEvent: MirageKeyEvent(keyCode: 0x15, modifiers: [.command, .shift]),
         shortcut: MirageClientShortcutBinding(keyCode: 0x15, modifiers: [.command, .shift, .option]),
-        showInControlBar: true,
         sfSymbolName: "rectangle.dashed"
+    )
+
+    static let hostScreenshotOptions = MirageAction(
+        id: hostScreenshotOptionsID,
+        displayName: "Screenshot Options",
+        target: .hostKeyInject,
+        hostKeyEvent: MirageKeyEvent(keyCode: 0x17, modifiers: [.command, .shift]),
+        shortcut: MirageClientShortcutBinding(keyCode: 0x17, modifiers: [.command, .shift, .option]),
+        sfSymbolName: "camera.metering.matrix"
     )
 
     static let dictationToggle = MirageAction(
@@ -223,20 +250,7 @@ public extension MirageAction {
 
     static let allBuiltIn: [MirageAction] = [
         .spaceLeft, .spaceRight, .missionControl, .appExpose, .cmdTab,
-        .hostFullScreenScreenshot, .hostSelectionScreenshot,
+        .hostFullScreenScreenshot, .hostSelectionScreenshot, .hostScreenshotOptions,
         .dictationToggle, .escapeRemap,
     ]
-}
-
-public extension MirageAction {
-    var hostScreenshotStyle: MirageHostScreenshotStyle? {
-        switch id {
-        case Self.hostFullScreenScreenshotID:
-            return .fullScreen
-        case Self.hostSelectionScreenshotID:
-            return .selection
-        default:
-            return nil
-        }
-    }
 }

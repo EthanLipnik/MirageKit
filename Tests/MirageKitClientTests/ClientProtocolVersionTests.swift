@@ -16,5 +16,6 @@ struct ClientProtocolVersionTests {
     func clientHelloProtocolVersionMatchesMirageProtocol() {
         #expect(MirageClientService.clientProtocolVersion == Int(MirageKit.protocolVersion))
         #expect(Int(MirageKit.protocolVersion) == Int(mirageProtocolVersion))
+        #expect(MirageKit.protocolVersion == 1)
     }
 }

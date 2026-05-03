@@ -55,6 +55,9 @@ enum MirageInterceptedShortcutPolicy {
     private static let commandHShortcut = makeShortcut("h", modifiers: [.command])
     private static let commandMShortcut = makeShortcut("m", modifiers: [.command])
     private static let commandCommaShortcut = makeShortcut(",", modifiers: [.command])
+    private static let commandSpaceShortcut = makeShortcut(" ", modifiers: [.command])
+    private static let commandTabShortcut = makeShortcut("\t", modifiers: [.command])
+    private static let commandShiftTabShortcut = makeShortcut("\t", modifiers: [.command, .shift])
     private static let commandShiftWShortcut = makeShortcut("w", modifiers: [.command, .shift])
     private static let undoShortcut = makeShortcut(
         "z",
@@ -95,6 +98,9 @@ enum MirageInterceptedShortcutPolicy {
         commandHShortcut,
         commandMShortcut,
         commandCommaShortcut,
+        commandSpaceShortcut,
+        commandTabShortcut,
+        commandShiftTabShortcut,
         commandShiftWShortcut,
         undoShortcut,
         redoShortcut,

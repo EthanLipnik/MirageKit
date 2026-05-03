@@ -27,6 +27,7 @@ extension MirageClientService {
                 return
             }
             guard !progress.apps.isEmpty else { return }
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
 
             let previousIconsByBundleIdentifier = availableIconPayloadsByBundleIdentifierSnapshot()
             let preparedProgress = await Task.detached(priority: .userInitiated) {
@@ -74,6 +75,7 @@ extension MirageClientService {
                 )
                 return
             }
+            heartbeatGraceDeadline = nil
 
             let completedBundleIdentifiers = orderedAvailableAppBundleIdentifiers.filter {
                 activeAppListReceivedBundleIdentifiers.contains($0)

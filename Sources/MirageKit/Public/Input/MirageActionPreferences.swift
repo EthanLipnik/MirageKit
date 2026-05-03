@@ -18,13 +18,9 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
     /// Find an action whose shortcut matches the given key event.
     public func matchingAction(for keyEvent: MirageKeyEvent) -> MirageAction? {
         actions.first { action in
-            action.shortcut?.matches(keyEvent) == true
+            guard action.isEnabled else { return false }
+            return action.shortcut?.matches(keyEvent) == true
         }
-    }
-
-    /// All actions that should appear in the stream control bar.
-    public var controlBarActions: [MirageAction] {
-        actions.filter(\.showInControlBar)
     }
 
     /// Look up an action by its identifier.
@@ -62,6 +58,7 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
         let normalizedModifiers = shortcut.modifiers.normalizedForShortcutMatching
         return actions.first { action in
             action.id != excludingActionID &&
+                action.isEnabled &&
                 action.shortcut?.keyCode == shortcut.keyCode &&
                 (action.shortcut?.modifiers.normalizedForShortcutMatching ?? []) == normalizedModifiers
         }
@@ -112,7 +109,7 @@ public extension MirageActionPreferences {
         var mergedAction = canonicalAction
         mergedAction.displayName = storedAction.displayName
         mergedAction.shortcut = storedAction.shortcut
-        mergedAction.showInControlBar = storedAction.showInControlBar
+        mergedAction.isEnabled = storedAction.isEnabled
         mergedAction.sfSymbolName = storedAction.sfSymbolName
         return mergedAction
     }

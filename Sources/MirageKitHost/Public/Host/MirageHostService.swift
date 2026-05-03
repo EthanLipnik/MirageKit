@@ -281,6 +281,7 @@ public final class MirageHostService {
     // Host-side client liveness monitoring.
     nonisolated let clientLastActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
     nonisolated let clientLastMediaActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
+    nonisolated let clientLastControlSendActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
     var clientLivenessTask: Task<Void, Never>?
     var backgroundLeaseExpirationsByClientID: [UUID: Date] = [:]
     var backgroundLeaseTasksByClientID: [UUID: Task<Void, Never>] = [:]
