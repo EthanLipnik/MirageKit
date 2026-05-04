@@ -48,6 +48,83 @@ struct AudioLiveSyncPolicyTests {
         #expect(filtered.frames.count == frames.count)
     }
 
+    @Test("Policy gates playback and retains only live tail before first video frame")
+    func policyGatesBeforeFirstVideoFrame() {
+        let frames = [
+            makeFrame(timestampNs: 0),
+            makeFrame(timestampNs: 100_000_000),
+            makeFrame(timestampNs: 200_000_000),
+            makeFrame(timestampNs: 300_000_000),
+        ]
+
+        let decision = LiveAudioSyncPolicy.decide(
+            frames: frames,
+            videoState: .waitingForFirstFrame,
+            liveTailDurationSeconds: 0.180
+        )
+
+        #expect(decision.shouldGatePlayback)
+        #expect(decision.reason == "waiting-first-video-frame")
+        #expect(decision.droppedCount == 2)
+        #expect(decision.frames.map(\.timestampNs) == [200_000_000, 300_000_000])
+    }
+
+    @Test("Policy gates stale video and prevents accumulated playback backlog")
+    func policyGatesWhenVideoPresentationIsStale() {
+        let frames = [
+            makeFrame(timestampNs: 1_000_000_000),
+            makeFrame(timestampNs: 1_100_000_000),
+            makeFrame(timestampNs: 1_200_000_000),
+        ]
+
+        let decision = LiveAudioSyncPolicy.decide(
+            frames: frames,
+            videoState: .staleAfterPresentation,
+            liveTailDurationSeconds: 0.150
+        )
+
+        #expect(decision.shouldGatePlayback)
+        #expect(decision.reason == "stale-video-presentation")
+        #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
+    }
+
+    @Test("Policy resumes near live video without gate")
+    func policyResumesAgainstFreshVideo() {
+        let frames = [
+            makeFrame(timestampNs: 300_000_000),
+            makeFrame(timestampNs: 920_000_000),
+            makeFrame(timestampNs: 1_060_000_000),
+        ]
+
+        let decision = LiveAudioSyncPolicy.decide(
+            frames: frames,
+            videoState: .fresh(timestampNs: 1_000_000_000),
+            maxBehindNs: 180_000_000,
+            maxHoldSeconds: 0.080
+        )
+
+        #expect(!decision.shouldGatePlayback)
+        #expect(decision.droppedCount == 1)
+        #expect(decision.frames.map(\.timestampNs) == [920_000_000, 1_060_000_000])
+        #expect(decision.runtimeExtraDelaySeconds == 0)
+    }
+
+    @Test("Policy holds audio that is ahead of fresh video")
+    func policyDelaysAudioAheadOfVideo() {
+        let frames = [
+            makeFrame(timestampNs: 1_120_000_000),
+        ]
+
+        let decision = LiveAudioSyncPolicy.decide(
+            frames: frames,
+            videoState: .fresh(timestampNs: 1_000_000_000),
+            maxHoldSeconds: 0.080
+        )
+
+        #expect(!decision.shouldGatePlayback)
+        #expect(abs(decision.runtimeExtraDelaySeconds - 0.080) < 0.001)
+    }
+
     @Test("Default live sync policy preserves moderate video lead")
     func defaultPolicyPreservesModerateVideoLead() {
         let frames = [

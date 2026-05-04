@@ -667,6 +667,7 @@ public final class MirageClientService {
     var pendingDecodedAudioDurationByStreamID: [StreamID: Double] = [:]
     let maxPendingDecodedAudioDuration: Double = 0.5
     var audioSyncDropCount: UInt64 = 0
+    var audioVideoGateActiveStreamIDs: Set<StreamID> = []
     var lastAudioSyncDropLogTime: CFAbsoluteTime = 0
     var lastAudioSyncAheadLogTime: CFAbsoluteTime = 0
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)

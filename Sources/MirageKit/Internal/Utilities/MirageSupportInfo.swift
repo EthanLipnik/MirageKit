@@ -98,6 +98,12 @@ public enum MirageSupportInfo {
         guard let normalizedIdentifier = trimmedValue(hardwareIdentifier)?.lowercased() else {
             return "Unknown"
         }
+        if isKnownMacStudioModelIdentifier(normalizedIdentifier) {
+            return "Mac Studio"
+        }
+        if isKnownMacMiniModelIdentifier(normalizedIdentifier) {
+            return "Mac mini"
+        }
 
         switch normalizedIdentifier {
         case let identifier where identifier.hasPrefix("iphone"):
@@ -128,6 +134,26 @@ public enum MirageSupportInfo {
         default:
             return "Unknown"
         }
+    }
+
+    private static func isKnownMacStudioModelIdentifier(_ identifier: String) -> Bool {
+        [
+            "mac13,1",
+            "mac13,2",
+            "mac14,13",
+            "mac14,14",
+            "mac15,14",
+            "mac16,9",
+        ].contains(identifier)
+    }
+
+    private static func isKnownMacMiniModelIdentifier(_ identifier: String) -> Bool {
+        [
+            "mac14,3",
+            "mac14,12",
+            "mac16,10",
+            "mac16,11",
+        ].contains(identifier)
     }
 
     static func chipName(systemCPUBrand: String?) -> String? {

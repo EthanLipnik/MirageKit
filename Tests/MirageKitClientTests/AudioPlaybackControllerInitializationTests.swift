@@ -73,8 +73,8 @@ struct AudioPlaybackControllerInitializationTests {
     }
 
     @MainActor
-    @Test("Decoded frames that beat audio stream start are buffered and flushed")
-    func earlyDecodedFramesAreBufferedUntilAudioStreamStarted() async throws {
+    @Test("Decoded frames that beat audio stream start remain buffered until video is ready")
+    func earlyDecodedFramesRemainBufferedUntilVideoReady() async throws {
         let service = MirageClientService(deviceName: "Early Audio Buffer Test")
         let streamID: StreamID = 77
         service.audioRegisteredStreamID = streamID
@@ -94,10 +94,8 @@ struct AudioPlaybackControllerInitializationTests {
         )
         service.handleAudioStreamStarted(message)
 
-        try await waitUntil {
-            service.pendingDecodedAudioFramesByStreamID[streamID] == nil
-        }
-        #expect(service.pendingDecodedAudioFramesByStreamID[streamID] == nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(service.pendingDecodedAudioFramesByStreamID[streamID]?.count == 1)
         service.stopAudioConnection()
     }
 
@@ -124,6 +122,21 @@ struct AudioPlaybackControllerInitializationTests {
 
         #expect(controller.pendingFrameCountForTesting() == 1)
         #expect(controller.pendingDurationSecondsForTesting() < 0.12)
+    }
+
+    @MainActor
+    @Test("Buffered audio discard clears pending startup frames")
+    func bufferedAudioDiscardClearsPendingStartupFrames() {
+        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
+
+        controller.enqueue(makeDecodedFrame(timestampNs: 1))
+        controller.enqueue(makeDecodedFrame(timestampNs: 2))
+        #expect(controller.pendingFrameCountForTesting() == 2)
+
+        controller.discardBufferedAudio()
+
+        #expect(controller.pendingFrameCountForTesting() == 0)
+        #expect(controller.pendingDurationSecondsForTesting() == 0)
     }
 
     @MainActor

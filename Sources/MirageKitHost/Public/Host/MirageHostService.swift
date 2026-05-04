@@ -968,6 +968,11 @@ public final class MirageHostService {
     }
 
     private static func hardwareMachineFamily(modelIdentifier: String?, iconName: String?) -> String? {
+        if let modelIdentifier,
+           let family = hardwareMachineFamily(forKnownModelIdentifier: modelIdentifier) {
+            return family
+        }
+
         if let iconName {
             let normalizedIconName = iconName.lowercased()
             if normalizedIconName.contains("macbook") || normalizedIconName.contains("sidebarlaptop") {
@@ -1025,6 +1030,29 @@ public final class MirageHostService {
             return "macPro"
         }
         return "macGeneric"
+    }
+
+    private static func hardwareMachineFamily(forKnownModelIdentifier modelIdentifier: String) -> String? {
+        guard let normalizedModel = normalizeModelIdentifier(modelIdentifier) else {
+            return nil
+        }
+
+        switch normalizedModel {
+        case "mac13,1",
+             "mac13,2",
+             "mac14,13",
+             "mac14,14",
+             "mac15,14",
+             "mac16,9":
+            return "macStudio"
+        case "mac14,3",
+             "mac14,12",
+             "mac16,10",
+             "mac16,11":
+            return "macMini"
+        default:
+            return nil
+        }
     }
 
     private static func hardwareMachineName() -> String? {

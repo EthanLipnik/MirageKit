@@ -105,7 +105,12 @@ enum MirageHostHardwareIconResolver {
 
         var selectedAsset: CoreTypesIconAsset?
 
-        if let normalizedPreferredName {
+        if let normalizedPreferredName,
+           preferredIconNameMatchesMetadata(
+               normalizedPreferredName,
+               normalizedFamily: normalizedFamily,
+               normalizedModel: normalizedModel
+           ) {
             selectedAsset = iconAssets
                 .filter { $0.lowercasedFilename == normalizedPreferredName }
                 .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
@@ -134,6 +139,41 @@ enum MirageHostHardwareIconResolver {
         }
 
         return selectedAsset
+    }
+
+    private static func preferredIconNameMatchesMetadata(
+        _ iconName: String,
+        normalizedFamily: String?,
+        normalizedModel: String?
+    ) -> Bool {
+        if let normalizedFamily {
+            return matchesMachineFamily(normalizedFamily, iconName: iconName)
+        }
+
+        guard let normalizedModel,
+              let knownFamily = knownMachineFamily(forModelIdentifier: normalizedModel) else {
+            return true
+        }
+        return matchesMachineFamily(knownFamily, iconName: iconName)
+    }
+
+    private static func knownMachineFamily(forModelIdentifier modelIdentifier: String) -> String? {
+        switch modelIdentifier {
+        case "mac13,1",
+             "mac13,2",
+             "mac14,13",
+             "mac14,14",
+             "mac15,14",
+             "mac16,9":
+            return "macstudio"
+        case "mac14,3",
+             "mac14,12",
+             "mac16,10",
+             "mac16,11":
+            return "macmini"
+        default:
+            return nil
+        }
     }
 
     private static func metadataCoreTypesIconAssets() -> [CoreTypesIconAsset] {

@@ -17,6 +17,8 @@ struct MirageSupportInfoTests {
         #expect(MirageSupportInfo.deviceDisplayName(for: "N301AP") == "Apple Vision Pro")
         #expect(MirageSupportInfo.deviceDisplayName(for: "MacBookPro18,2") == "MacBook Pro")
         #expect(MirageSupportInfo.deviceDisplayName(for: "Macmini9,1") == "Mac mini")
+        #expect(MirageSupportInfo.deviceDisplayName(for: "Mac14,13") == "Mac Studio")
+        #expect(MirageSupportInfo.deviceDisplayName(for: "Mac16,10") == "Mac mini")
         #expect(MirageSupportInfo.deviceDisplayName(for: "VirtualMac2,1") == "Mac")
         #expect(MirageSupportInfo.deviceDisplayName(for: "UnknownBoard") == "Unknown")
     }

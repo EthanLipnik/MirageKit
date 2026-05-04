@@ -52,7 +52,14 @@ extension MirageHostInputController {
     ) {
         if let stylus = event.stylus {
             postTabletProximityIfNeeded(entering: true, at: screenPoint)
-            postTabletPointerEvent(from: event, stylus: stylus, type: type, at: screenPoint)
+            applyTabletFields(
+                cgEvent,
+                from: event,
+                stylus: stylus,
+                point: screenPoint,
+                pointerButtons: isPointerButtonActive(for: type) ? tabletButtonMask(for: event.button) : 0
+            )
+            postEvent(cgEvent)
             if isPointerButtonRelease(for: type) {
                 postTabletProximityIfNeeded(entering: false, at: screenPoint)
             }
@@ -90,21 +97,6 @@ extension MirageHostInputController {
         cgEvent.setIntegerValueField(.tabletEventDeviceID, value: syntheticTabletDeviceID)
     }
 
-    private func postTabletPointerEvent(
-        from event: MirageMouseEvent,
-        stylus: MirageStylusEvent,
-        type: CGEventType,
-        at screenPoint: CGPoint
-    ) {
-        guard let tabletEvent = makeTabletPointerEvent(
-            from: event,
-            stylus: stylus,
-            type: type,
-            at: screenPoint
-        ) else { return }
-        postEvent(tabletEvent)
-    }
-
     func postTabletPointerSample(
         _ sample: MiragePointerSample,
         batch: MiragePointerSampleBatch,
@@ -129,14 +121,14 @@ extension MirageHostInputController {
     ) -> CGEvent? {
         guard let tabletEvent = CGEvent(
             mouseEventSource: nil,
-            mouseType: .mouseMoved,
+            mouseType: type,
             mouseCursorPosition: screenPoint,
             mouseButton: event.button.cgMouseButton
         ) else {
             return nil
         }
 
-        tabletEvent.type = .tabletPointer
+        applyPointerEventMetadata(tabletEvent, from: event, type: type)
         let pointerButtons: Int64 = isPointerButtonActive(for: type) ? tabletButtonMask(for: event.button) : 0
         applyTabletFields(
             tabletEvent,

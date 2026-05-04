@@ -286,35 +286,34 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.lockedCursorPosition == CGPoint(x: 1.1, y: -0.15))
     }
 
-    @Test("Normal direct touch moves the remote cursor before scrolling")
-    func normalDirectTouchMovesTheRemoteCursorBeforeScrolling() {
+    @Test("Normal direct-touch scroll reuses the tracked pointer location")
+    func normalDirectTouchScrollReusesTrackedPointerLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        var receivedEvents: [MirageInputEvent] = []
-        view.onInputEvent = { receivedEvents.append($0) }
+        view.directTouchInputMode = .normal
+        view.lastCursorPosition = CGPoint(x: 0.2, y: 0.8)
 
-        view.handleDirectTouchLocationChange(CGPoint(x: 80, y: 60))
+        let location = view.scrollEventLocation(
+            source: .directTouch,
+            phase: .changed,
+            momentumPhase: .none
+        )
 
-        #expect(view.lastCursorPosition == CGPoint(x: 0.25, y: 0.25))
-        #expect(receivedEvents.count == 1)
-        guard case let .mouseMoved(event) = receivedEvents[0] else {
-            Issue.record("Expected a mouseMoved event for direct touch contact")
-            return
-        }
-
-        #expect(event.location == CGPoint(x: 0.25, y: 0.25))
+        #expect(location == CGPoint(x: 0.2, y: 0.8))
     }
 
-    @Test("Normal direct touch does not inject mouse-moved while a press gesture owns the pointer")
-    func normalDirectTouchSkipsMouseMoveWhilePressGestureOwnsPointer() {
+    @Test("Untracked normal direct-touch scroll lets the host choose a target fallback")
+    func untrackedNormalDirectTouchScrollUsesHostFallback() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        var receivedEvents: [MirageInputEvent] = []
-        view.onInputEvent = { receivedEvents.append($0) }
-        view.directLongPressButtonDown = true
+        view.directTouchInputMode = .normal
+        view.lastCursorPosition = nil
 
-        view.handleDirectTouchLocationChange(CGPoint(x: 80, y: 60))
+        let location = view.scrollEventLocation(
+            source: .directTouch,
+            phase: .changed,
+            momentumPhase: .none
+        )
 
-        #expect(view.lastCursorPosition == CGPoint(x: 0.25, y: 0.25))
-        #expect(receivedEvents.isEmpty)
+        #expect(location == nil)
     }
 
     private func allowedTouchTypes(for scrollView: UIScrollView) -> Set<Int> {

@@ -179,6 +179,20 @@ public final class AudioPlaybackController {
         drainPendingFramesIfNeeded()
     }
 
+    func discardBufferedAudio() {
+        pendingFrames.removeAll()
+        pendingDurationSeconds = 0
+        scheduledDurationSeconds = 0
+        hasStartedPlayback = false
+        isDelayHoldActive = false
+
+        guard let playerNode = playbackGraph?.playerNode else { return }
+        if playerNode.isPlaying {
+            playerNode.pause()
+        }
+        playerNode.reset()
+    }
+
     func runtimeExtraDelaySecondsForTesting() -> Double {
         runtimeExtraDelaySeconds
     }

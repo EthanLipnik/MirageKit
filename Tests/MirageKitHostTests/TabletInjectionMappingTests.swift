@@ -73,8 +73,8 @@ struct TabletInjectionMappingTests {
         #expect(cgEvent.getIntegerValueField(.mouseEventSubtype) == 0)
     }
 
-    @Test("Tablet pointer events are created as tablet event types")
-    func tabletPointerEventCreationUsesTabletType() throws {
+    @Test("Stylus contact events keep actionable mouse event type")
+    func stylusContactEventCreationUsesMouseType() throws {
         let controller = MirageHostInputController()
         let stylus = MirageStylusEvent(
             altitudeAngle: .pi / 4,
@@ -98,13 +98,14 @@ struct TabletInjectionMappingTests {
             )
         )
 
-        #expect(tabletEvent.type == .tabletPointer)
+        #expect(tabletEvent.type == .leftMouseDragged)
         #expect(abs(tabletEvent.getDoubleValueField(.tabletEventPointPressure) - 0.66) < 0.02)
         #expect(tabletEvent.getIntegerValueField(.tabletEventPointButtons) == 1)
+        #expect(tabletEvent.getIntegerValueField(.mouseEventSubtype) == Int64(CGEventMouseSubtype.tabletPoint.rawValue))
     }
 
-    @Test("Pointer sample batches create tablet pointer events without mouse subtype path")
-    func pointerSampleBatchCreatesTabletPointerEvent() throws {
+    @Test("Pointer sample batches create actionable drag events with tablet fields")
+    func pointerSampleBatchCreatesActionableDragEvent() throws {
         let controller = MirageHostInputController()
         let stylus = MirageStylusEvent(
             altitudeAngle: .pi / 4,
@@ -136,11 +137,97 @@ struct TabletInjectionMappingTests {
             )
         )
 
-        #expect(tabletEvent.type == .tabletPointer)
+        #expect(tabletEvent.type == .leftMouseDragged)
         #expect(abs(tabletEvent.getDoubleValueField(.tabletEventPointPressure) - 0.55) < 0.02)
         #expect(tabletEvent.getIntegerValueField(.tabletEventPointButtons) == 1)
         #expect(tabletEvent.getIntegerValueField(.tabletEventPointX) == 640)
         #expect(tabletEvent.getIntegerValueField(.tabletEventPointY) == 480)
+    }
+
+    @Test("Pointer sample batch boundaries produce down and up mouse events")
+    func pointerSampleBatchBoundariesProduceActionableMouseEvents() throws {
+        let controller = MirageHostInputController()
+        let stylus = MirageStylusEvent(
+            altitudeAngle: .pi / 4,
+            azimuthAngle: .pi / 6,
+            tiltX: 0,
+            tiltY: 0
+        )
+        let sample = MiragePointerSample(
+            location: .zero,
+            pressure: 0.5,
+            stylus: stylus
+        )
+        let began = MiragePointerSampleBatch(
+            phase: .began,
+            clickCount: 1,
+            isButtonPressed: true,
+            samples: [sample]
+        )
+        let ended = MiragePointerSampleBatch(
+            phase: .ended,
+            clickCount: 1,
+            isButtonPressed: false,
+            samples: [sample]
+        )
+
+        let downEvent = try #require(
+            controller.makeTabletPointerEvent(
+                from: sample,
+                batch: began,
+                type: MirageHostInputController.pointerEventType(for: began),
+                at: CGPoint(x: 100, y: 100)
+            )
+        )
+        let upEvent = try #require(
+            controller.makeTabletPointerEvent(
+                from: sample,
+                batch: ended,
+                type: MirageHostInputController.pointerEventType(for: ended),
+                at: CGPoint(x: 100, y: 100)
+            )
+        )
+
+        #expect(downEvent.type == .leftMouseDown)
+        #expect(downEvent.getIntegerValueField(.mouseEventClickState) == 1)
+        #expect(downEvent.getIntegerValueField(.tabletEventPointButtons) == 1)
+        #expect(upEvent.type == .leftMouseUp)
+        #expect(upEvent.getIntegerValueField(.mouseEventClickState) == 1)
+        #expect(upEvent.getIntegerValueField(.tabletEventPointButtons) == 0)
+    }
+
+    @Test("Pointer sample hover remains non-clicking movement")
+    func pointerSampleHoverRemainsMovementOnly() throws {
+        let controller = MirageHostInputController()
+        let stylus = MirageStylusEvent(
+            altitudeAngle: .pi / 4,
+            azimuthAngle: .pi / 6,
+            tiltX: 0,
+            tiltY: 0,
+            isHovering: true
+        )
+        let sample = MiragePointerSample(
+            location: .zero,
+            pressure: 0,
+            stylus: stylus
+        )
+        let hover = MiragePointerSampleBatch(
+            phase: .hover,
+            isButtonPressed: false,
+            samples: [sample]
+        )
+
+        let hoverEvent = try #require(
+            controller.makeTabletPointerEvent(
+                from: sample,
+                batch: hover,
+                type: MirageHostInputController.pointerEventType(for: hover),
+                at: CGPoint(x: 100, y: 100)
+            )
+        )
+
+        #expect(hoverEvent.type == .mouseMoved)
+        #expect(hoverEvent.getIntegerValueField(.tabletEventPointButtons) == 0)
     }
 
     @Test("Ended and cancelled batches map to button release")
