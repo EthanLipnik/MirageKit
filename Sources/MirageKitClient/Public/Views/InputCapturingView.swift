@@ -93,6 +93,13 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Host-authoritative maximum render frame rate for the active stream.
+    public var preferredMaximumRenderFPS: Int? {
+        didSet {
+            sampleBufferView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
+        }
+    }
+
     /// Active vs passive presentation tier for local rendering cadence.
     public var presentationTier: StreamPresentationTier = .activeLive {
         didSet {

@@ -286,6 +286,12 @@ extension MirageClientService {
         maxRefreshRateOverride = clamped
     }
 
+    func updateObservedFrameRate(_ frameRate: Int, for streamID: StreamID) {
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(frameRate)
+        guard observedFrameRateByStream[streamID] != clamped else { return }
+        observedFrameRateByStream[streamID] = clamped
+    }
+
     /// Send display size change (points) to host when the client view bounds change.
     public func sendDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
@@ -503,6 +509,7 @@ extension MirageClientService {
 
     func clearStreamRefreshRateOverride(streamID: StreamID) {
         refreshRateOverridesByStream.removeValue(forKey: streamID)
+        observedFrameRateByStream.removeValue(forKey: streamID)
         refreshRateMismatchCounts.removeValue(forKey: streamID)
         refreshRateFallbackTargets.removeValue(forKey: streamID)
     }

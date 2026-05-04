@@ -355,6 +355,10 @@ extension MirageClientService {
     }
 
     private func logAudioSyncDropsIfNeeded(streamID: StreamID) {
+        guard MirageSteadyStateDiagnostics.isEnabled else {
+            audioSyncDropCount = 0
+            return
+        }
         let now = CFAbsoluteTimeGetCurrent()
         guard lastAudioSyncDropLogTime == 0 || now - lastAudioSyncDropLogTime > 2.0 else { return }
         MirageLogger.client(
@@ -365,6 +369,7 @@ extension MirageClientService {
     }
 
     private func logAudioAheadIfNeeded(streamID: StreamID, aheadSeconds: Double, delay: Double) {
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
         guard delay > 0.001, lastAudioSyncAheadLogTime == 0 || now - lastAudioSyncAheadLogTime > 2.0 else {
             return

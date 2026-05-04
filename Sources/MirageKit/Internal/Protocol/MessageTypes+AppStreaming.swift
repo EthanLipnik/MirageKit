@@ -668,6 +668,16 @@ public struct WindowRemovedFromStreamMessage: Codable, Sendable {
 
 /// Window stream failed (Host -> Client).
 public struct WindowStreamFailedMessage: Codable, Sendable {
+    public enum FailureCode: String, Codable, Sendable {
+        case unknown
+        case windowNotFound
+        case windowAlreadyBound
+        case virtualDisplayUnavailable
+        case virtualDisplayCreationFailed
+        case windowPlacementFailed
+        case runtimeConditionBlocked
+    }
+
     /// Bundle identifier of the app.
     public let bundleIdentifier: String
     /// Host window identifier that failed to stream.
@@ -676,12 +686,25 @@ public struct WindowStreamFailedMessage: Codable, Sendable {
     public let title: String?
     /// Failure reason suitable for diagnostics and user-facing notice text.
     public let reason: String
+    /// Stable failure code for client recovery policy.
+    public let failureCode: FailureCode
+    /// Short user-facing message. Falls back to ``reason`` for older senders.
+    public let userMessage: String?
 
-    package init(bundleIdentifier: String, windowID: WindowID, title: String?, reason: String) {
+    package init(
+        bundleIdentifier: String,
+        windowID: WindowID,
+        title: String?,
+        reason: String,
+        failureCode: FailureCode = .unknown,
+        userMessage: String? = nil
+    ) {
         self.bundleIdentifier = bundleIdentifier
         self.windowID = windowID
         self.title = title
         self.reason = reason
+        self.failureCode = failureCode
+        self.userMessage = userMessage
     }
 }
 

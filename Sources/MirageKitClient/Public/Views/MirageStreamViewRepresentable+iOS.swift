@@ -122,6 +122,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Active vs passive presentation tier.
     public var presentationTier: StreamPresentationTier
 
+    /// Host-authoritative maximum render frame rate for this stream.
+    public var preferredMaximumRenderFPS: Int?
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
@@ -170,6 +173,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
+        preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
         prefersLocalAspectFitPresentation: Bool = false,
         ignoresSafeArea: Bool = true
@@ -212,6 +216,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.presentationTier = presentationTier
+        self.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         self.maxDrawableSize = maxDrawableSize
         self.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         self.ignoresSafeArea = ignoresSafeArea
@@ -278,6 +283,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
+            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
             maxDrawableSize: maxDrawableSize,
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
             ignoresSafeArea: ignoresSafeArea
@@ -344,6 +350,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
+            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
             maxDrawableSize: maxDrawableSize,
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
             ignoresSafeArea: ignoresSafeArea
@@ -478,6 +485,7 @@ public final class MirageStreamViewController: UIViewController {
         onCursorLockRecaptureRequested: (() -> Void)?,
         syntheticCursorEnabled: Bool,
         presentationTier: StreamPresentationTier,
+        preferredMaximumRenderFPS: Int?,
         maxDrawableSize: CGSize?,
         prefersLocalAspectFitPresentation: Bool,
         ignoresSafeArea: Bool
@@ -507,6 +515,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         captureView.syntheticCursorEnabled = syntheticCursorEnabled
         captureView.presentationTier = presentationTier
+        captureView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         captureView.maxDrawableSize = maxDrawableSize
         captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         captureView.ignoresSafeArea = ignoresSafeArea

@@ -48,8 +48,8 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client control sessions prefer UDP before falling back to TCP")
-    func controlSessionAttemptsPreferUdpThenTcp() throws {
+    @Test("Client control sessions prefer TCP before falling back to UDP")
+    func controlSessionAttemptsPreferTcpThenUdp() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61_001))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_002))
         let host = LoomPeer(
@@ -80,10 +80,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTcpEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].endpoint.debugDescription == expectedTcpEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
     }
 
     @MainActor
@@ -147,9 +147,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
     }
 
     @MainActor
@@ -179,9 +179,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
     }
 
     @MainActor
@@ -219,10 +219,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -576,8 +576,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
     @MainActor
@@ -615,10 +616,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(!attempts.contains { $0.endpoint.debugDescription.contains("fe80") })
     }
 
@@ -648,12 +649,15 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
+        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
         let expectedEndpoint: NWEndpoint = .hostPort(
             host: .ipv4(IPv4Address("192.168.1.50")!),
             port: udpPort
         )
 
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
     @MainActor
@@ -697,8 +701,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
     @MainActor
@@ -748,10 +753,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -798,8 +803,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
     @MainActor
@@ -827,12 +833,15 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
+        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
         let expectedEndpoint: NWEndpoint = .hostPort(
             host: .ipv4(IPv4Address("100.65.199.51")!),
             port: udpPort
         )
 
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
     @MainActor

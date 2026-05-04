@@ -106,7 +106,9 @@ extension MirageHostService {
             let result = await resolveHostSoftwareUpdateInstallResult(for: peer, trigger: request.trigger)
             try await clientContext.send(.hostSoftwareUpdateInstallResult, content: result)
             MirageLogger.host(
-                "Handled host software update install request from \(clientContext.client.name): accepted=\(result.accepted)"
+                "Handled host software update install request from \(clientContext.client.name): " +
+                    "accepted=\(result.accepted), resultCode=\(result.resultCode?.rawValue ?? "nil"), " +
+                    "blockReason=\(result.blockReason?.rawValue ?? "nil"), message=\(result.message)"
             )
         } catch {
             await handleControlChannelSendFailure(
@@ -190,10 +192,10 @@ extension MirageHostService {
             )
             return HostSoftwareUpdateInstallResultMessage(
                 accepted: false,
-                message: "Remote update request denied for this device.",
+                message: "Approve this client on the host before requesting a remote update.",
                 resultCode: .denied,
-                blockReason: .policyDenied,
-                remediationHint: nil,
+                blockReason: .authorizationRequired,
+                remediationHint: "Open Mirage Host on the Mac and approve or trust this client, then try again.",
                 status: makeHostSoftwareUpdateStatusMessage(from: snapshot)
             )
         }

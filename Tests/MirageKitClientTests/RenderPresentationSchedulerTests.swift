@@ -30,13 +30,12 @@ struct RenderPresentationSchedulerTests {
             },
             submit: { _ in
                 submitCount += 1
-                return false
+                return .noPendingFrame
             },
-            hasPendingFrame: { _ in false }
+            hasPendingFrame: { false }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
-        scheduler.setDisplayLinkActive(true)
 
         scheduler.handleFrameAvailable(referenceTime: 1)
         scheduler.handleFrameAvailable(referenceTime: 2)
@@ -68,13 +67,12 @@ struct RenderPresentationSchedulerTests {
                 } else {
                     pendingState.hasPendingAfterFirstSubmit = false
                 }
-                return true
+                return .submitted
             },
-            hasPendingFrame: { _ in pendingState.hasPendingAfterFirstSubmit }
+            hasPendingFrame: { pendingState.hasPendingAfterFirstSubmit }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
-        scheduler.setDisplayLinkActive(true)
 
         scheduler.handleFrameAvailable(referenceTime: 1)
 
@@ -95,38 +93,41 @@ struct RenderPresentationSchedulerTests {
         let scheduler = MirageRenderPresentationScheduler(
             submit: { _ in
                 submitCount += 1
-                return false
+                return .noPendingFrame
             },
-            hasPendingFrame: { _ in false }
+            hasPendingFrame: { false }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.passiveSnapshot)
-        scheduler.setDisplayLinkActive(true)
 
         scheduler.handleFrameAvailable(referenceTime: 1)
 
         #expect(submitCount == 1)
     }
 
-    @Test("Display link remains a fallback path when no coalesced pass is queued")
-    func displayLinkRemainsAFallbackPathWhenNoCoalescedPassIsQueued() {
+    @Test("Display layer not-ready arms a readiness retry")
+    func displayLayerNotReadyArmsReadinessRetry() {
         let streamID: StreamID = 904
         var submitCount = 0
+        var readinessRetryCount = 0
 
         let scheduler = MirageRenderPresentationScheduler(
             submit: { _ in
                 submitCount += 1
-                return false
+                return .displayLayerNotReady
             },
-            hasPendingFrame: { _ in false }
+            hasPendingFrame: { false },
+            onDisplayLayerNotReady: {
+                readinessRetryCount += 1
+            }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
-        scheduler.setDisplayLinkActive(true)
 
-        scheduler.displayLinkTick(referenceTime: 1)
+        scheduler.requestImmediateSubmission(referenceTime: 1)
 
         #expect(submitCount == 1)
+        #expect(readinessRetryCount == 1)
     }
 
     @Test("Reset clears queued coalesced passes before they execute")
@@ -141,13 +142,12 @@ struct RenderPresentationSchedulerTests {
             },
             submit: { _ in
                 submitCount += 1
-                return false
+                return .noPendingFrame
             },
-            hasPendingFrame: { _ in false }
+            hasPendingFrame: { false }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
-        scheduler.setDisplayLinkActive(true)
 
         scheduler.handleFrameAvailable(referenceTime: 1)
         #expect(scheduledCallbacks.count == 1)

@@ -99,10 +99,11 @@ struct HostSoftwareUpdateFlowTests {
         )
 
         #expect(result.accepted == false)
-        #expect(result.message == "Remote update request denied for this device.")
+        #expect(result.message == "Approve this client on the host before requesting a remote update.")
         #expect(result.status?.currentVersion == controller.snapshot.currentVersion)
         #expect(result.resultCode == .denied)
-        #expect(result.blockReason == .policyDenied)
+        #expect(result.blockReason == .authorizationRequired)
+        #expect(result.remediationHint == "Open Mirage Host on the Mac and approve or trust this client, then try again.")
     }
 
     @MainActor

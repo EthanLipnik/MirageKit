@@ -15,12 +15,14 @@ package struct ErrorMessage: Codable {
     package let code: ErrorCode
     package let message: String
     package let streamID: StreamID?
+    package let bundleIdentifier: String?
 
     package enum ErrorCode: String, Codable {
         case unknown
         case invalidMessage
         case streamNotFound
         case windowNotFound
+        case appStreamStartupFailed
         case encodingError
         case decodingError
         case networkError
@@ -32,10 +34,16 @@ package struct ErrorMessage: Codable {
         case waitingForHostApproval
     }
 
-    package init(code: ErrorCode, message: String, streamID: StreamID? = nil) {
+    package init(
+        code: ErrorCode,
+        message: String,
+        streamID: StreamID? = nil,
+        bundleIdentifier: String? = nil
+    ) {
         self.code = code
         self.message = message
         self.streamID = streamID
+        self.bundleIdentifier = bundleIdentifier
     }
 }
 

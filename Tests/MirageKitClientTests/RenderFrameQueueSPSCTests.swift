@@ -104,6 +104,7 @@ struct RenderFrameQueueSPSCTests {
             )
         }
         MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+        MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
         MirageRenderStreamStore.shared.markSubmitted(
             sequence: 3,
             mappedPresentationTime: CMTime(seconds: 3, preferredTimescale: 600),
@@ -112,6 +113,9 @@ struct RenderFrameQueueSPSCTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.decodeFPS >= 1)
+        #expect(telemetry.submitAttemptFPS >= 1)
+        #expect(telemetry.layerAcceptedFPS >= 1)
+        #expect(telemetry.presentedFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
         #expect(telemetry.pendingFrameCount == 1)
@@ -161,8 +165,8 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamB)?.sequence == 1)
     }
 
-    @Test("Pending frame can be observed by multiple presenters")
-    func pendingFrameCanBeObservedByMultiplePresenters() {
+    @Test("Submitted pending frame remains visible for peer presenters")
+    func submittedPendingFrameRemainsVisibleForPeerPresenters() {
         let streamID: StreamID = 307
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }

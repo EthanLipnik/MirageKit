@@ -62,6 +62,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Active vs passive presentation tier.
     public var presentationTier: StreamPresentationTier
 
+    /// Host-authoritative maximum render frame rate for this stream.
+    public var preferredMaximumRenderFPS: Int?
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
@@ -97,6 +100,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         syntheticCursorEnabled: Bool = true,
         inputEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
+        preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
@@ -122,6 +126,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.inputEnabled = inputEnabled
         self.presentationTier = presentationTier
+        self.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         self.maxDrawableSize = maxDrawableSize
         self.clientShortcuts = clientShortcuts
         self.onClientShortcut = onClientShortcut
@@ -157,6 +162,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         context.coordinator.sampleBufferView = sampleBufferView
         sampleBufferView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
         sampleBufferView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
+        sampleBufferView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         sampleBufferView.maxDrawableSize = maxDrawableSize
         sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize
         sampleBufferView.streamPresentationTier = presentationTier
@@ -218,6 +224,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamPresentationTier = presentationTier }
         if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.contentRectOverride = contentRectOverride }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.preferredMaximumRenderFPS = preferredMaximumRenderFPS }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
@@ -235,6 +242,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.streamID = streamID
             wrapper.clientShortcuts = clientShortcuts
             wrapper.onClientShortcut = onClientShortcut
+            wrapper.actions = actions
+            wrapper.onActionTriggered = onActionTriggered
             wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
         }
     }

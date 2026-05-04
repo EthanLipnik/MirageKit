@@ -37,6 +37,7 @@ package enum InputEventBinaryCodec {
         case pixelResize = 0x14
         case windowFocus = 0x15
         case pointerSampleBatch = 0x16
+        case swipe = 0x17
     }
 
     package static func serialize(_ message: InputEventMessage) throws -> Data {
@@ -119,6 +120,9 @@ package enum InputEventBinaryCodec {
         case let .rotate(rotateEvent):
             writer.appendUInt8(EventType.rotate.rawValue)
             writer.appendRotateEvent(rotateEvent)
+        case let .swipe(swipeEvent):
+            writer.appendUInt8(EventType.swipe.rawValue)
+            writer.appendSwipeEvent(swipeEvent)
         case let .windowResize(resizeEvent):
             writer.appendUInt8(EventType.windowResize.rawValue)
             writer.appendResizeEvent(resizeEvent)
@@ -171,6 +175,8 @@ package enum InputEventBinaryCodec {
             .magnify(try reader.readMagnifyEvent())
         case .rotate:
             .rotate(try reader.readRotateEvent())
+        case .swipe:
+            .swipe(try reader.readSwipeEvent())
         case .windowResize:
             .windowResize(try reader.readResizeEvent())
         case .relativeResize:
@@ -334,13 +340,35 @@ package enum InputEventBinaryCodec {
 
         mutating func appendMagnifyEvent(_ event: MirageMagnifyEvent) {
             appendDouble(Double(event.magnification))
+            appendBool(event.location != nil)
+            if let location = event.location {
+                appendCGPoint(location)
+            }
             appendUInt8(UInt8(clamping: event.phase.rawValue))
+            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
             appendDouble(event.timestamp)
         }
 
         mutating func appendRotateEvent(_ event: MirageRotateEvent) {
             appendDouble(Double(event.rotation))
+            appendBool(event.location != nil)
+            if let location = event.location {
+                appendCGPoint(location)
+            }
             appendUInt8(UInt8(clamping: event.phase.rawValue))
+            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
+            appendDouble(event.timestamp)
+        }
+
+        mutating func appendSwipeEvent(_ event: MirageSwipeEvent) {
+            appendDouble(Double(event.deltaX))
+            appendDouble(Double(event.deltaY))
+            appendBool(event.location != nil)
+            if let location = event.location {
+                appendCGPoint(location)
+            }
+            appendUInt8(UInt8(clamping: event.phase.rawValue))
+            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
             appendDouble(event.timestamp)
         }
 
@@ -578,22 +606,47 @@ package enum InputEventBinaryCodec {
 
         mutating func readMagnifyEvent() throws -> MirageMagnifyEvent {
             let magnification = CGFloat(try readDouble())
+            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
             let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
+            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
             let timestamp = try readDouble()
             return MirageMagnifyEvent(
                 magnification: magnification,
+                location: location,
                 phase: phase,
+                modifiers: modifiers,
                 timestamp: timestamp
             )
         }
 
         mutating func readRotateEvent() throws -> MirageRotateEvent {
             let rotation = CGFloat(try readDouble())
+            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
             let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
+            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
             let timestamp = try readDouble()
             return MirageRotateEvent(
                 rotation: rotation,
+                location: location,
                 phase: phase,
+                modifiers: modifiers,
+                timestamp: timestamp
+            )
+        }
+
+        mutating func readSwipeEvent() throws -> MirageSwipeEvent {
+            let deltaX = CGFloat(try readDouble())
+            let deltaY = CGFloat(try readDouble())
+            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
+            let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
+            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
+            let timestamp = try readDouble()
+            return MirageSwipeEvent(
+                deltaX: deltaX,
+                deltaY: deltaY,
+                location: location,
+                phase: phase,
+                modifiers: modifiers,
                 timestamp: timestamp
             )
         }

@@ -62,6 +62,9 @@ struct ClientMetricsStoreTests {
             receivedFrameIntervalP95Ms: 18.0,
             receivedFrameIntervalP99Ms: 33.0,
             droppedFrames: 3,
+            submitAttemptFPS: 61.0,
+            layerAcceptedFPS: 59.0,
+            presentedFPS: 58.0,
             submittedFPS: 59.0,
             uniqueSubmittedFPS: 58.0,
             pendingFrameCount: 1,
@@ -145,6 +148,9 @@ struct ClientMetricsStoreTests {
         #expect(snapshot?.clientReceivedWorstGapMs == 44.0)
         #expect(snapshot?.clientReceivedFrameIntervalP95Ms == 18.0)
         #expect(snapshot?.clientReceivedFrameIntervalP99Ms == 33.0)
+        #expect(snapshot?.clientSubmitAttemptFPS == 61.0)
+        #expect(snapshot?.clientLayerAcceptedFPS == 59.0)
+        #expect(snapshot?.clientPresentedFPS == 58.0)
         #expect(snapshot?.hostCaptureIngressAverageMs == 4.2)
         #expect(snapshot?.hostSendQueueBytes == 196_608)
         #expect(snapshot?.hostSendCompletionMaxMs == 22.7)

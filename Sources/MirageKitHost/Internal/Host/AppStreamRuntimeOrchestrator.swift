@@ -62,6 +62,7 @@ actor AppStreamRuntimeOrchestrator {
              .scrollWheel,
              .magnify,
              .rotate,
+             .swipe,
              .windowResize,
              .relativeResize,
              .pixelResize,

@@ -795,7 +795,7 @@ extension MirageClientService {
         var attempts: [ControlSessionAttempt] = []
         let transportOrder: [LoomTransportKind] = isOverlayControlHost(host)
             ? [.tcp, .quic, .udp]
-            : [.udp, .quic, .tcp]
+            : [.tcp, .quic, .udp]
 
         for transportKind in transportOrder {
             guard let endpoint = controlSessionEndpoint(

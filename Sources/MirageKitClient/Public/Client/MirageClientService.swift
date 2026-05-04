@@ -234,6 +234,16 @@ public final class MirageClientService {
         }
     }
 
+    public struct AppStreamStartupFailure: Sendable, Equatable, Codable {
+        public let bundleIdentifier: String?
+        public let message: String
+
+        public init(bundleIdentifier: String?, message: String) {
+            self.bundleIdentifier = bundleIdentifier
+            self.message = message
+        }
+    }
+
     public struct HostApplicationRestartResult: Sendable, Equatable, Codable {
         public let accepted: Bool
         public let message: String
@@ -360,6 +370,9 @@ public final class MirageClientService {
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 
+    /// Host-authoritative target frame rate observed for active streams.
+    var observedFrameRateByStream: [StreamID: Int] = [:]
+
     /// Preferred low-power policy for local decoder sessions.
     public var decoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto {
         didSet {
@@ -475,6 +488,9 @@ public final class MirageClientService {
 
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
+
+    /// Callback when an app stream fails before any initial window becomes active.
+    public var onAppStreamStartupFailed: ((AppStreamStartupFailure) -> Void)?
 
     /// Callback when a generic custom stream starts.
     public var onCustomStreamStarted: ((MirageCustomStreamStartedMessage) -> Void)?

@@ -28,6 +28,7 @@ public enum MirageInputEvent: Codable, Sendable {
     case scrollWheel(MirageScrollEvent)
     case magnify(MirageMagnifyEvent)
     case rotate(MirageRotateEvent)
+    case swipe(MirageSwipeEvent)
     case windowResize(MirageResizeEvent)
     case relativeResize(MirageRelativeResizeEvent)
     case pixelResize(MiragePixelResizeEvent)
@@ -58,6 +59,7 @@ public enum MirageInputEvent: Codable, Sendable {
         case let .scrollWheel(e): e.timestamp
         case let .magnify(e): e.timestamp
         case let .rotate(e): e.timestamp
+        case let .swipe(e): e.timestamp
         case let .windowResize(e): e.timestamp
         case let .relativeResize(e): e.timestamp
         case let .pixelResize(e): e.timestamp
@@ -84,14 +86,18 @@ public enum MirageInputEvent: Codable, Sendable {
             e.lastLocation
         case let .scrollWheel(e):
             e.location
+        case let .magnify(e):
+            e.location
+        case let .rotate(e):
+            e.location
+        case let .swipe(e):
+            e.location
         case .flagsChanged,
              .hostSystemAction,
              .keyDown,
              .keyUp,
-             .magnify,
              .pixelResize,
              .relativeResize,
-             .rotate,
              .windowFocus,
              .windowResize:
             nil

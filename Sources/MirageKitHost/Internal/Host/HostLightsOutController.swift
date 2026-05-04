@@ -158,6 +158,7 @@ final class HostLightsOutController {
     private var escapeHoldCheckTask: Task<Void, Never>?
     private var screenChangeObserver: Any?
     private var brightnessSnapshot: [CGDirectDisplayID: DisplayGammaSnapshot] = [:]
+    private let betterDisplayBrightnessController = BetterDisplaySoftwareBrightnessController()
     private let revealClock = ContinuousClock()
     private var revealUntil: ContinuousClock.Instant?
 
@@ -188,6 +189,7 @@ final class HostLightsOutController {
         let displayIDs = resolveDisplayIDs(for: newTarget)
         updateOverlays(for: displayIDs)
         updateBrightnessSnapshot(for: displayIDs)
+        updateBetterDisplayBrightnessTarget(for: displayIDs)
         applyRevealState()
         ensureEventTapActive()
         ensureScreenChangeObserver()
@@ -201,7 +203,10 @@ final class HostLightsOutController {
         escapeHoldCheckTask = nil
         escapeHoldState.reset()
         revealUntil = nil
-        restoreBrightness()
+        restoreBrightness(restoresBetterDisplay: false)
+        Task {
+            await betterDisplayBrightnessController.restoreAll()
+        }
         removeEventTap()
         removeScreenChangeObserver()
         for overlay in overlays.values {
@@ -334,15 +339,29 @@ final class HostLightsOutController {
         }
     }
 
+    private func updateBetterDisplayBrightnessTarget(for displayIDs: Set<CGDirectDisplayID>) {
+        let shouldDim = revealUntil == nil || revealClock.now >= (revealUntil ?? revealClock.now)
+        Task {
+            await betterDisplayBrightnessController.updateTarget(displayIDs: displayIDs, dimmed: shouldDim)
+        }
+    }
+
     private func dimDisplays() {
         for (displayID, snapshot) in brightnessSnapshot {
             applyGamma(snapshot, scale: dimmedGammaScale, displayID: displayID)
         }
+        Task {
+            await betterDisplayBrightnessController.dimKnownDisplays()
+        }
     }
 
-    private func restoreBrightness() {
+    private func restoreBrightness(restoresBetterDisplay: Bool = true) {
         for (displayID, snapshot) in brightnessSnapshot {
             applyGamma(snapshot, scale: 1.0, displayID: displayID)
+        }
+        guard restoresBetterDisplay else { return }
+        Task {
+            await betterDisplayBrightnessController.restoreKnownDisplays()
         }
     }
 

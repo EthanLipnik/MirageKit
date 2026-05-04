@@ -80,6 +80,12 @@ extension MirageHostInputController {
                 injectMouseEvent(.otherMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
             case let .scrollWheel(e):
                 injectScrollEvent(e, windowFrame, app: window.application)
+            case let .magnify(e):
+                injectMagnifyEvent(e, bounds: windowFrame, domain: .session)
+            case let .rotate(e):
+                injectRotateEvent(e, bounds: windowFrame, domain: .session)
+            case let .swipe(e):
+                injectSwipeEvent(e, bounds: windowFrame, domain: .session)
             case let .hostSystemAction(request):
                 performWindowActivation(
                     windowID: window.id,
@@ -108,9 +114,7 @@ extension MirageHostInputController {
                 )
             case let .flagsChanged(modifiers):
                 injectFlagsChanged(modifiers, domain: .session, app: window.application)
-            case .magnify,
-                 .rotate,
-                 .pixelResize,
+            case .pixelResize,
                  .relativeResize,
                  .windowResize:
                 break

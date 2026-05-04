@@ -92,6 +92,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "freeze-recovery-keyframe-starved",
                 decodedFPS: 120,
                 receivedFPS: 120,
+                submitAttemptFPS: 120,
+                layerAcceptedFPS: 72,
+                presentedFPS: 72,
                 submittedFPS: 72,
                 uniqueSubmittedFPS: 72,
                 pendingFrameCount: 1,
@@ -115,6 +118,9 @@ struct ClientStreamingAnomalyDiagnosticTests {
 
         #expect(diagnostic.bottleneckKind == .presentationBound)
         #expect(diagnostic.label == "presentation-bound")
+        #expect(diagnostic.message.contains("submitAttempt=120.0fps"))
+        #expect(diagnostic.message.contains("layerAccepted=72.0fps"))
+        #expect(diagnostic.message.contains("presented=72.0fps"))
         #expect(diagnostic.message.contains("layerBackpressure=3"))
         #expect(diagnostic.message.contains("overwritten=4"))
     }

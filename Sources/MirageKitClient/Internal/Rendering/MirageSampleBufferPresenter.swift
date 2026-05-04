@@ -62,6 +62,12 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayer?.status == .failed
     }
 
+    var hasPendingFrameForCurrentPresenter: Bool {
+        guard let streamID else { return false }
+        guard let frame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID) else { return false }
+        return frame.sequence > lastSubmittedSequence
+    }
+
     func setTargetFPS(_ fps: Int) {
         let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
         maxRenderFPS = normalized
@@ -122,30 +128,15 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     @discardableResult
-    func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> Bool {
-        guard let streamID, let displayLayer else { return false }
-        guard !renderingSuspended else { return false }
+    func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> MirageRenderSubmissionResult {
+        guard let streamID, let displayLayer else { return .blocked }
+        guard !renderingSuspended else { return .blocked }
         recoverDisplayLayerIfNeeded()
-        guard displayLayer.status != .failed else { return false }
+        guard displayLayer.status != .failed else { return .blocked }
 
-        // Detect presentation stalls (backpressure, display sleep, window occlusion)
-        // and rebase time mapping to prevent fast-forward playback on recovery
         let now = CACurrentMediaTime()
-        if lastFrameSubmissionTime > 0, (now - lastFrameSubmissionTime) > Self.stallRecoveryThresholdSeconds {
-            MirageLogger.renderer(
-                "Presentation stall detected (\(String(format: "%.2f", now - lastFrameSubmissionTime))s gap); rebasing time origin"
-            )
-            resetSequenceTrackingState()
-        }
-
-        guard displayLayer.isReadyForMoreMediaData else {
-            MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
-            recoverDisplayLayerLivenessIfNeeded(streamID: streamID, now: now)
-            return false
-        }
-        displayLayerNotReadyStartTime = 0
         guard let frame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID) else {
-            return false
+            return .noPendingFrame
         }
 
         if frame.sequence <= lastSubmittedSequence {
@@ -154,11 +145,29 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
                 MirageLogger
                     .renderer(
                         "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
-                    )
+            )
                 resetSequenceTrackingState()
                 refreshFrameListener(for: streamID)
             }
-            guard frame.sequence > lastSubmittedSequence else { return false }
+            guard frame.sequence > lastSubmittedSequence else { return .noPendingFrame }
+        }
+
+        MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
+        guard displayLayer.isReadyForMoreMediaData else {
+            MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+            recoverDisplayLayerLivenessIfNeeded(now: now, presenterHasPendingFrame: true)
+            return .displayLayerNotReady
+        }
+        displayLayerNotReadyStartTime = 0
+
+        // Detect presentation stalls (backpressure, display sleep, window occlusion)
+        // only when a new frame is actually waiting, then rebase time mapping to
+        // prevent fast-forward playback on recovery.
+        if lastFrameSubmissionTime > 0, (now - lastFrameSubmissionTime) > Self.stallRecoveryThresholdSeconds {
+            MirageLogger.renderer(
+                "Presentation stall detected (\(String(format: "%.2f", now - lastFrameSubmissionTime))s gap); rebasing time origin"
+            )
+            resetSequenceTrackingState()
         }
 
         updateLayerContentRect(contentRectOverride ?? frame.contentRect, pixelBuffer: frame.pixelBuffer)
@@ -167,7 +176,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             presentationTime: frame.presentationTime,
             referenceTime: referenceTime
         ) else {
-            return false
+            return .blocked
         }
 
         displayLayer.enqueue(sampleBuffer)
@@ -180,7 +189,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             mappedPresentationTime: mappedPresentationTime,
             for: streamID
         )
-        return true
+        return .submitted
     }
 
     private func resetSequenceTrackingState() {
@@ -391,11 +400,10 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func recoverDisplayLayerLivenessIfNeeded(
-        streamID: StreamID,
-        now: CFTimeInterval
+        now: CFTimeInterval,
+        presenterHasPendingFrame: Bool
     ) {
-        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
-        guard pendingFrameCount > 0 else {
+        guard presenterHasPendingFrame else {
             displayLayerNotReadyStartTime = 0
             return
         }
@@ -409,7 +417,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard now - lastProgressTime >= Self.displayLayerLivenessResetThresholdSeconds else { return }
 
         MirageLogger.renderer(
-            "Display layer remained not-ready with \(pendingFrameCount) pending frame(s); resetting presentation pipeline"
+            "Display layer remained not-ready with a presenter-pending frame; resetting presentation pipeline"
         )
         resetPresentationState()
     }

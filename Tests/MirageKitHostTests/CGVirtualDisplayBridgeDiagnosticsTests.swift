@@ -16,10 +16,8 @@ import Testing
 struct CGVirtualDisplayBridgeDiagnosticsTests {
     @Test("Probe failures stay out of diagnostics errors")
     func probeFailuresStayOutOfDiagnosticsErrors() async {
-        await LoomDiagnostics.removeAllSinks()
-
         let sink = CGVirtualDisplayBridgeTestSink()
-        _ = await LoomDiagnostics.addSink(sink)
+        let sinkToken = await LoomDiagnostics.addSink(sink)
 
         CGVirtualDisplayBridge.logVirtualDisplaySettingsProbeFailure(
             attemptLabel: "pixel-hiDPI0",
@@ -32,35 +30,38 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         )
 
         #expect(await waitUntil { await sink.logCount() >= 3 })
-        #expect(await sink.errorCount() == 0)
+        #expect(await sink.bridgeErrorCount() == 0)
 
         let messages = await sink.logMessages()
         #expect(messages.contains { $0.contains("settings probe failed") })
         #expect(messages.contains { $0.contains("initialization failed for profile serial0-global-queue") })
         #expect(messages.contains { $0.contains("resolution update probe failed 1x activation") })
+
+        await LoomDiagnostics.removeSink(sinkToken)
     }
 
     @Test("Terminal update failures still emit diagnostics errors")
     func terminalUpdateFailuresStillEmitDiagnosticsErrors() async {
-        await LoomDiagnostics.removeAllSinks()
-
         let sink = CGVirtualDisplayBridgeTestSink()
-        _ = await LoomDiagnostics.addSink(sink)
+        let sinkToken = await LoomDiagnostics.addSink(sink)
 
         CGVirtualDisplayBridge.logVirtualDisplayResolutionUpdateFailure(
             hiDPI: true,
             isTerminal: true
         )
 
-        #expect(await waitUntil { await sink.errorCount() == 1 })
+        #expect(await waitUntil { await sink.bridgeErrorCount() == 1 })
 
-        guard let event = await sink.firstError() else {
+        guard let event = await sink.firstBridgeError() else {
             Issue.record("Expected diagnostics error event for terminal virtual display update failure")
+            await LoomDiagnostics.removeSink(sinkToken)
             return
         }
 
         #expect(event.category == LoomLogCategory(rawValue: MirageLogCategory.host.rawValue))
         #expect(event.message.contains("Updated virtual display failed Retina activation"))
+
+        await LoomDiagnostics.removeSink(sinkToken)
     }
 
     @Test("Gross Retina mismatch helper flags 800x600 fallback modes")
@@ -172,16 +173,20 @@ private actor CGVirtualDisplayBridgeTestSink: LoomDiagnosticsSink {
         logs.count
     }
 
-    func errorCount() -> Int {
-        errors.count
+    func bridgeErrorCount() -> Int {
+        errors.filter { Self.isBridgeError($0) }.count
     }
 
     func logMessages() -> [String] {
         logs.map(\.message)
     }
 
-    func firstError() -> LoomDiagnosticsErrorEvent? {
-        errors.first
+    func firstBridgeError() -> LoomDiagnosticsErrorEvent? {
+        errors.first(where: Self.isBridgeError)
+    }
+
+    private static func isBridgeError(_ event: LoomDiagnosticsErrorEvent) -> Bool {
+        event.fileID.contains("CGVirtualDisplayBridge.swift")
     }
 }
 #endif

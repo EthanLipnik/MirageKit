@@ -38,6 +38,25 @@ enum WindowStreamStartFailureCode: Int, Sendable, Equatable, Hashable, Comparabl
     var isNonRetryableVirtualDisplayAllocationFailure: Bool {
         self == .virtualDisplayCreationFailed || self == .virtualDisplayUnavailable
     }
+
+    var wireFailureCode: WindowStreamFailedMessage.FailureCode {
+        switch self {
+        case .unknown, .noSavedWindowState, .operationTimedOut:
+            return .unknown
+        case .virtualDisplayCreationFailed:
+            return .virtualDisplayCreationFailed
+        case .virtualDisplayUnavailable:
+            return .virtualDisplayUnavailable
+        case .windowPlacementFailed:
+            return .windowPlacementFailed
+        case .windowOwnerConflict, .windowOwnerMismatch, .windowAlreadyBound:
+            return .windowAlreadyBound
+        case .windowNotFound:
+            return .windowNotFound
+        case .runtimeConditionBlocked:
+            return .runtimeConditionBlocked
+        }
+    }
 }
 
 enum WindowStreamStartError: Error {

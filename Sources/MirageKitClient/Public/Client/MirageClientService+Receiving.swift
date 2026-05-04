@@ -279,7 +279,13 @@ extension MirageClientService {
 
     nonisolated static func shouldLogControlMessage(_ type: ControlMessageType) -> Bool {
         switch type {
-        case .cursorUpdate, .cursorPositionUpdate, .streamMetricsUpdate:
+        case .appListProgress,
+             .cursorUpdate,
+             .cursorPositionUpdate,
+             .hostSoftwareUpdateStatus,
+             .ping,
+             .pong,
+             .streamMetricsUpdate:
             return false
         default:
             return true

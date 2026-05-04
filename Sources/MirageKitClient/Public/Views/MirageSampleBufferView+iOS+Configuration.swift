@@ -148,7 +148,8 @@ extension MirageSampleBufferView {
     // MARK: - Preferences
 
     func applyRenderPreferences() {
-        refreshRateMonitor.preferredMaximumRefreshRate = MirageRenderPreferences.preferredMaximumRefreshRate()
+        refreshRateMonitor.preferredMaximumRefreshRate =
+            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate()
         requestImmediateSubmission()
     }
 
@@ -162,38 +163,14 @@ extension MirageSampleBufferView {
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        let localFPS = resolvedLocalDisplayLinkFPS(baseFPS: clamped)
+        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : clamped
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
-        if let displayLink {
-            configureDisplayLinkRate(displayLink, fps: localFPS)
-        }
 
         guard changed else { return }
         MirageLogger.renderer(
             "Applied iOS render refresh lock: host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
         )
-    }
-
-    func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        if #available(iOS 15.0, visionOS 1.0, *) {
-            let preferred = Float(clamped)
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: preferred,
-                maximum: preferred,
-                preferred: preferred
-            )
-        } else {
-            displayLink.preferredFramesPerSecond = clamped
-        }
-    }
-
-    private func resolvedLocalDisplayLinkFPS(baseFPS: Int) -> Int {
-        if streamPresentationTier == .passiveSnapshot {
-            return 1
-        }
-        return MirageRenderModePolicy.normalizedTargetFPS(baseFPS)
     }
 
     func startObservingPreferences() {

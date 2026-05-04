@@ -487,13 +487,17 @@ extension MirageHostService {
         bundleIdentifier: String,
         windowID: WindowID,
         title: String?,
-        reason: String
+        reason: String,
+        failureCode: WindowStreamFailedMessage.FailureCode = .unknown,
+        userMessage: String? = nil
     ) async {
         let message = WindowStreamFailedMessage(
             bundleIdentifier: bundleIdentifier,
             windowID: windowID,
             title: title,
-            reason: reason
+            reason: reason,
+            failureCode: failureCode,
+            userMessage: userMessage
         )
         try? await clientContext.send(.windowStreamFailed, content: message)
     }

@@ -36,6 +36,19 @@ struct ControlUpdatePolicySuppressionTests {
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sharedClipboardUpdate))
     }
 
+    @Test("Noisy recurring control messages do not emit per-message logs")
+    func recurringControlMessagesAreNotLoggedIndividually() {
+        #expect(!MirageClientService.shouldLogControlMessage(.appListProgress))
+        #expect(!MirageClientService.shouldLogControlMessage(.cursorUpdate))
+        #expect(!MirageClientService.shouldLogControlMessage(.cursorPositionUpdate))
+        #expect(!MirageClientService.shouldLogControlMessage(.hostSoftwareUpdateStatus))
+        #expect(!MirageClientService.shouldLogControlMessage(.ping))
+        #expect(!MirageClientService.shouldLogControlMessage(.pong))
+        #expect(!MirageClientService.shouldLogControlMessage(.streamMetricsUpdate))
+        #expect(MirageClientService.shouldLogControlMessage(.desktopStreamStarted))
+        #expect(MirageClientService.shouldLogControlMessage(.desktopStreamStopped))
+    }
+
     @Test("Deferred refresh requirements are tracked and consumed once")
     func deferredRefreshRequirementsConsumeOnce() async throws {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }

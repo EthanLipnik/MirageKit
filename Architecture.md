@@ -149,7 +149,7 @@ The client captures local interaction and translates it into host-meaningful inp
 - keyboard events
 - pointer movement and clicks
 - touch or gesture-driven pointer behavior
-- scroll input
+- scroll and trackpad gesture input
 - host actions such as menu or system commands
 
 The host receives those commands and injects them into the local macOS environment.
@@ -165,6 +165,8 @@ This keeps Mirage's model clean:
 - the host owns final input injection against real host state
 
 Keyboard translation separates special keys from printable text. Platform-specific key strings such as Escape use host key codes, while Unicode fallback is reserved for actual text input. Custom bindings are represented as Mirage actions so shortcuts, display metadata, and host key injection share the same preference model as built-in controls.
+
+On macOS clients, shortcut-style keyboard input can be captured before local menu or system shortcut handling when the active stream owns input focus. Those shortcuts are still transported as normal key intent and resolved by the host, so host screenshot, app switching, and app-menu shortcuts target the remote Mac instead of the client Mac. Trackpad gestures follow the same model: the client reports normalized scroll, magnify, rotate, and swipe intent, and the host chooses the best injection strategy for the active desktop or app-window target.
 
 ## Shared Clipboard
 

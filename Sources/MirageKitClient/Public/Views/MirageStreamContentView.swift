@@ -233,6 +233,12 @@ public struct MirageStreamContentView: View {
         return clientService.desktopSessionID
     }
 
+    private var preferredMaximumRenderFPS: Int {
+        clientService.observedFrameRateByStream[session.streamID] ??
+            clientService.refreshRateOverridesByStream[session.streamID] ??
+            clientService.getScreenMaxRefreshRate()
+    }
+
     public var body: some View {
         ZStack {
             Rectangle()
@@ -301,6 +307,7 @@ public struct MirageStreamContentView: View {
                     onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
                     syntheticCursorEnabled: syntheticCursorEnabled,
                     presentationTier: streamPresentationTier,
+                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                     maxDrawableSize: maxDrawableSize,
                     prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
                     ignoresSafeArea: ignoresSafeArea
@@ -346,6 +353,7 @@ public struct MirageStreamContentView: View {
                     syntheticCursorEnabled: syntheticCursorEnabled,
                     inputEnabled: macOSInputEnabled,
                     presentationTier: streamPresentationTier,
+                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                     maxDrawableSize: maxDrawableSize,
                     clientShortcuts: clientReservedShortcuts,
                     onClientShortcut: handleReservedShortcut,
@@ -630,6 +638,7 @@ public struct MirageStreamContentView: View {
              .scrollWheel,
              .magnify,
              .rotate,
+             .swipe,
              .pixelResize,
              .relativeResize,
              .windowFocus,
@@ -1196,7 +1205,8 @@ private extension MirageInputEvent {
              .otherMouseDragged,
              .scrollWheel,
              .magnify,
-             .rotate:
+             .rotate,
+             .swipe:
             true
         case .flagsChanged,
              .hostSystemAction,

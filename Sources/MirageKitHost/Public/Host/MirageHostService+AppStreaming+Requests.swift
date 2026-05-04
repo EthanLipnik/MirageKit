@@ -328,6 +328,27 @@ extension MirageHostService {
         }
     }
 
+    nonisolated private static func shouldExcludeInitialStartupWindow(
+        after failureCode: WindowStreamStartFailureCode
+    ) -> Bool {
+        switch failureCode {
+        case .windowNotFound, .windowAlreadyBound, .windowOwnerConflict, .windowOwnerMismatch:
+            return true
+        case .unknown,
+             .virtualDisplayCreationFailed,
+             .virtualDisplayUnavailable,
+             .windowPlacementFailed,
+             .noSavedWindowState,
+             .operationTimedOut,
+             .runtimeConditionBlocked:
+            return false
+        }
+    }
+
+    nonisolated private static func appStreamStartupFailureMessage(appName: String) -> String {
+        "Could not find a streamable \(appName) window."
+    }
+
     private func rejectMalformedAppListRequest(
         from clientContext: ClientContext,
         reason: String
@@ -625,8 +646,9 @@ extension MirageHostService {
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
                 sendAppSelectionError(
                     to: clientContext,
-                    code: .windowNotFound,
-                    message: "Failed to launch \(app.name)"
+                    code: .appStreamStartupFailed,
+                    message: Self.appStreamStartupFailureMessage(appName: app.name),
+                    bundleIdentifier: app.bundleIdentifier
                 )
                 await restoreStageManagerAfterAppStreamingIfNeeded()
                 pendingLightsOutSetup = false
@@ -668,8 +690,9 @@ extension MirageHostService {
                 await restoreStageManagerAfterAppStreamingIfNeeded()
                 sendAppSelectionError(
                     to: clientContext,
-                    code: .windowNotFound,
-                    message: "Failed to start \(app.name): \(startupResult.failureSummary)"
+                    code: .appStreamStartupFailed,
+                    message: Self.appStreamStartupFailureMessage(appName: app.name),
+                    bundleIdentifier: app.bundleIdentifier
                 )
                 pendingLightsOutSetup = false
                 await endPendingAppStreamLightsOutSetup()
@@ -1537,7 +1560,9 @@ extension MirageHostService {
                     bundleIdentifier: app.bundleIdentifier,
                     windowID: candidate.window.id,
                     title: initialStreamFailureTitle(for: candidate, appName: app.name),
-                    reason: reason
+                    reason: reason,
+                    failureCode: .windowNotFound,
+                    userMessage: Self.appStreamStartupFailureMessage(appName: app.name)
                 )
                 MirageLogger.host(
                     "Initial app-stream startup failed permanently for \(candidate.window.id): \(reason) (\(candidate.logMetadata))"
@@ -1680,6 +1705,7 @@ extension MirageHostService {
         var deprioritizedWindowIDs: Set<WindowID> = []
         var excludedWindowIDs: Set<WindowID> = []
         var currentBinding = binding
+        var newWindowRequestAttempts = 0
 
         while ContinuousClock.now < startupDeadline {
             slotAttempt += 1
@@ -1694,6 +1720,17 @@ extension MirageHostService {
                     failureNotes.append(
                         "slot \(preferredSlotIndex) attempt \(slotAttempt): no startup-eligible app windows available"
                     )
+                    if newWindowRequestAttempts < 2 {
+                        newWindowRequestAttempts += 1
+                        await appStreamManager.requestNewWindow(
+                            bundleIdentifier: app.bundleIdentifier,
+                            path: app.path
+                        )
+                        MirageLogger.host(
+                            "Initial app-stream slot \(preferredSlotIndex) requested a new \(app.bundleIdentifier) window " +
+                                "after binding returned no startup target (request \(newWindowRequestAttempts))"
+                        )
+                    }
                     if ContinuousClock.now < startupDeadline {
                         try? await Task.sleep(for: Self.initialAppWindowSlotRetryDelay(afterAttempt: slotAttempt))
                     }
@@ -1779,11 +1816,14 @@ extension MirageHostService {
                     .sorted(by: <)
                     .map(String.init)
                     .joined(separator: ",")
+                let failureCode = windowStreamStartFailureCode(for: error)
+                let shouldExcludeFailedWindows = Self.shouldExcludeInitialStartupWindow(after: failureCode)
                 failureNotes.append(
                     "slot \(preferredSlotIndex) attempt \(slotAttempt) window(s) \(failedWindowList): \(renderedDetail)"
                 )
 
-                let retryable = AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error)
+                let retryable = AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error) &&
+                    !shouldExcludeFailedWindows
                 let shouldMoveToHiddenInventory = AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error)
 
                 for failedWindowID in failedWindowIDs {
@@ -1829,6 +1869,28 @@ extension MirageHostService {
                     MirageLogger.host(
                         "Initial app-stream slot \(preferredSlotIndex) moved window \(resolved.id) to hidden inventory " +
                             "after lifecycle startup failure: \(renderedDetail) (\(currentBinding.candidate.logMetadata))"
+                    )
+                } else if shouldExcludeFailedWindows {
+                    excludedWindowIDs.formUnion(failedWindowIDs)
+                    deprioritizedWindowIDs.subtract(failedWindowIDs)
+                    if let currentPreferredWindowID = preferredWindowID,
+                       failedWindowIDs.contains(currentPreferredWindowID) {
+                        preferredWindowID = nil
+                    }
+                    if failureCode == .windowNotFound, newWindowRequestAttempts < 2 {
+                        newWindowRequestAttempts += 1
+                        await appStreamManager.requestNewWindow(
+                            bundleIdentifier: app.bundleIdentifier,
+                            path: app.path
+                        )
+                        MirageLogger.host(
+                            "Initial app-stream slot \(preferredSlotIndex) requested a replacement \(app.bundleIdentifier) window " +
+                                "after stale startup target(s) \(failedWindowList) (request \(newWindowRequestAttempts))"
+                        )
+                    }
+                    MirageLogger.host(
+                        "Initial app-stream slot \(preferredSlotIndex) excluded failed startup window(s) \(failedWindowList): " +
+                            "\(renderedDetail) (\(currentBinding.candidate.logMetadata))"
                     )
                 } else {
                     if retryable {
@@ -1966,9 +2028,10 @@ extension MirageHostService {
     private func sendAppSelectionError(
         to clientContext: ClientContext,
         code: ErrorMessage.ErrorCode,
-        message: String
+        message: String,
+        bundleIdentifier: String? = nil
     ) {
-        let error = ErrorMessage(code: code, message: message)
+        let error = ErrorMessage(code: code, message: message, bundleIdentifier: bundleIdentifier)
         guard let response = try? ControlMessage(type: .error, content: error) else { return }
         clientContext.sendBestEffort(response)
     }

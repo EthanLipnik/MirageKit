@@ -214,6 +214,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var cursorHidden: Bool = false
     private var cursorHiddenForTyping: Bool = false
     private var suppressEscapeKeyUpForCursorUnlock = false
+    private let shortcutForwardingEventTap = MacShortcutForwardingEventTap()
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
 
     override init(frame: CGRect) {
@@ -240,6 +241,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
         ])
 
         setupLockedCursorView()
+        shortcutForwardingEventTap.shouldForward = { [weak self] in
+            self?.isKeyboardInputActive == true
+        }
+        shortcutForwardingEventTap.onInputEvent = { [weak self] event in
+            self?.onMouseEvent?(event)
+        }
+        shortcutForwardingEventTap.onForwardedShortcutKeyDown = { [weak self] in
+            self?.hideCursorForTypingUntilPointerMovement()
+        }
     }
 
     override func viewDidMoveToWindow() {
@@ -292,9 +302,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func handleInputActivityStateChange() {
         if isInputProcessingActive {
             updateCursorLockMode()
+            shortcutForwardingEventTap.start()
             startModifierPollingIfNeeded()
             syncModifierStateFromSystem(force: true)
         } else {
+            shortcutForwardingEventTap.stop()
             stopLockedCursorSmoothing()
             stopModifierPolling()
             cursorHiddenForTyping = false
@@ -789,6 +801,64 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    override func magnify(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+        updateGestureLocation(from: event)
+        onMouseEvent?(.magnify(MirageMagnifyEvent(
+            magnification: event.magnification,
+            location: lastMouseLocation,
+            phase: MirageScrollPhase(from: event.phase),
+            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+        )))
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+        updateGestureLocation(from: event)
+        onMouseEvent?(.magnify(MirageMagnifyEvent(
+            magnification: 1,
+            location: lastMouseLocation,
+            phase: .changed,
+            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+        )))
+    }
+
+    override func rotate(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+        updateGestureLocation(from: event)
+        onMouseEvent?(.rotate(MirageRotateEvent(
+            rotation: CGFloat(event.rotation),
+            location: lastMouseLocation,
+            phase: MirageScrollPhase(from: event.phase),
+            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+        )))
+    }
+
+    override func swipe(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+        updateGestureLocation(from: event)
+        onMouseEvent?(.swipe(MirageSwipeEvent(
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            location: lastMouseLocation,
+            phase: MirageScrollPhase(from: event.phase),
+            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags)
+        )))
+    }
+
+    private func updateGestureLocation(from event: NSEvent) {
+        if cursorLockEnabled {
+            lastMouseLocation = lockedCursorPosition
+        } else {
+            let locationInView = convert(event.locationInWindow, from: nil)
+            updateLocalMouseLocation(Self.normalizedLocation(
+                locationInView,
+                in: bounds,
+                contentRect: resolvedDesktopPresentationContentRect()
+            ))
+        }
+    }
+
     // MARK: - Mouse Event Handling
 
     override func mouseDown(with event: NSEvent) {
@@ -1084,6 +1154,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
         // Forward all other key equivalents to the host
         hideCursorForTypingUntilPointerMovement()
         onMouseEvent?(.keyDown(keyEvent))
+        onMouseEvent?(.keyUp(MirageKeyEvent(
+            keyCode: keyEvent.keyCode,
+            characters: keyEvent.characters,
+            charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
+            modifiers: keyEvent.modifiers
+        )))
         return true
     }
 

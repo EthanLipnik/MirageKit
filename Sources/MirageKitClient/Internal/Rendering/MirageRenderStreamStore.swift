@@ -30,6 +30,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     struct RenderTelemetrySnapshot: Sendable {
         let decodeFPS: Double
+        let submitAttemptFPS: Double
+        let layerAcceptedFPS: Double
+        let presentedFPS: Double
         let submittedFPS: Double
         let uniqueSubmittedFPS: Double
         let pendingFrameCount: Int
@@ -74,6 +77,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         var decodeSamples: [CFAbsoluteTime] = []
         var decodeSampleStartIndex: Int = 0
+        var submitAttemptSamples: [CFAbsoluteTime] = []
+        var submitAttemptSampleStartIndex: Int = 0
         var submittedSamples: [CFAbsoluteTime] = []
         var submittedSampleStartIndex: Int = 0
         var uniqueSubmittedSamples: [CFAbsoluteTime] = []
@@ -253,6 +258,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return snapshot
     }
 
+    func noteSubmitAttempt(for streamID: StreamID) {
+        let state = streamState(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+        state.lock.lock()
+        appendSampleLocked(now, samples: &state.submitAttemptSamples, startIndex: &state.submitAttemptSampleStartIndex)
+        state.lock.unlock()
+    }
+
     func noteDisplayLayerNotReady(for streamID: StreamID) {
         let state = streamState(for: streamID)
         state.lock.lock()
@@ -267,6 +280,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         guard let state = streamStateIfPresent(for: streamID) else {
             return RenderTelemetrySnapshot(
                 decodeFPS: 0,
+                submitAttemptFPS: 0,
+                layerAcceptedFPS: 0,
+                presentedFPS: 0,
                 submittedFPS: 0,
                 uniqueSubmittedFPS: 0,
                 pendingFrameCount: 0,
@@ -285,6 +301,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         state.lock.lock()
         trimSamplesLocked(now: now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
+        trimSamplesLocked(
+            now: now,
+            samples: &state.submitAttemptSamples,
+            startIndex: &state.submitAttemptSampleStartIndex
+        )
         trimSamplesLocked(now: now, samples: &state.submittedSamples, startIndex: &state.submittedSampleStartIndex)
         trimSamplesLocked(
             now: now,
@@ -298,6 +319,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         )
 
         let decodeFPS = Double(state.decodeSamples.count - state.decodeSampleStartIndex)
+        let submitAttemptFPS = Double(state.submitAttemptSamples.count - state.submitAttemptSampleStartIndex)
         let submittedFPS = Double(state.submittedSamples.count - state.submittedSampleStartIndex)
         let uniqueSubmittedFPS = Double(state.uniqueSubmittedSamples.count - state.uniqueSubmittedSampleStartIndex)
         let pendingFrameCount = state.pendingFrame == nil ? 0 : 1
@@ -322,6 +344,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         return RenderTelemetrySnapshot(
             decodeFPS: decodeFPS,
+            submitAttemptFPS: submitAttemptFPS,
+            layerAcceptedFPS: submittedFPS,
+            presentedFPS: uniqueSubmittedFPS,
             submittedFPS: submittedFPS,
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
@@ -414,6 +439,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lastSubmittedMappedPresentationTime = .invalid
         state.decodeSamples.removeAll(keepingCapacity: false)
         state.decodeSampleStartIndex = 0
+        state.submitAttemptSamples.removeAll(keepingCapacity: false)
+        state.submitAttemptSampleStartIndex = 0
         state.submittedSamples.removeAll(keepingCapacity: false)
         state.submittedSampleStartIndex = 0
         state.uniqueSubmittedSamples.removeAll(keepingCapacity: false)

@@ -55,6 +55,7 @@ extension MirageClientService {
         desktopStreamPresentationResolution = presentationSize
         desktopCaptureSource = started.captureSource
         desktopStreamAllowsClientResize = started.allowsClientResize
+        updateObservedFrameRate(started.frameRate, for: streamID)
         if let generation = started.desktopPresentationGeneration {
             desktopPresentationGenerationBySessionID[started.desktopSessionID] = generation
         }
@@ -230,6 +231,7 @@ extension MirageClientService {
                 desktopResizeCoordinator.clearAllState()
                 sessionStore.clearPostResizeTransition(for: streamID)
             }
+            updateObservedFrameRate(started.frameRate, for: streamID)
             activeStreamCodecs[streamID] = started.codec
             if let dimensionToken {
                 desktopDimensionTokenByStream[streamID] = dimensionToken

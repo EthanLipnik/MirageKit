@@ -16,6 +16,9 @@ struct ClientStreamingAnomalySample: Sendable {
     let receivedWorstGapMs: Double
     let receivedFrameIntervalP95Ms: Double
     let receivedFrameIntervalP99Ms: Double
+    let submitAttemptFPS: Double
+    let layerAcceptedFPS: Double
+    let presentedFPS: Double
     let submittedFPS: Double
     let uniqueSubmittedFPS: Double
     let pendingFrameCount: Int
@@ -42,6 +45,9 @@ struct ClientStreamingAnomalySample: Sendable {
         receivedWorstGapMs: Double = 0,
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
+        submitAttemptFPS: Double = 0,
+        layerAcceptedFPS: Double = 0,
+        presentedFPS: Double = 0,
         submittedFPS: Double,
         uniqueSubmittedFPS: Double,
         pendingFrameCount: Int,
@@ -67,6 +73,9 @@ struct ClientStreamingAnomalySample: Sendable {
         self.receivedWorstGapMs = receivedWorstGapMs
         self.receivedFrameIntervalP95Ms = receivedFrameIntervalP95Ms
         self.receivedFrameIntervalP99Ms = receivedFrameIntervalP99Ms
+        self.submitAttemptFPS = submitAttemptFPS
+        self.layerAcceptedFPS = layerAcceptedFPS
+        self.presentedFPS = presentedFPS
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
@@ -93,6 +102,9 @@ struct ClientStreamingAnomalySample: Sendable {
             clientReceivedWorstGapMs: receivedWorstGapMs,
             clientReceivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
             clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
+            clientSubmitAttemptFPS: submitAttemptFPS,
+            clientLayerAcceptedFPS: layerAcceptedFPS,
+            clientPresentedFPS: presentedFPS,
             submittedFPS: submittedFPS,
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
@@ -208,6 +220,8 @@ func clientStreamingAnomalyDiagnostic(
         "decoded=\(formattedFPS(sample.decodedFPS))fps received=\(formattedFPS(sample.receivedFPS))fps " +
         "receivedWorstGap=\(formattedMs(sample.receivedWorstGapMs))ms " +
         "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
+        "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
+        "presented=\(formattedFPS(sample.presentedFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "overwritten=\(sample.overwrittenPendingFrames) layerBackpressure=\(sample.displayLayerNotReadyCount) " +

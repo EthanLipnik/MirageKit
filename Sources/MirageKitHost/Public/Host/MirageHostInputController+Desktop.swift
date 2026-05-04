@@ -107,6 +107,12 @@ extension MirageHostInputController {
                 injectDesktopPointerEvent(.otherMouseDragged, e, requestedPoint: point)
             case let .scrollWheel(e):
                 injectDesktopScrollEvent(e, bounds: bounds)
+            case let .magnify(e):
+                injectMagnifyEvent(e, bounds: bounds, domain: .hid)
+            case let .rotate(e):
+                injectRotateEvent(e, bounds: bounds, domain: .hid)
+            case let .swipe(e):
+                injectSwipeEvent(e, bounds: bounds, domain: .hid)
             case let .hostSystemAction(request):
                 executeHostSystemAction(request)
             case let .keyDown(e):
@@ -115,9 +121,7 @@ extension MirageHostInputController {
                 injectKeyEvent(isKeyDown: false, e, domain: .hid, app: nil)
             case let .flagsChanged(modifiers):
                 injectFlagsChanged(modifiers, domain: .hid, app: nil)
-            case .magnify,
-                 .rotate,
-                 .pixelResize,
+            case .pixelResize,
                  .relativeResize,
                  .windowResize:
                 break

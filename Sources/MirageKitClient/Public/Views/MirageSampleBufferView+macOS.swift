@@ -37,6 +37,13 @@ public class MirageSampleBufferView: NSView {
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
+    public var preferredMaximumRenderFPS: Int? {
+        didSet {
+            guard preferredMaximumRenderFPS != oldValue else { return }
+            applyRenderPreferences()
+        }
+    }
+
     public var maxDrawableSize: CGSize? {
         didSet {
             guard maxDrawableSize != oldValue else { return }
@@ -63,9 +70,9 @@ public class MirageSampleBufferView: NSView {
     // MARK: - Rendering State
 
     private let preferencesObserver = MirageUserDefaultsObserver()
-    private var activeDisplayLink: CADisplayLink?
     private var presenter: MirageSampleBufferPresenter!
     @MainActor private var presentationScheduler: MirageRenderPresentationScheduler!
+    private var displayLayerReadinessRetryTask: Task<Void, Never>?
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
     private var lastReportedDrawableSize: CGSize = .zero
@@ -104,12 +111,11 @@ public class MirageSampleBufferView: NSView {
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
-            startDisplayLinkIfNeeded()
             resumeRendering()
             applyRenderPreferences()
             observeScreenChanges()
         } else {
-            stopDisplayLink()
+            stopDisplayLayerReadinessRetry()
             suspendRendering()
             stopObservingScreenChanges()
         }
@@ -130,6 +136,7 @@ public class MirageSampleBufferView: NSView {
     // MARK: - Public Controls
 
     func suspendRendering() {
+        stopDisplayLayerReadinessRetry()
         presenter.setRenderingSuspended(true, clearCurrentFrame: true)
         presentationScheduler.setRenderingSuspended(true)
     }
@@ -156,7 +163,13 @@ public class MirageSampleBufferView: NSView {
         presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
         presentationScheduler = MirageRenderPresentationScheduler(
             submit: { [weak presenter] referenceTime in
-                presenter?.submitPendingFrameIfPossible(referenceTime: referenceTime) ?? false
+                presenter?.submitPendingFrameIfPossible(referenceTime: referenceTime) ?? .blocked
+            },
+            hasPendingFrame: { [weak presenter] in
+                presenter?.hasPendingFrameForCurrentPresenter ?? false
+            },
+            onDisplayLayerNotReady: { [weak self] in
+                self?.armDisplayLayerReadinessRetry()
             }
         )
         presentationScheduler.setPresentationTier(streamPresentationTier)
@@ -183,32 +196,24 @@ public class MirageSampleBufferView: NSView {
         presentationScheduler.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
     }
 
-    @objc private func displayLinkTick(_ link: CADisplayLink) {
-        let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
-        let interval = link.targetTimestamp - link.timestamp
-        _ = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
-        presentationScheduler.displayLinkTick(referenceTime: link.timestamp)
-    }
-
     private func handleFrameAvailable() {
         presentationScheduler.handleFrameAvailable(referenceTime: CACurrentMediaTime())
     }
 
-    private func startDisplayLinkIfNeeded() {
-        guard activeDisplayLink == nil else { return }
-        let link = self.displayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        let requestedFPS = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
-        let localFPS = streamPresentationTier == .activeLive ? requestedFPS : 1
-        configureDisplayLinkRate(link, fps: localFPS)
-        link.add(to: .main, forMode: .common)
-        activeDisplayLink = link
-        presentationScheduler.setDisplayLinkActive(true)
+    private func armDisplayLayerReadinessRetry() {
+        guard displayLayerReadinessRetryTask == nil else { return }
+        displayLayerReadinessRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            displayLayerReadinessRetryTask = nil
+            presentationScheduler.requestReadinessRetry(referenceTime: CACurrentMediaTime())
+        }
     }
 
-    private func stopDisplayLink() {
-        activeDisplayLink?.invalidate()
-        activeDisplayLink = nil
-        presentationScheduler.setDisplayLinkActive(false)
+    private func stopDisplayLayerReadinessRetry() {
+        displayLayerReadinessRetryTask?.cancel()
+        displayLayerReadinessRetryTask = nil
     }
 
     // MARK: - Metrics
@@ -279,7 +284,7 @@ public class MirageSampleBufferView: NSView {
 
     private func applyRenderPreferences() {
         let target = MirageRenderModePolicy.normalizedTargetFPS(
-            MirageRenderPreferences.preferredMaximumRefreshRate()
+            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate()
         )
         maxRenderFPS = target
         presenter.setTargetFPS(target)
@@ -293,26 +298,11 @@ public class MirageSampleBufferView: NSView {
         let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : clamped
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
-        if let activeDisplayLink {
-            configureDisplayLinkRate(activeDisplayLink, fps: localFPS)
-        }
 
         guard changed else { return }
         MirageLogger.renderer(
             "Applied macOS render refresh lock: host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
         )
-    }
-
-    private func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        if #available(macOS 14.0, *) {
-            let preferred = Float(clamped)
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: preferred,
-                maximum: preferred,
-                preferred: preferred
-            )
-        }
     }
 
     private func startObservingPreferences() {

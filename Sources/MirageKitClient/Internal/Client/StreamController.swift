@@ -149,6 +149,9 @@ actor StreamController {
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
         let droppedFrames: UInt64
+        let submitAttemptFPS: Double
+        let layerAcceptedFPS: Double
+        let presentedFPS: Double
         let submittedFPS: Double
         let uniqueSubmittedFPS: Double
         let pendingFrameCount: Int
@@ -1124,6 +1127,9 @@ actor StreamController {
             receivedFrameIntervalP95Ms: snapshot.receivedFrameIntervalP95Ms,
             receivedFrameIntervalP99Ms: snapshot.receivedFrameIntervalP99Ms,
             droppedFrames: droppedFrames,
+            submitAttemptFPS: renderTelemetry.submitAttemptFPS,
+            layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
+            presentedFPS: renderTelemetry.presentedFPS,
             submittedFPS: renderTelemetry.submittedFPS,
             uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,

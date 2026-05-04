@@ -128,8 +128,14 @@ public struct MirageMagnifyEvent: Codable, Sendable, Hashable {
     /// Magnification delta
     public let magnification: CGFloat
 
+    /// Location in normalized stream coordinates.
+    public let location: CGPoint?
+
     /// Gesture phase
     public let phase: MirageScrollPhase
+
+    /// Active modifier flags
+    public let modifiers: MirageModifierFlags
 
     /// Event timestamp
     public let timestamp: TimeInterval
@@ -138,15 +144,21 @@ public struct MirageMagnifyEvent: Codable, Sendable, Hashable {
     ///
     /// - Parameters:
     ///   - magnification: Scale delta, where positive values zoom in.
+    ///   - location: Optional normalized cursor/contact location.
     ///   - phase: Gesture lifecycle phase.
+    ///   - modifiers: Active keyboard modifiers.
     ///   - timestamp: Event creation time.
     public init(
         magnification: CGFloat,
+        location: CGPoint? = nil,
         phase: MirageScrollPhase = .none,
+        modifiers: MirageModifierFlags = [],
         timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         self.magnification = magnification
+        self.location = location
         self.phase = phase
+        self.modifiers = modifiers
         self.timestamp = timestamp
     }
 }
@@ -156,8 +168,14 @@ public struct MirageRotateEvent: Codable, Sendable, Hashable {
     /// Rotation in degrees
     public let rotation: CGFloat
 
+    /// Location in normalized stream coordinates.
+    public let location: CGPoint?
+
     /// Gesture phase
     public let phase: MirageScrollPhase
+
+    /// Active modifier flags
+    public let modifiers: MirageModifierFlags
 
     /// Event timestamp
     public let timestamp: TimeInterval
@@ -166,15 +184,58 @@ public struct MirageRotateEvent: Codable, Sendable, Hashable {
     ///
     /// - Parameters:
     ///   - rotation: Rotation delta in degrees.
+    ///   - location: Optional normalized cursor/contact location.
     ///   - phase: Gesture lifecycle phase.
+    ///   - modifiers: Active keyboard modifiers.
     ///   - timestamp: Event creation time.
     public init(
         rotation: CGFloat,
+        location: CGPoint? = nil,
         phase: MirageScrollPhase = .none,
+        modifiers: MirageModifierFlags = [],
         timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
         self.rotation = rotation
+        self.location = location
         self.phase = phase
+        self.modifiers = modifiers
+        self.timestamp = timestamp
+    }
+}
+
+/// Represents a trackpad swipe gesture event.
+public struct MirageSwipeEvent: Codable, Sendable, Hashable {
+    /// Horizontal swipe delta in points or event units.
+    public let deltaX: CGFloat
+
+    /// Vertical swipe delta in points or event units.
+    public let deltaY: CGFloat
+
+    /// Location in normalized stream coordinates.
+    public let location: CGPoint?
+
+    /// Gesture phase.
+    public let phase: MirageScrollPhase
+
+    /// Active modifier flags.
+    public let modifiers: MirageModifierFlags
+
+    /// Event timestamp.
+    public let timestamp: TimeInterval
+
+    public init(
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        location: CGPoint? = nil,
+        phase: MirageScrollPhase = .none,
+        modifiers: MirageModifierFlags = [],
+        timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        self.deltaX = deltaX
+        self.deltaY = deltaY
+        self.location = location
+        self.phase = phase
+        self.modifiers = modifiers
         self.timestamp = timestamp
     }
 }

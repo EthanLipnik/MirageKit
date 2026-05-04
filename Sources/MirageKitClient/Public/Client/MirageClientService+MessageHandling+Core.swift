@@ -347,6 +347,7 @@ extension MirageClientService {
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
             let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
             refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
+            updateObservedFrameRate(started.frameRate, for: streamID)
 
             let dimensionToken = started.dimensionToken
             let hasController = controllersByStream[streamID] != nil
@@ -500,6 +501,7 @@ extension MirageClientService {
 
     func handleStreamMetricsUpdate(_ message: ControlMessage) {
         if let metrics = try? message.decode(StreamMetricsMessage.self) {
+            updateObservedFrameRate(metrics.targetFrameRate, for: metrics.streamID)
             if let controller = controllersByStream[metrics.streamID] {
                 Task {
                     await controller.updateHostMetrics(metrics)
@@ -628,6 +630,15 @@ extension MirageClientService {
         if let errorMessage = try? message.decode(ErrorMessage.self) {
             if (desktopStreamMode != nil || desktopStreamRequestStartTime > 0) && desktopStreamID == nil {
                 clearPendingDesktopStreamStartState()
+            }
+            if errorMessage.code == .appStreamStartupFailed {
+                onAppStreamStartupFailed?(
+                    AppStreamStartupFailure(
+                        bundleIdentifier: errorMessage.bundleIdentifier,
+                        message: errorMessage.message
+                    )
+                )
+                return
             }
             if let runtimeCondition = errorMessage.code.runtimeConditionError {
                 delegate?.clientService(self, didEncounterError: runtimeCondition)

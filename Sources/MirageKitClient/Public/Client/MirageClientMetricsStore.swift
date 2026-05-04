@@ -15,6 +15,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReceivedWorstGapMs: Double
     public var clientReceivedFrameIntervalP95Ms: Double
     public var clientReceivedFrameIntervalP99Ms: Double
+    public var clientSubmitAttemptFPS: Double
+    public var clientLayerAcceptedFPS: Double
+    public var clientPresentedFPS: Double
     public var submittedFPS: Double
     public var uniqueSubmittedFPS: Double
     public var pendingFrameCount: Int
@@ -127,6 +130,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReceivedWorstGapMs: Double = 0,
         clientReceivedFrameIntervalP95Ms: Double = 0,
         clientReceivedFrameIntervalP99Ms: Double = 0,
+        clientSubmitAttemptFPS: Double = 0,
+        clientLayerAcceptedFPS: Double = 0,
+        clientPresentedFPS: Double = 0,
         submittedFPS: Double = 0,
         uniqueSubmittedFPS: Double = 0,
         pendingFrameCount: Int = 0,
@@ -179,6 +185,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReceivedWorstGapMs = clientReceivedWorstGapMs
         self.clientReceivedFrameIntervalP95Ms = clientReceivedFrameIntervalP95Ms
         self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
+        self.clientSubmitAttemptFPS = clientSubmitAttemptFPS
+        self.clientLayerAcceptedFPS = clientLayerAcceptedFPS
+        self.clientPresentedFPS = clientPresentedFPS
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
@@ -275,6 +284,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
         droppedFrames: UInt64,
+        submitAttemptFPS: Double = 0,
+        layerAcceptedFPS: Double = 0,
+        presentedFPS: Double = 0,
         submittedFPS: Double,
         uniqueSubmittedFPS: Double,
         pendingFrameCount: Int,
@@ -294,6 +306,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientReceivedWorstGapMs = max(0, receivedWorstGapMs)
         snapshot.clientReceivedFrameIntervalP95Ms = max(0, receivedFrameIntervalP95Ms)
         snapshot.clientReceivedFrameIntervalP99Ms = max(0, receivedFrameIntervalP99Ms)
+        snapshot.clientSubmitAttemptFPS = max(0, submitAttemptFPS)
+        snapshot.clientLayerAcceptedFPS = max(0, layerAcceptedFPS)
+        snapshot.clientPresentedFPS = max(0, presentedFPS)
         snapshot.submittedFPS = submittedFPS
         snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
         snapshot.pendingFrameCount = max(0, pendingFrameCount)

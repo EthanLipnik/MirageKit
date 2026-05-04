@@ -373,6 +373,7 @@ extension MirageClientService {
 
     func logAwdlExperimentTelemetryIfNeeded() {
         guard awdlExperimentEnabled else { return }
+        guard MirageSteadyStateDiagnostics.isEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
         guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 5.0 else { return }
         lastAwdlTelemetryLogTime = now

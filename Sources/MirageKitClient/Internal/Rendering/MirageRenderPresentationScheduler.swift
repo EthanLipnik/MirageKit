@@ -9,16 +9,23 @@ import Foundation
 import MirageKit
 import QuartzCore
 
+enum MirageRenderSubmissionResult: Equatable, Sendable {
+    case submitted
+    case noPendingFrame
+    case displayLayerNotReady
+    case blocked
+}
+
 @MainActor
 final class MirageRenderPresentationScheduler {
     private let referenceTimeProvider: () -> CFTimeInterval
     private let enqueueCoalescedPass: (@escaping @MainActor () -> Void) -> Void
-    private let submit: @MainActor (CFTimeInterval) -> Bool
-    private let hasPendingFrame: (StreamID) -> Bool
+    private let submit: @MainActor (CFTimeInterval) -> MirageRenderSubmissionResult
+    private let hasPendingFrame: @MainActor () -> Bool
+    private let onDisplayLayerNotReady: @MainActor () -> Void
 
     private var streamID: StreamID?
     private var presentationTier: StreamPresentationTier = .activeLive
-    private var displayLinkActive = false
     private var renderingSuspended = false
 
     private var scheduledPassPending = false
@@ -35,15 +42,15 @@ final class MirageRenderPresentationScheduler {
                 action()
             }
         },
-        submit: @escaping @MainActor (CFTimeInterval) -> Bool,
-        hasPendingFrame: @escaping (StreamID) -> Bool = {
-            MirageRenderStreamStore.shared.pendingFrameCount(for: $0) > 0
-        }
+        submit: @escaping @MainActor (CFTimeInterval) -> MirageRenderSubmissionResult,
+        hasPendingFrame: @escaping @MainActor () -> Bool = { false },
+        onDisplayLayerNotReady: @escaping @MainActor () -> Void = {}
     ) {
         self.referenceTimeProvider = referenceTimeProvider
         self.enqueueCoalescedPass = enqueueCoalescedPass
         self.submit = submit
         self.hasPendingFrame = hasPendingFrame
+        self.onDisplayLayerNotReady = onDisplayLayerNotReady
     }
 
     func setStreamID(_ streamID: StreamID?) {
@@ -55,10 +62,6 @@ final class MirageRenderPresentationScheduler {
 
     func setPresentationTier(_ tier: StreamPresentationTier) {
         presentationTier = tier
-    }
-
-    func setDisplayLinkActive(_ active: Bool) {
-        displayLinkActive = active
     }
 
     func setRenderingSuspended(_ suspended: Bool) {
@@ -81,6 +84,11 @@ final class MirageRenderPresentationScheduler {
         performPass(referenceTime: referenceTime, allowFollowUpSchedule: shouldAllowFollowUpScheduling)
     }
 
+    func requestReadinessRetry(referenceTime: CFTimeInterval) {
+        guard !renderingSuspended else { return }
+        schedulePass(referenceTime: referenceTime)
+    }
+
     func handleFrameAvailable(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
 
@@ -92,14 +100,8 @@ final class MirageRenderPresentationScheduler {
         performPass(referenceTime: referenceTime, allowFollowUpSchedule: shouldAllowFollowUpScheduling)
     }
 
-    func displayLinkTick(referenceTime: CFTimeInterval) {
-        guard !renderingSuspended else { return }
-        guard !scheduledPassPending else { return }
-        performPass(referenceTime: referenceTime, allowFollowUpSchedule: shouldAllowFollowUpScheduling)
-    }
-
     private var shouldUseCoalescedFrameArrivalSubmission: Bool {
-        presentationTier == .activeLive && displayLinkActive
+        presentationTier == .activeLive
     }
 
     private var shouldAllowFollowUpScheduling: Bool {
@@ -134,7 +136,7 @@ final class MirageRenderPresentationScheduler {
         referenceTime: CFTimeInterval,
         allowFollowUpSchedule: Bool
     ) {
-        guard let streamID else { return }
+        guard streamID != nil else { return }
 
         if runningPass {
             pendingScheduledPass = true
@@ -143,8 +145,11 @@ final class MirageRenderPresentationScheduler {
         }
 
         runningPass = true
-        let didSubmit = submit(referenceTime)
+        let submissionResult = submit(referenceTime)
         runningPass = false
+        if submissionResult == .displayLayerNotReady {
+            onDisplayLayerNotReady()
+        }
 
         if pendingScheduledPass {
             pendingScheduledPass = false
@@ -152,7 +157,7 @@ final class MirageRenderPresentationScheduler {
             return
         }
 
-        guard allowFollowUpSchedule, didSubmit, hasPendingFrame(streamID) else { return }
+        guard allowFollowUpSchedule, submissionResult == .submitted, hasPendingFrame() else { return }
         schedulePass(referenceTime: referenceTimeProvider())
     }
 }

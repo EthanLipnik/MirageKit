@@ -344,6 +344,7 @@ private extension MirageInputEvent {
              .pixelResize,
              .relativeResize,
              .rotate,
+             .swipe,
              .windowFocus,
              .windowResize:
             false
