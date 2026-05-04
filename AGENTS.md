@@ -6,8 +6,10 @@
 - MirageKit is licensed under PolyForm Shield 1.0.0.
 
 ## Core Rules
-- Pre-release package: compatibility is not locked yet for internal code or public API.
-- Remove dead code completely (signatures, implementations, call sites, tests); no shims, wrappers, or dormant compatibility layers.
+- Released package: preserve compatibility for existing clients, hosts, persisted data, wire protocols, public APIs, and documented behavior unless a task explicitly authorizes a breaking change.
+- Cutovers must include explicit migration, version-gating, or compatibility handling for existing installs; keep transitional paths active, tested, and tied to a clear removal condition.
+- When a change might require a migration, ask for explicit permission before implementing the migration or compatibility path.
+- Remove dead code completely (signatures, implementations, call sites, tests); no no-op wrappers, dormant adapters, or compatibility layers that are not exercised by a current migration or version gate.
 - Platform parity across clients is the default unless a task explicitly scopes platforms.
 - Target latest supported OS releases; avoid availability checks.
 - Keep public API additions minimal, intentional, and documented.

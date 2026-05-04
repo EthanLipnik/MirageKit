@@ -264,6 +264,7 @@ private func makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: Bool?) ->
     MirageSessionBootstrapRequest(
         protocolVersion: Int(MirageKit.protocolVersion),
         requestedFeatures: mirageSupportedFeatures,
+        clientRequiresMediaEncryption: false,
         requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
     )
 }

@@ -36,8 +36,25 @@ struct HostMediaEncryptionPolicyTests {
     func defaultHostPolicyAllowsUnencryptedOnlyOnPeerSessions() {
         let host = MirageHostService()
 
-        #expect(!host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: true))
-        #expect(host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: false))
+        #expect(!host.mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: true,
+            clientRequiresMediaEncryption: false
+        ))
+        #expect(host.mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: false,
+            clientRequiresMediaEncryption: false
+        ))
+    }
+
+    @MainActor
+    @Test("Client requirement forces encrypted media on local peer sessions")
+    func clientRequirementForcesEncryptedMediaOnLocalPeerSessions() {
+        let host = MirageHostService()
+
+        #expect(host.mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: true,
+            clientRequiresMediaEncryption: true
+        ))
     }
 
     @MainActor
@@ -49,8 +66,14 @@ struct HostMediaEncryptionPolicyTests {
             )
         )
 
-        #expect(host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: true))
-        #expect(host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: false))
+        #expect(host.mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: true,
+            clientRequiresMediaEncryption: false
+        ))
+        #expect(host.mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: false,
+            clientRequiresMediaEncryption: false
+        ))
     }
 
     @MainActor
@@ -82,6 +105,7 @@ struct HostMediaEncryptionPolicyTests {
 
         #expect(
             host.resolveAcceptedSessionMediaEncryptionPolicy(
+                clientRequiresMediaEncryption: false,
                 peerAdvertisement: advertisement,
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot

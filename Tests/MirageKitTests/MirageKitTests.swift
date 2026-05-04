@@ -59,7 +59,8 @@ struct MirageKitTests {
     func controlMessageSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures
+            requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: true
         )
 
         let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
@@ -72,6 +73,7 @@ struct MirageKitTests {
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.requestedFeatures == mirageSupportedFeatures)
+        #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }
 
     @Test("Desktop stream start ignores unknown optional preferences")
@@ -339,6 +341,7 @@ struct MirageKitTests {
         let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: false,
             requestHostUpdateOnProtocolMismatch: true
         )
 

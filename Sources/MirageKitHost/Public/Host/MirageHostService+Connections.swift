@@ -553,6 +553,7 @@ extension MirageHostService {
 
         let hostIdentity = try identityManager.currentIdentity()
         let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(
+            clientRequiresMediaEncryption: request.clientRequiresMediaEncryption,
             peerAdvertisement: peerAdvertisement,
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
@@ -581,12 +582,17 @@ extension MirageHostService {
         return (response, mediaSecurity)
     }
 
-    func mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: Bool) -> Bool {
+    func mediaEncryptionEnabledForAcceptedSession(
+        isPeerToPeer: Bool,
+        clientRequiresMediaEncryption: Bool
+    ) -> Bool {
+        if clientRequiresMediaEncryption { return true }
         guard isPeerToPeer else { return true }
         return networkConfig.requireEncryptedMediaOnLocalNetwork
     }
 
     func resolveAcceptedSessionMediaEncryptionPolicy(
+        clientRequiresMediaEncryption: Bool,
         peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
@@ -595,7 +601,8 @@ extension MirageHostService {
             isPeerToPeer: ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot
-            )
+            ),
+            clientRequiresMediaEncryption: clientRequiresMediaEncryption
         )
     }
 

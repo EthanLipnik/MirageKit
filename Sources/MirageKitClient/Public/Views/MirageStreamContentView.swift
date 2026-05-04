@@ -48,7 +48,6 @@ public struct MirageStreamContentView: View {
     public let onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     public let dictationMode: MirageDictationMode
     public let dictationLocalePreference: MirageDictationLocalePreference
-    public let hostRequiresUnlock: Bool
     public let desktopCursorLockEnabledOverride: Bool?
     public let desktopCursorLockCanRecapture: Bool
     public let onCursorLockEscapeRequested: (() -> Void)?
@@ -136,7 +135,6 @@ public struct MirageStreamContentView: View {
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
-        hostRequiresUnlock: Bool = false,
         desktopCursorLockEnabledOverride: Bool? = nil,
         desktopCursorLockCanRecapture: Bool = false,
         onCursorLockEscapeRequested: (() -> Void)? = nil,
@@ -174,7 +172,6 @@ public struct MirageStreamContentView: View {
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
-        self.hostRequiresUnlock = hostRequiresUnlock
         self.desktopCursorLockEnabledOverride = desktopCursorLockEnabledOverride
         self.desktopCursorLockCanRecapture = desktopCursorLockCanRecapture
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
@@ -608,43 +605,8 @@ public struct MirageStreamContentView: View {
         if shouldSuppressDesktopPointerEventDuringResize(event) {
             return
         }
-        if shouldSuppressInputForLockedHost(event) {
-            MirageLogger.client("Suppressing keyboard input while host session requires credentials")
-            return
-        }
 
         forwardInputEventToHost(event)
-    }
-
-    private func shouldSuppressInputForLockedHost(_ event: MirageInputEvent) -> Bool {
-        guard hostRequiresUnlock else { return false }
-        switch event {
-        case .keyDown,
-             .keyUp,
-             .flagsChanged,
-             .hostSystemAction:
-            return true
-        case .mouseDown,
-             .mouseUp,
-             .mouseMoved,
-             .mouseDragged,
-             .pointerSampleBatch,
-             .rightMouseDown,
-             .rightMouseUp,
-             .rightMouseDragged,
-             .otherMouseDown,
-             .otherMouseUp,
-             .otherMouseDragged,
-             .scrollWheel,
-             .magnify,
-             .rotate,
-             .swipe,
-             .pixelResize,
-             .relativeResize,
-             .windowFocus,
-             .windowResize:
-            return false
-        }
     }
 
     private func shouldSuppressDesktopPointerEventDuringResize(_ event: MirageInputEvent) -> Bool {

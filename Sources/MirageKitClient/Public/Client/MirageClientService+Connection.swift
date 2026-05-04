@@ -64,6 +64,7 @@ extension MirageClientService {
         MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
             requestTakeoverIfBusy: requestTakeoverIfBusy
         )

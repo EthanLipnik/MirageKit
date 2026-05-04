@@ -41,7 +41,8 @@ struct ClientLoomControlPlaneTests {
         do {
             let bootstrapRequest = MirageSessionBootstrapRequest(
                 protocolVersion: Int(MirageKit.protocolVersion),
-                requestedFeatures: mirageSupportedFeatures
+                requestedFeatures: mirageSupportedFeatures,
+                clientRequiresMediaEncryption: true
             )
             try await clientControl.send(.sessionBootstrapRequest, content: bootstrapRequest)
 
@@ -50,6 +51,7 @@ struct ClientLoomControlPlaneTests {
             let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageSessionBootstrapRequest.self)
             #expect(receivedBootstrapRequest.protocolVersion == bootstrapRequest.protocolVersion)
             #expect(receivedBootstrapRequest.requestedFeatures == bootstrapRequest.requestedFeatures)
+            #expect(receivedBootstrapRequest.clientRequiresMediaEncryption)
 
             let bootstrapResponse = MirageSessionBootstrapResponse(
                 accepted: true,

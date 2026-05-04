@@ -24,19 +24,60 @@ package enum MirageSessionBootstrapRejectionReason: String, Codable, Sendable {
 package struct MirageSessionBootstrapRequest: Codable, Sendable {
     package let protocolVersion: Int
     package let requestedFeatures: MirageFeatureSet
+    package let clientRequiresMediaEncryption: Bool
     package let requestHostUpdateOnProtocolMismatch: Bool?
     package let requestTakeoverIfBusy: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case protocolVersion
+        case requestedFeatures
+        case clientRequiresMediaEncryption
+        case requestHostUpdateOnProtocolMismatch
+        case requestTakeoverIfBusy
+    }
 
     package init(
         protocolVersion: Int,
         requestedFeatures: MirageFeatureSet,
+        clientRequiresMediaEncryption: Bool,
         requestHostUpdateOnProtocolMismatch: Bool? = nil,
         requestTakeoverIfBusy: Bool? = nil
     ) {
         self.protocolVersion = protocolVersion
         self.requestedFeatures = requestedFeatures
+        self.clientRequiresMediaEncryption = clientRequiresMediaEncryption
         self.requestHostUpdateOnProtocolMismatch = requestHostUpdateOnProtocolMismatch
         self.requestTakeoverIfBusy = requestTakeoverIfBusy
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
+        requestedFeatures = try container.decode(MirageFeatureSet.self, forKey: .requestedFeatures)
+        clientRequiresMediaEncryption = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .clientRequiresMediaEncryption
+        ) ?? false
+        requestHostUpdateOnProtocolMismatch = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requestHostUpdateOnProtocolMismatch
+        )
+        requestTakeoverIfBusy = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requestTakeoverIfBusy
+        )
+    }
+
+    package func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(protocolVersion, forKey: .protocolVersion)
+        try container.encode(requestedFeatures, forKey: .requestedFeatures)
+        try container.encode(clientRequiresMediaEncryption, forKey: .clientRequiresMediaEncryption)
+        try container.encodeIfPresent(
+            requestHostUpdateOnProtocolMismatch,
+            forKey: .requestHostUpdateOnProtocolMismatch
+        )
+        try container.encodeIfPresent(requestTakeoverIfBusy, forKey: .requestTakeoverIfBusy)
     }
 }
 

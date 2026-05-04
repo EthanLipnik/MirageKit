@@ -156,7 +156,8 @@ struct HostSingleClientTests {
         let host = MirageHostService()
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures
+            requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: false
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
@@ -173,7 +174,8 @@ struct HostSingleClientTests {
         let host = MirageHostService()
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures
+            requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: false
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
