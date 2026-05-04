@@ -148,6 +148,10 @@ final class HostLightsOutController {
         var isHolding: Bool {
             lock.withLock { holdStart != 0 && !triggered }
         }
+
+        var isTracking: Bool {
+            lock.withLock { holdStart != 0 }
+        }
     }
 
     private var target: Target?
@@ -156,6 +160,7 @@ final class HostLightsOutController {
     private var eventTapSource: CFRunLoopSource?
     private var messageHideTask: Task<Void, Never>?
     private var escapeHoldCheckTask: Task<Void, Never>?
+    private var escapeKeyPollTask: Task<Void, Never>?
     private var screenChangeObserver: Any?
     private var brightnessSnapshot: [CGDirectDisplayID: DisplayGammaSnapshot] = [:]
     private let betterDisplayBrightnessController = BetterDisplaySoftwareBrightnessController()
@@ -192,6 +197,7 @@ final class HostLightsOutController {
         updateBetterDisplayBrightnessTarget(for: displayIDs)
         applyRevealState()
         ensureEventTapActive()
+        ensureEscapeKeyPolling()
         ensureScreenChangeObserver()
     }
 
@@ -201,6 +207,8 @@ final class HostLightsOutController {
         messageHideTask = nil
         escapeHoldCheckTask?.cancel()
         escapeHoldCheckTask = nil
+        escapeKeyPollTask?.cancel()
+        escapeKeyPollTask = nil
         escapeHoldState.reset()
         revealUntil = nil
         restoreBrightness(restoresBetterDisplay: false)
@@ -496,9 +504,7 @@ final class HostLightsOutController {
 
         if type == .keyDown {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-            if keyCode == 0x35, !isRepeat {
-                // Bare Escape press starts the hold timer.
+            if Self.shouldBeginEscapeHold(keyCode: keyCode, isTracking: escapeHoldState.isTracking) {
                 escapeHoldState.begin()
                 Task { @MainActor [weak self] in
                     self?.startEscapeHoldCheck()
@@ -520,6 +526,44 @@ final class HostLightsOutController {
         }
 
         return nil
+    }
+
+    nonisolated static func shouldBeginEscapeHold(keyCode: UInt16, isTracking: Bool) -> Bool {
+        keyCode == 0x35 && !isTracking
+    }
+
+    // MARK: - Physical Escape Fallback
+
+    private func ensureEscapeKeyPolling() {
+        guard escapeKeyPollTask == nil else { return }
+
+        escapeKeyPollTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                self.updatePhysicalEscapeHold(isPressed: Self.isPhysicalEscapeKeyPressed())
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func updatePhysicalEscapeHold(isPressed: Bool) {
+        if isPressed {
+            guard Self.shouldBeginEscapeHold(keyCode: 0x35, isTracking: escapeHoldState.isTracking) else {
+                return
+            }
+            escapeHoldState.begin()
+            startEscapeHoldCheck()
+        } else if escapeHoldState.isTracking {
+            escapeHoldState.reset()
+        }
+    }
+
+    nonisolated static func isPhysicalEscapeKeyPressed() -> Bool {
+        CGEventSource.keyState(.hidSystemState, key: 0x35)
     }
 
     private static func eventMask() -> CGEventMask {

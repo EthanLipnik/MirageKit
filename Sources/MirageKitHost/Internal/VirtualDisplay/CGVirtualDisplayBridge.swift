@@ -713,7 +713,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         refreshRate: Double,
         hiDPI: Bool,
         colorSpace: MirageColorSpace,
-        serial: UInt32?
+        serial: UInt32?,
+        startupBudget: DesktopVirtualDisplayStartupBudget?
     )
     -> Bool {
         let requestedLogical = CGSize(
@@ -725,6 +726,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let transferFunctionCandidates = transferFunctionAttempts(for: colorSpace)
         for attempt in modeActivationAttempts(pixelWidth: pixelWidth, pixelHeight: pixelHeight, hiDPI: hiDPI) {
             for transferFunction in transferFunctionCandidates {
+                if startupBudget?.isExpired == true { return false }
                 guard let displayMode = createDisplayMode(
                     modeClass: modeClass,
                     width: attempt.modeWidth,
@@ -760,7 +762,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                     requestedLogical: requestedLogical,
                     requestedPixel: requestedPixel,
                     hiDPISetting: attempt.hiDPISetting,
-                    serial: serial
+                    serial: serial,
+                    startupBudget: startupBudget
                 ) {
                     MirageLogger.host(
                         "Virtual display mode activation succeeded with attempt \(attempt.label) and transferFunction=\(transferFunction.label)"
@@ -866,10 +869,13 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         requestedLogical: CGSize,
         requestedPixel: CGSize,
         hiDPISetting: UInt32,
-        serial: UInt32?
+        serial: UInt32?,
+        startupBudget: DesktopVirtualDisplayStartupBudget?
     )
     -> Bool {
-        let deadline = Date().addingTimeInterval(1.6)
+        guard startupBudget?.isExpired != true else { return false }
+        let validationTimeout = startupBudget?.boundedTimeout(1.6) ?? 1.6
+        let deadline = Date().addingTimeInterval(validationTimeout)
         var lastObserved: DisplayModeSizes?
         var lastBounds = CGRect.zero
         var lastPixelDimensions = CGSize.zero
@@ -878,6 +884,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         var grossMismatchFirstObservedAt: CFAbsoluteTime = 0
 
         while Date() < deadline {
+            if startupBudget?.isExpired == true { break }
             let pollNow = CFAbsoluteTimeGetCurrent()
             let isOnline = isDisplayOnline(displayID)
             sawOnline = sawOnline || isOnline
@@ -1004,7 +1011,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 }
             }
 
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: min(0.05, startupBudget?.remainingTimeInterval ?? 0.05))
         }
 
         MirageLogger.host(
@@ -1039,7 +1046,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         refreshRate: Double = 60.0,
         hiDPI: Bool = false,
         ppi: Double = 220.0,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageColorSpace,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     -> VirtualDisplayContext? {
         guard loadPrivateAPIs() else { return nil }
@@ -1063,6 +1071,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
 
         var serialRetryAttempted = false
         while true {
+            if startupBudget?.isExpired == true {
+                MirageLogger.host("Virtual display creation stopped because startup budget expired")
+                return nil
+            }
             let persistentSerial = persistentSerialNumber(for: colorSpace)
             var validationHint = cachedValidationHint(
                 for: colorSpace,
@@ -1090,6 +1102,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             var sawColorValidationFailure = false
 
             for profile in descriptorProfiles {
+                if startupBudget?.isExpired == true {
+                    MirageLogger.host("Virtual display descriptor attempts stopped because startup budget expired")
+                    return nil
+                }
                 var failedDisplayID: CGDirectDisplayID?
                 var creationResult: VirtualDisplayContext?
 
@@ -1156,7 +1172,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         refreshRate: refreshRate,
                         hiDPI: hiDPI,
                         colorSpace: colorSpace,
-                        serial: profile.serial
+                        serial: profile.serial,
+                        startupBudget: startupBudget
                     ) else {
                         let modeLabel = hiDPI ? "Retina" : "1x"
                         MirageLogger.host(
@@ -1435,7 +1452,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             refreshRate: refreshRate,
             hiDPI: hiDPI,
             colorSpace: colorSpace,
-            serial: nil
+            serial: nil,
+            startupBudget: nil
         )
 
         if success {

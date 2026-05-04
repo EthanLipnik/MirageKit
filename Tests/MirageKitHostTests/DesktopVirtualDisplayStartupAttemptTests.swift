@@ -200,5 +200,59 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(attempts[1].label == "descriptor-fallback-sRGB")
         #expect(attempts[2].label == "conservative-retry")
     }
+
+    @Test("Startup surface consumes encoder cap when cap determines stream scale")
+    func startupSurfaceConsumesEncoderCapWhenCapDeterminesStreamScale() {
+        let surface = desktopVirtualDisplayStartupSurface(
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedScaleFactor: 1.0,
+            requestedStreamScale: 0.6,
+            encoderMaxWidth: 1280,
+            encoderMaxHeight: 720,
+            disableResolutionCap: false
+        )
+
+        #expect(surface.logicalResolution == CGSize(width: 960, height: 720))
+        #expect(surface.requestedScaleFactor == 1.0)
+        #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
+        #expect(surface.pixelResolution == CGSize(width: 960, height: 720))
+        #expect(surface.consumesEncoderScale)
+    }
+
+    @Test("Startup surface keeps full display for manual stream scale")
+    func startupSurfaceKeepsFullDisplayForManualStreamScale() {
+        let surface = desktopVirtualDisplayStartupSurface(
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedScaleFactor: 1.0,
+            requestedStreamScale: 0.5,
+            encoderMaxWidth: 1280,
+            encoderMaxHeight: 720,
+            disableResolutionCap: false
+        )
+
+        #expect(surface.logicalResolution == CGSize(width: 1600, height: 1200))
+        #expect(surface.requestedScaleFactor == 1.0)
+        #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
+        #expect(surface.pixelResolution == CGSize(width: 1600, height: 1200))
+        #expect(!surface.consumesEncoderScale)
+    }
+
+    @Test("Startup surface keeps uncapped display without explicit encoder limit")
+    func startupSurfaceKeepsUncappedDisplayWithoutExplicitEncoderLimit() {
+        let surface = desktopVirtualDisplayStartupSurface(
+            requestedLogicalResolution: CGSize(width: 1600, height: 1200),
+            requestedScaleFactor: 1.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil,
+            disableResolutionCap: true
+        )
+
+        #expect(surface.logicalResolution == CGSize(width: 1600, height: 1200))
+        #expect(surface.requestedScaleFactor == 1.0)
+        #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
+        #expect(surface.pixelResolution == CGSize(width: 1600, height: 1200))
+        #expect(!surface.consumesEncoderScale)
+    }
 }
 #endif

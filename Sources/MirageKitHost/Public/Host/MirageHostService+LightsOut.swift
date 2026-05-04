@@ -92,6 +92,15 @@ extension MirageHostService {
         lockHostIfStreamingStopped()
     }
 
+    func cancelPendingDesktopStreamLightsOutSetup(reason: String) async {
+        guard pendingDesktopStreamStartCount > 0 else { return }
+
+        pendingDesktopStreamStartCount = 0
+        await updateLightsOutState()
+        await syncAppListRequestDeferralForInteractiveWorkload()
+        MirageLogger.host("Lights Out pending desktop setup cleared (\(reason))")
+    }
+
     func updateLightsOutState() async {
         guard Self.shouldAllowLightsOut(for: sessionState) else {
             lightsOutController.deactivate()

@@ -261,6 +261,10 @@ extension MirageHostService {
             cancelAllStreamSetup(clientSessionID: clientContext.sessionID)
         }
 
+        if request.kind != .app {
+            await cancelPendingDesktopStreamLightsOutSetup(reason: "client cancelled desktop stream setup")
+        }
+
         // If desktop stream is already fully set up, stop it directly
         if request.kind != .app, desktopStreamID != nil {
             await stopDesktopStream(reason: .clientRequested)

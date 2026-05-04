@@ -521,7 +521,8 @@ extension SharedVirtualDisplayManager {
                 height: Int(requestedResolution.height),
                 refreshRate: Double(refreshRate),
                 hiDPI: attempt.hiDPI,
-                colorSpace: attempt.colorSpace
+                colorSpace: attempt.colorSpace,
+                startupBudget: startupBudget
             ) else {
                 MirageLogger.host(
                     "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height)), color=\(attempt.colorSpace.displayName)"

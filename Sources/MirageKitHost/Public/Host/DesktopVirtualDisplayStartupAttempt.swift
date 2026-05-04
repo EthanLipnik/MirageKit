@@ -48,6 +48,14 @@ struct DesktopVirtualDisplayStartupPlan: Equatable {
     let attempts: [DesktopVirtualDisplayStartupAttempt]
 }
 
+struct DesktopVirtualDisplayStartupSurface: Equatable {
+    let logicalResolution: CGSize
+    let requestedScaleFactor: CGFloat
+    let requestedPixelResolution: CGSize
+    let pixelResolution: CGSize
+    let consumesEncoderScale: Bool
+}
+
 private struct DesktopVirtualDisplayStartupCacheEntry: Equatable, Codable {
     let pixelWidth: Int
     let pixelHeight: Int
@@ -259,6 +267,57 @@ func desktopVirtualDisplayStartupPlan(
     return DesktopVirtualDisplayStartupPlan(
         request: request,
         attempts: attempts
+    )
+}
+
+func desktopVirtualDisplayStartupSurface(
+    requestedLogicalResolution: CGSize,
+    requestedScaleFactor: CGFloat,
+    requestedStreamScale: CGFloat?,
+    encoderMaxWidth: Int?,
+    encoderMaxHeight: Int?,
+    disableResolutionCap: Bool
+) -> DesktopVirtualDisplayStartupSurface {
+    let backingScale = resolvedDesktopBackingScaleResolution(
+        logicalResolution: requestedLogicalResolution,
+        defaultScaleFactor: requestedScaleFactor
+    )
+    let requestedPixelResolution = backingScale.pixelResolution
+    let capOnlyPlan = MirageStreamGeometry.resolveEncodedPlan(
+        basePixelSize: requestedPixelResolution,
+        requestedStreamScale: 1.0,
+        encoderMaxWidth: encoderMaxWidth,
+        encoderMaxHeight: encoderMaxHeight,
+        disableResolutionCap: disableResolutionCap
+    )
+    let requestedPlan = MirageStreamGeometry.resolveEncodedPlan(
+        basePixelSize: requestedPixelResolution,
+        requestedStreamScale: requestedStreamScale ?? 1.0,
+        encoderMaxWidth: encoderMaxWidth,
+        encoderMaxHeight: encoderMaxHeight,
+        disableResolutionCap: disableResolutionCap
+    )
+
+    let hasExplicitResolutionLimit = (encoderMaxWidth ?? 0) > 0 || (encoderMaxHeight ?? 0) > 0
+    let capReducesDisplay = capOnlyPlan.resolvedStreamScale < 0.999
+    let capDeterminesRequestedScale = abs(requestedPlan.resolvedStreamScale - capOnlyPlan.resolvedStreamScale) <= 0.0001
+    guard hasExplicitResolutionLimit, capReducesDisplay, capDeterminesRequestedScale else {
+        return DesktopVirtualDisplayStartupSurface(
+            logicalResolution: requestedLogicalResolution,
+            requestedScaleFactor: backingScale.scaleFactor,
+            requestedPixelResolution: requestedPixelResolution,
+            pixelResolution: requestedPixelResolution,
+            consumesEncoderScale: false
+        )
+    }
+
+    let cappedPixelResolution = requestedPlan.encodedPixelSize
+    return DesktopVirtualDisplayStartupSurface(
+        logicalResolution: MirageStreamGeometry.normalizedLogicalSize(cappedPixelResolution),
+        requestedScaleFactor: 1.0,
+        requestedPixelResolution: requestedPixelResolution,
+        pixelResolution: cappedPixelResolution,
+        consumesEncoderScale: true
     )
 }
 

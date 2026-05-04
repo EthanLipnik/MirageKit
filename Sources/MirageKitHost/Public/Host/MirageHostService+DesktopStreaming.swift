@@ -172,14 +172,22 @@ extension MirageHostService {
             for: targetFrameRate ?? 60
         )
         let resolvedColorDepth = effectiveColorDepth(for: colorDepth)
+        let virtualDisplayStartupSurface = desktopVirtualDisplayStartupSurface(
+            requestedLogicalResolution: displayResolution,
+            requestedScaleFactor: defaultDesktopBackingScale,
+            requestedStreamScale: streamScale,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        )
         if let colorDepth, let resolvedColorDepth, colorDepth != resolvedColorDepth {
             MirageLogger.host(
                 "Desktop color depth request downgraded: requested=\(colorDepth.displayName), effective=\(resolvedColorDepth.displayName)"
             )
         }
         let virtualDisplayStartupPlan = desktopVirtualDisplayStartupPlan(
-            logicalResolution: displayResolution,
-            requestedScaleFactor: defaultDesktopBackingScale,
+            logicalResolution: virtualDisplayStartupSurface.logicalResolution,
+            requestedScaleFactor: virtualDisplayStartupSurface.requestedScaleFactor,
             requestedRefreshRate: virtualDisplayRefreshRate,
             requestedColorDepth: resolvedColorDepth ?? encoderConfig.colorDepth,
             requestedColorSpace: encoderConfig.withOverrides(
@@ -193,8 +201,8 @@ extension MirageHostService {
         var virtualDisplayStartupSession = DesktopVirtualDisplayStartupSession(plan: virtualDisplayStartupPlan)
         let desktopBackingScale = virtualDisplayStartupAttempts.first?.backingScale ??
             resolvedDesktopBackingScaleResolution(
-                logicalResolution: displayResolution,
-                defaultScaleFactor: defaultDesktopBackingScale
+                logicalResolution: virtualDisplayStartupSurface.logicalResolution,
+                defaultScaleFactor: virtualDisplayStartupSurface.requestedScaleFactor
             )
         let virtualDisplayResolution = desktopBackingScale.pixelResolution
         if let resolvedClientScaleFactor {
@@ -208,6 +216,17 @@ extension MirageHostService {
                     "(\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px) " +
                     "(\(mode.displayName))"
             )
+        if virtualDisplayStartupSurface.consumesEncoderScale {
+            let encoderLimitText = "\(encoderMaxWidth.map(String.init) ?? "unbounded")x" +
+                "\(encoderMaxHeight.map(String.init) ?? "unbounded")"
+            MirageLogger.host(
+                "Desktop resolution cap applied before virtual display startup: " +
+                    "requested=\(Int(virtualDisplayStartupSurface.requestedPixelResolution.width))x" +
+                    "\(Int(virtualDisplayStartupSurface.requestedPixelResolution.height)) px, " +
+                    "capped=\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px, " +
+                    "encoderLimit=\(encoderLimitText)"
+            )
+        }
         logDesktopStartStep("request accepted")
 
         // Stop all active app/window streams (mutual exclusivity)
@@ -259,7 +278,7 @@ extension MirageHostService {
         }
         MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
 
-        if clampedStreamScale < 1.0 {
+        if clampedStreamScale < 1.0, !virtualDisplayStartupSurface.consumesEncoderScale {
             MirageLogger.host(
                 "Desktop scale \(clampedStreamScale) → capture/encoder downscale; virtual display stays at " +
                     "\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px"
@@ -278,8 +297,8 @@ extension MirageHostService {
             reason: "desktop_stream_start"
         )
 
-        // Acquire virtual display at the resolved streaming resolution.
-        // The 5K cap is applied at the encoding layer, not the virtual display.
+        // Acquire the virtual display at the startup surface. Explicit encoder
+        // resolution caps may shrink this surface before CGVirtualDisplay setup.
         // Pass the target frame rate to enable 120Hz when appropriate.
         var acquiredCaptureContext: (
             display: SCDisplayWrapper,
@@ -599,9 +618,10 @@ extension MirageHostService {
             )
         }
 
+        let requestedEncodingStreamScale = virtualDisplayStartupSurface.consumesEncoderScale ? 1.0 : (streamScale ?? 1.0)
         let computedStreamScale = MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: captureResolution,
-            requestedStreamScale: streamScale ?? 1.0,
+            requestedStreamScale: requestedEncodingStreamScale,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight,
             disableResolutionCap: disableResolutionCap
@@ -720,6 +740,13 @@ extension MirageHostService {
         syncSharedClipboardState(reason: "desktop_stream_started")
         await updateLightsOutState()
         let excludedWindows = await resolveLightsOutExcludedWindows()
+        try await ensureDesktopStreamStartupCanContinue(
+            streamID: streamID,
+            clientSessionID: clientContext.sessionID,
+            startupRequestID: startupRequestID,
+            mode: mode,
+            stage: "after Lights Out setup"
+        )
 
         // Register for input handling.
         // For mirrored virtual displays, use the aspect-fit content bounds within the
@@ -769,6 +796,13 @@ extension MirageHostService {
             await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
             throw error
         }
+        try await ensureDesktopStreamStartupCanContinue(
+            streamID: streamID,
+            clientSessionID: clientContext.sessionID,
+            startupRequestID: startupRequestID,
+            mode: mode,
+            stage: "after video stream open"
+        )
 
         // Start streaming the display with direct Loom send ownership in StreamPacketSender.
         let firstSuccessfulVideoPacketSent = Locked(false)
@@ -904,6 +938,13 @@ extension MirageHostService {
             await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
             throw error
         }
+        try await ensureDesktopStreamStartupCanContinue(
+            streamID: streamID,
+            clientSessionID: clientContext.sessionID,
+            startupRequestID: startupRequestID,
+            mode: mode,
+            stage: "before desktopStreamStarted"
+        )
 
         // Send stream-started to client BEFORE enabling encoding so the client's
         // controller/reassembler is ready when video packets arrive.
@@ -961,6 +1002,28 @@ extension MirageHostService {
             requestedPixelResolution: captureResolution
         )
         MirageInstrumentation.record(.hostStreamDesktopStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
+    }
+
+    private func ensureDesktopStreamStartupCanContinue(
+        streamID: StreamID,
+        clientSessionID: UUID,
+        startupRequestID: UUID,
+        mode: MirageDesktopStreamMode,
+        stage: String
+    )
+    async throws {
+        if isStreamSetupCancelled(clientSessionID: clientSessionID, startupRequestID: startupRequestID) {
+            MirageLogger.host("Desktop stream setup cancelled by client \(stage)")
+            if desktopStreamID == streamID {
+                await cleanupFailedDesktopStreamStartup(mode: mode)
+            }
+            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+        }
+
+        guard desktopStreamID == streamID, desktopStreamContext != nil else {
+            MirageLogger.host("Desktop stream startup stopped \(stage)")
+            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+        }
     }
 
     /// Clean up virtual display and mirroring state after a failed desktop stream startup.
