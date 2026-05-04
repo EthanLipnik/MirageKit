@@ -1553,7 +1553,7 @@ public class InputCapturingView: UIView {
             return lastCursorPosition
 
         case .indirectPointer:
-            return nil
+            return lastCursorPosition
         }
     }
 

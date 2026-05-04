@@ -37,8 +37,10 @@ public extension MirageHostService {
             do {
                 try await startListeners()
                 break
-            } catch let error as NWError where Self.isAddressInUseError(error) {
-                MirageLogger.host("Port already in use (attempt \(attempt + 1)/\(maxRetries)), cleaning up stale listeners...")
+            } catch where Self.isRetryableListenerStartError(error) {
+                MirageLogger.host(
+                    "Listener start failed (attempt \(attempt + 1)/\(maxRetries)), cleaning up stale listeners: \(error)"
+                )
                 await loomNode.stopAdvertising()
 
                 if attempt < maxRetries - 1 {
@@ -70,9 +72,14 @@ public extension MirageHostService {
         await startSessionStateMonitoring()
     }
 
-    private nonisolated static func isAddressInUseError(_ error: NWError) -> Bool {
-        if case let .posix(code) = error, code == .EADDRINUSE { return true }
-        return false
+    private nonisolated static func isRetryableListenerStartError(_ error: Error) -> Bool {
+        guard let nwError = error as? NWError else { return false }
+        switch nwError {
+        case let .posix(code):
+            return code == .EADDRINUSE || code == .EADDRNOTAVAIL
+        default:
+            return false
+        }
     }
 
     private nonisolated static func isScreenRecordingPermissionDenied(_ error: Error) -> Bool {
@@ -121,7 +128,11 @@ public extension MirageHostService {
                     }
                 }
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to start: ")
+            if Self.isRetryableListenerStartError(error) {
+                MirageLogger.host("Listener start failed: \(error)")
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed to start: ")
+            }
             state = .error(error.localizedDescription)
             throw error
         }

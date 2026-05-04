@@ -24,11 +24,25 @@ struct AppWindowInventoryGovernanceTests {
         #expect(!AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(flags))
     }
 
-    @Test("Ownership signal classifier accepts focus, clicks, and key down")
+    @Test("Ownership signal classifier accepts focus, clicks, key down, and scroll start")
     func ownershipSignalClassifierAcceptsSwitchSignals() {
         #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.windowFocus))
         #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.mouseDown(MirageMouseEvent(location: .zero))))
         #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.keyDown(MirageKeyEvent(keyCode: 0))))
+        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 12,
+            phase: .began
+        ))))
+        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 12
+        ))))
+        #expect(!AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
+            deltaX: 0,
+            deltaY: 12,
+            momentumPhase: .changed
+        ))))
     }
 
     @Test("Orchestrator ownership hysteresis prevents rapid ping-pong")

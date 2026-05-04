@@ -101,11 +101,61 @@ public enum MirageDiagnosticsSubmissionPolicy {
             )
         }
 
+        if isExpectedTransportSendFailure(event, lowercasedMessage: lowercasedMessage) {
+            return breadcrumbOnly(
+                issueKind: "expected-transport-close",
+                failureStage: event.category.rawValue,
+                recoveryOutcome: "expected-lifecycle"
+            )
+        }
+
+        if isExpectedWakeFailure(event, lowercasedMessage: lowercasedMessage) {
+            return breadcrumbOnly(
+                issueKind: "wake-unavailable",
+                failureStage: "wake",
+                recoveryOutcome: "expected-environment"
+            )
+        }
+
+        if isExpectedVersionOrProtocolRejection(lowercasedMessage) {
+            return breadcrumbOnly(
+                issueKind: "protocol-incompatible",
+                failureStage: "bootstrap",
+                recoveryOutcome: "expected-version-gate"
+            )
+        }
+
+        if lowercasedMessage.contains("software update check watchdog timed out") &&
+            lowercasedMessage.contains("clearing stuck checking state") {
+            return breadcrumbOnly(
+                issueKind: "software-update-watchdog",
+                failureStage: "software-update-check",
+                recoveryOutcome: "recovered"
+            )
+        }
+
         if isDuplicateStartupReporter(event, lowercasedMessage: lowercasedMessage) {
             return breadcrumbOnly(
                 issueKind: "duplicate-startup-failure",
                 failureStage: "startup",
                 recoveryOutcome: "duplicate"
+            )
+        }
+
+        if lowercasedMessage.contains("desktop stream start timed out") {
+            return capture(
+                issueKind: "desktop-startup-failure",
+                failureStage: "startup",
+                recoveryOutcome: "fallback-exhausted",
+                transportHealth: inferredTransportHealth(from: lowercasedMessage)
+            )
+        }
+
+        if isVirtualDisplayStartupFailure(event, lowercasedMessage: lowercasedMessage) {
+            return capture(
+                issueKind: "virtual-display-startup",
+                failureStage: "startup",
+                recoveryOutcome: "fallback-exhausted"
             )
         }
 
@@ -235,7 +285,8 @@ private extension MirageDiagnosticsSubmissionPolicy {
         failureStage: String,
         recoveryOutcome: String,
         fallbackUsed: String = "none",
-        transportHealth: String = "unknown"
+        transportHealth: String = "unknown",
+        allowEscalation: Bool = false
     ) -> MirageDiagnosticsEventClassification {
         MirageDiagnosticsEventClassification(
             disposition: .breadcrumbOnly,
@@ -244,7 +295,9 @@ private extension MirageDiagnosticsSubmissionPolicy {
             recoveryOutcome: recoveryOutcome,
             fallbackUsed: fallbackUsed,
             transportHealth: transportHealth,
-            suppressionKey: "\(issueKind):\(failureStage):\(recoveryOutcome):\(fallbackUsed):\(transportHealth)"
+            suppressionKey: allowEscalation
+                ? "\(issueKind):\(failureStage):\(recoveryOutcome):\(fallbackUsed):\(transportHealth)"
+                : nil
         )
     }
 
@@ -272,6 +325,7 @@ private extension MirageDiagnosticsSubmissionPolicy {
         return lowercasedMessage.contains("client error:") &&
             (
                 lowercasedMessage.contains("desktop stream failed") ||
+                    lowercasedMessage.contains("desktop stream start timed out") ||
                     lowercasedMessage.contains("stream failed to present its first frame after bounded recovery")
             )
     }
@@ -313,5 +367,81 @@ private extension MirageDiagnosticsSubmissionPolicy {
         }
 
         return event.category.rawValue
+    }
+
+    static func isExpectedTransportSendFailure(
+        _ event: LoomDiagnosticsErrorEvent,
+        lowercasedMessage: String
+    ) -> Bool {
+        guard lowercasedMessage.contains("failed to send input") ||
+            lowercasedMessage.contains("failed to send session state") ||
+            lowercasedMessage.contains("audio transport send failed") ||
+            lowercasedMessage.contains("failed reopening audio transport") ||
+            lowercasedMessage.contains("control channel closed") else {
+            return false
+        }
+
+        if lowercasedMessage.contains("unreliable send queue cancelled") ||
+            lowercasedMessage.contains("connectionfailed") ||
+            lowercasedMessage.contains("cancelled") ||
+            lowercasedMessage.contains("closed") {
+            return true
+        }
+
+        guard let metadata = event.metadata else { return false }
+        if metadata.domain == "Loom.LoomError" {
+            return metadata.code == 0 || metadata.code == 3
+        }
+        if metadata.domain == NSPOSIXErrorDomain {
+            return [32, 54, 57, 89].contains(metadata.code)
+        }
+        return false
+    }
+
+    static func isExpectedWakeFailure(
+        _ event: LoomDiagnosticsErrorEvent,
+        lowercasedMessage: String
+    ) -> Bool {
+        guard event.category.rawValue == "wol" ||
+            event.category.rawValue == "bootstrapHandoff" ||
+            event.category.rawValue == "bootstrap_handoff" else {
+            return false
+        }
+
+        if lowercasedMessage.contains("wake timed out") {
+            return true
+        }
+
+        guard lowercasedMessage.contains("wake-on-lan failed") else { return false }
+        if lowercasedMessage.contains("permission denied") ||
+            lowercasedMessage.contains("sendfailed") ||
+            lowercasedMessage.contains("network is unreachable") ||
+            lowercasedMessage.contains("cannot assign requested address") {
+            return true
+        }
+        return false
+    }
+
+    static func isVirtualDisplayStartupFailure(
+        _ event: LoomDiagnosticsErrorEvent,
+        lowercasedMessage: String
+    ) -> Bool {
+        if let metadata = event.metadata,
+           metadata.domain.contains("SharedVirtualDisplayManager.SharedDisplayError") {
+            return true
+        }
+
+        return lowercasedMessage.contains("virtual display acquisition failed") ||
+            lowercasedMessage.contains("failed to handle desktop stream request")
+    }
+
+    static func isExpectedVersionOrProtocolRejection(_ lowercasedMessage: String) -> Bool {
+        lowercasedMessage.contains("protocolversionmismatch") ||
+            lowercasedMessage.contains("protocolfeaturesmismatch") ||
+            lowercasedMessage.contains("versions are incompatible") ||
+            lowercasedMessage.contains("protocol features are incompatible") ||
+            lowercasedMessage.contains("incompatible mirage handshake") ||
+            lowercasedMessage.contains("invalid mirage bootstrap frame") ||
+            lowercasedMessage.contains("malformedbootstrap")
     }
 }

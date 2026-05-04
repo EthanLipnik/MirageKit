@@ -73,7 +73,12 @@ extension MirageHostService {
         do {
             try await clientContext.send(.sessionStateUpdate, content: message)
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to send session state: ")
+            await handleControlChannelSendFailure(
+                client: clientContext.client,
+                error: error,
+                operation: "Session state update",
+                sessionID: clientContext.sessionID
+            )
         }
     }
 

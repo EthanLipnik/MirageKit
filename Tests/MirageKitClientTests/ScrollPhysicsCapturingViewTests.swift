@@ -212,6 +212,34 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(location == CGPoint(x: 0.2, y: 0.8))
     }
 
+    @Test("Indirect pointer scroll reuses the tracked pointer location")
+    func indirectPointerScrollReusesTrackedPointerLocation() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.lastCursorPosition = CGPoint(x: 0.35, y: 0.65)
+
+        let location = view.scrollEventLocation(
+            source: .indirectPointer,
+            phase: .changed,
+            momentumPhase: .none
+        )
+
+        #expect(location == CGPoint(x: 0.35, y: 0.65))
+    }
+
+    @Test("Untracked indirect pointer scroll lets the host choose a target fallback")
+    func untrackedIndirectPointerScrollUsesHostFallback() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.lastCursorPosition = nil
+
+        let location = view.scrollEventLocation(
+            source: .indirectPointer,
+            phase: .changed,
+            momentumPhase: .none
+        )
+
+        #expect(location == nil)
+    }
+
     @Test("Virtual cursor scroll reanchors to the swipe location")
     func virtualCursorScrollReanchorsToTheSwipeLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

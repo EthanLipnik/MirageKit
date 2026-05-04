@@ -90,7 +90,7 @@ extension VideoDecoder {
         }
 
         guard startCodePositions.count >= 3 else {
-            MirageLogger.error(.decoder, "Not enough start codes found: \(startCodePositions.count)")
+            MirageLogger.decoder("Not enough start codes found: \(startCodePositions.count)")
             return data
         }
 

@@ -150,7 +150,11 @@ public final class MirageInputEventSender: @unchecked Sendable {
                 let data = try self.makeInputMessageData(event: pending.event, streamID: pending.streamID)
                 try await handler(data, false)
             } catch {
-                MirageLogger.error(.client, error: error, message: "Failed to send input: ")
+                if Self.isExpectedBestEffortSendFailure(error) {
+                    MirageLogger.client("Dropped best-effort input because the stream closed: \(error.localizedDescription)")
+                } else {
+                    MirageLogger.error(.client, error: error, message: "Failed to send input: ")
+                }
             }
 
             self.sendQueue.async { [weak self] in
@@ -194,6 +198,21 @@ public final class MirageInputEventSender: @unchecked Sendable {
         let inputMessage = InputEventMessage(streamID: streamID, event: event)
         let message = try ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
         return message.serialize()
+    }
+
+    private static func isExpectedBestEffortSendFailure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == "Loom.LoomError" {
+            return nsError.code == 0 || nsError.code == 3
+        }
+        if nsError.domain == NSPOSIXErrorDomain {
+            return [32, 54, 57, 89].contains(nsError.code)
+        }
+        return false
     }
 
     private func currentSendHandler() -> (@Sendable (Data, Bool) async throws -> Void)? {

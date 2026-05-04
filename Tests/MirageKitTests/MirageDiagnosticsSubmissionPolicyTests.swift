@@ -51,6 +51,19 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.recoveryOutcome == "duplicate")
     }
 
+    @Test("AppState startup timeout duplicates stay breadcrumb-only")
+    func appStateStartupTimeoutDuplicatesStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "appState",
+                message: "Client error: protocolError(\"Desktop stream start timed out. The host may be busy or unreachable.\")"
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "duplicate-startup-failure")
+    }
+
     @Test("Unrecovered startup exhaustion remains reportable")
     func unrecoveredStartupExhaustionRemainsReportable() {
         let classification = MirageDiagnosticsSubmissionPolicy.classification(
@@ -65,8 +78,71 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.recoveryOutcome == "fallback-exhausted")
     }
 
-    @Test("Suppressed classes escalate on repeated launch and window counts")
-    func suppressedClassesEscalateOnRepeatedCounts() {
+    @Test("Desktop start timeouts are grouped under startup failures")
+    func desktopStartTimeoutsAreGroupedUnderStartupFailures() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "client",
+                message: "Desktop stream start timed out after 30s"
+            )
+        )
+
+        #expect(classification.disposition == .capture)
+        #expect(classification.issueKind == "desktop-startup-failure")
+        #expect(classification.failureStage == "startup")
+    }
+
+    @Test("Virtual display startup errors get a concrete issue kind")
+    func virtualDisplayStartupErrorsGetConcreteIssueKind() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Failed to handle desktop stream request: ",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "MirageKitHost.SharedVirtualDisplayManager.SharedDisplayError",
+                    domain: "MirageKitHost.SharedVirtualDisplayManager.SharedDisplayError",
+                    code: 4
+                )
+            )
+        )
+
+        #expect(classification.disposition == .capture)
+        #expect(classification.issueKind == "virtual-display-startup")
+    }
+
+    @Test("Expected transport closures stay breadcrumb-only")
+    func expectedTransportClosuresStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "client",
+                message: "Failed to send input: ",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "Loom.LoomError",
+                    domain: "Loom.LoomError",
+                    code: 0
+                )
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "expected-transport-close")
+    }
+
+    @Test("Protocol incompatibility is breadcrumb-only")
+    func protocolIncompatibilityIsBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "client",
+                message: "Connection rejected: Mirage versions are incompatible. Host protocol 8, client protocol 7."
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "protocol-incompatible")
+    }
+
+    @Test("Breadcrumb-only classifications do not aggregate into Sentry captures")
+    func breadcrumbOnlyClassificationsDoNotAggregateIntoSentryCaptures() {
         var state = MirageDiagnosticsSuppressionState()
         let classification = MirageDiagnosticsSubmissionPolicy.classification(
             for: makeEvent(
@@ -84,7 +160,7 @@ struct MirageDiagnosticsSubmissionPolicyTests {
             #expect(!shouldEscalate)
         }
         let shouldEscalate = state.shouldEscalate(classification: classification, at: now.addingTimeInterval(5))
-        #expect(shouldEscalate)
+        #expect(!shouldEscalate)
     }
 
     private func makeEvent(

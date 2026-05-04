@@ -49,6 +49,8 @@ actor AppStreamRuntimeOrchestrator {
              .hostSystemAction,
              .keyDown:
             return true
+        case let .scrollWheel(event):
+            return isScrollOwnershipSwitchSignal(event)
         case let .pointerSampleBatch(batch):
             return batch.phase == .began
         case .flagsChanged,
@@ -59,7 +61,6 @@ actor AppStreamRuntimeOrchestrator {
              .mouseUp,
              .rightMouseUp,
              .otherMouseUp,
-             .scrollWheel,
              .magnify,
              .rotate,
              .swipe,
@@ -69,6 +70,11 @@ actor AppStreamRuntimeOrchestrator {
              .keyUp:
             return false
         }
+    }
+
+    nonisolated static func isScrollOwnershipSwitchSignal(_ event: MirageScrollEvent) -> Bool {
+        if event.phase == .began { return true }
+        return event.phase == .none && event.momentumPhase == .none
     }
 
     func registerStream(bundleIdentifier: String, streamID: StreamID) {

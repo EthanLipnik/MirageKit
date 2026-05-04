@@ -231,8 +231,7 @@ extension MirageHostService {
         guard transportRegistry.hasAudioConnection(clientID: clientID) else { return }
 
         if audioSendErrorReportedByClientID.insert(clientID).inserted {
-            MirageLogger.error(
-                .host,
+            MirageLogger.host(
                 "Audio transport send failed for client \(clientID), stream \(streamID); reopening audio stream: \(error)"
             )
         }
@@ -252,7 +251,13 @@ extension MirageHostService {
             )
             MirageLogger.host("Reopened Loom audio stream for client \(clientID), stream \(streamID)")
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed reopening audio transport: ")
+            if isExpectedLifecycleControlSendFailure(error) ||
+                isFatalConnectionError(error) ||
+                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageLogger.host("Audio transport reopen stopped because the client connection closed: \(error)")
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed reopening audio transport: ")
+            }
             if isFatalConnectionError(error) {
                 await disconnectClient(clientContext.client)
             }

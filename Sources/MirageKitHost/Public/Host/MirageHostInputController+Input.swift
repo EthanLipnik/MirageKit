@@ -79,7 +79,14 @@ extension MirageHostInputController {
             case let .otherMouseDragged(e):
                 injectMouseEvent(.otherMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
             case let .scrollWheel(e):
-                injectScrollEvent(e, windowFrame, app: window.application)
+                if Self.shouldActivateWindowForScrollEvent(e) {
+                    performWindowActivation(
+                        windowID: window.id,
+                        app: window.application,
+                        trigger: .windowFocus
+                    )
+                }
+                injectScrollEvent(e, windowFrame, windowID: window.id, app: window.application)
             case let .magnify(e):
                 injectMagnifyEvent(e, bounds: windowFrame, domain: .session)
             case let .rotate(e):
@@ -126,6 +133,11 @@ extension MirageHostInputController {
                 )
             }
         }
+    }
+
+    nonisolated static func shouldActivateWindowForScrollEvent(_ event: MirageScrollEvent) -> Bool {
+        if event.phase == .began { return true }
+        return event.phase == .none && event.momentumPhase == .none
     }
 
     private func performWindowActivation(

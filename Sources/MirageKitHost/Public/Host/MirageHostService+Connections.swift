@@ -49,7 +49,7 @@ extension MirageHostService {
                 return message == "Authenticated Loom session closed before Mirage control stream opened" ||
                     message == "Control stream closed before session bootstrap request"
             case let .connectionRejected(rejection):
-                return rejection.reason == .malformedBootstrap
+                return rejection.isTerminal
             case let .connectionFailed(underlyingError):
                 return isExpectedBootstrapConnectionClosure(underlyingError)
             default:
