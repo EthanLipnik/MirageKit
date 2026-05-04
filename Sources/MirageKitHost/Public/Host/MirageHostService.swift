@@ -261,6 +261,8 @@ public final class MirageHostService {
     var customStreamClientSessionIDByStreamID: [StreamID: UUID] = [:]
     var customStreamStartupRequestIDByStreamID: [StreamID: UUID] = [:]
     var appAtlasCoordinatorsByClientID: [UUID: AppAtlasMediaCoordinator] = [:]
+    var appAtlasCoordinatorCreationClientIDs: Set<UUID> = []
+    var appStreamStartupReservedWindowIDs: Set<WindowID> = []
     let startupAttemptTimeoutSeconds: Duration = .seconds(5)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"

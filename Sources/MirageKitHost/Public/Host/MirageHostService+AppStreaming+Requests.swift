@@ -1050,9 +1050,9 @@ extension MirageHostService {
             let codec = await context.getCodec()
             let dimensionToken = await context.getDimensionToken()
             let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
-            let fallbackMin = fallbackMinimumSize(for: targetWindow.frame)
-            let minWidth = Int(minimumSizesByWindowID[targetWindowID]?.width ?? CGFloat(fallbackMin.minWidth))
-            let minHeight = Int(minimumSizesByWindowID[targetWindowID]?.height ?? CGFloat(fallbackMin.minHeight))
+            let minSize = await resolvedMinimumSize(for: targetWindow)
+            let minWidth = Int(minSize.width)
+            let minHeight = Int(minSize.height)
             let started = StreamStartedMessage(
                 streamID: targetSlotStreamID,
                 windowID: targetWindowID,
@@ -1373,11 +1373,29 @@ extension MirageHostService {
         let failureNotes: [String]
     }
 
+    private func reserveInitialAppWindowStartup(windowID: WindowID) throws {
+        if let existingStreamID = activeStreamIDByWindowID[windowID] {
+            throw WindowStreamStartError.windowAlreadyBound(
+                windowID: windowID,
+                existingStreamID: existingStreamID
+            )
+        }
+        guard appStreamStartupReservedWindowIDs.insert(windowID).inserted else {
+            throw WindowStreamStartError.windowStartupInProgress(windowID: windowID)
+        }
+    }
+
+    private func releaseInitialAppWindowStartupReservation(windowID: WindowID?) {
+        guard let windowID else { return }
+        appStreamStartupReservedWindowIDs.remove(windowID)
+    }
+
     private func resolveCurrentInitialAppWindowBinding(
         bundleIdentifier: String,
         preferredWindowID: WindowID?,
         deprioritizedWindowIDs: Set<WindowID>,
-        excludedWindowIDs: Set<WindowID>
+        excludedWindowIDs: Set<WindowID>,
+        allowedReservedWindowIDs: Set<WindowID> = []
     ) async throws -> ResolvedAppWindowBinding? {
         guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return nil }
 
@@ -1393,7 +1411,10 @@ extension MirageHostService {
         let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
             activeStreamIDs: Set(activeSessionByStreamID.keys)
         )
-        let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
+        let reservedWindowIDs = appStreamStartupReservedWindowIDs.subtracting(allowedReservedWindowIDs)
+        let claimedWindowIDs = Set(activeStreamIDByWindowID.keys)
+            .union(activeOwnerClaimedWindowIDs)
+            .union(reservedWindowIDs)
         let visibleWindowIDs = Set(session.windowStreams.keys)
 
         return Self.resolveInitialAppWindowStartupBinding(
@@ -1455,7 +1476,9 @@ extension MirageHostService {
                 let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
                     activeStreamIDs: Set(activeSessionByStreamID.keys)
                 )
-                let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
+                let claimedWindowIDs = Set(activeStreamIDByWindowID.keys)
+                    .union(activeOwnerClaimedWindowIDs)
+                    .union(appStreamStartupReservedWindowIDs)
                 let lifecycleEligibleCandidates = Self.lifecycleStartupEligibleCandidates(
                     from: selection.candidates,
                     visibleWindowIDs: Set(session.windowStreams.keys),
@@ -1513,7 +1536,9 @@ extension MirageHostService {
             let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
                 activeStreamIDs: Set(activeSessionByStreamID.keys)
             )
-            let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
+            let claimedWindowIDs = Set(activeStreamIDByWindowID.keys)
+                .union(activeOwnerClaimedWindowIDs)
+                .union(appStreamStartupReservedWindowIDs)
             bindingPlan = AppWindowBindingPlanner.plan(
                 candidates: startupCandidates,
                 liveWindows: liveWindows,
@@ -1752,6 +1777,13 @@ extension MirageHostService {
             }
 
             do {
+                var reservedWindowID: WindowID?
+                try reserveInitialAppWindowStartup(windowID: currentBinding.resolvedWindow.id)
+                reservedWindowID = currentBinding.resolvedWindow.id
+                defer {
+                    releaseInitialAppWindowStartupReservation(windowID: reservedWindowID)
+                }
+
                 await prepareWindowForStreamingIfNeeded(
                     currentBinding.resolvedWindow,
                     reason: "initial app-stream startup"
@@ -1760,7 +1792,8 @@ extension MirageHostService {
                     bundleIdentifier: app.bundleIdentifier,
                     preferredWindowID: currentBinding.resolvedWindow.id,
                     deprioritizedWindowIDs: deprioritizedWindowIDs,
-                    excludedWindowIDs: excludedWindowIDs
+                    excludedWindowIDs: excludedWindowIDs,
+                    allowedReservedWindowIDs: reservedWindowID.map { Set([$0]) } ?? []
                 ) {
                     if reboundBinding.candidate.window.id != currentBinding.candidate.window.id ||
                         reboundBinding.resolvedWindow.id != currentBinding.resolvedWindow.id {
@@ -1769,6 +1802,11 @@ extension MirageHostService {
                                 "candidate \(currentBinding.candidate.window.id)->\(reboundBinding.candidate.window.id) " +
                                 "resolved \(currentBinding.resolvedWindow.id)->\(reboundBinding.resolvedWindow.id) after preparation"
                         )
+                    }
+                    if reboundBinding.resolvedWindow.id != reservedWindowID {
+                        try reserveInitialAppWindowStartup(windowID: reboundBinding.resolvedWindow.id)
+                        releaseInitialAppWindowStartupReservation(windowID: reservedWindowID)
+                        reservedWindowID = reboundBinding.resolvedWindow.id
                     }
                     currentBinding = reboundBinding
                     preferredWindowID = reboundBinding.resolvedWindow.id

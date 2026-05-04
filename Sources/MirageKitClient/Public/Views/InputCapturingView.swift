@@ -1089,16 +1089,17 @@ public class InputCapturingView: UIView {
 
         // Configure scroll physics callback
         // Scroll events don't have a gesture recognizer with modifierFlags, so use keyboard state only
-        scrollPhysicsView!.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in
+        scrollPhysicsView!.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase, source in
             guard let self else { return }
             noteInteractionForResponderRecovery()
             refreshModifiersForInput()
             let modifiers = keyboardModifiers
             sendModifierSnapshotIfNeeded(modifiers)
+            let location = scrollEventLocation(source: source, phase: phase, momentumPhase: momentumPhase)
             let scrollEvent = MirageScrollEvent(
                 deltaX: deltaX,
                 deltaY: deltaY,
-                location: cursorLockEnabled ? lockedCursorPosition : lastCursorPosition,
+                location: location,
                 phase: phase,
                 momentumPhase: momentumPhase,
                 modifiers: modifiers,
@@ -1538,6 +1539,22 @@ public class InputCapturingView: UIView {
         lastCursorPosition = cursorLockEnabled ? lockedCursorPosition : location
         updateLockedCursorViewVisibility()
         updateLockedCursorViewPosition()
+    }
+
+    func scrollEventLocation(
+        source: ScrollPhysicsCapturingView.InputSource,
+        phase: MirageScrollPhase,
+        momentumPhase: MirageScrollPhase
+    ) -> CGPoint? {
+        guard !cursorLockEnabled else { return lockedCursorPosition }
+
+        switch source {
+        case .directTouch:
+            return lastCursorPosition
+
+        case .indirectPointer:
+            return nil
+        }
     }
 
     func handleDirectTouchLocationChange(_ rawLocation: CGPoint) {

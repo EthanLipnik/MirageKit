@@ -1662,10 +1662,9 @@ extension MirageHostService {
         )
         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedWindow.frame)
 
-        let minSize = minimumSizesByWindowID[updatedWindow.id]
-        let fallbackMin = fallbackMinimumSize(for: updatedWindow.frame)
-        let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
-        let minHeight = Int(minSize?.height ?? CGFloat(fallbackMin.minHeight))
+        let minSize = await resolvedMinimumSize(for: updatedWindow)
+        let minWidth = Int(minSize.width)
+        let minHeight = Int(minSize.height)
         let dimensionToken = await context.getDimensionToken()
         let encodedDimensions = await context.getEncodedDimensions()
         let frameRate = await context.getTargetFrameRate()

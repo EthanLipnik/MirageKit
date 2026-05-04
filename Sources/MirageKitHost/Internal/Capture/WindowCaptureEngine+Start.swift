@@ -192,7 +192,7 @@ extension WindowCaptureEngine {
     private func stopCapture(clearSessionState: Bool) async {
         if clearSessionState { restartGeneration &+= 1 }
         cancelScheduledCaptureRestart(reason: clearSessionState ? "capture_stop" : "capture_restart")
-        guard isCapturing else {
+        guard isCapturing || stream != nil else {
             if clearSessionState {
                 stream = nil
                 streamOutput = nil

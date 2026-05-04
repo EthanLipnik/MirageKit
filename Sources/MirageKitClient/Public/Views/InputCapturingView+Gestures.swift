@@ -431,16 +431,14 @@ extension InputCapturingView {
             return
         }
 
-        let rawLocation = gesture.location(in: self)
-        let location = normalizedLocation(rawLocation)
-        updatePointerLocationForLocalContact(location)
         let eventModifiers = modifiers(from: gesture)
 
         if gesture.numberOfTouches > 1 {
             if longPressButtonDown {
+                let releaseLocation = pointerReleaseLocation()
                 let mouseEvent = MirageMouseEvent(
                     button: .left,
-                    location: location,
+                    location: releaseLocation,
                     clickCount: currentClickCount,
                     modifiers: eventModifiers
                 )
@@ -452,6 +450,10 @@ extension InputCapturingView {
             resetPrimaryClickTracking()
             return
         }
+
+        let rawLocation = gesture.location(in: self)
+        let location = normalizedLocation(rawLocation)
+        updatePointerLocationForLocalContact(location)
 
         switch gesture.state {
         case .began:
@@ -639,6 +641,7 @@ extension InputCapturingView {
             }
             return
         }
+        guard hoverStylus != nil || scrollPhysicsView?.isIndirectScrollActive != true else { return }
         let normalized = normalizedLocation(location)
         let pointerMoved: Bool = if let lastCursorPosition {
             hypot(normalized.x - lastCursorPosition.x, normalized.y - lastCursorPosition.y) > 0.0001

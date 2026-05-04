@@ -7,6 +7,7 @@
 //  Single-client enforcement for host connections.
 //
 
+@testable import MirageKit
 @testable import MirageKitHost
 import Foundation
 import Testing
@@ -147,6 +148,40 @@ struct HostSingleClientTests {
         )
 
         #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
+    }
+
+    @Test("Trusted takeover is allowed when busy metadata is stale")
+    @MainActor
+    func trustedTakeoverIsAllowedWhenBusyMetadataIsStale() {
+        let host = MirageHostService()
+        let request = MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            requestedFeatures: mirageSupportedFeatures
+        )
+
+        let rejectionReason = host.busyHostTakeoverRejectionReason(
+            for: request,
+            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
+        )
+
+        #expect(rejectionReason == nil)
+    }
+
+    @Test("Untrusted stale busy takeover remains rejected as busy")
+    @MainActor
+    func untrustedStaleBusyTakeoverRemainsRejectedAsBusy() {
+        let host = MirageHostService()
+        let request = MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            requestedFeatures: mirageSupportedFeatures
+        )
+
+        let rejectionReason = host.busyHostTakeoverRejectionReason(
+            for: request,
+            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
+        )
+
+        #expect(rejectionReason == .hostBusy)
     }
 }
 #endif

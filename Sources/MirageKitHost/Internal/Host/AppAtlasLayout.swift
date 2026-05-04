@@ -162,14 +162,18 @@ enum AppAtlasLayout {
 
         if validWindows.count == 1, let window = validWindows.first {
             let size = evenSize(window.sourceRect.size)
+            let canvasSize = encoderAlignedCanvasSize(size)
             let destinationRect = CGRect(origin: .zero, size: size)
             let placement = Placement(
                 id: window.id,
                 sourceRect: CGRect(origin: window.sourceRect.origin, size: size),
                 destinationRect: destinationRect,
-                normalizedDestinationRect: CGRect(x: 0, y: 0, width: 1, height: 1)
+                normalizedDestinationRect: normalizedRect(
+                    destinationRect,
+                    canvasSize: canvasSize
+                )
             )
-            return Result(canvasSize: size, contentRect: destinationRect, placements: [placement])
+            return Result(canvasSize: canvasSize, contentRect: destinationRect, placements: [placement])
         }
 
         let spacing = normalizedSpacing(requestedSpacing)
@@ -348,12 +352,13 @@ enum AppAtlasLayout {
             rowLayouts.append((row, sizes, rowWidth, rowHeight))
         }
 
-        let canvasWidth = evenLength(rowLayouts.map(\.width).max() ?? 0)
-        let canvasHeight = evenLength(
+        let contentWidth = evenLength(rowLayouts.map(\.width).max() ?? 0)
+        let contentHeight = evenLength(
             rowLayouts.reduce(CGFloat.zero) { $0 + $1.height } +
                 spacing * CGFloat(max(0, rowLayouts.count - 1))
         )
-        guard canvasWidth > 0, canvasHeight > 0 else { return nil }
+        let canvasSize = encoderAlignedCanvasSize(CGSize(width: contentWidth, height: contentHeight))
+        guard contentWidth > 0, contentHeight > 0 else { return nil }
 
         var placements: [Placement] = []
         placements.reserveCapacity(rows.reduce(0) { $0 + $1.count })
@@ -371,7 +376,7 @@ enum AppAtlasLayout {
                         destinationRect: destinationRect,
                         normalizedDestinationRect: normalizedRect(
                             destinationRect,
-                            canvasSize: CGSize(width: canvasWidth, height: canvasHeight)
+                            canvasSize: canvasSize
                         )
                     )
                 )
@@ -386,12 +391,12 @@ enum AppAtlasLayout {
                 : partialResult.union(placement.destinationRect)
         }
         let result = Result(
-            canvasSize: CGSize(width: canvasWidth, height: canvasHeight),
+            canvasSize: canvasSize,
             contentRect: contentRect.isNull ? .zero : contentRect.standardized,
             placements: placements
         )
-        let area = canvasWidth * canvasHeight
-        let aspectRatio = canvasHeight > 0 ? canvasWidth / canvasHeight : 1
+        let area = canvasSize.width * canvasSize.height
+        let aspectRatio = canvasSize.height > 0 ? canvasSize.width / canvasSize.height : 1
         return NativeCandidate(
             result: result,
             area: area,
@@ -525,6 +530,20 @@ enum AppAtlasLayout {
         let rounded = Int(value.rounded())
         let even = rounded - (rounded % 2)
         return CGFloat(max(2, even))
+    }
+
+    private static func encoderAlignedCanvasSize(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: encoderAlignedCanvasLength(size.width),
+            height: encoderAlignedCanvasLength(size.height)
+        )
+    }
+
+    private static func encoderAlignedCanvasLength(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return 0 }
+        let rounded = max(1, Int(ceil(value)))
+        let aligned = ((rounded + 15) / 16) * 16
+        return CGFloat(max(16, aligned))
     }
 }
 #endif

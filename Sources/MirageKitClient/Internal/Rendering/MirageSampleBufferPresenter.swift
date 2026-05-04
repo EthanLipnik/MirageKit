@@ -29,6 +29,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     static let displayLayerLivenessResetThresholdSeconds: CFTimeInterval = 0.75
 
     private weak var displayLayer: AVSampleBufferDisplayLayer?
+    private let pixelBufferCropper = MiragePixelBufferCropper()
 
     private var streamID: StreamID?
     private var listenerStreamID: StreamID?
@@ -170,9 +171,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             resetSequenceTrackingState()
         }
 
-        updateLayerContentRect(contentRectOverride ?? frame.contentRect, pixelBuffer: frame.pixelBuffer)
+        let pixelBuffer = presentationPixelBuffer(for: frame)
         guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
-            from: frame.pixelBuffer,
+            from: pixelBuffer,
             presentationTime: frame.presentationTime,
             referenceTime: referenceTime
         ) else {
@@ -190,6 +191,21 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             for: streamID
         )
         return .submitted
+    }
+
+    private func presentationPixelBuffer(for frame: MirageRenderFrame) -> CVPixelBuffer {
+        guard let contentRectOverride else {
+            updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
+            return frame.pixelBuffer
+        }
+
+        guard let cropResult = pixelBufferCropper.crop(frame.pixelBuffer, to: contentRectOverride) else {
+            updateLayerContentRect(contentRectOverride, pixelBuffer: frame.pixelBuffer)
+            return frame.pixelBuffer
+        }
+
+        resetLayerContentRect(to: cropResult.contentRect)
+        return cropResult.pixelBuffer
     }
 
     private func resetSequenceTrackingState() {
@@ -226,6 +242,12 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             height: min(max(resolvedContentRect.size.height / height, 0), 1)
         )
         displayLayer.contentsRect = normalized
+    }
+
+    private func resetLayerContentRect(to contentRect: CGRect) {
+        guard let displayLayer else { return }
+        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        currentContentReferenceSize = contentRect.size
     }
 
     private func makeSampleBuffer(

@@ -349,7 +349,9 @@ extension MirageHostService {
             if let busyClientContext = busyClientContext(forIncomingSessionID: sessionID) {
                 if let rejectionReason = busyHostTakeoverRejectionReason(
                     for: bootstrap,
-                    trustEvaluation: context.trustEvaluation
+                    trustEvaluation: context.trustEvaluation,
+                    existingClient: busyClientContext.client,
+                    incomingPeerIdentity: peerIdentity
                 ) {
                     MirageLogger.host(
                         "Connection from \(peerIdentity.name) rejected while host is busy reason=\(rejectionReason.rawValue)"
@@ -682,14 +684,22 @@ extension MirageHostService {
 
     func busyHostTakeoverRejectionReason(
         for request: MirageSessionBootstrapRequest,
-        trustEvaluation: LoomTrustEvaluation
+        trustEvaluation: LoomTrustEvaluation,
+        existingClient: MirageConnectedClient? = nil,
+        incomingPeerIdentity: LoomPeerIdentity? = nil
     ) -> MirageSessionBootstrapRejectionReason? {
-        guard request.requestTakeoverIfBusy == true else {
-            return .hostBusy
+        if let existingClient,
+           let incomingPeerIdentity,
+           shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) {
+            return nil
         }
 
         guard trustEvaluation.decision == .trusted else {
-            return .takeoverRequiresTrustedRequester
+            return request.requestTakeoverIfBusy == true ? .takeoverRequiresTrustedRequester : .hostBusy
+        }
+
+        guard request.requestTakeoverIfBusy != false else {
+            return .hostBusy
         }
 
         return nil

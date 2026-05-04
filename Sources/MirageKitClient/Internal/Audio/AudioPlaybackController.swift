@@ -43,12 +43,13 @@ public final class AudioPlaybackController {
 
     private let startupBufferSeconds: Double
     private let maxQueuedSeconds: Double
-    private let maxRuntimeExtraDelaySeconds: Double = 0.250
+    private let maxRuntimeExtraDelaySeconds: Double = 0.080
 
     private var playbackGraph: PlaybackGraph?
 
     private var configuredSampleRate: Int = 0
     private var configuredChannelCount: Int = 0
+    private var configuredOutputChannelCount: Int = 0
     private var pendingFrames: [PendingPlaybackFrame] = []
     private var pendingDurationSeconds: Double = 0
     private var scheduledDurationSeconds: Double = 0
@@ -93,6 +94,7 @@ public final class AudioPlaybackController {
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
+        configuredOutputChannelCount = 0
     }
 
     private func resolvePlaybackGraph() -> PlaybackGraph {
@@ -124,6 +126,7 @@ public final class AudioPlaybackController {
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
+        configuredOutputChannelCount = 0
         await releasePlaybackSessionIfNeeded()
     }
 
@@ -323,6 +326,7 @@ public final class AudioPlaybackController {
 
         configuredSampleRate = key.sampleRate
         configuredChannelCount = key.channelCount
+        configuredOutputChannelCount = resolvedOutputChannelCount(fallback: key.channelCount)
         hasStartedPlayback = false
         isDelayHoldActive = false
         isConfigured = true
@@ -369,7 +373,6 @@ public final class AudioPlaybackController {
             AVAudioSession.interruptionNotification,
             AVAudioSession.mediaServicesWereLostNotification,
             AVAudioSession.mediaServicesWereResetNotification,
-            AVAudioSession.routeChangeNotification,
         ]
         audioSessionObserverTokens = names.map { name in
             center.addObserver(forName: name, object: session, queue: nil) { [weak self] notification in
@@ -380,6 +383,18 @@ public final class AudioPlaybackController {
                 }
             }
         }
+        let routeToken = center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: session,
+            queue: nil
+        ) { [weak self] notification in
+            let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            Task { @MainActor [weak self, reasonValue] in
+                guard let self else { return }
+                await self.handleAudioRouteChange(reasonValue: reasonValue)
+            }
+        }
+        audioSessionObserverTokens.append(routeToken)
         #endif
     }
 
@@ -550,6 +565,37 @@ public final class AudioPlaybackController {
         MirageLogger.client("Audio playback session recovery: \(reason)")
         await reset()
     }
+
+    #if os(iOS) || os(visionOS)
+    private func handleAudioRouteChange(reasonValue: UInt?) async {
+        guard let reasonValue,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+              Self.shouldRecoverPlaybackForRouteChange(reason) else {
+            return
+        }
+        guard isConfigured, configuredOutputChannelCount > 0 else { return }
+        let currentOutputChannelCount = resolvedOutputChannelCount(fallback: configuredOutputChannelCount)
+        guard currentOutputChannelCount > 0,
+              currentOutputChannelCount != configuredOutputChannelCount else {
+            return
+        }
+
+        await handleAudioSessionRecovery(reason: "route-change-\(reason.rawValue)")
+    }
+
+    nonisolated static func shouldRecoverPlaybackForRouteChange(
+        _ reason: AVAudioSession.RouteChangeReason
+    ) -> Bool {
+        switch reason {
+        case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
+            return true
+        case .unknown, .categoryChange, .override, .wakeFromSleep, .noSuitableRouteForCategory:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+    #endif
 
     private func logQueueDepthIfNeeded() {
         guard MirageSteadyStateDiagnostics.isEnabled else { return }

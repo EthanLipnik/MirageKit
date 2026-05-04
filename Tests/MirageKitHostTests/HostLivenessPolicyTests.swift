@@ -39,6 +39,21 @@ struct HostLivenessPolicyTests {
         )
     }
 
+    @Test("Active background lease defers disconnect")
+    func activeBackgroundLeaseDefersDisconnect() {
+        #expect(
+            hostClientLivenessDecision(
+                controlIdleSeconds: 25,
+                mediaIdleSeconds: nil,
+                hasActiveStreams: false,
+                pingThreshold: 10,
+                disconnectThreshold: 20,
+                activeMediaGraceThreshold: 8,
+                hasActiveBackgroundLease: true
+            ) == .deferForBackgroundLease
+        )
+    }
+
     @Test("Stale media does not defer disconnect")
     func staleMediaDoesNotDeferDisconnect() {
         #expect(

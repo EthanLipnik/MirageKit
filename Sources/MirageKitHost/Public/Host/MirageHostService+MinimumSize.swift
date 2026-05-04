@@ -24,5 +24,15 @@ public extension MirageHostService {
             minimumSizesByWindowID[windowID] = minSize
         }
     }
+
+    func resolvedMinimumSize(for window: MirageWindow) async -> CGSize {
+        if let minSize = minimumSizesByWindowID[window.id] { return minSize }
+        if let discovered = await windowController.discoverMinimumSize(for: window) {
+            return discovered
+        }
+
+        let fallbackMin = fallbackMinimumSize(for: window.frame)
+        return CGSize(width: CGFloat(fallbackMin.minWidth), height: CGFloat(fallbackMin.minHeight))
+    }
 }
 #endif

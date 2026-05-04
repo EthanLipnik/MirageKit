@@ -113,10 +113,9 @@ extension StreamContext {
     }
 
     private nonisolated static func normalizedAppAtlasPixelLength(_ value: CGFloat) -> Int {
-        guard value.isFinite, value > 0 else { return 2 }
-        let rounded = Int(value.rounded())
-        let even = rounded - (rounded % 2)
-        return max(2, even)
+        guard value.isFinite, value > 0 else { return 16 }
+        let rounded = max(1, Int(ceil(value)))
+        return max(16, ((rounded + 15) / 16) * 16)
     }
 }
 #endif

@@ -227,7 +227,26 @@ extension MirageHostService {
         }
     }
 
-    func stopAppAtlasCoordinator(clientID: UUID) async {
+    func stopAppAtlasCoordinator(clientID: UUID, stopLogicalSessions: Bool = false) async {
+        if stopLogicalSessions, let coordinator = appAtlasCoordinatorsByClientID[clientID] {
+            let logicalStreamIDs = await coordinator.logicalStreamIDs()
+            let logicalSessions = appAtlasLogicalSessions(clientID: clientID, streamIDs: logicalStreamIDs)
+            let activeLogicalStreamIDs = Set(logicalSessions.map(\.id))
+            for session in logicalSessions {
+                await stopStream(
+                    session,
+                    minimizeWindow: false,
+                    updateAppSession: true,
+                    triggeredByExplicitStreamStop: false
+                )
+            }
+            for streamID in logicalStreamIDs where !activeLogicalStreamIDs.contains(streamID) {
+                if appAtlasCoordinatorsByClientID[clientID] != nil {
+                    await coordinator.removeWindow(streamID: streamID)
+                }
+            }
+        }
+
         guard let coordinator = appAtlasCoordinatorsByClientID.removeValue(forKey: clientID) else { return }
         let mediaStreamID = coordinator.mediaStreamID
         cancelPendingStartupAttempt(streamID: mediaStreamID)
@@ -244,6 +263,13 @@ extension MirageHostService {
         MirageLogger.host("Stopped app-atlas media stream \(mediaStreamID) for client \(clientID.uuidString)")
     }
 
+    func appAtlasLogicalSessions(clientID: UUID, streamIDs: [StreamID]) -> [MirageStreamSession] {
+        let streamIDSet = Set(streamIDs)
+        return activeStreams.filter { session in
+            session.client.id == clientID && streamIDSet.contains(session.id)
+        }
+    }
+
     private func ensureAppAtlasCoordinator(
         clientContext: ClientContext,
         selectRequest: SelectAppMessage,
@@ -251,11 +277,36 @@ extension MirageHostService {
         requestedBitrate: Int?,
         mediaMaxPacketSize: Int
     ) async throws -> AppAtlasMediaCoordinator {
-        if let existing = appAtlasCoordinatorsByClientID[clientContext.client.id] {
+        let clientID = clientContext.client.id
+        if let existing = appAtlasCoordinatorsByClientID[clientID] {
             return existing
         }
 
-        guard mediaSecurityByClientID[clientContext.client.id] != nil else {
+        if appAtlasCoordinatorCreationClientIDs.contains(clientID) {
+            MirageLogger.host(
+                "Waiting for in-flight app-atlas coordinator setup for client \(clientID.uuidString)"
+            )
+            while appAtlasCoordinatorCreationClientIDs.contains(clientID) {
+                try? await Task.sleep(for: .milliseconds(20))
+                if let existing = appAtlasCoordinatorsByClientID[clientID] {
+                    return existing
+                }
+            }
+            if let existing = appAtlasCoordinatorsByClientID[clientID] {
+                return existing
+            }
+        }
+
+        appAtlasCoordinatorCreationClientIDs.insert(clientID)
+        defer {
+            appAtlasCoordinatorCreationClientIDs.remove(clientID)
+        }
+
+        if let existing = appAtlasCoordinatorsByClientID[clientID] {
+            return existing
+        }
+
+        guard mediaSecurityByClientID[clientID] != nil else {
             throw MirageError.protocolError("Missing media security context for client")
         }
 
@@ -290,7 +341,7 @@ extension MirageHostService {
         } else {
             .baseline
         }
-        let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientContext.client.id] ?? .default
+        let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
         let context = StreamContext(
             streamID: mediaStreamID,
             windowID: 0,
@@ -333,7 +384,7 @@ extension MirageHostService {
 
         do {
             try await activateAudioForClient(
-                clientID: clientContext.client.id,
+                clientID: clientID,
                 expectedSessionID: clientContext.sessionID,
                 sourceStreamID: mediaStreamID,
                 configuration: audioConfiguration
@@ -360,7 +411,7 @@ extension MirageHostService {
         }
 
         let coordinator = AppAtlasMediaCoordinator(
-            clientID: clientContext.client.id,
+            clientID: clientID,
             mediaStreamID: mediaStreamID,
             context: context,
             encoderConfig: atlasEncoderConfig,
@@ -375,21 +426,6 @@ extension MirageHostService {
                 dispatchMainWork {
                     await self.handleVideoSendError(streamID: mediaStreamID, error: error)
                 }
-            },
-            registerStartupAttempt: { [weak self] startupAttemptID in
-                guard let self else { return }
-                self.registerPendingStartupAttempt(
-                    streamID: mediaStreamID,
-                    startupAttemptID: startupAttemptID,
-                    sessionID: clientContext.sessionID,
-                    clientID: clientContext.client.id,
-                    kind: .appAtlas
-                )
-                MirageLogger.signpostEvent(
-                    .host,
-                    "Startup.StreamStartedSent",
-                    "stream=\(mediaStreamID) kind=appAtlas"
-                )
             },
             sendMediaUpdate: { [weak self] update in
                 guard let self else { return }

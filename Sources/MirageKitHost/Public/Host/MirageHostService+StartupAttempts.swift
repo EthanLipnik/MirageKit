@@ -159,7 +159,7 @@ extension MirageHostService {
                     to: clientContext
                 )
             }
-            await stopAppAtlasCoordinator(clientID: pending.clientID)
+            await stopAppAtlasCoordinator(clientID: pending.clientID, stopLogicalSessions: true)
             MirageLogger.host(
                 "App atlas startup timed out waiting for client readiness ack stream=\(streamID)"
             )

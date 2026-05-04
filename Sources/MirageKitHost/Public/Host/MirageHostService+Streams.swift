@@ -62,6 +62,7 @@ enum WindowStreamStartFailureCode: Int, Sendable, Equatable, Hashable, Comparabl
 enum WindowStreamStartError: Error {
     case virtualDisplayStartFailed(code: WindowStreamStartFailureCode, details: String)
     case windowAlreadyBound(windowID: WindowID, existingStreamID: StreamID)
+    case windowStartupInProgress(windowID: WindowID)
 }
 
 extension WindowStreamStartError: LocalizedError {
@@ -71,6 +72,8 @@ extension WindowStreamStartError: LocalizedError {
             "Dedicated virtual display start failed: \(details)"
         case let .windowAlreadyBound(windowID, existingStreamID):
             "Window \(windowID) is already streamed by stream \(existingStreamID)"
+        case let .windowStartupInProgress(windowID):
+            "Window \(windowID) is already reserved by another startup attempt"
         }
     }
 }
@@ -80,7 +83,7 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
         switch windowStartError {
         case let .virtualDisplayStartFailed(code, _):
             return code
-        case .windowAlreadyBound:
+        case .windowAlreadyBound, .windowStartupInProgress:
             return .windowAlreadyBound
         }
     }
@@ -445,10 +448,9 @@ public extension MirageHostService {
         // Only notify client AFTER capture successfully started
         if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) {
             let streamWindow = session.window
-            let minSize = minimumSizesByWindowID[streamWindow.id]
-            let fallbackMin = fallbackMinimumSize(for: streamWindow.frame)
-            let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
-            let minHeight = Int(minSize?.height ?? CGFloat(fallbackMin.minHeight))
+            let minSize = await resolvedMinimumSize(for: streamWindow)
+            let minWidth = Int(minSize.width)
+            let minHeight = Int(minSize.height)
 
             let encodedDimensions = await context.getEncodedDimensions()
             let targetFrameRate = await context.getTargetFrameRate()
@@ -667,6 +669,8 @@ public extension MirageHostService {
             switch windowStartError {
             case let .windowAlreadyBound(_, existingStreamID):
                 return existingStreamID
+            case .windowStartupInProgress:
+                return nil
             case .virtualDisplayStartFailed:
                 break
             }
@@ -1175,10 +1179,9 @@ public extension MirageHostService {
             let dimensionToken = await context.getDimensionToken()
 
             if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) {
-                let minSize = minimumSizesByWindowID[updatedWindow.id]
-                let fallbackMin = fallbackMinimumSize(for: updatedWindow.frame)
-                let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
-                let minHeight = Int(minSize?.height ?? CGFloat(fallbackMin.minHeight))
+                let minSize = await resolvedMinimumSize(for: updatedWindow)
+                let minWidth = Int(minSize.width)
+                let minHeight = Int(minSize.height)
 
                 let message = StreamStartedMessage(
                     streamID: session.id,
@@ -1245,10 +1248,9 @@ public extension MirageHostService {
 
             // Notify the client of the dimensions
             if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) {
-                let minSize = minimumSizesByWindowID[windowID]
-                let fallbackMin = fallbackMinimumSize(for: latestFrame)
-                let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
-                let minHeight = Int(minSize?.height ?? CGFloat(fallbackMin.minHeight))
+                let minSize = await resolvedMinimumSize(for: updatedWindow)
+                let minWidth = Int(minSize.width)
+                let minHeight = Int(minSize.height)
 
                 let message = await StreamStartedMessage(
                     streamID: session.id,

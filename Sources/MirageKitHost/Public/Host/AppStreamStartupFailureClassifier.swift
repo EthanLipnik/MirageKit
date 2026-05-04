@@ -16,7 +16,7 @@ enum AppStreamStartupFailureClassifier {
 
         if let windowStartError = error as? WindowStreamStartError {
             switch windowStartError {
-            case .windowAlreadyBound:
+            case .windowAlreadyBound, .windowStartupInProgress:
                 return false
             case let .virtualDisplayStartFailed(code, _):
                 if code.isOwnershipConflict { return false }

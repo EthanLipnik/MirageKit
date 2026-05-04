@@ -71,6 +71,31 @@ struct AudioJitterBufferTests {
         #expect(result[0].frameNumber == 31)
     }
 
+    @Test("Discontinuity after playback start does not require startup buffering again")
+    func discontinuityAfterPlaybackStartDoesNotRebuffer() async {
+        let buffer = AudioJitterBuffer(startupBufferSeconds: 0.150)
+        let payload = Data(repeating: 0x22, count: 32)
+
+        let firstFrames = await buffer.ingest(
+            header: makeHeader(frameNumber: 1, timestamp: 100, samplesPerFrame: 4_800),
+            payload: payload
+        )
+        #expect(firstFrames.isEmpty)
+
+        let startupFrames = await buffer.ingest(
+            header: makeHeader(frameNumber: 2, timestamp: 200, samplesPerFrame: 4_800),
+            payload: payload
+        )
+        #expect(startupFrames.count == 2)
+
+        var discontinuityHeader = makeHeader(frameNumber: 3, timestamp: 300)
+        discontinuityHeader.flags = [.discontinuity]
+        let resumedFrames = await buffer.ingest(header: discontinuityHeader, payload: payload)
+
+        #expect(resumedFrames.count == 1)
+        #expect(resumedFrames[0].frameNumber == 3)
+    }
+
     @Test("Late frames are dropped after playback has started")
     func lateFramesDropAfterStartup() async {
         let buffer = AudioJitterBuffer(startupBufferSeconds: 0)

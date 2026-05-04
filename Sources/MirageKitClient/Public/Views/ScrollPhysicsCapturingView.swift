@@ -13,6 +13,11 @@ import UIKit
 /// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingView: UIView {
+    enum InputSource {
+        case indirectPointer
+        case directTouch
+    }
+
     // MARK: - Safe Area Override
 
     var ignoresSafeArea: Bool = true {
@@ -44,8 +49,15 @@ final class ScrollPhysicsCapturingView: UIView {
     /// The pan recognizer that drives native one-finger direct-touch scrolling.
     var directTouchPanGestureRecognizer: UIPanGestureRecognizer { directTouchScrollView.panGestureRecognizer }
 
-    /// Callback for scroll events: (deltaX, deltaY, phase, momentumPhase)
-    var onScroll: ((CGFloat, CGFloat, MirageScrollPhase, MirageScrollPhase) -> Void)?
+    /// Callback for scroll events: (deltaX, deltaY, phase, momentumPhase, source)
+    var onScroll: ((CGFloat, CGFloat, MirageScrollPhase, MirageScrollPhase, InputSource) -> Void)?
+
+    var isIndirectScrollActive: Bool {
+        isIndirectTracking ||
+            indirectScrollView.isTracking ||
+            indirectScrollView.isDragging ||
+            indirectScrollView.panGestureRecognizer.state.isActive
+    }
 
     /// Callback for rotation events: (rotationDegrees, phase)
     var onRotation: ((CGFloat, MirageScrollPhase) -> Void)?
@@ -290,7 +302,7 @@ final class ScrollPhysicsCapturingView: UIView {
         setTracking(true, for: scrollView)
         setLastContentOffset(scrollView.contentOffset, for: scrollView)
         reportDirectTouchPanLocation(for: scrollView)
-        onScroll?(0, 0, .began, .none)
+        onScroll?(0, 0, .began, .none, inputSource(for: scrollView))
     }
 
     private func handleScrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -312,7 +324,7 @@ final class ScrollPhysicsCapturingView: UIView {
         let momentumPhase: MirageScrollPhase = scrollView.isDecelerating ? .changed : .none
 
         if deltaX != 0 || deltaY != 0 {
-            onScroll?(deltaX, deltaY, phase, momentumPhase)
+            onScroll?(deltaX, deltaY, phase, momentumPhase, inputSource(for: scrollView))
         }
     }
 
@@ -330,13 +342,13 @@ final class ScrollPhysicsCapturingView: UIView {
         setTracking(false, for: scrollView)
 
         if !decelerate {
-            onScroll?(0, 0, .ended, .none)
+            onScroll?(0, 0, .ended, .none, inputSource(for: scrollView))
             recenterIfNeeded(for: scrollView)
         }
     }
 
     private func handleScrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        onScroll?(0, 0, .none, .ended)
+        onScroll?(0, 0, .none, .ended, inputSource(for: scrollView))
         recenterIfNeeded(for: scrollView)
     }
 
@@ -376,6 +388,11 @@ final class ScrollPhysicsCapturingView: UIView {
         return isDirectTracking
     }
 
+    private func inputSource(for scrollView: UIScrollView) -> InputSource {
+        if scrollView === indirectScrollView { return .indirectPointer }
+        return .directTouch
+    }
+
     private func setTracking(_ isTracking: Bool, for scrollView: UIScrollView) {
         if scrollView === indirectScrollView {
             isIndirectTracking = isTracking
@@ -413,6 +430,17 @@ final class ScrollPhysicsCapturingView: UIView {
             isRecenteringIndirect = isRecentering
         } else {
             isRecenteringDirect = isRecentering
+        }
+    }
+}
+
+private extension UIGestureRecognizer.State {
+    var isActive: Bool {
+        switch self {
+        case .began, .changed:
+            true
+        default:
+            false
         }
     }
 }

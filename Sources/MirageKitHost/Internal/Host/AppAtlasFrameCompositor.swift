@@ -107,8 +107,23 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
 
             let sourceWidth = CVPixelBufferGetWidth(frame.pixelBuffer)
             let sourceHeight = CVPixelBufferGetHeight(frame.pixelBuffer)
-            let copyWidth = min(Int(placement.destinationRect.width), sourceWidth)
-            let copyHeight = min(Int(placement.destinationRect.height), sourceHeight)
+            let sourceRect = placement.sourceRect.integral
+            let sourceOriginX = max(0, Int(sourceRect.minX))
+            let sourceOriginY = max(0, Int(sourceRect.minY))
+            let destinationOriginX = max(0, Int(placement.destinationRect.minX))
+            let destinationOriginY = max(0, Int(placement.destinationRect.minY))
+            let copyWidth = [
+                Int(placement.destinationRect.width),
+                Int(sourceRect.width),
+                max(0, sourceWidth - sourceOriginX),
+                max(0, width - destinationOriginX),
+            ].min() ?? 0
+            let copyHeight = [
+                Int(placement.destinationRect.height),
+                Int(sourceRect.height),
+                max(0, sourceHeight - sourceOriginY),
+                max(0, height - destinationOriginY),
+            ].min() ?? 0
             guard copyWidth > 0, copyHeight > 0 else { continue }
 
             let sourceTexture = try makeTexture(
@@ -118,10 +133,10 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
                 height: sourceHeight
             )
             var region = CopyRegion(
-                sourceOriginX: UInt32(max(0, Int(placement.sourceRect.minX))),
-                sourceOriginY: UInt32(max(0, Int(placement.sourceRect.minY))),
-                destinationOriginX: UInt32(max(0, Int(placement.destinationRect.minX))),
-                destinationOriginY: UInt32(max(0, Int(placement.destinationRect.minY))),
+                sourceOriginX: UInt32(sourceOriginX),
+                sourceOriginY: UInt32(sourceOriginY),
+                destinationOriginX: UInt32(destinationOriginX),
+                destinationOriginY: UInt32(destinationOriginY),
                 width: UInt32(copyWidth),
                 height: UInt32(copyHeight)
             )

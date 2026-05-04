@@ -82,6 +82,7 @@ actor AppAtlasMediaCoordinator {
         var title: String?
         var pointSize: CGSize
         var pixelSize: CGSize
+        var sourceRect: CGRect
         var isResizable: Bool
     }
 
@@ -95,7 +96,6 @@ actor AppAtlasMediaCoordinator {
     private let targetFrameRate: Int
     private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
     private let onSendError: @Sendable (Error) -> Void
-    private let registerStartupAttempt: @MainActor @Sendable (UUID) -> Void
     private let sendMediaUpdate: @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
 
     private var frameSink: MirageCustomStreamFrameSink?
@@ -109,6 +109,7 @@ actor AppAtlasMediaCoordinator {
     private var currentLayout: AppAtlasLayout.Result?
     private var currentPublicLayout: MirageAppAtlasLayout?
     private var compositionTask: Task<Void, Never>?
+    private var isStopped = false
 
     init(
         clientID: UUID,
@@ -120,7 +121,6 @@ actor AppAtlasMediaCoordinator {
         targetFrameRate: Int,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: @escaping @Sendable (Error) -> Void,
-        registerStartupAttempt: @escaping @MainActor @Sendable (UUID) -> Void,
         sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
     ) {
         self.clientID = clientID
@@ -132,12 +132,15 @@ actor AppAtlasMediaCoordinator {
         self.targetFrameRate = max(1, targetFrameRate)
         self.sendPacket = sendPacket
         self.onSendError = onSendError
-        self.registerStartupAttempt = registerStartupAttempt
         self.sendMediaUpdate = sendMediaUpdate
     }
 
     var isEmpty: Bool {
         logicalWindowsByWindowID.isEmpty
+    }
+
+    func logicalStreamIDs() -> [StreamID] {
+        logicalWindowsByWindowID.values.map(\.streamID).sorted()
     }
 
     func addWindow(
@@ -190,6 +193,8 @@ actor AppAtlasMediaCoordinator {
         replacingExistingStreamBinding: Bool,
         reason: String
     ) async throws -> AppAtlasWindowAttachment {
+        guard !isStopped else { throw CancellationError() }
+
         let windowID = window.id
         if let existing = logicalWindowsByWindowID[windowID] {
             guard existing.streamID == streamID else {
@@ -200,33 +205,50 @@ actor AppAtlasMediaCoordinator {
         if !replacingExistingStreamBinding, let existingWindowID = windowIDByStreamID[streamID] {
             throw MirageError.protocolError("App-atlas stream \(streamID) is already bound to window \(existingWindowID)")
         }
+        if capturesByWindowID[windowID] != nil {
+            throw MirageError.protocolError("App-atlas window \(windowID) capture is already starting")
+        }
 
         let captureContext = AppAtlasWindowCaptureContext(windowID: windowID)
         let target = streamTargetDimensions(windowFrame: windowWrapper.window.frame)
         let pixelSize = CGSize(width: target.width, height: target.height)
-        let logicalWindow = LogicalWindow(
+        var logicalWindow = LogicalWindow(
             streamID: streamID,
             windowID: windowID,
             title: window.title,
             pointSize: window.frame.size,
             pixelSize: pixelSize,
+            sourceRect: CGRect(origin: .zero, size: pixelSize),
             isResizable: isResizable
         )
 
-        try await captureContext.startCapture(
-            windowWrapper: windowWrapper,
-            applicationWrapper: applicationWrapper,
-            displayWrapper: displayWrapper,
-            encoderConfig: encoderConfig,
-            latencyMode: latencyMode,
-            capturePressureProfile: capturePressureProfile,
-            targetFrameRate: targetFrameRate,
-            onFrame: { [weak self] frame in
-                Task(priority: .userInitiated) {
-                    await self?.recordFrame(frame, windowID: windowID)
+        capturesByWindowID[windowID] = captureContext
+        do {
+            try await captureContext.startCapture(
+                windowWrapper: windowWrapper,
+                applicationWrapper: applicationWrapper,
+                displayWrapper: displayWrapper,
+                encoderConfig: encoderConfig,
+                latencyMode: latencyMode,
+                capturePressureProfile: capturePressureProfile,
+                targetFrameRate: targetFrameRate,
+                onFrame: { [weak self] frame in
+                    Task(priority: .userInitiated) {
+                        await self?.recordFrame(frame, windowID: windowID)
+                    }
                 }
-            }
-        )
+            )
+        } catch {
+            capturesByWindowID.removeValue(forKey: windowID)
+            await captureContext.stop()
+            throw error
+        }
+
+        guard !isStopped else {
+            capturesByWindowID.removeValue(forKey: windowID)
+            await captureContext.stop()
+            throw CancellationError()
+        }
 
         let oldWindowID = replacingExistingStreamBinding ? windowIDByStreamID[streamID] : nil
         let oldLogicalWindow = oldWindowID.flatMap { logicalWindowsByWindowID[$0] }
@@ -237,7 +259,15 @@ actor AppAtlasMediaCoordinator {
             latestFramesByWindowID.removeValue(forKey: oldWindowID)
         }
 
-        capturesByWindowID[windowID] = captureContext
+        if let latestFrame = latestFramesByWindowID[windowID] {
+            let latestPixelSize = Self.pixelSize(for: latestFrame)
+            logicalWindow.pixelSize = latestPixelSize
+            logicalWindow.sourceRect = Self.normalizedSourceRect(
+                contentRect: latestFrame.info.contentRect,
+                pixelSize: latestPixelSize
+            )
+        }
+
         logicalWindowsByWindowID[windowID] = logicalWindow
         windowIDByStreamID[streamID] = windowID
 
@@ -282,6 +312,7 @@ actor AppAtlasMediaCoordinator {
     }
 
     func stop() async {
+        isStopped = true
         compositionTask?.cancel()
         compositionTask = nil
         let captures = capturesByWindowID.values
@@ -289,6 +320,10 @@ actor AppAtlasMediaCoordinator {
         logicalWindowsByWindowID.removeAll()
         windowIDByStreamID.removeAll()
         latestFramesByWindowID.removeAll()
+        frameSink = nil
+        compositor = nil
+        currentLayout = nil
+        currentPublicLayout = nil
         for capture in captures {
             await capture.stop()
         }
@@ -305,19 +340,21 @@ actor AppAtlasMediaCoordinator {
 
     private func recordFrame(_ frame: CapturedFrame, windowID: WindowID) async {
         latestFramesByWindowID[windowID] = frame
-        let pixelSize = CGSize(
-            width: CVPixelBufferGetWidth(frame.pixelBuffer),
-            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        let pixelSize = Self.pixelSize(for: frame)
+        let sourceRect = Self.normalizedSourceRect(
+            contentRect: frame.info.contentRect,
+            pixelSize: pixelSize
         )
         guard var logicalWindow = logicalWindowsByWindowID[windowID],
-              logicalWindow.pixelSize != pixelSize else {
+              logicalWindow.pixelSize != pixelSize || logicalWindow.sourceRect != sourceRect else {
             return
         }
 
         logicalWindow.pixelSize = pixelSize
+        logicalWindow.sourceRect = sourceRect
         logicalWindowsByWindowID[windowID] = logicalWindow
         do {
-            try await recomputeLayoutAndNotify(reason: "capture size changed")
+            try await recomputeLayoutAndNotify(reason: "capture geometry changed")
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to update app-atlas layout after capture resize: ")
         }
@@ -329,7 +366,7 @@ actor AppAtlasMediaCoordinator {
             .map { window in
                 AppAtlasLayout.Window(
                     id: window.windowID,
-                    sourceRect: CGRect(origin: .zero, size: window.pixelSize)
+                    sourceRect: window.sourceRect
                 )
             }
         let nextLayout = AppAtlasLayout.nativePackedLayout(windows: windows)
@@ -375,9 +412,7 @@ actor AppAtlasMediaCoordinator {
             sendPacket: sendPacket,
             onSendError: onSendError
         )
-        await MainActor.run {
-            registerStartupAttempt(attemptID)
-        }
+        await context.allowEncodingAfterRegistration()
     }
 
     private func sendCurrentMediaUpdate(layout: MirageAppAtlasLayout) async throws {
@@ -438,6 +473,10 @@ actor AppAtlasMediaCoordinator {
 
     private func targetFrameRateSnapshot() -> Int {
         targetFrameRate
+    }
+
+    private nonisolated static func pixelSize(for frame: CapturedFrame) -> CGSize {
+        CGSize(width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer))
     }
 
     private func emitAtlasFrameIfPossible() async {

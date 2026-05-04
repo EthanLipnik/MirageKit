@@ -180,10 +180,10 @@ extension MirageHostInputController {
 
     /// Inject scroll event for desktop streaming.
     private func injectDesktopScrollEvent(_ event: MirageScrollEvent, bounds: CGRect) {
-        let scrollPoint: CGPoint = if let normalizedLocation = event.location {
+        let scrollPoint: CGPoint? = if let normalizedLocation = event.location {
             screenPoint(normalizedLocation, in: bounds)
         } else {
-            CGPoint(x: bounds.midX, y: bounds.midY)
+            nil
         }
 
         let rawX = event.deltaX + directScrollRemainderX
@@ -209,7 +209,9 @@ extension MirageHostInputController {
             return
         }
 
-        cgEvent.location = scrollPoint
+        if let scrollPoint {
+            cgEvent.location = scrollPoint
+        }
         cgEvent.flags = event.modifiers.cgEventFlags
         postEvent(cgEvent)
     }

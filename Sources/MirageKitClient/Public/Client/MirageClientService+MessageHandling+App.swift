@@ -252,11 +252,6 @@ extension MirageClientService {
             addActiveStreamID(mediaStreamID)
             registeredStreamIDs.insert(mediaStreamID)
             await updateReassemblerSnapshot()
-            await sendStreamReadyAck(
-                streamID: mediaStreamID,
-                startupAttemptID: update.startupAttemptID,
-                kind: .appAtlas
-            )
             if shouldSetupController {
                 startStartupRegistrationRetry(streamID: mediaStreamID)
             }

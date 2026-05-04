@@ -90,9 +90,13 @@ struct AppStreamStartupFailureClassifierTests {
             windowID: 404,
             existingStreamID: 9
         )
+        let startupRaceError = WindowStreamStartError.windowStartupInProgress(windowID: 405)
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
         #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(startupRaceError))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(startupRaceError))
+        #expect(windowStreamStartFailureCode(for: startupRaceError) == .windowAlreadyBound)
     }
 
     @Test("Owner conflict and mismatch details are non-retryable")

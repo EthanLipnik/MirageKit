@@ -60,7 +60,7 @@ actor AudioJitterBuffer {
 
     @discardableResult
     func ingest(header: AudioPacketHeader, payload: Data) -> [AudioEncodedFrame] {
-        if header.flags.contains(.discontinuity) { reset() }
+        if header.flags.contains(.discontinuity) { clearQueuedFramesForDiscontinuity() }
 
         let fragmentCount = max(1, Int(header.fragmentCount))
         let fragmentIndex = Int(header.fragmentIndex)
@@ -129,6 +129,13 @@ actor AudioJitterBuffer {
 
         cleanupStalePendingFrames(now: now)
         return flushPlayableFrames()
+    }
+
+    private func clearQueuedFramesForDiscontinuity() {
+        pendingFrames.removeAll()
+        readyFrames.removeAll()
+        lastEmittedTimestampNs = nil
+        lastEmittedFrameNumber = nil
     }
 
     private func flushPlayableFrames() -> [AudioEncodedFrame] {

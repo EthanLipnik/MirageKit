@@ -48,6 +48,22 @@ struct AudioLiveSyncPolicyTests {
         #expect(filtered.frames.count == frames.count)
     }
 
+    @Test("Default live sync policy preserves moderate video lead")
+    func defaultPolicyPreservesModerateVideoLead() {
+        let frames = [
+            makeFrame(timestampNs: 700_000_000),
+            makeFrame(timestampNs: 820_000_000),
+        ]
+
+        let filtered = MirageClientService.filterLiveAudioFramesForLiveSync(
+            frames,
+            videoTimestampNs: 1_000_000_000
+        )
+
+        #expect(filtered.droppedCount == 0)
+        #expect(filtered.frames.count == frames.count)
+    }
+
     private func makeFrame(timestampNs: UInt64) -> DecodedPCMFrame {
         DecodedPCMFrame(
             sampleRate: 48_000,
