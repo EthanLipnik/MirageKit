@@ -124,10 +124,13 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.hostCaptureVirtualDisplayTimingSuspect == true
         let unevenPresentationCadence =
             snapshot.clientWorstPresentationGapMs >= max(80.0, targetFrameIntervalMs * 3.0) ||
-            snapshot.clientFrameIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0)
+            snapshot.clientFrameIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0) ||
+            snapshot.clientDisplayTickIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0) ||
+            snapshot.clientMissedVSyncCount > 0
         let severeUnevenPresentationCadence =
             snapshot.clientWorstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
-            snapshot.clientFrameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
+            snapshot.clientFrameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
+            snapshot.clientDisplayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
 
         let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress
 
@@ -140,6 +143,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let submissionLaggingDecode = (submittedFPS + presentationGapGrace < decodedFPS) ||
             (uniqueSubmittedFPS + presentationGapGrace < decodedFPS)
         let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
+            snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
         let presentationBound = decodeKeepsUp && (

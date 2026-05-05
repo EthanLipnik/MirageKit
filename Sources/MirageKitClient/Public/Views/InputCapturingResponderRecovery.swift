@@ -48,9 +48,9 @@ enum InputCapturingResponderRecoveryDecision: Equatable {
 enum InputCapturingResponderRecoveryPolicy {
     static func target(
         softwareKeyboardVisible: Bool,
-        hardwareKeyboardPresent: Bool
+        hardwareKeyboardPresent _: Bool
     ) -> InputCapturingResponderTarget {
-        if softwareKeyboardVisible && !hardwareKeyboardPresent {
+        if softwareKeyboardVisible {
             return .softwareKeyboardField
         }
         return .captureView

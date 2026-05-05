@@ -14,13 +14,24 @@ import Testing
 #if os(macOS)
 @Suite("Auto Typing Burst Policy")
 struct AutoTypingBurstPolicyTests {
+    @Test("Auto mode uses bounded micro-stutter smoothing")
+    func autoModeUsesBoundedMicroStutterSmoothing() async {
+        let context = makeContext(latencyMode: .auto)
+        let policy = await context.getInFlightPolicy()
+
+        #expect(policy.minInFlightFrames == 2)
+        #expect(policy.maxInFlightFrames == 2)
+        #expect(policy.maxInFlightFramesCap == 2)
+        #expect(policy.frameBufferDepth == 3)
+    }
+
     @Test("Auto mode applies burst overrides and expires without quality rebound")
     func autoModeBurstActivationAndExpiry() async {
         let context = makeContext(latencyMode: .auto)
         let baseline = await context.typingBurstSnapshot()
         #expect(!baseline.isActive)
         #expect(!baseline.latencyBurstActive)
-        #expect(baseline.maxInFlightFrames == 3)
+        #expect(baseline.maxInFlightFrames == 2)
         #expect(baseline.captureQueueDepthOverride == nil)
         #expect(!baseline.newestFrameDrainEnabled)
 
@@ -81,7 +92,7 @@ struct AutoTypingBurstPolicyTests {
     func autoBurstExpiryRestoresSmoothBaselineTarget() async {
         let context = makeContext(latencyMode: .auto)
         let baseline = await context.typingBurstSnapshot()
-        #expect(baseline.maxInFlightFrames == 3)
+        #expect(baseline.maxInFlightFrames == 2)
 
         await context.noteTypingBurstActivity(at: 20.0, scheduleExpiry: false)
         await context.expireTypingBurstIfNeeded(at: 20.36)

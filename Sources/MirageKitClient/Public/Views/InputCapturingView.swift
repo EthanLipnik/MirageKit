@@ -677,7 +677,6 @@ public class InputCapturingView: UIView {
         guard hardwareKeyboardPresent != isPresent else { return }
         hardwareKeyboardPresent = isPresent
         onHardwareKeyboardPresenceChanged?(isPresent)
-        if isPresent { clearSoftwareKeyboardState() }
         requestResponderRecovery(.hardwareKeyboardPresenceChanged)
     }
 

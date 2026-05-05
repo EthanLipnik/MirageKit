@@ -556,6 +556,10 @@ extension MirageClientService {
                 sendStartDelayMaxMs: metrics.sendStartDelayMaxMs,
                 sendCompletionAverageMs: metrics.sendCompletionAverageMs,
                 sendCompletionMaxMs: metrics.sendCompletionMaxMs,
+                nonKeyframeSendStartDelayAverageMs: metrics.nonKeyframeSendStartDelayAverageMs,
+                nonKeyframeSendStartDelayMaxMs: metrics.nonKeyframeSendStartDelayMaxMs,
+                nonKeyframeSendCompletionAverageMs: metrics.nonKeyframeSendCompletionAverageMs,
+                nonKeyframeSendCompletionMaxMs: metrics.nonKeyframeSendCompletionMaxMs,
                 packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs,
                 packetPacerTotalSleepMs: metrics.packetPacerTotalSleepMs,
                 packetPacerMaxSleepMs: metrics.packetPacerMaxSleepMs,
@@ -632,6 +636,9 @@ extension MirageClientService {
                 clearPendingDesktopStreamStartState()
             }
             if errorMessage.code == .appStreamStartupFailed {
+                pendingAppRequestedColorDepth = nil
+                pendingAppRequestedLatencyMode = nil
+                clearPendingStreamSetup(kind: .app)
                 onAppStreamStartupFailed?(
                     AppStreamStartupFailure(
                         bundleIdentifier: errorMessage.bundleIdentifier,

@@ -701,12 +701,12 @@ extension MirageHostService {
             return nil
         }
 
-        guard trustEvaluation.decision == .trusted else {
-            return request.requestTakeoverIfBusy == true ? .takeoverRequiresTrustedRequester : .hostBusy
+        guard request.requestTakeoverIfBusy == true else {
+            return .hostBusy
         }
 
-        guard request.requestTakeoverIfBusy != false else {
-            return .hostBusy
+        guard trustEvaluation.decision == .trusted else {
+            return .takeoverRequiresTrustedRequester
         }
 
         return nil
@@ -716,12 +716,7 @@ extension MirageHostService {
         _ existingClient: MirageConnectedClient,
         for incomingPeerIdentity: LoomPeerIdentity
     ) -> Bool {
-        if existingClient.id == incomingPeerIdentity.deviceID { return true }
-        guard let existingIdentityKeyID = existingClient.identityKeyID,
-              let incomingIdentityKeyID = incomingPeerIdentity.identityKeyID else {
-            return false
-        }
-        return existingIdentityKeyID == incomingIdentityKeyID
+        existingClient.id == incomingPeerIdentity.deviceID
     }
 
     func preemptExistingClientIfSuperseded(by incomingPeerIdentity: LoomPeerIdentity) async {

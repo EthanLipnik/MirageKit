@@ -223,6 +223,7 @@ extension MirageHostService {
             )
             do {
                 try await clientContext.send(.disconnect, content: disconnect)
+                try await clientContext.controlChannel.closeStream()
             } catch {
                 if !isExpectedLifecycleControlSendFailure(error) {
                     MirageLogger.host(

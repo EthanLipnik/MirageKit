@@ -103,7 +103,7 @@ The host remains the authority for:
 - bitrate, frame-rate, and quality policy
 - host-side session state such as cursor mode, clipboard availability, and host maintenance status
 
-MirageKit keeps media freshness and capture recovery policy above Loom. Loom moves the unreliable packets between peers, while MirageKit's sender still understands frame boundaries, keyframes, startup state, target frame budgets, and host capture cadence. That lets the host pace live media for the current frame interval, preserve keyframe and recovery boundaries, reset stale queued media before asking the encoder for a recovery keyframe, and recover ScreenCaptureKit or virtual-display timing without treating it as a transport problem.
+MirageKit keeps media freshness and capture recovery policy above Loom. Loom moves the unreliable packets between peers, while MirageKit's sender still understands frame boundaries, keyframes, startup state, target frame budgets, and host capture cadence. That lets the host pace live media for the current frame interval, drop stale non-keyframes by deadline, preserve keyframe and recovery boundaries, reset stale queued media before asking the encoder for a recovery keyframe, and recover ScreenCaptureKit or virtual-display timing without treating it as a transport problem.
 
 Adaptive quality changes use live receiver and host telemetry first. Active-stream promotion probes are shaped like streaming traffic, remain subordinate to media, climb gradually, and keep cooldown history when probing is suppressed. A probe that overlaps frame gaps, freezes, or loss is treated as a negative signal for future targets.
 
@@ -138,7 +138,9 @@ The client presentation side is intentionally separate from transport and decode
 - display timing can be tuned for responsiveness
 - local UI concerns such as resizing, focus, and overlays stay outside the core transport path
 
-The result is a presentation pipeline whose job is simple: show the newest valid frame as smoothly and quickly as possible.
+Interactive clients use a display-clock presentation path where the platform refresh driver pulls decoded frames from a tiny bounded playout queue. The queue absorbs small decode/arrival bursts, drops late frames at the presentation boundary, and keeps SwiftUI out of per-frame invalidation. Sample-buffer timestamps are mapped to the local display clock for low-latency presentation, while metrics distinguish decode, render enqueue, display ticks, layer acceptance, repeated frames, missed vsync, and submission cadence.
+
+The result is a presentation pipeline whose job is simple: show the newest valid frame as smoothly and quickly as possible without turning short bursts into long visible holds.
 
 ## Input Translation
 

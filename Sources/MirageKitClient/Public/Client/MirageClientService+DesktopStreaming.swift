@@ -130,6 +130,8 @@ public extension MirageClientService {
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         pendingDesktopRequestedColorDepth = request.colorDepth
+        pendingDesktopRequestedLatencyMode = request.latencyMode ?? .lowestLatency
+        pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
 
         let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
         let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
@@ -253,6 +255,7 @@ public extension MirageClientService {
         pendingStreamSetupRequestID = nil
         pendingStreamSetupKind = nil
         pendingStreamSetupAppSessionID = nil
+        pendingStreamSetupLatencyMode = nil
         MirageLogger.client("Sent cancel stream setup")
     }
 }

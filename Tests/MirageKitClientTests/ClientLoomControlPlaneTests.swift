@@ -16,6 +16,37 @@ import Testing
 @Suite("Client Loom Control Plane", .serialized)
 struct ClientLoomControlPlaneTests {
     @MainActor
+    @Test("Bootstrap requests do not request takeover by default")
+    func bootstrapRequestsDoNotRequestTakeoverByDefault() {
+        let service = MirageClientService(deviceName: "Loopback Client")
+
+        let defaultRequest = service.makeBootstrapRequest()
+        #expect(defaultRequest.requestTakeoverIfBusy == nil)
+
+        let explicitTakeoverRequest = service.makeBootstrapRequest(requestTakeoverIfBusy: true)
+        #expect(explicitTakeoverRequest.requestTakeoverIfBusy == true)
+
+        let automaticReconnectRequest = service.makeBootstrapRequest(requestTakeoverIfBusy: false)
+        #expect(automaticReconnectRequest.requestTakeoverIfBusy == false)
+    }
+
+    @MainActor
+    @Test("Takeover disconnect reason is retained")
+    func takeoverDisconnectReasonIsRetained() async {
+        let service = MirageClientService(deviceName: "Loopback Client")
+
+        await service.handleDisconnect(
+            reason: "takenOver",
+            state: .disconnected,
+            notifyDelegate: false,
+            forceCleanup: true
+        )
+
+        #expect(service.lastDisconnectReason == "takenOver")
+        #expect(service.connectionState == .disconnected)
+    }
+
+    @MainActor
     @Test("Loom-backed control channel carries bootstrap and follow-up control traffic")
     func loomBackedControlChannelCarriesPostBootstrapTraffic() async throws {
         let pair = try await makeLoopbackControlPair()

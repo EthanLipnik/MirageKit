@@ -72,7 +72,8 @@ extension MirageClientService {
 
     public func connect(
         withEstablishedSession session: LoomAuthenticatedSession,
-        host: LoomPeer
+        host: LoomPeer,
+        requestTakeoverIfBusy: Bool? = nil
     ) async throws {
         guard connectionState.canConnect else {
             throw MirageError.protocolError("Already connected or connecting")
@@ -82,6 +83,7 @@ extension MirageClientService {
         beginConnectionStartupCriticalSection()
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using established session...")
+        lastDisconnectReason = nil
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
@@ -103,7 +105,11 @@ extension MirageClientService {
             pendingChannel = controlChannel
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
-            try await performBootstrap(over: controlChannel, provisionalHost: host)
+            try await performBootstrap(
+                over: controlChannel,
+                provisionalHost: host,
+                requestTakeoverIfBusy: requestTakeoverIfBusy
+            )
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
 
@@ -166,7 +172,8 @@ extension MirageClientService {
 
     public func connect(
         to host: LoomPeer,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
+        requestHostUpdateOnProtocolMismatch: Bool? = nil,
+        requestTakeoverIfBusy: Bool? = nil
     ) async throws {
         guard connectionState.canConnect else {
             throw MirageError.protocolError("Already connected or connecting")
@@ -176,6 +183,7 @@ extension MirageClientService {
         beginConnectionStartupCriticalSection()
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name)...")
+        lastDisconnectReason = nil
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
@@ -196,7 +204,8 @@ extension MirageClientService {
                 to: host,
                 hello: helloRequest,
                 attemptID: attemptID,
-                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
+                requestTakeoverIfBusy: requestTakeoverIfBusy
             )
             let session = bootstrappedSession.session
             let controlChannel = bootstrappedSession.controlChannel
@@ -324,6 +333,7 @@ extension MirageClientService {
         loomSession = nil
         transferEngine = nil
         stopTransferObserver()
+        lastDisconnectReason = reason
         connectionState = state
 
         if let disconnectedControlChannel {
@@ -409,6 +419,10 @@ extension MirageClientService {
         pendingRequestedColorDepthByWindowID.removeAll()
         pendingDesktopRequestedColorDepth = nil
         pendingAppRequestedColorDepth = nil
+        pendingDesktopRequestedLatencyMode = nil
+        pendingAppRequestedLatencyMode = nil
+        pendingStreamSetupLatencyMode = nil
+        renderLatencyModeByStream.removeAll()
         desktopDimensionTokenByStream.removeAll()
         appDimensionTokenByStream.removeAll()
         appStreamStartAcknowledgementByStreamID.removeAll()
@@ -497,7 +511,8 @@ extension MirageClientService {
         to host: LoomPeer,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
+        requestHostUpdateOnProtocolMismatch: Bool? = nil,
+        requestTakeoverIfBusy: Bool? = nil
     ) async throws -> BootstrappedControlSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
@@ -527,7 +542,8 @@ extension MirageClientService {
                 try await performBootstrap(
                     over: controlChannel,
                     provisionalHost: host,
-                    requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+                    requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
+                    requestTakeoverIfBusy: requestTakeoverIfBusy
                 )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
@@ -1525,7 +1541,8 @@ extension MirageClientService {
     private func performBootstrap(
         over controlChannel: MirageControlChannel,
         provisionalHost: LoomPeer,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
+        requestHostUpdateOnProtocolMismatch: Bool? = nil,
+        requestTakeoverIfBusy: Bool? = nil
     ) async throws {
         connectionState = .handshaking(host: provisionalHost.name)
         MirageInstrumentation.record(.clientHelloSent)
@@ -1534,7 +1551,7 @@ extension MirageClientService {
             .sessionBootstrapRequest,
             content: makeBootstrapRequest(
                 requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch,
-                requestTakeoverIfBusy: provisionalHost.advertisement.mirageAcceptingConnections ? nil : true
+                requestTakeoverIfBusy: requestTakeoverIfBusy
             )
         )
 

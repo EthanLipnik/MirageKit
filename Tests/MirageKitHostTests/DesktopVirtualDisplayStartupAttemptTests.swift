@@ -201,58 +201,56 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(attempts[2].label == "conservative-retry")
     }
 
-    @Test("Startup surface consumes encoder cap when cap determines stream scale")
-    func startupSurfaceConsumesEncoderCapWhenCapDeterminesStreamScale() {
+    @Test("Startup surface keeps full display when encoder cap determines stream scale")
+    func startupSurfaceKeepsFullDisplayWhenEncoderCapDeterminesStreamScale() {
         let surface = desktopVirtualDisplayStartupSurface(
             requestedLogicalResolution: CGSize(width: 1600, height: 1200),
-            requestedScaleFactor: 1.0,
-            requestedStreamScale: 0.6,
-            encoderMaxWidth: 1280,
-            encoderMaxHeight: 720,
-            disableResolutionCap: false
+            requestedScaleFactor: 1.0
         )
 
-        #expect(surface.logicalResolution == CGSize(width: 960, height: 720))
+        #expect(surface.logicalResolution == CGSize(width: 1600, height: 1200))
         #expect(surface.requestedScaleFactor == 1.0)
         #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
-        #expect(surface.pixelResolution == CGSize(width: 960, height: 720))
-        #expect(surface.consumesEncoderScale)
+        #expect(surface.pixelResolution == CGSize(width: 1600, height: 1200))
     }
 
     @Test("Startup surface keeps full display for manual stream scale")
     func startupSurfaceKeepsFullDisplayForManualStreamScale() {
         let surface = desktopVirtualDisplayStartupSurface(
             requestedLogicalResolution: CGSize(width: 1600, height: 1200),
-            requestedScaleFactor: 1.0,
-            requestedStreamScale: 0.5,
-            encoderMaxWidth: 1280,
-            encoderMaxHeight: 720,
-            disableResolutionCap: false
+            requestedScaleFactor: 1.0
         )
 
         #expect(surface.logicalResolution == CGSize(width: 1600, height: 1200))
         #expect(surface.requestedScaleFactor == 1.0)
         #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
         #expect(surface.pixelResolution == CGSize(width: 1600, height: 1200))
-        #expect(!surface.consumesEncoderScale)
+    }
+
+    @Test("Startup surface preserves Retina geometry under free-tier 720p cap")
+    func startupSurfacePreservesRetinaGeometryUnderFreeTier720pCap() {
+        let surface = desktopVirtualDisplayStartupSurface(
+            requestedLogicalResolution: CGSize(width: 1366, height: 1024),
+            requestedScaleFactor: 2.0
+        )
+
+        #expect(surface.logicalResolution == CGSize(width: 1366, height: 1024))
+        #expect(surface.requestedScaleFactor == 2.0)
+        #expect(surface.requestedPixelResolution == CGSize(width: 2720, height: 2048))
+        #expect(surface.pixelResolution == CGSize(width: 2720, height: 2048))
     }
 
     @Test("Startup surface keeps uncapped display without explicit encoder limit")
     func startupSurfaceKeepsUncappedDisplayWithoutExplicitEncoderLimit() {
         let surface = desktopVirtualDisplayStartupSurface(
             requestedLogicalResolution: CGSize(width: 1600, height: 1200),
-            requestedScaleFactor: 1.0,
-            requestedStreamScale: 1.0,
-            encoderMaxWidth: nil,
-            encoderMaxHeight: nil,
-            disableResolutionCap: true
+            requestedScaleFactor: 1.0
         )
 
         #expect(surface.logicalResolution == CGSize(width: 1600, height: 1200))
         #expect(surface.requestedScaleFactor == 1.0)
         #expect(surface.requestedPixelResolution == CGSize(width: 1600, height: 1200))
         #expect(surface.pixelResolution == CGSize(width: 1600, height: 1200))
-        #expect(!surface.consumesEncoderScale)
     }
 }
 #endif

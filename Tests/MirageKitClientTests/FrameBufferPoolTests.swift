@@ -32,5 +32,39 @@ struct FrameBufferPoolTests {
         #expect(secondOutput == Data([0xAA, 0xBB, 0xCC, 0xDD]))
         #expect(firstOutput != secondOutput)
     }
+
+    @Test("Oversized buffers are not retained")
+    func oversizedBuffersAreNotRetained() {
+        let pool = FrameBufferPool(
+            maxBuffersPerCapacity: 4,
+            maxRetainedBufferCapacity: 16,
+            maxRetainedBytes: 64
+        )
+
+        let oversizedBuffer = pool.acquire(capacity: 32)
+        oversizedBuffer.release()
+
+        #expect(pool.retainedByteCount() == 0)
+    }
+
+    @Test("Retained buffers stay under total byte budget")
+    func retainedBuffersStayUnderTotalByteBudget() {
+        let pool = FrameBufferPool(
+            maxBuffersPerCapacity: 4,
+            maxRetainedBufferCapacity: 16,
+            maxRetainedBytes: 24
+        )
+
+        let firstBuffer = pool.acquire(capacity: 16)
+        let secondBuffer = pool.acquire(capacity: 16)
+        firstBuffer.release()
+        secondBuffer.release()
+
+        #expect(pool.retainedByteCount() <= 24)
+
+        let reusedBuffer = pool.acquire(capacity: 16)
+        #expect(pool.retainedByteCount() == 0)
+        reusedBuffer.release()
+    }
 }
 #endif

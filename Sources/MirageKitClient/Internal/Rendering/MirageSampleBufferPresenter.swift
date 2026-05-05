@@ -24,8 +24,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     static let cmTimeScale: CMTimeScale = 1_000_000_000
-    static let presentationRebaseThresholdSeconds: CFTimeInterval = 1.0
-    static let stallRecoveryThresholdSeconds: CFTimeInterval = 0.5
     static let displayLayerLivenessResetThresholdSeconds: CFTimeInterval = 0.75
 
     private weak var displayLayer: AVSampleBufferDisplayLayer?
@@ -40,8 +38,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var cachedFormatKey: PixelBufferFormatKey?
     private var cachedFormatDescription: CMVideoFormatDescription?
     private var lastSubmittedSequence: UInt64 = 0
-    private var remotePresentationOrigin: CMTime?
-    private var localPresentationOrigin: CFTimeInterval?
     private var lastMappedPresentationTime: CMTime = .invalid
     private var loggedLayerFailure = false
     private var lastFrameSubmissionTime: CFTimeInterval = 0
@@ -65,8 +61,10 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     var hasPendingFrameForCurrentPresenter: Bool {
         guard let streamID else { return false }
-        guard let frame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID) else { return false }
-        return frame.sequence > lastSubmittedSequence
+        return MirageRenderStreamStore.shared.hasFrameForPresentation(
+            for: streamID,
+            after: lastSubmittedSequence
+        )
     }
 
     func setTargetFPS(_ fps: Int) {
@@ -136,21 +134,8 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard displayLayer.status != .failed else { return .blocked }
 
         let now = CACurrentMediaTime()
-        guard let frame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID) else {
+        guard MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: lastSubmittedSequence) else {
             return .noPendingFrame
-        }
-
-        if frame.sequence <= lastSubmittedSequence {
-            let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
-            if latestSequence > 0, latestSequence < lastSubmittedSequence {
-                MirageLogger
-                    .renderer(
-                        "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
-            )
-                resetSequenceTrackingState()
-                refreshFrameListener(for: streamID)
-            }
-            guard frame.sequence > lastSubmittedSequence else { return .noPendingFrame }
         }
 
         MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
@@ -161,14 +146,23 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
         displayLayerNotReadyStartTime = 0
 
-        // Detect presentation stalls (backpressure, display sleep, window occlusion)
-        // only when a new frame is actually waiting, then rebase time mapping to
-        // prevent fast-forward playback on recovery.
-        if lastFrameSubmissionTime > 0, (now - lastFrameSubmissionTime) > Self.stallRecoveryThresholdSeconds {
-            MirageLogger.renderer(
-                "Presentation stall detected (\(String(format: "%.2f", now - lastFrameSubmissionTime))s gap); rebasing time origin"
-            )
-            resetSequenceTrackingState()
+        guard let frame = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: lastSubmittedSequence
+        ) else {
+            return .noPendingFrame
+        }
+
+        if frame.sequence <= lastSubmittedSequence {
+            let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
+            if latestSequence > 0, latestSequence < lastSubmittedSequence {
+                MirageLogger.renderer(
+                    "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
+                )
+                resetSequenceTrackingState()
+                refreshFrameListener(for: streamID)
+            }
+            guard frame.sequence > lastSubmittedSequence else { return .noPendingFrame }
         }
 
         let pixelBuffer = presentationPixelBuffer(for: frame)
@@ -210,8 +204,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     private func resetSequenceTrackingState() {
         lastSubmittedSequence = 0
-        remotePresentationOrigin = nil
-        localPresentationOrigin = nil
         lastMappedPresentationTime = .invalid
         lastFrameSubmissionTime = 0
         displayLayerNotReadyStartTime = 0
@@ -289,41 +281,11 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func mappedPresentationTime(
-        remotePresentationTime: CMTime,
+        remotePresentationTime _: CMTime,
         referenceTime: CFTimeInterval
     ) -> CMTime {
         let fallbackNow = CMTime(seconds: referenceTime, preferredTimescale: Self.cmTimeScale)
-        guard remotePresentationTime.isValid else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        if remotePresentationOrigin == nil || localPresentationOrigin == nil {
-            remotePresentationOrigin = remotePresentationTime
-            localPresentationOrigin = referenceTime
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        guard let remoteOrigin = remotePresentationOrigin,
-              let localOrigin = localPresentationOrigin else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        let delta = CMTimeSubtract(remotePresentationTime, remoteOrigin)
-        let deltaSeconds = CMTimeGetSeconds(delta)
-        guard deltaSeconds.isFinite else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        if deltaSeconds < -Self.presentationRebaseThresholdSeconds ||
-            deltaSeconds > 60 * 60 {
-            remotePresentationOrigin = remotePresentationTime
-            localPresentationOrigin = referenceTime
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        let localSeconds = localOrigin + max(0, deltaSeconds)
-        let mapped = CMTime(seconds: localSeconds, preferredTimescale: Self.cmTimeScale)
-        return makeMonotonicPresentationTime(from: mapped)
+        return makeMonotonicPresentationTime(from: fallbackNow)
     }
 
     private func makeMonotonicPresentationTime(from candidate: CMTime) -> CMTime {

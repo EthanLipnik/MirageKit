@@ -16,6 +16,7 @@ struct ClientStreamingAnomalySample: Sendable {
     let receivedWorstGapMs: Double
     let receivedFrameIntervalP95Ms: Double
     let receivedFrameIntervalP99Ms: Double
+    let displayTickFPS: Double
     let submitAttemptFPS: Double
     let layerAcceptedFPS: Double
     let presentedFPS: Double
@@ -24,7 +25,13 @@ struct ClientStreamingAnomalySample: Sendable {
     let pendingFrameCount: Int
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
+    let lateFrameDrops: UInt64
     let displayLayerNotReadyCount: UInt64
+    let repeatedFrameCount: UInt64
+    let missedVSyncCount: UInt64
+    let displayTickIntervalP95Ms: Double
+    let displayTickIntervalP99Ms: Double
+    let playoutDelayFrames: Int
     let presentationStallCount: UInt64
     let worstPresentationGapMs: Double
     let frameIntervalP95Ms: Double
@@ -32,6 +39,11 @@ struct ClientStreamingAnomalySample: Sendable {
     let decodeHealthy: Bool
     let decodeSubmissionLimit: Int
     let presentationTier: StreamPresentationTier
+    let reassemblerPendingFrameCount: Int
+    let reassemblerPendingKeyframeCount: Int
+    let reassemblerPendingBytes: Int
+    let frameBufferPoolRetainedBytes: Int
+    let reassemblerBudgetEvictions: UInt64
     let decoderOutputPixelFormat: String?
     let usingHardwareDecoder: Bool?
     let targetFrameRate: Int
@@ -45,6 +57,7 @@ struct ClientStreamingAnomalySample: Sendable {
         receivedWorstGapMs: Double = 0,
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
+        displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
         presentedFPS: Double = 0,
@@ -53,7 +66,13 @@ struct ClientStreamingAnomalySample: Sendable {
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
+        lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
+        repeatedFrameCount: UInt64 = 0,
+        missedVSyncCount: UInt64 = 0,
+        displayTickIntervalP95Ms: Double = 0,
+        displayTickIntervalP99Ms: Double = 0,
+        playoutDelayFrames: Int = 0,
         presentationStallCount: UInt64 = 0,
         worstPresentationGapMs: Double = 0,
         frameIntervalP95Ms: Double = 0,
@@ -61,6 +80,11 @@ struct ClientStreamingAnomalySample: Sendable {
         decodeHealthy: Bool,
         decodeSubmissionLimit: Int,
         presentationTier: StreamPresentationTier,
+        reassemblerPendingFrameCount: Int = 0,
+        reassemblerPendingKeyframeCount: Int = 0,
+        reassemblerPendingBytes: Int = 0,
+        frameBufferPoolRetainedBytes: Int = 0,
+        reassemblerBudgetEvictions: UInt64 = 0,
         decoderOutputPixelFormat: String?,
         usingHardwareDecoder: Bool?,
         targetFrameRate: Int,
@@ -73,6 +97,7 @@ struct ClientStreamingAnomalySample: Sendable {
         self.receivedWorstGapMs = receivedWorstGapMs
         self.receivedFrameIntervalP95Ms = receivedFrameIntervalP95Ms
         self.receivedFrameIntervalP99Ms = receivedFrameIntervalP99Ms
+        self.displayTickFPS = displayTickFPS
         self.submitAttemptFPS = submitAttemptFPS
         self.layerAcceptedFPS = layerAcceptedFPS
         self.presentedFPS = presentedFPS
@@ -81,7 +106,13 @@ struct ClientStreamingAnomalySample: Sendable {
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
+        self.lateFrameDrops = lateFrameDrops
         self.displayLayerNotReadyCount = displayLayerNotReadyCount
+        self.repeatedFrameCount = repeatedFrameCount
+        self.missedVSyncCount = missedVSyncCount
+        self.displayTickIntervalP95Ms = displayTickIntervalP95Ms
+        self.displayTickIntervalP99Ms = displayTickIntervalP99Ms
+        self.playoutDelayFrames = playoutDelayFrames
         self.presentationStallCount = presentationStallCount
         self.worstPresentationGapMs = worstPresentationGapMs
         self.frameIntervalP95Ms = frameIntervalP95Ms
@@ -89,6 +120,11 @@ struct ClientStreamingAnomalySample: Sendable {
         self.decodeHealthy = decodeHealthy
         self.decodeSubmissionLimit = decodeSubmissionLimit
         self.presentationTier = presentationTier
+        self.reassemblerPendingFrameCount = reassemblerPendingFrameCount
+        self.reassemblerPendingKeyframeCount = reassemblerPendingKeyframeCount
+        self.reassemblerPendingBytes = reassemblerPendingBytes
+        self.frameBufferPoolRetainedBytes = frameBufferPoolRetainedBytes
+        self.reassemblerBudgetEvictions = reassemblerBudgetEvictions
         self.decoderOutputPixelFormat = decoderOutputPixelFormat
         self.usingHardwareDecoder = usingHardwareDecoder
         self.targetFrameRate = targetFrameRate
@@ -102,6 +138,7 @@ struct ClientStreamingAnomalySample: Sendable {
             clientReceivedWorstGapMs: receivedWorstGapMs,
             clientReceivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
             clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
+            clientDisplayTickFPS: displayTickFPS,
             clientSubmitAttemptFPS: submitAttemptFPS,
             clientLayerAcceptedFPS: layerAcceptedFPS,
             clientPresentedFPS: presentedFPS,
@@ -110,12 +147,23 @@ struct ClientStreamingAnomalySample: Sendable {
             pendingFrameCount: pendingFrameCount,
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
+            clientLateFrameDrops: lateFrameDrops,
             clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
+            clientRepeatedFrameCount: repeatedFrameCount,
+            clientMissedVSyncCount: missedVSyncCount,
+            clientDisplayTickIntervalP95Ms: displayTickIntervalP95Ms,
+            clientDisplayTickIntervalP99Ms: displayTickIntervalP99Ms,
+            clientPlayoutDelayFrames: playoutDelayFrames,
             clientPresentationStallCount: presentationStallCount,
             clientWorstPresentationGapMs: worstPresentationGapMs,
             clientFrameIntervalP95Ms: frameIntervalP95Ms,
             clientFrameIntervalP99Ms: frameIntervalP99Ms,
             decodeHealthy: decodeHealthy,
+            clientReassemblerPendingFrameCount: reassemblerPendingFrameCount,
+            clientReassemblerPendingKeyframeCount: reassemblerPendingKeyframeCount,
+            clientReassemblerPendingBytes: reassemblerPendingBytes,
+            clientFrameBufferPoolRetainedBytes: frameBufferPoolRetainedBytes,
+            clientReassemblerBudgetEvictions: reassemblerBudgetEvictions,
             hostEncodedFPS: hostMetrics?.encodedFPS ?? 0,
             hostIdleFPS: hostMetrics?.idleEncodedFPS ?? 0,
             hostDroppedFrames: hostMetrics?.droppedFrames ?? 0,
@@ -162,6 +210,10 @@ struct ClientStreamingAnomalySample: Sendable {
         snapshot.hostSendStartDelayMaxMs = hostMetrics?.sendStartDelayMaxMs
         snapshot.hostSendCompletionAverageMs = hostMetrics?.sendCompletionAverageMs
         snapshot.hostSendCompletionMaxMs = hostMetrics?.sendCompletionMaxMs
+        snapshot.hostNonKeyframeSendStartDelayAverageMs = hostMetrics?.nonKeyframeSendStartDelayAverageMs
+        snapshot.hostNonKeyframeSendStartDelayMaxMs = hostMetrics?.nonKeyframeSendStartDelayMaxMs
+        snapshot.hostNonKeyframeSendCompletionAverageMs = hostMetrics?.nonKeyframeSendCompletionAverageMs
+        snapshot.hostNonKeyframeSendCompletionMaxMs = hostMetrics?.nonKeyframeSendCompletionMaxMs
         snapshot.hostPacketPacerAverageSleepMs = hostMetrics?.packetPacerAverageSleepMs
         snapshot.hostPacketPacerTotalSleepMs = hostMetrics?.packetPacerTotalSleepMs
         snapshot.hostPacketPacerMaxSleepMs = hostMetrics?.packetPacerMaxSleepMs
@@ -220,11 +272,18 @@ func clientStreamingAnomalyDiagnostic(
         "decoded=\(formattedFPS(sample.decodedFPS))fps received=\(formattedFPS(sample.receivedFPS))fps " +
         "receivedWorstGap=\(formattedMs(sample.receivedWorstGapMs))ms " +
         "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
+        "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
+        "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
         "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
         "presented=\(formattedFPS(sample.presentedFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
-        "overwritten=\(sample.overwrittenPendingFrames) layerBackpressure=\(sample.displayLayerNotReadyCount) " +
+        "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
+        "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
+        "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
+        "overwritten=\(sample.overwrittenPendingFrames) lateDrops=\(sample.lateFrameDrops) " +
+        "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
+        "layerBackpressure=\(sample.displayLayerNotReadyCount) " +
         "decodeHealthy=\(sample.decodeHealthy) limit=\(sample.decodeSubmissionLimit) " +
         "tier=\(sample.presentationTier.rawValue) target=\(sample.targetFrameRate) " +
         "decoderFormat=\(decoderFormat) hardwareDecoder=\(hardwareDecoderText) " +
@@ -236,6 +295,8 @@ func clientStreamingAnomalyDiagnostic(
         "sendDone=\(formattedMs(sample.hostMetrics?.sendCompletionAverageMs))ms " +
         "sendStartMax=\(formattedMs(sample.hostMetrics?.sendStartDelayMaxMs))ms " +
         "sendDoneMax=\(formattedMs(sample.hostMetrics?.sendCompletionMaxMs))ms " +
+        "nonKeySendStartMax=\(formattedMs(sample.hostMetrics?.nonKeyframeSendStartDelayMaxMs))ms " +
+        "nonKeySendDoneMax=\(formattedMs(sample.hostMetrics?.nonKeyframeSendCompletionMaxMs))ms " +
         "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms " +
         "pacerTotal=\(sample.hostMetrics?.packetPacerTotalSleepMs.map(String.init) ?? "--")ms " +
         "pacerFrameMax=\(sample.hostMetrics?.packetPacerFrameMaxSleepMs.map(String.init) ?? "--")ms " +
@@ -286,12 +347,14 @@ private func resolvedAnomalyBottleneckKind(
         sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
         sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
     let presentationBackpressure = sample.overwrittenPendingFrames > 0 ||
+        sample.lateFrameDrops > 0 ||
         sample.displayLayerNotReadyCount > 0 ||
         sample.pendingFrameAgeMs >= pendingAgeThresholdMs
     let targetFrameIntervalMs = 1_000.0 / targetFPS
     let severeUnevenPresentationCadence =
         sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
-        sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
+        sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
+        sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
     if decodeKeepsUp && (
         submissionLaggingDecode && presentationBackpressure ||
             severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90

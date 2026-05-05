@@ -239,6 +239,8 @@ public extension MirageClientService {
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         pendingAppRequestedColorDepth = request.colorDepth
+        pendingAppRequestedLatencyMode = request.latencyMode ?? .lowestLatency
+        pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
 
         try await sendControlMessage(.selectApp, content: request)
 

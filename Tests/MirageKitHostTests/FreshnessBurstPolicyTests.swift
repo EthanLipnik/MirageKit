@@ -8,6 +8,7 @@
 //
 
 @testable import MirageKitHost
+import Foundation
 import MirageKit
 import Testing
 
@@ -102,9 +103,95 @@ struct FreshnessBurstPolicyTests {
         #expect(settings.captureQueueDepth == 8)
     }
 
+    @Test("Keyframe-only sender delay does not enter freshness burst")
+    func keyframeOnlySenderDelayDoesNotEnterFreshnessBurst() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 8
+        )
+        let telemetry = makeSenderTelemetry(
+            sendCompletionMaxMs: 55,
+            keyframeSendMaxMs: 55
+        )
+
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+
+        let burst = await context.freshnessBurstSnapshot()
+        #expect(!burst.isActive)
+        #expect(burst.entryCount == 0)
+        #expect(await context.senderFrameBudgetDelayOverrunCount == 0)
+    }
+
+    @Test("Lowest-latency non-keyframe sender delay still enters freshness burst")
+    func lowestLatencyNonKeyframeSenderDelayStillEntersFreshnessBurst() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 8
+        )
+        let telemetry = makeSenderTelemetry(
+            sendCompletionMaxMs: 55,
+            nonKeyframeSendCompletionMaxMs: 55
+        )
+
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+
+        let burst = await context.freshnessBurstSnapshot()
+        #expect(burst.isActive)
+        #expect(burst.entryCount == 1)
+        #expect(burst.recoveryKeyframeCount == 1)
+    }
+
+    @Test("Automatic non-keyframe sender delay uses soft drain instead of recovery burst")
+    func automaticNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 8,
+            latencyMode: .auto
+        )
+        let telemetry = makeSenderTelemetry(
+            sendCompletionMaxMs: 55,
+            nonKeyframeSendCompletionMaxMs: 55
+        )
+
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+
+        let burst = await context.freshnessBurstSnapshot()
+        #expect(!burst.isActive)
+        #expect(!burst.latencyBurstActive)
+        #expect(burst.newestFrameDrainEnabled)
+        #expect(burst.entryCount == 0)
+        #expect(burst.recoveryKeyframeCount == 0)
+
+        await context.expireSoftFreshnessDrainIfNeeded(at: CFAbsoluteTimeGetCurrent() + 1)
+        let expired = await context.freshnessBurstSnapshot()
+        #expect(!expired.newestFrameDrainEnabled)
+    }
+
     private func makeContext(
         bitrate: Int,
-        captureQueueDepth: Int
+        captureQueueDepth: Int,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: 60,
@@ -120,9 +207,40 @@ struct FreshnessBurstPolicyTests {
             encoderConfig: config,
             runtimeQualityAdjustmentEnabled: true,
             capturePressureProfile: .tuned,
-            latencyMode: .lowestLatency,
+            latencyMode: latencyMode,
             performanceMode: .standard,
             enteredBitrate: bitrate
+        )
+    }
+
+    private func makeSenderTelemetry(
+        queuedBytes: Int = 0,
+        sendStartDelayMaxMs: Double = 0,
+        sendCompletionMaxMs: Double = 0,
+        nonKeyframeSendStartDelayMaxMs: Double = 0,
+        nonKeyframeSendCompletionMaxMs: Double = 0,
+        keyframeSendMaxMs: Double = 0
+    ) -> StreamPacketSender.TelemetrySnapshot {
+        StreamPacketSender.TelemetrySnapshot(
+            queuedBytes: queuedBytes,
+            sendStartDelayAverageMs: sendStartDelayMaxMs,
+            sendStartDelayMaxMs: sendStartDelayMaxMs,
+            sendCompletionAverageMs: sendCompletionMaxMs,
+            sendCompletionMaxMs: sendCompletionMaxMs,
+            nonKeyframeSendStartDelayAverageMs: nonKeyframeSendStartDelayMaxMs,
+            nonKeyframeSendStartDelayMaxMs: nonKeyframeSendStartDelayMaxMs,
+            nonKeyframeSendCompletionAverageMs: nonKeyframeSendCompletionMaxMs,
+            nonKeyframeSendCompletionMaxMs: nonKeyframeSendCompletionMaxMs,
+            keyframeSendAverageMs: keyframeSendMaxMs,
+            keyframeSendMaxMs: keyframeSendMaxMs,
+            packetPacerSleepAverageMs: 0,
+            packetPacerSleepTotalMs: 0,
+            packetPacerSleepMaxMs: 0,
+            packetPacerFrameMaxSleepMs: 0,
+            packetPacerSleepCount: 0,
+            stalePacketDrops: 0,
+            generationAbortDrops: 0,
+            nonKeyframeHoldDrops: 0
         )
     }
 }

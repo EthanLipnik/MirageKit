@@ -379,7 +379,7 @@ extension StreamContext {
             noteLossEvent(reason: reason, enablePFrameFEC: true)
         } else {
             softRecoveryCount += 1
-            noteLossEvent(reason: reason, enablePFrameFEC: true)
+            noteLossEvent(reason: reason, enablePFrameFEC: false)
         }
         await scheduleCaptureRestartForKeyframeRecoveryIfNeeded(now: now, reason: reason)
         markKeyframeRequestIssued()

@@ -11,6 +11,9 @@ import Foundation
 import MirageKit
 
 final class FrameBufferPool: @unchecked Sendable {
+    nonisolated static let defaultMaxRetainedBufferCapacity = 16 * 1024 * 1024
+    nonisolated static let defaultMaxRetainedBytes = 64 * 1024 * 1024
+
     final class Buffer: @unchecked Sendable {
         private let pool: FrameBufferPool
         let capacity: Int
@@ -70,17 +73,31 @@ final class FrameBufferPool: @unchecked Sendable {
 
     private let lock = NSLock()
     private let maxBuffersPerCapacity: Int
+    private let maxRetainedBufferCapacity: Int
+    private let maxRetainedBytes: Int
     private var buffersByCapacity: [Int: [Buffer]] = [:]
+    private var retainedBytes = 0
 
-    init(maxBuffersPerCapacity: Int = 4) {
+    init(
+        maxBuffersPerCapacity: Int = 4,
+        maxRetainedBufferCapacity: Int = FrameBufferPool.defaultMaxRetainedBufferCapacity,
+        maxRetainedBytes: Int = FrameBufferPool.defaultMaxRetainedBytes
+    ) {
         self.maxBuffersPerCapacity = max(1, maxBuffersPerCapacity)
+        self.maxRetainedBufferCapacity = max(1, maxRetainedBufferCapacity)
+        self.maxRetainedBytes = max(1, maxRetainedBytes)
     }
 
     func acquire(capacity: Int) -> Buffer {
         let clampedCapacity = max(1, capacity)
         lock.lock()
         if var buffers = buffersByCapacity[clampedCapacity], let buffer = buffers.popLast() {
-            buffersByCapacity[clampedCapacity] = buffers
+            if buffers.isEmpty {
+                buffersByCapacity.removeValue(forKey: clampedCapacity)
+            } else {
+                buffersByCapacity[clampedCapacity] = buffers
+            }
+            retainedBytes = max(0, retainedBytes - buffer.capacity)
             lock.unlock()
             buffer.prepareForReuse()
             return buffer
@@ -92,15 +109,45 @@ final class FrameBufferPool: @unchecked Sendable {
         return buffer
     }
 
+    func retainedByteCount() -> Int {
+        lock.lock()
+        let bytes = retainedBytes
+        lock.unlock()
+        return bytes
+    }
+
     fileprivate func reclaim(_ buffer: Buffer) {
+        guard buffer.capacity <= maxRetainedBufferCapacity else { return }
+
         lock.lock()
         var buffers = buffersByCapacity[buffer.capacity] ?? []
         if buffers.count < maxBuffersPerCapacity {
             buffers.append(buffer)
             buffersByCapacity[buffer.capacity] = buffers
+            retainedBytes += buffer.capacity
+            trimRetainedBuffersIfNeeded()
             lock.unlock()
             return
         }
         lock.unlock()
+    }
+
+    private func trimRetainedBuffersIfNeeded() {
+        while retainedBytes > maxRetainedBytes {
+            guard let capacity = buffersByCapacity.keys.max(),
+                  var buffers = buffersByCapacity[capacity],
+                  let buffer = buffers.popLast()
+            else {
+                retainedBytes = 0
+                return
+            }
+
+            retainedBytes = max(0, retainedBytes - buffer.capacity)
+            if buffers.isEmpty {
+                buffersByCapacity.removeValue(forKey: capacity)
+            } else {
+                buffersByCapacity[capacity] = buffers
+            }
+        }
     }
 }

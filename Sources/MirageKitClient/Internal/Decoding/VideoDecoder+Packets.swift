@@ -175,11 +175,9 @@ extension FrameReassembler {
         // Update keyframe flag if this packet has it (in case fragments arrive out of order)
         if isKeyframePacket && !frame.isKeyframe { frame.isKeyframe = true }
 
-        // NOTE: We intentionally do NOT discard older incomplete keyframes when a newer one starts.
-        // During network congestion, multiple keyframes may arrive simultaneously. Discarding
-        // partially-complete keyframes (even 70%+) in favor of new ones creates a cascade where
-        // ALL keyframes fail. Instead, let each keyframe complete or timeout naturally via
-        // cleanupOldFrames(). The timeout-based approach is more robust.
+        // Keep incomplete keyframes long enough for recovery, but bound retained memory.
+        // Budget enforcement below preserves the newest keyframe candidate while trimming
+        // older keyframes and non-keyframes under pressure.
 
         // Store fragment
         let fragmentIndex = Int(header.fragmentIndex)
@@ -284,6 +282,12 @@ extension FrameReassembler {
                 .frameAssembly,
                 "Promoting pending keyframe over stalled P-frame gap: expected=\(expectedFrame)"
             )
+        }
+
+        let budgetEvictions = enforceMemoryBudgetLocked()
+        if budgetEvictions > 0 {
+            shouldSignalFrameLoss = true
+            frameLossReason = frameLossReason ?? .memoryBudget
         }
         lock.unlock()
 
@@ -721,6 +725,94 @@ extension FrameReassembler {
         pendingFrames = preservedKeyframes
     }
 
+    private func enforceMemoryBudgetLocked() -> UInt64 {
+        var evictedCount: UInt64 = 0
+
+        func evict(_ frameNumber: UInt32) {
+            guard let frame = pendingFrames.removeValue(forKey: frameNumber) else { return }
+            frame.buffer.release()
+            droppedFrameCount += 1
+            memoryBudgetEvictionCount += 1
+            evictedCount += 1
+        }
+
+        while pendingFrames.count > memoryBudget.maxPendingFrames,
+              let frameNumber = memoryBudgetEvictionCandidateLocked() {
+            evict(frameNumber)
+        }
+
+        while pendingKeyframeCountLocked() > memoryBudget.maxPendingKeyframes,
+              let frameNumber = oldestPendingKeyframeLocked(excluding: newestPendingKeyframeNumberLocked()) {
+            evict(frameNumber)
+        }
+
+        while pendingFrameBytesLocked() > memoryBudget.maxPendingBytes,
+              pendingFrames.count > 1,
+              let frameNumber = memoryBudgetEvictionCandidateLocked() {
+            evict(frameNumber)
+        }
+
+        if evictedCount > 0 {
+            beginAwaitingKeyframe()
+            MirageLogger.client(
+                "Frame reassembler memory budget evicted \(evictedCount) pending frame(s) for stream \(streamID); " +
+                    "pendingBytes=\(pendingFrameBytesLocked()), pendingFrames=\(pendingFrames.count)"
+            )
+        }
+
+        return evictedCount
+    }
+
+    private func memoryBudgetEvictionCandidateLocked() -> UInt32? {
+        if let nonKeyframe = oldestPendingFrameNumberLocked(where: { _, frame in
+            !frame.isKeyframe
+        }) {
+            return nonKeyframe
+        }
+        return oldestPendingKeyframeLocked(excluding: newestPendingKeyframeNumberLocked())
+    }
+
+    private func oldestPendingKeyframeLocked(excluding excludedFrameNumber: UInt32?) -> UInt32? {
+        oldestPendingFrameNumberLocked { frameNumber, frame in
+            frame.isKeyframe && frameNumber != excludedFrameNumber
+        }
+    }
+
+    private func newestPendingKeyframeNumberLocked() -> UInt32? {
+        pendingFrames
+            .filter { $0.value.isKeyframe }
+            .max { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.value.lastProgressAt < rhs.value.lastProgressAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            }?
+            .key
+    }
+
+    private func oldestPendingFrameNumberLocked(
+        where shouldInclude: (UInt32, PendingFrame) -> Bool
+    )
+    -> UInt32? {
+        pendingFrames
+            .filter { shouldInclude($0.key, $0.value) }
+            .min { lhs, rhs in
+                if lhs.value.receivedAt != rhs.value.receivedAt {
+                    return lhs.value.receivedAt < rhs.value.receivedAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            }?
+            .key
+    }
+
+    private func pendingFrameBytesLocked() -> Int {
+        pendingFrames.values.reduce(0) { $0 + $1.retainedMemoryBytes }
+    }
+
+    private func pendingKeyframeCountLocked() -> Int {
+        pendingFrames.values.reduce(0) { $0 + ($1.isKeyframe ? 1 : 0) }
+    }
+
     func shouldRequestKeyframe() -> Bool {
         lock.lock()
         let incompleteCount = pendingFrames.count
@@ -744,9 +836,46 @@ extension FrameReassembler {
 
     func snapshotMetrics() -> Metrics {
         lock.lock()
-        let metrics = Metrics(framesDelivered: framesDelivered, droppedFrames: droppedFrameCount)
+        let metrics = Metrics(
+            framesDelivered: framesDelivered,
+            droppedFrames: droppedFrameCount,
+            pendingFrameCount: pendingFrames.count,
+            pendingKeyframeCount: pendingKeyframeCountLocked(),
+            pendingFrameBytes: pendingFrameBytesLocked(),
+            frameBufferPoolRetainedBytes: bufferPool.retainedByteCount(),
+            budgetEvictions: memoryBudgetEvictionCount
+        )
         lock.unlock()
         return metrics
+    }
+
+    func trimForMemoryPressure() -> MemoryTrimResult {
+        lock.lock()
+        let evictedFrames = pendingFrames.count
+        let releasedPendingBytes = pendingFrameBytesLocked()
+        for frame in pendingFrames.values {
+            frame.buffer.release()
+        }
+        pendingFrames.removeAll(keepingCapacity: false)
+        if evictedFrames > 0 {
+            droppedFrameCount += UInt64(evictedFrames)
+            beginAwaitingKeyframe()
+        }
+        let result = MemoryTrimResult(
+            evictedFrames: evictedFrames,
+            releasedPendingBytes: releasedPendingBytes,
+            awaitingKeyframe: awaitingKeyframe
+        )
+        lock.unlock()
+
+        if evictedFrames > 0 {
+            MirageLogger.client(
+                "Memory pressure trimmed \(evictedFrames) reassembler frame(s) for stream \(streamID); " +
+                    "releasedPendingBytes=\(releasedPendingBytes)"
+            )
+        }
+
+        return result
     }
 
     func enterKeyframeOnlyMode() {
@@ -833,6 +962,7 @@ extension FrameReassembler {
         hasSignaledGapFrameLoss = false
         clearAwaitingKeyframe()
         droppedFrameCount = 0
+        memoryBudgetEvictionCount = 0
         lastPacketReceivedTime = 0
         startupKeyframeTimeoutOverrideEnabled = false
         lock.unlock()

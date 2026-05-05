@@ -70,12 +70,14 @@ extension StreamContext {
         frameBudgetMs: Double
     ) async {
         let queueBytes = max(0, packetTelemetry.queuedBytes)
-        let sendDelayMaxMs = max(
-            packetTelemetry.sendStartDelayMaxMs,
-            packetTelemetry.sendCompletionMaxMs
+        let nonKeyframeSendDelayMaxMs = max(
+            packetTelemetry.nonKeyframeSendStartDelayMaxMs,
+            packetTelemetry.nonKeyframeSendCompletionMaxMs
         )
         let lowQueuePressure = queueBytes <= queuePressureBytes
-        let exceedsFrameBudget = sendDelayMaxMs > max(1.0, frameBudgetMs)
+        let hasNonKeyframeDelay = nonKeyframeSendDelayMaxMs > 0
+        let exceedsFrameBudget = hasNonKeyframeDelay &&
+            nonKeyframeSendDelayMaxMs > max(1.0, frameBudgetMs)
 
         if exceedsFrameBudget, lowQueuePressure {
             senderFrameBudgetDelayOverrunCount += 1
@@ -86,9 +88,16 @@ extension StreamContext {
 
         guard senderFrameBudgetDelayOverrunCount >= senderFrameBudgetDelayOverrunThreshold else { return }
         senderFrameBudgetDelayOverrunCount = 0
+        if usesSoftSenderDelaySmoothing {
+            enterSoftFreshnessDrainIfNeeded(
+                frameBudgetMs: frameBudgetMs,
+                reason: "non-keyframe sender delay exceeded frame budget"
+            )
+            return
+        }
         _ = await enterFreshnessBurstIfNeeded(
             queueBytes: queueBytes,
-            reason: "sender delay exceeded frame budget"
+            reason: "non-keyframe sender delay exceeded frame budget"
         )
     }
 
@@ -300,6 +309,7 @@ extension StreamContext {
         } else if backpressureActive {
             if queueBytesSnapshot <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytesSnapshot) }
         }
+        expireSoftFreshnessDrainIfNeeded()
 
         while inFlightCount < maxInFlightFrames {
             let queueBytesBeforeDrain = packetSender?.queuedBytesSnapshot() ?? 0
@@ -850,6 +860,10 @@ extension StreamContext {
                 sendStartDelayMaxMs: packetTelemetry?.sendStartDelayMaxMs,
                 sendCompletionAverageMs: packetTelemetry?.sendCompletionAverageMs,
                 sendCompletionMaxMs: packetTelemetry?.sendCompletionMaxMs,
+                nonKeyframeSendStartDelayAverageMs: packetTelemetry?.nonKeyframeSendStartDelayAverageMs,
+                nonKeyframeSendStartDelayMaxMs: packetTelemetry?.nonKeyframeSendStartDelayMaxMs,
+                nonKeyframeSendCompletionAverageMs: packetTelemetry?.nonKeyframeSendCompletionAverageMs,
+                nonKeyframeSendCompletionMaxMs: packetTelemetry?.nonKeyframeSendCompletionMaxMs,
                 packetPacerAverageSleepMs: packetTelemetry?.packetPacerSleepAverageMs,
                 packetPacerTotalSleepMs: packetTelemetry?.packetPacerSleepTotalMs,
                 packetPacerMaxSleepMs: packetTelemetry?.packetPacerSleepMaxMs,
@@ -1259,25 +1273,6 @@ extension StreamContext {
 
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
-            if usesAdaptiveStandardDesktopLowLatency60HzPolicy {
-                let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-                let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.02
-                let desired = if encodeOverBudget || pendingCount > 0 {
-                    min(maxInFlightFramesCap, 2)
-                } else {
-                    1
-                }
-                guard desired != maxInFlightFrames else { return }
-                maxInFlightFrames = desired
-                lastInFlightAdjustmentTime = now
-                await encoder?.updateInFlightLimit(desired)
-                let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
-                let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.metrics(
-                    "In-flight depth set to \(desired) (adaptive desktop 60Hz low latency, encode \(avgText)ms, budget \(budgetText)ms, pending=\(pendingCount))"
-                )
-                return
-            }
             let baselineLowLatencyLimit: Int
             if performanceMode == .game {
                 baselineLowLatencyLimit = currentFrameRate >= 120

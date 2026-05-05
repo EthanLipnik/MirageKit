@@ -223,5 +223,91 @@ struct DesktopResizeCoordinatorTests {
         #expect(!service.desktopResizeCoordinator.isResizing)
         #expect(!service.desktopResizeCoordinator.maskActive)
     }
+
+    @Test("No-op desktop resize is suppressed even while client recovery is active")
+    func noOpDesktopResizeIsSuppressedDuringClientRecovery() {
+        let service = MirageClientService()
+        let streamID: StreamID = 38
+        let target = target(logicalWidth: 1366, logicalHeight: 1024)
+        service.desktopResizeCoordinator.lastSentTarget = target
+        service.sessionStore.createSession(
+            streamID: streamID,
+            window: MirageWindow(
+                id: 9001,
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1366, height: 1024),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+        service.sessionStore.setClientRecoveryStatus(for: streamID, status: .startup)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: target,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("No-op startup resize is suppressed when encoder cap matches uncapped output")
+    func noOpStartupResizeIsSuppressedWhenEncoderCapMatchesUncappedOutput() {
+        let service = MirageClientService()
+        let streamID: StreamID = 39
+        let uncappedStartupTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.72,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        let drawableBoundTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.72,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+        service.desktopResizeCoordinator.lastSentTarget = uncappedStartupTarget
+        service.sessionStore.createSession(
+            streamID: streamID,
+            window: MirageWindow(
+                id: 9002,
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1600, height: 1200),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+        service.sessionStore.setClientRecoveryStatus(for: streamID, status: .startup)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: drawableBoundTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(uncappedStartupTarget.isEffectivelySameStreamGeometry(as: drawableBoundTarget))
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
 }
 #endif

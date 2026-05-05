@@ -554,6 +554,10 @@ public struct MirageReceiverHealthController: Sendable {
             (
                 snapshot.clientFrameIntervalP99Ms == 0 ||
                     snapshot.clientFrameIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
+            ) &&
+            (
+                snapshot.clientDisplayTickIntervalP99Ms == 0 ||
+                    snapshot.clientDisplayTickIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
             )
         return Sample(
             isSevere: severe,

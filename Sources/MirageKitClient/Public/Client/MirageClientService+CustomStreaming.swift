@@ -55,6 +55,7 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &request)
+        pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
 
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
@@ -126,6 +127,10 @@ extension MirageClientService {
             streamStartupFirstPacketReceived.remove(streamID)
             markStartupPacketPending(streamID)
             registerStartupAttempt(startupAttemptID, for: streamID)
+            applyRenderLatencyMode(
+                to: streamID,
+                preferredLatencyMode: pendingStreamSetupLatencyMode
+            )
 
             await setupControllerForStream(
                 streamID,
@@ -216,6 +221,7 @@ extension MirageClientService {
         activeStreams.removeAll { $0.id == streamID }
         customStreamDescriptorsByStreamID.removeValue(forKey: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
+        renderLatencyModeByStream.removeValue(forKey: streamID)
 
         metricsStore.clear(streamID: streamID)
         cursorStore.clear(streamID: streamID)

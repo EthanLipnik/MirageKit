@@ -98,9 +98,9 @@ struct HostSingleClientTests {
         #expect(host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 
-    @Test("Reconnect preemption matches same identity key ID")
+    @Test("Reconnect preemption does not match only identity key ID")
     @MainActor
-    func reconnectPreemptionMatchesIdentityKeyID() {
+    func reconnectPreemptionIgnoresSharedIdentityKeyID() {
         let host = MirageHostService()
 
         let existingClient = MirageConnectedClient(
@@ -121,7 +121,7 @@ struct HostSingleClientTests {
             endpoint: "127.0.0.1"
         )
 
-        #expect(host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
+        #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 
     @Test("Reconnect preemption ignores unrelated clients")
@@ -150,10 +150,65 @@ struct HostSingleClientTests {
         #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 
-    @Test("Trusted takeover is allowed when busy metadata is stale")
+    @Test("Trusted explicit takeover is allowed")
     @MainActor
-    func trustedTakeoverIsAllowedWhenBusyMetadataIsStale() {
+    func trustedExplicitTakeoverIsAllowed() {
         let host = MirageHostService()
+        let existingClient = MirageConnectedClient(
+            id: UUID(),
+            name: "Existing iPad",
+            deviceType: .iPad,
+            connectedAt: Date(),
+            identityKeyID: "shared-key"
+        )
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: UUID(),
+            name: "Incoming iPhone",
+            deviceType: .iPhone,
+            iCloudUserID: nil,
+            identityKeyID: "shared-key",
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
+        )
+        let request = MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            requestedFeatures: mirageSupportedFeatures,
+            clientRequiresMediaEncryption: false,
+            requestTakeoverIfBusy: true
+        )
+
+        let rejectionReason = host.busyHostTakeoverRejectionReason(
+            for: request,
+            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false),
+            existingClient: existingClient,
+            incomingPeerIdentity: incomingPeer
+        )
+
+        #expect(rejectionReason == nil)
+    }
+
+    @Test("Trusted automatic takeover is rejected while busy")
+    @MainActor
+    func trustedAutomaticTakeoverIsRejectedWhileBusy() {
+        let host = MirageHostService()
+        let existingClient = MirageConnectedClient(
+            id: UUID(),
+            name: "Existing iPad",
+            deviceType: .iPad,
+            connectedAt: Date(),
+            identityKeyID: "shared-key"
+        )
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: UUID(),
+            name: "Incoming iPhone",
+            deviceType: .iPhone,
+            iCloudUserID: nil,
+            identityKeyID: "shared-key",
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
+        )
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             requestedFeatures: mirageSupportedFeatures,
@@ -162,20 +217,23 @@ struct HostSingleClientTests {
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
+            trustEvaluation: LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false),
+            existingClient: existingClient,
+            incomingPeerIdentity: incomingPeer
         )
 
-        #expect(rejectionReason == nil)
+        #expect(rejectionReason == .hostBusy)
     }
 
-    @Test("Untrusted stale busy takeover remains rejected as busy")
+    @Test("Untrusted explicit takeover requires trusted requester")
     @MainActor
-    func untrustedStaleBusyTakeoverRemainsRejectedAsBusy() {
+    func untrustedExplicitTakeoverRequiresTrustedRequester() {
         let host = MirageHostService()
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             requestedFeatures: mirageSupportedFeatures,
-            clientRequiresMediaEncryption: false
+            clientRequiresMediaEncryption: false,
+            requestTakeoverIfBusy: true
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
@@ -183,7 +241,7 @@ struct HostSingleClientTests {
             trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         )
 
-        #expect(rejectionReason == .hostBusy)
+        #expect(rejectionReason == .takeoverRequiresTrustedRequester)
     }
 }
 #endif

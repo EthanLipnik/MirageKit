@@ -685,7 +685,7 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
         case .lowestLatency:
             "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
         case .auto:
-            "Uses Smoothest as baseline, then switches to latency-first only during qualifying text-entry key bursts; mouse input and keyboard shortcuts do not trigger."
+            "Uses a small smoothing buffer to absorb short cadence stalls, then switches to latency-first during qualifying text-entry key bursts; mouse input and keyboard shortcuts do not trigger."
         }
     }
 }

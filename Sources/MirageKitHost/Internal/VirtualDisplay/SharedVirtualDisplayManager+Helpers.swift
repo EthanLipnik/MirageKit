@@ -27,6 +27,34 @@ extension SharedVirtualDisplayManager {
         case modeMismatch
     }
 
+    enum DisplayModeValidationAcceptance: Sendable, Equatable {
+        case strict
+        case lenientOneX
+        case missingCoreGraphicsRefreshOneX
+        case missingCoreGraphicsMode
+
+        var logLabel: String {
+            switch self {
+            case .strict:
+                return "strict"
+            case .lenientOneX:
+                return "lenient 1x"
+            case .missingCoreGraphicsRefreshOneX:
+                return "missing CoreGraphics refresh 1x"
+            case .missingCoreGraphicsMode:
+                return "missing CoreGraphics mode/refresh"
+            }
+        }
+    }
+
+    struct DisplayModeValidationSnapshot: Sendable, Equatable {
+        let boundsSize: CGSize
+        let screenCaptureSize: CGSize
+        let modeLogicalSize: CGSize
+        let modePixelSize: CGSize
+        let modeRefreshRate: Double?
+    }
+
     struct DisplayCreationAttempt: Sendable {
         let resolution: CGSize
         let hiDPI: Bool
@@ -133,6 +161,68 @@ extension SharedVirtualDisplayManager {
             return .greatestFiniteMagnitude
         }
         return abs(requestedAspect - candidateAspect) / requestedAspect
+    }
+
+    static func displayModeValidationAcceptance(
+        snapshot: DisplayModeValidationSnapshot,
+        expectedLogicalResolution: CGSize,
+        expectedPixelResolution: CGSize,
+        expectedRefreshRate: Double?
+    ) -> DisplayModeValidationAcceptance? {
+        let boundsReady = snapshot.boundsSize.width > 0 && snapshot.boundsSize.height > 0
+
+        let scMatchesLogical = Self.resolutionsMatch(snapshot.screenCaptureSize, expectedLogicalResolution)
+        let scMatchesPixel = Self.resolutionsMatch(snapshot.screenCaptureSize, expectedPixelResolution)
+        let boundsMatchesLogical = Self.resolutionsMatch(snapshot.boundsSize, expectedLogicalResolution)
+        let boundsMatchesPixel = Self.resolutionsMatch(snapshot.boundsSize, expectedPixelResolution)
+        let modeMatchesLogical = Self.resolutionsMatch(snapshot.modeLogicalSize, expectedLogicalResolution)
+        let modeMatchesPixel = Self.resolutionsMatch(snapshot.modePixelSize, expectedPixelResolution)
+
+        let screenCaptureMatches = scMatchesLogical || scMatchesPixel
+        let boundsMatches = boundsMatchesLogical || boundsMatchesPixel
+        let observedSurfacesCoverExpectedGeometry = (scMatchesLogical || boundsMatchesLogical) &&
+            (scMatchesPixel || boundsMatchesPixel)
+        let sizeMatches = screenCaptureMatches || boundsMatches
+        let modeMatches = modeMatchesLogical && modeMatchesPixel
+        let modeSizeAvailable = snapshot.modeLogicalSize.width > 0 &&
+            snapshot.modeLogicalSize.height > 0 &&
+            snapshot.modePixelSize.width > 0 &&
+            snapshot.modePixelSize.height > 0
+        let modeRefreshRate = snapshot.modeRefreshRate ?? 0
+        let modeRefreshAvailable = modeRefreshRate > 0
+        let refreshMatches = if let expectedRefreshRate {
+            modeRefreshAvailable && abs(modeRefreshRate - expectedRefreshRate) <= 1.0
+        } else {
+            true
+        }
+        let missingExpectedRefresh = expectedRefreshRate != nil && !modeRefreshAvailable
+        let expectsOneX = Self.resolutionsMatch(expectedLogicalResolution, expectedPixelResolution)
+
+        if boundsReady, sizeMatches, modeMatches, refreshMatches {
+            return .strict
+        }
+
+        if expectsOneX, boundsReady, sizeMatches, refreshMatches {
+            return .lenientOneX
+        }
+
+        if expectsOneX, boundsReady, screenCaptureMatches, boundsMatches, missingExpectedRefresh {
+            return .missingCoreGraphicsRefreshOneX
+        }
+
+        if boundsReady,
+           observedSurfacesCoverExpectedGeometry,
+           missingExpectedRefresh,
+           (!modeSizeAvailable || modeMatches) {
+            return .missingCoreGraphicsMode
+        }
+
+        return nil
+    }
+
+    private static func resolutionsMatch(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat = 1) -> Bool {
+        abs(lhs.width - rhs.width) <= tolerance &&
+            abs(lhs.height - rhs.height) <= tolerance
     }
 
     private func resolvedScaleFactor(displayID: CGDirectDisplayID, fallback: CGFloat) -> CGFloat {
@@ -250,7 +340,6 @@ extension SharedVirtualDisplayManager {
                 return sawScreenCaptureKitDelay ? .screenCaptureKitVisibilityDelayed(displayID) : .modeMismatch
             }
             let bounds = CGDisplayBounds(displayID)
-            let boundsReady = bounds.width > 0 && bounds.height > 0
             let observedMode = observedDisplayMode(displayID: displayID)
 
             do {
@@ -262,43 +351,30 @@ extension SharedVirtualDisplayManager {
                 let scSize = CGSize(width: CGFloat(scDisplay.display.width), height: CGFloat(scDisplay.display.height))
                 let modeLogicalSize = observedMode?.logicalResolution ?? .zero
                 let modePixelSize = observedMode?.pixelResolution ?? .zero
-                let modeRefreshRate = observedMode?.refreshRate ?? 0
+                let modeRefreshRate = observedMode?.refreshRate
+                let validationAcceptance = Self.displayModeValidationAcceptance(
+                    snapshot: DisplayModeValidationSnapshot(
+                        boundsSize: bounds.size,
+                        screenCaptureSize: scSize,
+                        modeLogicalSize: modeLogicalSize,
+                        modePixelSize: modePixelSize,
+                        modeRefreshRate: modeRefreshRate
+                    ),
+                    expectedLogicalResolution: expectedLogicalResolution,
+                    expectedPixelResolution: expectedPixelResolution,
+                    expectedRefreshRate: expectedRefreshRate
+                )
 
-                let scMatchesLogical = abs(scSize.width - expectedLogicalResolution.width) <= 1 &&
-                    abs(scSize.height - expectedLogicalResolution.height) <= 1
-                let scMatchesPixel = abs(scSize.width - expectedPixelResolution.width) <= 1 &&
-                    abs(scSize.height - expectedPixelResolution.height) <= 1
-
-                let boundsMatchesLogical = abs(bounds.width - expectedLogicalResolution.width) <= 1 &&
-                    abs(bounds.height - expectedLogicalResolution.height) <= 1
-                let boundsMatchesPixel = abs(bounds.width - expectedPixelResolution.width) <= 1 &&
-                    abs(bounds.height - expectedPixelResolution.height) <= 1
-
-                let modeMatchesLogical = abs(modeLogicalSize.width - expectedLogicalResolution.width) <= 1 &&
-                    abs(modeLogicalSize.height - expectedLogicalResolution.height) <= 1
-                let modeMatchesPixel = abs(modePixelSize.width - expectedPixelResolution.width) <= 1 &&
-                    abs(modePixelSize.height - expectedPixelResolution.height) <= 1
-
-                let sizeMatches = scMatchesLogical || scMatchesPixel || boundsMatchesLogical || boundsMatchesPixel
-                let modeMatches = modeMatchesLogical && modeMatchesPixel
-                let refreshMatches = if let expectedRefreshRate {
-                    abs(modeRefreshRate - expectedRefreshRate) <= 1.0
-                } else {
-                    true
-                }
-                let expectsOneX = abs(expectedLogicalResolution.width - expectedPixelResolution.width) <= 1 &&
-                    abs(expectedLogicalResolution.height - expectedPixelResolution.height) <= 1
-
-                if boundsReady, sizeMatches, modeMatches, refreshMatches {
+                if validationAcceptance == .strict {
                     return .ready
                 }
 
-                if expectsOneX, boundsReady, sizeMatches, refreshMatches {
+                if let validationAcceptance {
                     MirageLogger
                         .host(
-                            "Virtual display \(displayID) accepted using lenient 1x validation: " +
+                            "Virtual display \(displayID) accepted using \(validationAcceptance.logLabel) validation: " +
                                 "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate), " +
+                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate ?? 0), " +
                                 "expected=\(expectedPixelResolution)"
                         )
                     return .ready
@@ -308,7 +384,7 @@ extension SharedVirtualDisplayManager {
                     .host(
                         "Virtual display \(displayID) size mismatch (attempt \(attempt)/\(maxAttempts)): " +
                             "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                            "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate), " +
+                            "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate ?? 0), " +
                             "expectedLogical=\(expectedLogicalResolution), expectedPixel=\(expectedPixelResolution), expectedRefresh=\(expectedRefreshRate ?? 0)"
                     )
             } catch let error as SharedDisplayError {

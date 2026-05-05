@@ -76,6 +76,11 @@ extension MirageClientService {
 
         guard let target else { return }
         coordinator.latestRequestedTarget = target
+        guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
+            coordinator.queuedTarget = nil
+            coordinator.clearLocalPresentationState()
+            return
+        }
         guard coordinator.resizeLifecycleState == .active else {
             coordinator.queueLatestTarget(target)
             coordinator.cancelPendingResizeDispatch()
@@ -103,7 +108,8 @@ extension MirageClientService {
         }
 
         if let activeTransition = coordinator.activeTransition {
-            if activeTransition.streamID == streamID, activeTransition.target == target {
+            if activeTransition.streamID == streamID,
+               activeTransition.target.isEffectivelySameStreamGeometry(as: target) {
                 return
             }
             coordinator.queueLatestTarget(target)
@@ -116,11 +122,6 @@ extension MirageClientService {
         guard hasPresentedFrame else {
             coordinator.queueLatestTarget(target)
             coordinator.cancelPendingResizeDispatch()
-            coordinator.clearLocalPresentationState()
-            return
-        }
-
-        guard coordinator.lastSentTarget != target else {
             coordinator.clearLocalPresentationState()
             return
         }
@@ -161,7 +162,8 @@ extension MirageClientService {
         }
         guard let target = coordinator.queuedTarget ?? coordinator.latestRequestedTarget else { return }
         guard target.logicalResolution.width > 0, target.logicalResolution.height > 0 else { return }
-        guard coordinator.lastSentTarget != target else {
+        guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
+            coordinator.queuedTarget = nil
             coordinator.clearLocalPresentationState()
             return
         }

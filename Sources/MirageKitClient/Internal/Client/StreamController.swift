@@ -149,6 +149,7 @@ actor StreamController {
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
         let droppedFrames: UInt64
+        let displayTickFPS: Double
         let submitAttemptFPS: Double
         let layerAcceptedFPS: Double
         let presentedFPS: Double
@@ -157,13 +158,24 @@ actor StreamController {
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
+        let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
+        let repeatedFrameCount: UInt64
+        let missedVSyncCount: UInt64
+        let displayTickIntervalP95Ms: Double
+        let displayTickIntervalP99Ms: Double
+        let playoutDelayFrames: Int
         let presentationStallCount: UInt64
         let worstPresentationGapMs: Double
         let frameIntervalP95Ms: Double
         let frameIntervalP99Ms: Double
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
+        let reassemblerPendingFrameCount: Int
+        let reassemblerPendingKeyframeCount: Int
+        let reassemblerPendingBytes: Int
+        let frameBufferPoolRetainedBytes: Int
+        let reassemblerBudgetEvictions: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
     }
@@ -1007,17 +1019,44 @@ actor StreamController {
         }
     }
 
-    func clearQueuedFramesForRecovery() {
+    @discardableResult
+    func clearQueuedFramesForRecovery() -> Int {
         let queued = queuedFrames.drain()
         let pending = Array(pendingOrderedFrames.values)
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0
         enqueueOrderAllocator.reset()
-        guard !queued.isEmpty || !pending.isEmpty else { return }
+        guard !queued.isEmpty || !pending.isEmpty else { return 0 }
         let frames = queued + pending
         for frame in frames {
             frame.releaseBuffer()
         }
+        return frames.count
+    }
+
+    @discardableResult
+    func handleMemoryPressure() async -> Bool {
+        let queuedFramesTrimmed = clearQueuedFramesForRecovery()
+        let reassemblerTrim = reassembler.trimForMemoryPressure()
+        let renderFramesTrimmed = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+        await decoder.flushMemoryPool()
+
+        let didTrim = queuedFramesTrimmed > 0 ||
+            reassemblerTrim.evictedFrames > 0 ||
+            renderFramesTrimmed > 0
+        guard didTrim else { return false }
+
+        MirageLogger.client(
+            "Memory pressure trimmed stream \(streamID): queuedFrames=\(queuedFramesTrimmed), " +
+                "reassemblerFrames=\(reassemblerTrim.evictedFrames), renderFrames=\(renderFramesTrimmed), " +
+                "reassemblerBytes=\(reassemblerTrim.releasedPendingBytes)"
+        )
+
+        if isRunning, !isStopping {
+            await requestKeyframeRecovery(reason: .manualRecovery)
+        }
+
+        return true
     }
 
     private func logQueueDropIfNeeded() {
@@ -1112,7 +1151,8 @@ actor StreamController {
             await clearTransientRecoveryStateAfterPresentationProgress()
         }
         let snapshot = metricsTracker.snapshot(now: now)
-        let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
+        let reassemblerMetrics = reassembler.snapshotMetrics()
+        let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
@@ -1127,6 +1167,7 @@ actor StreamController {
             receivedFrameIntervalP95Ms: snapshot.receivedFrameIntervalP95Ms,
             receivedFrameIntervalP99Ms: snapshot.receivedFrameIntervalP99Ms,
             droppedFrames: droppedFrames,
+            displayTickFPS: renderTelemetry.displayTickFPS,
             submitAttemptFPS: renderTelemetry.submitAttemptFPS,
             layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
             presentedFPS: renderTelemetry.presentedFPS,
@@ -1135,13 +1176,24 @@ actor StreamController {
             pendingFrameCount: renderTelemetry.pendingFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+            lateFrameDrops: renderTelemetry.lateFrameDrops,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
+            repeatedFrameCount: renderTelemetry.repeatedFrameCount,
+            missedVSyncCount: renderTelemetry.missedVSyncCount,
+            displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
+            displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
+            playoutDelayFrames: renderTelemetry.playoutDelayFrames,
             presentationStallCount: renderTelemetry.presentationStallCount,
             worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
             frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
             frameIntervalP99Ms: renderTelemetry.frameIntervalP99Ms,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
+            reassemblerPendingFrameCount: reassemblerMetrics.pendingFrameCount,
+            reassemblerPendingKeyframeCount: reassemblerMetrics.pendingKeyframeCount,
+            reassemblerPendingBytes: reassemblerMetrics.pendingFrameBytes,
+            frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
+            reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
             decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),
             usingHardwareDecoder: await decoder.currentHardwareDecoderStatus()
         )

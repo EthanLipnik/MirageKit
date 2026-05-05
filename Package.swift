@@ -39,7 +39,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "1.7.13"),
+        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "1.7.14"),
     ],
     targets: [
         .target(

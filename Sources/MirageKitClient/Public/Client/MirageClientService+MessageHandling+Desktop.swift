@@ -239,6 +239,10 @@ extension MirageClientService {
             if let previousStreamID, previousStreamID != streamID {
                 desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
             }
+            applyRenderLatencyMode(
+                to: streamID,
+                preferredLatencyMode: pendingStreamSetupLatencyMode ?? pendingDesktopRequestedLatencyMode
+            )
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
             let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
             refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
@@ -398,6 +402,8 @@ extension MirageClientService {
             clearDecoderColorDepthState(for: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopRequestedColorDepth = nil
+            pendingDesktopRequestedLatencyMode = nil
+            renderLatencyModeByStream.removeValue(forKey: streamID)
             activeJitterHoldMs = 0
             mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
             activeStreamCodecs.removeValue(forKey: streamID)

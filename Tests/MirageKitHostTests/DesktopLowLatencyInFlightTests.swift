@@ -12,23 +12,23 @@ import Testing
 
 @Suite("Desktop Low Latency In-Flight Policy")
 struct DesktopLowLatencyInFlightTests {
-    @Test("60 Hz desktop lowest-latency starts adaptive single-inflight with two-slot cap")
-    func desktopLowestLatencyStartsSingleInflight() async {
+    @Test("60 Hz desktop lowest-latency starts single-inflight with capture buffering")
+    func desktopLowestLatencyStartsSingleInflightWithCaptureBuffering() async {
         let context = makeContext()
 
         #expect(await context.maxInFlightFrames == 1)
-        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.maxInFlightFramesCap == 1)
         #expect(await context.frameBufferDepth == 2)
     }
 
-    @Test("60 Hz desktop lowest-latency raises inflight under pressure and restores after recovery")
-    func desktopLowestLatencyAdjustmentRaisesAndRestoresInflight() async {
+    @Test("60 Hz desktop lowest-latency does not raise inflight under pressure")
+    func desktopLowestLatencyDoesNotRaiseInflightUnderPressure() async {
         let context = makeContext()
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
 
-        #expect(await context.maxInFlightFrames == 2)
-        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 1)
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 10, pendingCount: 0)
 

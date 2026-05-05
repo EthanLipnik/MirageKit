@@ -1390,6 +1390,10 @@ struct MirageKitTests {
             sendStartDelayMaxMs: 8.8,
             sendCompletionAverageMs: 9.4,
             sendCompletionMaxMs: 21.1,
+            nonKeyframeSendStartDelayAverageMs: 2.4,
+            nonKeyframeSendStartDelayMaxMs: 5.5,
+            nonKeyframeSendCompletionAverageMs: 7.1,
+            nonKeyframeSendCompletionMaxMs: 14.2,
             packetPacerAverageSleepMs: 1.3,
             packetPacerTotalSleepMs: 24,
             packetPacerMaxSleepMs: 6,
@@ -1416,6 +1420,7 @@ struct MirageKitTests {
         #expect(decoded.captureIngressAverageMs == 4.1)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
+        #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)
         #expect(decoded.packetPacerTotalSleepMs == 24)
         #expect(decoded.packetPacerFrameMaxSleepMs == 8)
         #expect(decoded.nonKeyframeHoldDrops == 4)

@@ -15,6 +15,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReceivedWorstGapMs: Double
     public var clientReceivedFrameIntervalP95Ms: Double
     public var clientReceivedFrameIntervalP99Ms: Double
+    public var clientDisplayTickFPS: Double
     public var clientSubmitAttemptFPS: Double
     public var clientLayerAcceptedFPS: Double
     public var clientPresentedFPS: Double
@@ -23,13 +24,24 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var pendingFrameCount: Int
     public var clientPendingFrameAgeMs: Double
     public var clientOverwrittenPendingFrames: UInt64
+    public var clientLateFrameDrops: UInt64
     public var clientDisplayLayerNotReadyCount: UInt64
+    public var clientRepeatedFrameCount: UInt64
+    public var clientMissedVSyncCount: UInt64
+    public var clientDisplayTickIntervalP95Ms: Double
+    public var clientDisplayTickIntervalP99Ms: Double
+    public var clientPlayoutDelayFrames: Int
     public var clientPresentationStallCount: UInt64
     public var clientWorstPresentationGapMs: Double
     public var clientFrameIntervalP95Ms: Double
     public var clientFrameIntervalP99Ms: Double
     public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
+    public var clientReassemblerPendingFrameCount: Int
+    public var clientReassemblerPendingKeyframeCount: Int
+    public var clientReassemblerPendingBytes: Int
+    public var clientFrameBufferPoolRetainedBytes: Int
+    public var clientReassemblerBudgetEvictions: UInt64
     public var hostEncodedFPS: Double
     public var hostIdleFPS: Double
     public var hostDroppedFrames: UInt64
@@ -104,6 +116,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostSendStartDelayMaxMs: Double? = nil
     package var hostSendCompletionAverageMs: Double? = nil
     package var hostSendCompletionMaxMs: Double? = nil
+    package var hostNonKeyframeSendStartDelayAverageMs: Double? = nil
+    package var hostNonKeyframeSendStartDelayMaxMs: Double? = nil
+    package var hostNonKeyframeSendCompletionAverageMs: Double? = nil
+    package var hostNonKeyframeSendCompletionMaxMs: Double? = nil
     package var hostPacketPacerAverageSleepMs: Double? = nil
     package var hostPacketPacerTotalSleepMs: Int? = nil
     package var hostPacketPacerMaxSleepMs: Int? = nil
@@ -130,6 +146,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReceivedWorstGapMs: Double = 0,
         clientReceivedFrameIntervalP95Ms: Double = 0,
         clientReceivedFrameIntervalP99Ms: Double = 0,
+        clientDisplayTickFPS: Double = 0,
         clientSubmitAttemptFPS: Double = 0,
         clientLayerAcceptedFPS: Double = 0,
         clientPresentedFPS: Double = 0,
@@ -138,13 +155,24 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         pendingFrameCount: Int = 0,
         clientPendingFrameAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
+        clientLateFrameDrops: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
+        clientRepeatedFrameCount: UInt64 = 0,
+        clientMissedVSyncCount: UInt64 = 0,
+        clientDisplayTickIntervalP95Ms: Double = 0,
+        clientDisplayTickIntervalP99Ms: Double = 0,
+        clientPlayoutDelayFrames: Int = 0,
         clientPresentationStallCount: UInt64 = 0,
         clientWorstPresentationGapMs: Double = 0,
         clientFrameIntervalP95Ms: Double = 0,
         clientFrameIntervalP99Ms: Double = 0,
         decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
+        clientReassemblerPendingFrameCount: Int = 0,
+        clientReassemblerPendingKeyframeCount: Int = 0,
+        clientReassemblerPendingBytes: Int = 0,
+        clientFrameBufferPoolRetainedBytes: Int = 0,
+        clientReassemblerBudgetEvictions: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
@@ -185,6 +213,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReceivedWorstGapMs = clientReceivedWorstGapMs
         self.clientReceivedFrameIntervalP95Ms = clientReceivedFrameIntervalP95Ms
         self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
+        self.clientDisplayTickFPS = clientDisplayTickFPS
         self.clientSubmitAttemptFPS = clientSubmitAttemptFPS
         self.clientLayerAcceptedFPS = clientLayerAcceptedFPS
         self.clientPresentedFPS = clientPresentedFPS
@@ -193,13 +222,24 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.pendingFrameCount = pendingFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
+        self.clientLateFrameDrops = clientLateFrameDrops
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
+        self.clientRepeatedFrameCount = clientRepeatedFrameCount
+        self.clientMissedVSyncCount = clientMissedVSyncCount
+        self.clientDisplayTickIntervalP95Ms = clientDisplayTickIntervalP95Ms
+        self.clientDisplayTickIntervalP99Ms = clientDisplayTickIntervalP99Ms
+        self.clientPlayoutDelayFrames = clientPlayoutDelayFrames
         self.clientPresentationStallCount = clientPresentationStallCount
         self.clientWorstPresentationGapMs = clientWorstPresentationGapMs
         self.clientFrameIntervalP95Ms = clientFrameIntervalP95Ms
         self.clientFrameIntervalP99Ms = clientFrameIntervalP99Ms
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
+        self.clientReassemblerPendingFrameCount = clientReassemblerPendingFrameCount
+        self.clientReassemblerPendingKeyframeCount = clientReassemblerPendingKeyframeCount
+        self.clientReassemblerPendingBytes = clientReassemblerPendingBytes
+        self.clientFrameBufferPoolRetainedBytes = clientFrameBufferPoolRetainedBytes
+        self.clientReassemblerBudgetEvictions = clientReassemblerBudgetEvictions
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS
         self.hostDroppedFrames = hostDroppedFrames
@@ -284,6 +324,12 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
         droppedFrames: UInt64,
+        reassemblerPendingFrameCount: Int = 0,
+        reassemblerPendingKeyframeCount: Int = 0,
+        reassemblerPendingBytes: Int = 0,
+        frameBufferPoolRetainedBytes: Int = 0,
+        reassemblerBudgetEvictions: UInt64 = 0,
+        displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
         presentedFPS: Double = 0,
@@ -292,7 +338,13 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
+        lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
+        repeatedFrameCount: UInt64 = 0,
+        missedVSyncCount: UInt64 = 0,
+        displayTickIntervalP95Ms: Double = 0,
+        displayTickIntervalP99Ms: Double = 0,
+        playoutDelayFrames: Int = 0,
         presentationStallCount: UInt64 = 0,
         worstPresentationGapMs: Double = 0,
         frameIntervalP95Ms: Double = 0,
@@ -306,6 +358,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientReceivedWorstGapMs = max(0, receivedWorstGapMs)
         snapshot.clientReceivedFrameIntervalP95Ms = max(0, receivedFrameIntervalP95Ms)
         snapshot.clientReceivedFrameIntervalP99Ms = max(0, receivedFrameIntervalP99Ms)
+        snapshot.clientDisplayTickFPS = max(0, displayTickFPS)
         snapshot.clientSubmitAttemptFPS = max(0, submitAttemptFPS)
         snapshot.clientLayerAcceptedFPS = max(0, layerAcceptedFPS)
         snapshot.clientPresentedFPS = max(0, presentedFPS)
@@ -314,13 +367,24 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.pendingFrameCount = max(0, pendingFrameCount)
         snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
         snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
+        snapshot.clientLateFrameDrops = lateFrameDrops
         snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
+        snapshot.clientRepeatedFrameCount = repeatedFrameCount
+        snapshot.clientMissedVSyncCount = missedVSyncCount
+        snapshot.clientDisplayTickIntervalP95Ms = max(0, displayTickIntervalP95Ms)
+        snapshot.clientDisplayTickIntervalP99Ms = max(0, displayTickIntervalP99Ms)
+        snapshot.clientPlayoutDelayFrames = max(0, playoutDelayFrames)
         snapshot.clientPresentationStallCount = presentationStallCount
         snapshot.clientWorstPresentationGapMs = max(0, worstPresentationGapMs)
         snapshot.clientFrameIntervalP95Ms = max(0, frameIntervalP95Ms)
         snapshot.clientFrameIntervalP99Ms = max(0, frameIntervalP99Ms)
         snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
+        snapshot.clientReassemblerPendingFrameCount = max(0, reassemblerPendingFrameCount)
+        snapshot.clientReassemblerPendingKeyframeCount = max(0, reassemblerPendingKeyframeCount)
+        snapshot.clientReassemblerPendingBytes = max(0, reassemblerPendingBytes)
+        snapshot.clientFrameBufferPoolRetainedBytes = max(0, frameBufferPoolRetainedBytes)
+        snapshot.clientReassemblerBudgetEvictions = reassemblerBudgetEvictions
         metricsByStream[streamID] = snapshot
         lock.unlock()
     }
@@ -411,6 +475,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         sendStartDelayMaxMs: Double?,
         sendCompletionAverageMs: Double?,
         sendCompletionMaxMs: Double?,
+        nonKeyframeSendStartDelayAverageMs: Double?,
+        nonKeyframeSendStartDelayMaxMs: Double?,
+        nonKeyframeSendCompletionAverageMs: Double?,
+        nonKeyframeSendCompletionMaxMs: Double?,
         packetPacerAverageSleepMs: Double?,
         packetPacerTotalSleepMs: Int?,
         packetPacerMaxSleepMs: Int?,
@@ -433,6 +501,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostSendStartDelayMaxMs = sendStartDelayMaxMs
         snapshot.hostSendCompletionAverageMs = sendCompletionAverageMs
         snapshot.hostSendCompletionMaxMs = sendCompletionMaxMs
+        snapshot.hostNonKeyframeSendStartDelayAverageMs = nonKeyframeSendStartDelayAverageMs
+        snapshot.hostNonKeyframeSendStartDelayMaxMs = nonKeyframeSendStartDelayMaxMs
+        snapshot.hostNonKeyframeSendCompletionAverageMs = nonKeyframeSendCompletionAverageMs
+        snapshot.hostNonKeyframeSendCompletionMaxMs = nonKeyframeSendCompletionMaxMs
         snapshot.hostPacketPacerAverageSleepMs = packetPacerAverageSleepMs
         snapshot.hostPacketPacerTotalSleepMs = packetPacerTotalSleepMs
         snapshot.hostPacketPacerMaxSleepMs = packetPacerMaxSleepMs

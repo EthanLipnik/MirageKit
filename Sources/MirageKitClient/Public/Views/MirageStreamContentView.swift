@@ -220,9 +220,43 @@ public struct MirageStreamContentView: View {
         #endif
     }
 
-    private var prefersLocalAspectFitPresentation: Bool {
-        (isDesktopStream && clientService.desktopCaptureSource == .mainDisplayFallback) ||
+    private var suppressesWindowDrivenResizeForLocalPresentation: Bool {
+        (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
             (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
+    }
+
+    private var prefersLocalAspectFitPresentation: Bool {
+        suppressesWindowDrivenResizeForLocalPresentation || appStreamPrefersAspectFitPresentation
+    }
+
+    private var appStreamPrefersAspectFitPresentation: Bool {
+        guard !isDesktopStream else { return false }
+        let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
+            ? latestContainerDisplaySize
+            : latestDrawableViewSize
+        return appStreamAspectFitPresentationDecision(
+            containerSize: containerSize,
+            streamContentSize: appStreamContentReferenceSize
+        ) == .aspectFit
+    }
+
+    private var appStreamContentReferenceSize: CGSize? {
+        if let atlasRegion = session.atlasRegion?.pixelRect,
+           atlasRegion.width > 0,
+           atlasRegion.height > 0 {
+            return atlasRegion.size
+        }
+
+        if let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID] ??
+            clientService.appStreamStartAcknowledgementByStreamID[session.mediaStreamID],
+            acknowledgement.width > 0,
+            acknowledgement.height > 0 {
+            return CGSize(width: acknowledgement.width, height: acknowledgement.height)
+        }
+
+        let windowSize = session.window.frame.size
+        guard windowSize.width > 0, windowSize.height > 0 else { return nil }
+        return windowSize
     }
 
     private var activeDesktopSessionID: UUID? {
@@ -792,7 +826,7 @@ public struct MirageStreamContentView: View {
         let decision = windowDrivenResizeTargetDecision(
             containerSize: containerSize,
             fallbackDrawableSize: latestDrawableViewSize,
-            suppressForLocalPresentation: prefersLocalAspectFitPresentation
+            suppressForLocalPresentation: suppressesWindowDrivenResizeForLocalPresentation
         )
         switch decision {
         case .suppressForLocalPresentation:

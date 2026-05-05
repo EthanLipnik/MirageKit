@@ -25,6 +25,7 @@ struct MirageHostBootstrapConfigurationTests {
         #expect(configuration.autoEndpoints.isEmpty)
         #expect(configuration.sshHostKeyFingerprints.isEmpty)
         #expect(configuration.controlAuthSecret.isEmpty == false)
+        #expect(configuration.manualWakeOnLANMACAddress.isEmpty)
         #expect(configuration.remoteLoginReachable == false)
         #expect(configuration.preloginDaemonReady == false)
     }
@@ -42,8 +43,13 @@ struct MirageHostBootstrapConfigurationTests {
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),
             ],
             sshHostKeyFingerprints: ["SHA256:test-fingerprint"],
+            manualWakeOnLANMACAddress: "11:22:33:44:55:66",
             wakeOnLANMACAddress: "AA:BB:CC:DD:EE:FF",
             wakeOnLANBroadcasts: ["192.168.1.255"],
+            wakeOnLANInterfaceName: "en0",
+            wakeOnLANInterfaceDisplayName: "Ethernet",
+            wakeOnLANUsesWiFi: false,
+            wakeOnLANWiFiPrivateAddressWarning: false,
             remoteLoginReachable: true,
             preloginDaemonReady: true
         )
@@ -67,6 +73,7 @@ struct MirageHostBootstrapConfigurationTests {
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),
             ],
             sshHostKeyFingerprints: [" SHA256:test-fingerprint ", " "],
+            manualWakeOnLANMACAddress: " 11:22:33:44:55:66 ",
             wakeOnLANMACAddress: " AA:BB:CC:DD:EE:FF ",
             wakeOnLANBroadcasts: [" 192.168.1.255 ", " "],
             remoteLoginReachable: true,
@@ -85,7 +92,19 @@ struct MirageHostBootstrapConfigurationTests {
         #expect(metadata?.endpoints.first?.port == 2200)
         #expect(metadata?.endpoints.first?.source == .user)
         #expect(metadata?.sshHostKeyFingerprints == ["SHA256:test-fingerprint"])
-        #expect(metadata?.wakeOnLAN?.macAddress == "AA:BB:CC:DD:EE:FF")
+        #expect(metadata?.wakeOnLAN?.macAddress == "11:22:33:44:55:66")
         #expect(metadata?.wakeOnLAN?.broadcastAddresses == ["192.168.1.255"])
+    }
+
+    @Test("Invalid manual Wake MAC falls back to auto-detected MAC")
+    func invalidManualWakeMACFallback() {
+        let configuration = MirageHostBootstrapConfiguration(
+            enabled: true,
+            manualWakeOnLANMACAddress: "invalid",
+            wakeOnLANMACAddress: "AA:BB:CC:DD:EE:FF",
+            wakeOnLANBroadcasts: ["192.168.1.255"]
+        )
+
+        #expect(configuration.toBootstrapMetadata()?.wakeOnLAN?.macAddress == "AA:BB:CC:DD:EE:FF")
     }
 }

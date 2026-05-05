@@ -6,6 +6,9 @@
 //
 
 import CoreGraphics
+#if canImport(Darwin)
+import Darwin
+#endif
 import Foundation
 import Loom
 import MirageKit
@@ -298,6 +301,8 @@ public final class MirageClientService {
 
     /// Current connection state
     public internal(set) var connectionState: ConnectionState = .disconnected
+    /// Last completed disconnect reason from the host or local client lifecycle.
+    public internal(set) var lastDisconnectReason: String?
     /// Current host authorization/trust evaluation state.
     public internal(set) var authorizationState: AuthorizationState = .idle
     /// Whether the host connection is awaiting explicit manual approval.
@@ -756,6 +761,22 @@ public final class MirageClientService {
         return streamIDs.filter { seen.insert($0).inserted }
     }
 
+    public func handleMemoryPressure() async {
+        let streamIDs = activeInteractiveStreamIDs
+        var trimmedStreamCount = 0
+
+        for streamID in streamIDs {
+            guard let controller = controllersByStream[streamID] else { continue }
+            if await controller.handleMemoryPressure() {
+                trimmedStreamCount += 1
+            }
+        }
+
+        MirageLogger.client(
+            "Handled client memory pressure: activeStreams=\(streamIDs.count), trimmedStreams=\(trimmedStreamCount)"
+        )
+    }
+
     var startupRegistrationRetryTasks: [StreamID: Task<Void, Never>] = [:]
     let startupRegistrationRetryInterval: Duration = .seconds(1)
     let startupRegistrationRetryLimit: Int = 5
@@ -843,6 +864,10 @@ public final class MirageClientService {
     var pendingRequestedColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
     var pendingDesktopRequestedColorDepth: MirageStreamColorDepth?
     var pendingAppRequestedColorDepth: MirageStreamColorDepth?
+    var pendingDesktopRequestedLatencyMode: MirageStreamLatencyMode?
+    var pendingAppRequestedLatencyMode: MirageStreamLatencyMode?
+    var pendingStreamSetupLatencyMode: MirageStreamLatencyMode?
+    var renderLatencyModeByStream: [StreamID: MirageStreamLatencyMode] = [:]
     let decoderCompatibilityFallbackCooldown: CFAbsoluteTime = 15.0
     @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
     // Internal for low-power policy extension.
@@ -957,6 +982,7 @@ public final class MirageClientService {
 
     private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
         let primarySnapshot = diagnosticsPrimaryStreamSnapshot()
+        let processPhysicalFootprintBytes = Self.processPhysicalFootprintBytes()
         return [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
             "client.authorizationState": .string(authorizationState.rawValue),
@@ -976,6 +1002,18 @@ public final class MirageClientService {
             "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
                 primarySnapshot?.clientUsingHardwareDecoder
             ),
+            "client.primaryStream.reassemblerPendingFrameCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingFrameCount) } ?? .null,
+            "client.primaryStream.reassemblerPendingKeyframeCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingKeyframeCount) } ?? .null,
+            "client.primaryStream.reassemblerPendingBytes": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingBytes) } ?? .null,
+            "client.primaryStream.frameBufferPoolRetainedBytes": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientFrameBufferPoolRetainedBytes) } ?? .null,
+            "client.primaryStream.reassemblerBudgetEvictions": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientReassemblerBudgetEvictions)) } ?? .null,
+            "client.process.physicalFootprintBytes": processPhysicalFootprintBytes
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0)) } ?? .null,
             "client.primaryStream.hostEncoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
                 primarySnapshot?.hostUsingHardwareEncoder
             ),
@@ -1018,6 +1056,27 @@ public final class MirageClientService {
     private func diagnosticsHardwareAccelerationState(_ enabled: Bool?) -> LoomDiagnosticsValue {
         guard let enabled else { return .string("unknown") }
         return .string(enabled ? "active" : "software_fallback")
+    }
+
+    private static func processPhysicalFootprintBytes() -> UInt64? {
+        #if canImport(Darwin)
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { reboundPointer in
+                task_info(
+                    mach_task_self_,
+                    task_flavor_t(TASK_VM_INFO),
+                    reboundPointer,
+                    &count
+                )
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return UInt64(info.phys_footprint)
+        #else
+        return nil
+        #endif
     }
 
     private static func diagnosticsConnectionStateName(_ state: ConnectionState) -> String {

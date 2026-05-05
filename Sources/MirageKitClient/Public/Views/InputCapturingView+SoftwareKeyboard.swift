@@ -64,7 +64,7 @@ extension InputCapturingView {
 
     func updateSoftwareKeyboardVisibility(allowDismissalReset: Bool = false) {
         guard let inputView = softwareKeyboardField else { return }
-        let wantsSoftwareKeyboard = softwareKeyboardVisible && !hardwareKeyboardPresent
+        let wantsSoftwareKeyboard = softwareKeyboardVisible
         if allowDismissalReset && wantsSoftwareKeyboard && canPresentSoftwareKeyboardField(inputView) {
             softwareKeyboardDismissalPending = false
         }

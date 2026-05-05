@@ -60,6 +60,29 @@ struct CapturePressureProfileTests {
         #expect(baseline == 8)
         #expect(tuned == baseline)
     }
+
+    @Test("Virtual-display 60 Hz capture uses full SCK queue headroom")
+    func virtualDisplay60HzUsesFullQueueDepth() {
+        let physical = WindowCaptureEngine.resolveSCKQueueDepth(
+            width: 3_840,
+            height: 2_160,
+            frameRate: 60,
+            latencyMode: .lowestLatency,
+            overrideDepth: nil,
+            usesDisplayRefreshCadence: false
+        )
+        let virtual = WindowCaptureEngine.resolveSCKQueueDepth(
+            width: 3_840,
+            height: 2_160,
+            frameRate: 60,
+            latencyMode: .lowestLatency,
+            overrideDepth: nil,
+            usesDisplayRefreshCadence: true
+        )
+
+        #expect(physical == 7)
+        #expect(virtual == 8)
+    }
 }
 
 @Suite("Capture Rate Policy")
@@ -117,6 +140,31 @@ struct CaptureRatePolicyTests {
                 requestedFrameRate: 120,
                 displayRefreshRate: 120,
                 usesDisplayRefreshCadence: false
+            ) != .zero
+        )
+    }
+
+    @Test("Virtual-display cadence falls back to native 60 Hz when refresh readback is missing")
+    func virtualDisplayCadenceFallsBackToNative60Hz() {
+        #expect(
+            WindowCaptureEngine.resolvedEffectiveCaptureRate(
+                requestedFrameRate: 60,
+                displayRefreshRate: nil,
+                usesDisplayRefreshCadence: true
+            ) == 60
+        )
+        #expect(
+            WindowCaptureEngine.resolvedMinimumFrameInterval(
+                requestedFrameRate: 60,
+                displayRefreshRate: nil,
+                usesDisplayRefreshCadence: true
+            ) == .zero
+        )
+        #expect(
+            WindowCaptureEngine.resolvedMinimumFrameInterval(
+                requestedFrameRate: 30,
+                displayRefreshRate: nil,
+                usesDisplayRefreshCadence: true
             ) != .zero
         )
     }

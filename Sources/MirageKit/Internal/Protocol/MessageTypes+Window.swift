@@ -405,6 +405,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let sendStartDelayMaxMs: Double?
     package let sendCompletionAverageMs: Double?
     package let sendCompletionMaxMs: Double?
+    package let nonKeyframeSendStartDelayAverageMs: Double?
+    package let nonKeyframeSendStartDelayMaxMs: Double?
+    package let nonKeyframeSendCompletionAverageMs: Double?
+    package let nonKeyframeSendCompletionMaxMs: Double?
     package let packetPacerAverageSleepMs: Double?
     package let packetPacerTotalSleepMs: Int?
     package let packetPacerMaxSleepMs: Int?
@@ -458,6 +462,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
         sendStartDelayMaxMs: Double? = nil,
         sendCompletionAverageMs: Double? = nil,
         sendCompletionMaxMs: Double? = nil,
+        nonKeyframeSendStartDelayAverageMs: Double? = nil,
+        nonKeyframeSendStartDelayMaxMs: Double? = nil,
+        nonKeyframeSendCompletionAverageMs: Double? = nil,
+        nonKeyframeSendCompletionMaxMs: Double? = nil,
         packetPacerAverageSleepMs: Double? = nil,
         packetPacerTotalSleepMs: Int? = nil,
         packetPacerMaxSleepMs: Int? = nil,
@@ -510,6 +518,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.sendStartDelayMaxMs = sendStartDelayMaxMs
         self.sendCompletionAverageMs = sendCompletionAverageMs
         self.sendCompletionMaxMs = sendCompletionMaxMs
+        self.nonKeyframeSendStartDelayAverageMs = nonKeyframeSendStartDelayAverageMs
+        self.nonKeyframeSendStartDelayMaxMs = nonKeyframeSendStartDelayMaxMs
+        self.nonKeyframeSendCompletionAverageMs = nonKeyframeSendCompletionAverageMs
+        self.nonKeyframeSendCompletionMaxMs = nonKeyframeSendCompletionMaxMs
         self.packetPacerAverageSleepMs = packetPacerAverageSleepMs
         self.packetPacerTotalSleepMs = packetPacerTotalSleepMs
         self.packetPacerMaxSleepMs = packetPacerMaxSleepMs

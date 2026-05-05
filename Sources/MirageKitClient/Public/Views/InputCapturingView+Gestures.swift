@@ -281,6 +281,7 @@ extension InputCapturingView {
             lastPanLocation = location
 
         case .changed:
+            stopTouchScrollDeceleration()
             if !directLongPressButtonDown {
                 let mouseEvent = MirageMouseEvent(
                     button: .left,

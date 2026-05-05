@@ -32,7 +32,8 @@ extension WindowCaptureEngine {
         height: Int,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        overrideDepth: Int?
+        overrideDepth: Int?,
+        usesDisplayRefreshCadence: Bool = false
     ) -> Int {
         if let overrideDepth, overrideDepth > 0 {
             return min(max(3, overrideDepth), 8)
@@ -40,6 +41,9 @@ extension WindowCaptureEngine {
 
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
+        if usesDisplayRefreshCadence, frameRate >= 60 {
+            return 8
+        }
         if frameRate >= 120 {
             // Native-refresh capture is where SCK is most sensitive to queue starvation.
             // Keep the stream queue at the platform-supported ceiling and use Mirage's
@@ -145,7 +149,8 @@ extension WindowCaptureEngine {
             height: currentHeight,
             frameRate: currentFrameRate,
             latencyMode: latencyMode,
-            overrideDepth: configuration.captureQueueDepth
+            overrideDepth: configuration.captureQueueDepth,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )
     }
 
@@ -166,11 +171,14 @@ extension WindowCaptureEngine {
         usesDisplayRefreshCadence: Bool
     ) -> Int {
         let requestedFrameRate = max(1, requestedFrameRate)
-        guard usesDisplayRefreshCadence,
-              let displayRefreshRate,
-              displayRefreshRate > 0 else {
+        guard usesDisplayRefreshCadence else {
             return requestedFrameRate
         }
+        guard let displayRefreshRate = resolvedDisplayRefreshRateForCadence(
+            requestedFrameRate: requestedFrameRate,
+            displayRefreshRate: displayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        ) else { return requestedFrameRate }
         return max(1, min(requestedFrameRate, displayRefreshRate))
     }
 
@@ -180,11 +188,28 @@ extension WindowCaptureEngine {
         usesDisplayRefreshCadence: Bool
     ) -> Bool {
         guard usesDisplayRefreshCadence,
-              let displayRefreshRate,
-              displayRefreshRate > 0 else {
+              let displayRefreshRate = resolvedDisplayRefreshRateForCadence(
+                  requestedFrameRate: requestedFrameRate,
+                  displayRefreshRate: displayRefreshRate,
+                  usesDisplayRefreshCadence: usesDisplayRefreshCadence
+              ) else {
             return false
         }
         return max(1, requestedFrameRate) >= displayRefreshRate
+    }
+
+    nonisolated static func resolvedDisplayRefreshRateForCadence(
+        requestedFrameRate: Int,
+        displayRefreshRate: Int?,
+        usesDisplayRefreshCadence: Bool
+    ) -> Int? {
+        guard usesDisplayRefreshCadence else { return displayRefreshRate }
+        if let displayRefreshRate, displayRefreshRate > 0 {
+            return displayRefreshRate
+        }
+        let requestedFrameRate = max(1, requestedFrameRate)
+        guard requestedFrameRate >= 60 else { return nil }
+        return min(requestedFrameRate, 120)
     }
 
     nonisolated static func resolvedMinimumFrameInterval(

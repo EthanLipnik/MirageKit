@@ -344,6 +344,7 @@ final class FrameReassembler: @unchecked Sendable {
     enum FrameLossReason: String, Sendable, Equatable {
         case timeout
         case forwardGapTimeout
+        case memoryBudget
         case severeForwardGap
 
         var requestsImmediateActiveRecovery: Bool {
@@ -351,21 +352,57 @@ final class FrameReassembler: @unchecked Sendable {
             case .timeout:
                 false
             case .forwardGapTimeout,
+                 .memoryBudget,
                  .severeForwardGap:
                 true
             }
         }
     }
 
+    struct MemoryBudget: Sendable, Equatable {
+        static let `default` = MemoryBudget(
+            maxPendingFrames: 12,
+            maxPendingKeyframes: 2,
+            maxPendingBytes: 128 * 1024 * 1024
+        )
+
+        let maxPendingFrames: Int
+        let maxPendingKeyframes: Int
+        let maxPendingBytes: Int
+
+        init(
+            maxPendingFrames: Int,
+            maxPendingKeyframes: Int,
+            maxPendingBytes: Int
+        ) {
+            self.maxPendingFrames = max(1, maxPendingFrames)
+            self.maxPendingKeyframes = max(1, maxPendingKeyframes)
+            self.maxPendingBytes = max(1, maxPendingBytes)
+        }
+    }
+
     struct Metrics: Sendable {
         let framesDelivered: UInt64
         let droppedFrames: UInt64
+        let pendingFrameCount: Int
+        let pendingKeyframeCount: Int
+        let pendingFrameBytes: Int
+        let frameBufferPoolRetainedBytes: Int
+        let budgetEvictions: UInt64
     }
+
+    struct MemoryTrimResult: Sendable, Equatable {
+        let evictedFrames: Int
+        let releasedPendingBytes: Int
+        let awaitingKeyframe: Bool
+    }
+
     /// The stream ID this reassembler handles
     let streamID: StreamID
     let maxPayloadSize: Int
     let lock = NSLock()
     let bufferPool = FrameBufferPool()
+    let memoryBudget: MemoryBudget
 
     var pendingFrames: [UInt32: PendingFrame] = [:]
     var lastCompletedFrame: UInt32 = 0
@@ -374,6 +411,7 @@ final class FrameReassembler: @unchecked Sendable {
     /// Frame number 0 is valid, so lastDeliveredKeyframe cannot be used as a sentinel.
     var hasDeliveredKeyframeAnchor: Bool = false
     var droppedFrameCount: UInt64 = 0
+    var memoryBudgetEvictionCount: UInt64 = 0
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0
@@ -433,6 +471,9 @@ final class FrameReassembler: @unchecked Sendable {
         var expectedTotalBytes: Int
         var parityFragments: [Int: Data]
         var receivedParityCount: Int
+        var retainedMemoryBytes: Int {
+            buffer.capacity + parityFragments.values.reduce(0) { $0 + $1.count }
+        }
 
         init(
             buffer: FrameBufferPool.Buffer,
@@ -469,9 +510,14 @@ final class FrameReassembler: @unchecked Sendable {
         }
     }
 
-    init(streamID: StreamID, maxPayloadSize: Int) {
+    init(
+        streamID: StreamID,
+        maxPayloadSize: Int,
+        memoryBudget: MemoryBudget = .default
+    ) {
         self.streamID = streamID
         self.maxPayloadSize = max(1, maxPayloadSize)
+        self.memoryBudget = memoryBudget
     }
 
     // Update the expected dimension token for this stream.

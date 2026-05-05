@@ -41,6 +41,7 @@ extension StreamController {
         let renderTelemetry = latestRenderTelemetrySnapshot ??
             MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         let frameMetrics = metricsTracker.snapshot(now: currentTime())
+        let reassemblerMetrics = reassembler.snapshotMetrics()
         let diagnostic = clientStreamingAnomalyDiagnostic(
             sample: ClientStreamingAnomalySample(
                 streamID: streamID,
@@ -50,6 +51,7 @@ extension StreamController {
                 receivedWorstGapMs: frameMetrics.receivedWorstGapMs,
                 receivedFrameIntervalP95Ms: frameMetrics.receivedFrameIntervalP95Ms,
                 receivedFrameIntervalP99Ms: frameMetrics.receivedFrameIntervalP99Ms,
+                displayTickFPS: renderTelemetry.displayTickFPS,
                 submitAttemptFPS: renderTelemetry.submitAttemptFPS,
                 layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
                 presentedFPS: renderTelemetry.presentedFPS,
@@ -58,7 +60,13 @@ extension StreamController {
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+                lateFrameDrops: renderTelemetry.lateFrameDrops,
                 displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
+                repeatedFrameCount: renderTelemetry.repeatedFrameCount,
+                missedVSyncCount: renderTelemetry.missedVSyncCount,
+                displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
+                displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
+                playoutDelayFrames: renderTelemetry.playoutDelayFrames,
                 presentationStallCount: renderTelemetry.presentationStallCount,
                 worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
                 frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
@@ -66,6 +74,11 @@ extension StreamController {
                 decodeHealthy: renderTelemetry.decodeHealthy,
                 decodeSubmissionLimit: currentDecodeSubmissionLimit,
                 presentationTier: presentationTier,
+                reassemblerPendingFrameCount: reassemblerMetrics.pendingFrameCount,
+                reassemblerPendingKeyframeCount: reassemblerMetrics.pendingKeyframeCount,
+                reassemblerPendingBytes: reassemblerMetrics.pendingFrameBytes,
+                frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
+                reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
                 decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),
                 usingHardwareDecoder: await decoder.currentHardwareDecoderStatus(),
                 targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? decodeSchedulerTargetFPS),

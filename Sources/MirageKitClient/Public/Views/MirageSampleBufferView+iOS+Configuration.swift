@@ -166,6 +166,7 @@ extension MirageSampleBufferView {
         let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : clamped
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
+        updatePresentationDisplayLinkFrameRate()
 
         guard changed else { return }
         MirageLogger.renderer(

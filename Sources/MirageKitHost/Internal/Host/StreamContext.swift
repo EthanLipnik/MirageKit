@@ -181,6 +181,9 @@ actor StreamContext {
     var freshnessBurstQueueResetCount: UInt64 = 0
     var freshnessBurstRecoveryKeyframeCount: UInt64 = 0
     var freshnessBurstCoalescedKeyframeCount: UInt64 = 0
+    var softFreshnessDrainActive = false
+    var softFreshnessDrainDeadline: CFAbsoluteTime = 0
+    var softFreshnessDrainCount: UInt64 = 0
     var latencyBurstActive = false
     var latencyBurstDrainsNewestFrames = false
     var latencyBurstCaptureQueueDepthOverride: Int?
@@ -486,7 +489,7 @@ actor StreamContext {
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
-        let usesAdaptiveDesktopLowLatency60HzPolicy = Self.usesAdaptiveStandardDesktopLowLatency60HzPolicy(
+        let usesDesktopLowLatency60HzBufferPolicy = Self.usesStandardDesktopLowLatency60HzBufferPolicy(
             streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: resolvedLatencyMode,
@@ -510,9 +513,8 @@ actor StreamContext {
                 latencyMode: resolvedLatencyMode
             )
         )
-        if usesAdaptiveDesktopLowLatency60HzPolicy {
+        if usesDesktopLowLatency60HzBufferPolicy {
             bufferDepth = max(bufferDepth, 2)
-            inFlightCap = max(inFlightCap, 2)
         }
         if performanceMode == .game,
            useLowLatencyPipeline,
@@ -635,9 +637,9 @@ actor StreamContext {
             if frameRate >= 60 { return 5 }
             return 3
         case .auto:
-            if frameRate >= 120 { return 6 }
-            if frameRate >= 60 { return 5 }
-            return 3
+            if frameRate >= 120 { return 4 }
+            if frameRate >= 60 { return 3 }
+            return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
             if frameRate >= 60 { return 2 }
@@ -653,9 +655,13 @@ actor StreamContext {
     -> Int {
         if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
         switch latencyMode {
-        case .smoothest, .auto:
+        case .smoothest:
             if frameRate >= 120 { return 5 }
             if frameRate >= 60 { return 4 }
+            return 2
+        case .auto:
+            if frameRate >= 120 { return 3 }
+            if frameRate >= 60 { return 2 }
             return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -671,16 +677,20 @@ actor StreamContext {
     -> Int {
         if useLowLatencyPipeline { return 1 }
         switch latencyMode {
-        case .smoothest, .auto:
+        case .smoothest:
             if frameRate >= 120 { return 4 }
             if frameRate >= 60 { return 3 }
+            return 1
+        case .auto:
+            if frameRate >= 120 { return 2 }
+            if frameRate >= 60 { return 2 }
             return 1
         case .lowestLatency:
             return 1
         }
     }
 
-    static func usesAdaptiveStandardDesktopLowLatency60HzPolicy(
+    static func usesStandardDesktopLowLatency60HzBufferPolicy(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
@@ -691,15 +701,6 @@ actor StreamContext {
             performanceMode == .standard &&
             latencyMode == .lowestLatency &&
             frameRate == 60
-    }
-
-    var usesAdaptiveStandardDesktopLowLatency60HzPolicy: Bool {
-        Self.usesAdaptiveStandardDesktopLowLatency60HzPolicy(
-            streamKind: streamKind,
-            frameRate: currentFrameRate,
-            latencyMode: latencyMode,
-            performanceMode: performanceMode
-        )
     }
 
     nonisolated func schedulePipelineStatsLog() {

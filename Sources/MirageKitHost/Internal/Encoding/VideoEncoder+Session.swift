@@ -35,7 +35,9 @@ extension VideoEncoder {
         width: Int,
         height: Int,
         streamKind: StreamKind,
-        codec: MirageVideoCodec = .hevc
+        codec: MirageVideoCodec = .hevc,
+        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MiragePixelFormat? = nil
     ) -> [CFString: Any] {
         // ProRes does not use hardware-accelerated HEVC encoder or low-latency rate control
         if codec == .proRes4444 {
@@ -53,7 +55,9 @@ extension VideoEncoder {
             latencyMode: latencyMode,
             width: width,
             height: height,
-            streamKind: streamKind
+            streamKind: streamKind,
+            colorDepth: colorDepth,
+            pixelFormat: pixelFormat
         ) {
             spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
         }
@@ -78,21 +82,28 @@ extension VideoEncoder {
         latencyMode: MirageStreamLatencyMode,
         width _: Int,
         height _: Int,
-        streamKind: StreamKind
+        streamKind: StreamKind,
+        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MiragePixelFormat? = nil
     ) -> Bool {
         guard performanceMode == .standard, latencyMode == .lowestLatency else { return false }
-        return !shouldSuppressStandardLowLatencyRateControl(
-            streamKind: streamKind
+        return standardLowLatencyUsesSunshinePolicy(
+            streamKind: streamKind,
+            colorDepth: colorDepth,
+            pixelFormat: pixelFormat
         )
     }
 
     nonisolated static func shouldSuppressStandardLowLatencyRateControl(
-        streamKind: StreamKind
+        streamKind: StreamKind,
+        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MiragePixelFormat? = nil
     ) -> Bool {
-        switch streamKind {
-        case .appAtlas, .custom, .desktop, .window:
-            true
-        }
+        !standardLowLatencyUsesSunshinePolicy(
+            streamKind: streamKind,
+            colorDepth: colorDepth,
+            pixelFormat: pixelFormat
+        )
     }
 
     nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
@@ -100,16 +111,31 @@ extension VideoEncoder {
         latencyMode: MirageStreamLatencyMode,
         width _: Int,
         height _: Int,
-        streamKind: StreamKind
+        streamKind: StreamKind,
+        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MiragePixelFormat? = nil
     ) -> Bool {
         performanceMode == .standard &&
             latencyMode == .lowestLatency &&
             shouldSuppressStandardLowLatencyRateControl(
-                streamKind: streamKind
+                streamKind: streamKind,
+                colorDepth: colorDepth,
+                pixelFormat: pixelFormat
             )
     }
 
-    private struct GameModeRateControlPolicy {
+    nonisolated static func standardLowLatencyUsesSunshinePolicy(
+        streamKind: StreamKind,
+        colorDepth: MirageStreamColorDepth? = nil,
+        pixelFormat: MiragePixelFormat? = nil
+    ) -> Bool {
+        streamKind == .desktop ||
+            colorDepth == .ultra ||
+            pixelFormat == .xf44 ||
+            pixelFormat == .ayuv16
+    }
+
+    private struct LowLatencyRateControlPolicy {
         let realTime = true
         let allowFrameReordering = false
         let referenceBufferCount = 1
@@ -158,15 +184,15 @@ extension VideoEncoder {
         var failedText: String { joined(failed) }
     }
 
-    private enum GameModeBitrateStrategy: String {
+    private enum LowLatencyBitrateStrategy: String {
         case constantBitRate
         case averageBitRateOnly
         case averageBitRateDataRateLimits
         case none
     }
 
-    private struct GameModeBitrateResult {
-        let strategy: GameModeBitrateStrategy
+    private struct LowLatencyBitrateResult {
+        let strategy: LowLatencyBitrateStrategy
         let windowSeconds: Double?
     }
 
@@ -317,7 +343,9 @@ extension VideoEncoder {
             MirageLogger.encoder("Encoder spec: game mode low-latency rate control requested")
         } else if resolvedSessionLatencyMode() == .lowestLatency {
             if Self.shouldSuppressStandardLowLatencyRateControl(
-                streamKind: streamKind
+                streamKind: streamKind,
+                colorDepth: configuration.colorDepth,
+                pixelFormat: activePixelFormat
             ) {
                 MirageLogger.encoder(
                     "Encoder spec: standard low-latency rate control suppressed for \(streamKind.rawValue) \(width)x\(height)"
@@ -327,7 +355,9 @@ extension VideoEncoder {
                 latencyMode: resolvedSessionLatencyMode(),
                 width: width,
                 height: height,
-                streamKind: streamKind
+                streamKind: streamKind,
+                colorDepth: configuration.colorDepth,
+                pixelFormat: activePixelFormat
             ) {
                 MirageLogger.encoder(
                     "Encoder spec: standard low-latency rate control requested for \(streamKind.rawValue) \(width)x\(height)"
@@ -426,7 +456,9 @@ extension VideoEncoder {
                 width: width,
                 height: height,
                 streamKind: streamKind,
-                codec: codec
+                codec: codec,
+                colorDepth: configuration.colorDepth,
+                pixelFormat: activePixelFormat
             )
         case 1:
             // Drop low-latency rate control, keep hardware requirement
@@ -760,13 +792,13 @@ extension VideoEncoder {
     }
 
     @discardableResult
-    private func applyGameModeBitrateSettings(
+    private func applyLowLatencyBitrateSettings(
         _ session: VTCompressionSession,
-        policy: GameModeRateControlPolicy,
+        policy: LowLatencyRateControlPolicy,
         status: inout SessionPolicyStatus
-    ) -> GameModeBitrateResult {
+    ) -> LowLatencyBitrateResult {
         guard let targetBitrate = configuration.bitrate, targetBitrate > 0 else {
-            return GameModeBitrateResult(strategy: .none, windowSeconds: nil)
+            return LowLatencyBitrateResult(strategy: .none, windowSeconds: nil)
         }
 
         let targetFrameRate = max(1, policy.expectedFrameRate)
@@ -778,7 +810,7 @@ extension VideoEncoder {
             status: &status
         )
 
-        let strategy: GameModeBitrateStrategy
+        let strategy: LowLatencyBitrateStrategy
         let windowSeconds: Double?
         if constantBitRateApplied {
             strategy = .constantBitRate
@@ -836,15 +868,23 @@ extension VideoEncoder {
         } else {
             MirageLogger.encoder("Encoder bitrate target: \(bitrateText) Mbps (strategy \(strategy.rawValue))")
         }
-        return GameModeBitrateResult(strategy: strategy, windowSeconds: windowSeconds)
+        return LowLatencyBitrateResult(strategy: strategy, windowSeconds: windowSeconds)
     }
 
     func applyBitrateSettingsToActiveSession() {
         guard let session = compressionSession else { return }
         if performanceMode == .game {
-            let policy = GameModeRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+            let policy = LowLatencyRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
             var status = SessionPolicyStatus()
-            applyGameModeBitrateSettings(session, policy: policy, status: &status)
+            applyLowLatencyBitrateSettings(session, policy: policy, status: &status)
+        } else if !isProRes, Self.standardLowLatencyUsesSunshinePolicy(
+            streamKind: streamKind,
+            colorDepth: configuration.colorDepth,
+            pixelFormat: activePixelFormat
+        ), resolvedSessionLatencyMode() == .lowestLatency {
+            let policy = LowLatencyRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+            var status = SessionPolicyStatus()
+            applyLowLatencyBitrateSettings(session, policy: policy, status: &status)
         } else {
             applyBitrateSettings(session)
         }
@@ -882,16 +922,20 @@ extension VideoEncoder {
             latencyMode: resolvedLatencyMode,
             width: width,
             height: height,
-            streamKind: streamKind
+            streamKind: streamKind,
+            colorDepth: configuration.colorDepth,
+            pixelFormat: activePixelFormat
         )
         let suppressedStandardLowLatencyThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             performanceMode: performanceMode,
             latencyMode: resolvedLatencyMode,
             width: width,
             height: height,
-            streamKind: streamKind
+            streamKind: streamKind,
+            colorDepth: configuration.colorDepth,
+            pixelFormat: activePixelFormat
         )
-        let gameModePolicy = performanceMode == .game ? GameModeRateControlPolicy(
+        let gameModePolicy = performanceMode == .game ? LowLatencyRateControlPolicy(
             targetFrameRate: configuration.targetFrameRate
         ) : nil
         var gameModeStatus = SessionPolicyStatus()
@@ -947,6 +991,7 @@ extension VideoEncoder {
             if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
                 applyStandardLowLatencyThroughputSettings(
                     session,
+                    useSunshinePolicy: standardLowLatencyTuningEnabled,
                     status: &standardLowLatencyStatus
                 )
             } else {
@@ -1009,7 +1054,7 @@ extension VideoEncoder {
 
         // Apply bitrate policy.
         if let gameModePolicy {
-            let bitrateResult = applyGameModeBitrateSettings(session, policy: gameModePolicy, status: &gameModeStatus)
+            let bitrateResult = applyLowLatencyBitrateSettings(session, policy: gameModePolicy, status: &gameModeStatus)
             let windowText = if let windowSeconds = bitrateResult.windowSeconds {
                 windowSeconds.formatted(.number.precision(.fractionLength(4)))
             } else {
@@ -1022,8 +1067,26 @@ extension VideoEncoder {
                     "failed=\(gameModeStatus.failedText)"
             )
         } else {
-            // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
-            applyBitrateSettings(session)
+            if standardLowLatencyTuningEnabled {
+                let policy = LowLatencyRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+                let bitrateResult = applyLowLatencyBitrateSettings(
+                    session,
+                    policy: policy,
+                    status: &standardLowLatencyStatus
+                )
+                let windowText = if let windowSeconds = bitrateResult.windowSeconds {
+                    windowSeconds.formatted(.number.precision(.fractionLength(4)))
+                } else {
+                    "n/a"
+                }
+                MirageLogger.encoder(
+                    "event=encoder_effective_policy mode=standardLowLatency strategy=\(bitrateResult.strategy.rawValue) " +
+                        "targetFPS=\(policy.expectedFrameRate) dataRateWindow=\(windowText)s"
+                )
+            } else {
+                // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
+                applyBitrateSettings(session)
+            }
             if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
                 MirageLogger.encoder(
                     "event=encoder_standard_low_latency_tuning applied=\(standardLowLatencyStatus.appliedText) " +
@@ -1126,6 +1189,7 @@ extension VideoEncoder {
 
     private func applyStandardLowLatencyThroughputSettings(
         _ session: VTCompressionSession,
+        useSunshinePolicy: Bool,
         status: inout SessionPolicyStatus
     ) {
         applyMaximizePowerEfficiencyTracked(session, status: &status)
@@ -1136,11 +1200,26 @@ extension VideoEncoder {
             propertyName: "referenceBufferCount",
             status: &status
         )
+        guard useSunshinePolicy else { return }
+        setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_AllowOpenGOP,
+            value: kCFBooleanFalse,
+            propertyName: "allowOpenGOP",
+            status: &status
+        )
+        setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_AllowTemporalCompression,
+            value: kCFBooleanTrue,
+            propertyName: "allowTemporalCompression",
+            status: &status
+        )
     }
 
     private func applyGameModeThroughputSettings(
         _ session: VTCompressionSession,
-        policy: GameModeRateControlPolicy,
+        policy: LowLatencyRateControlPolicy,
         status: inout SessionPolicyStatus
     ) {
         // Keep HEVC on the highest-throughput path for sustained high-resolution encoding.

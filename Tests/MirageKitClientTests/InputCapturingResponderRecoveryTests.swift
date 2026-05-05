@@ -107,14 +107,14 @@ struct InputCapturingResponderRecoveryTests {
         }
     }
 
-    @Test("Target selection prefers hardware capture when a hardware keyboard is present")
-    func targetSelectionPrefersCaptureViewForHardwareKeyboard() {
+    @Test("Target selection prefers the software keyboard field whenever it is intentionally shown")
+    func targetSelectionPrefersSoftwareKeyboardFieldWithHardwareKeyboard() {
         let target = InputCapturingResponderRecoveryPolicy.target(
             softwareKeyboardVisible: true,
             hardwareKeyboardPresent: true
         )
 
-        #expect(target == .captureView)
+        #expect(target == .softwareKeyboardField)
     }
 
     @Test("Target selection prefers the software keyboard field when intentionally shown")
@@ -127,8 +127,8 @@ struct InputCapturingResponderRecoveryTests {
         #expect(target == .softwareKeyboardField)
     }
 
-    @Test("Hardware keyboard presence change clears software state and requests capture recovery")
-    func hardwareKeyboardPresenceChangeClearsSoftwareStateAndRequestsCaptureRecovery() {
+    @Test("Hardware keyboard presence change preserves software keyboard state and requests recovery")
+    func hardwareKeyboardPresenceChangePreservesSoftwareStateAndRequestsRecovery() {
         let view = InputCapturingView(frame: .zero)
         var requestedTriggers: [InputCapturingResponderRecoveryTrigger] = []
         var hardwarePresenceEvents: [Bool] = []
@@ -139,7 +139,8 @@ struct InputCapturingResponderRecoveryTests {
         view.updateHardwareKeyboardPresence(true)
 
         #expect(view.hardwareKeyboardPresent)
-        #expect(view.responderRecoveryTarget() == .captureView)
+        #expect(view.softwareKeyboardVisible)
+        #expect(view.responderRecoveryTarget() == .softwareKeyboardField)
         #expect(requestedTriggers == [.hardwareKeyboardPresenceChanged])
         #expect(hardwarePresenceEvents == [true])
     }

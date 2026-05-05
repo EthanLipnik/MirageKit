@@ -62,6 +62,12 @@ struct ClientMetricsStoreTests {
             receivedFrameIntervalP95Ms: 18.0,
             receivedFrameIntervalP99Ms: 33.0,
             droppedFrames: 3,
+            reassemblerPendingFrameCount: 5,
+            reassemblerPendingKeyframeCount: 2,
+            reassemblerPendingBytes: 65_536,
+            frameBufferPoolRetainedBytes: 131_072,
+            reassemblerBudgetEvictions: 4,
+            displayTickFPS: 60.0,
             submitAttemptFPS: 61.0,
             layerAcceptedFPS: 59.0,
             presentedFPS: 58.0,
@@ -70,7 +76,13 @@ struct ClientMetricsStoreTests {
             pendingFrameCount: 1,
             pendingFrameAgeMs: 4.0,
             overwrittenPendingFrames: 2,
+            lateFrameDrops: 1,
             displayLayerNotReadyCount: 0,
+            repeatedFrameCount: 4,
+            missedVSyncCount: 2,
+            displayTickIntervalP95Ms: 17.2,
+            displayTickIntervalP99Ms: 29.5,
+            playoutDelayFrames: 1,
             decodeHealthy: true
         )
         let captureCadence = StreamCaptureCadenceMetrics(
@@ -114,6 +126,10 @@ struct ClientMetricsStoreTests {
             sendStartDelayMaxMs: 8.4,
             sendCompletionAverageMs: 9.1,
             sendCompletionMaxMs: 22.7,
+            nonKeyframeSendStartDelayAverageMs: 2.1,
+            nonKeyframeSendStartDelayMaxMs: 5.2,
+            nonKeyframeSendCompletionAverageMs: 7.8,
+            nonKeyframeSendCompletionMaxMs: 15.6,
             packetPacerAverageSleepMs: 1.4,
             packetPacerTotalSleepMs: 42,
             packetPacerMaxSleepMs: 6,
@@ -148,12 +164,25 @@ struct ClientMetricsStoreTests {
         #expect(snapshot?.clientReceivedWorstGapMs == 44.0)
         #expect(snapshot?.clientReceivedFrameIntervalP95Ms == 18.0)
         #expect(snapshot?.clientReceivedFrameIntervalP99Ms == 33.0)
+        #expect(snapshot?.clientDisplayTickFPS == 60.0)
+        #expect(snapshot?.clientDisplayTickIntervalP95Ms == 17.2)
+        #expect(snapshot?.clientDisplayTickIntervalP99Ms == 29.5)
         #expect(snapshot?.clientSubmitAttemptFPS == 61.0)
         #expect(snapshot?.clientLayerAcceptedFPS == 59.0)
         #expect(snapshot?.clientPresentedFPS == 58.0)
+        #expect(snapshot?.clientLateFrameDrops == 1)
+        #expect(snapshot?.clientRepeatedFrameCount == 4)
+        #expect(snapshot?.clientMissedVSyncCount == 2)
+        #expect(snapshot?.clientPlayoutDelayFrames == 1)
+        #expect(snapshot?.clientReassemblerPendingFrameCount == 5)
+        #expect(snapshot?.clientReassemblerPendingKeyframeCount == 2)
+        #expect(snapshot?.clientReassemblerPendingBytes == 65_536)
+        #expect(snapshot?.clientFrameBufferPoolRetainedBytes == 131_072)
+        #expect(snapshot?.clientReassemblerBudgetEvictions == 4)
         #expect(snapshot?.hostCaptureIngressAverageMs == 4.2)
         #expect(snapshot?.hostSendQueueBytes == 196_608)
         #expect(snapshot?.hostSendCompletionMaxMs == 22.7)
+        #expect(snapshot?.hostNonKeyframeSendCompletionMaxMs == 15.6)
         #expect(snapshot?.hostTransportPacketPacerTotalSleepMs == 42)
         #expect(snapshot?.hostTransportPacketPacerMaxSleepMs == 6)
         #expect(snapshot?.hostTransportPacketPacerFrameMaxSleepMs == 9)

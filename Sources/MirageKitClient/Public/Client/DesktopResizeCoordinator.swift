@@ -19,6 +19,39 @@ final class DesktopResizeCoordinator {
         let requestedStreamScale: CGFloat
         let encoderMaxWidth: Int?
         let encoderMaxHeight: Int?
+
+        func isEffectivelySameStreamGeometry(as other: RequestGeometry) -> Bool {
+            guard Self.approximatelyEqual(logicalResolution.width, other.logicalResolution.width),
+                  Self.approximatelyEqual(logicalResolution.height, other.logicalResolution.height),
+                  Self.approximatelyEqual(displayScaleFactor, other.displayScaleFactor),
+                  Self.approximatelyEqual(requestedStreamScale, other.requestedStreamScale) else {
+                return false
+            }
+
+            let currentGeometry = resolvedGeometry
+            let otherGeometry = other.resolvedGeometry
+            return Self.pixelSizesEqual(currentGeometry.displayPixelSize, otherGeometry.displayPixelSize) &&
+                Self.pixelSizesEqual(currentGeometry.encodedPixelSize, otherGeometry.encodedPixelSize)
+        }
+
+        private var resolvedGeometry: MirageStreamGeometry {
+            MirageStreamGeometry.resolve(
+                logicalSize: logicalResolution,
+                displayScaleFactor: displayScaleFactor,
+                requestedStreamScale: requestedStreamScale,
+                encoderMaxWidth: encoderMaxWidth,
+                encoderMaxHeight: encoderMaxHeight
+            )
+        }
+
+        private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+            abs(lhs - rhs) <= 0.001
+        }
+
+        private static func pixelSizesEqual(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+            abs(lhs.width - rhs.width) <= 1 &&
+                abs(lhs.height - rhs.height) <= 1
+        }
     }
 
     struct ActiveTransition: Equatable {

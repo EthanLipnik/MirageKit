@@ -12,6 +12,64 @@ import Testing
 #if os(macOS)
 @Suite("Shared Virtual Display Validation")
 struct SharedVirtualDisplayValidationTests {
+    @Test("Display validation accepts exact 1x display when CoreGraphics refresh is unavailable")
+    func displayValidationAcceptsExactOneXDisplayWhenCoreGraphicsRefreshIsUnavailable() {
+        let expected = CGSize(width: 1280, height: 640)
+        let acceptance = SharedVirtualDisplayManager.displayModeValidationAcceptance(
+            snapshot: SharedVirtualDisplayManager.DisplayModeValidationSnapshot(
+                boundsSize: expected,
+                screenCaptureSize: expected,
+                modeLogicalSize: .zero,
+                modePixelSize: .zero,
+                modeRefreshRate: nil
+            ),
+            expectedLogicalResolution: expected,
+            expectedPixelResolution: expected,
+            expectedRefreshRate: 30
+        )
+
+        #expect(acceptance == .missingCoreGraphicsRefreshOneX)
+    }
+
+    @Test("Display validation accepts Retina display when CoreGraphics mode is unavailable")
+    func displayValidationAcceptsRetinaDisplayWhenCoreGraphicsModeIsUnavailable() {
+        let expectedLogical = CGSize(width: 1728, height: 890)
+        let expectedPixel = CGSize(width: 3456, height: 1776)
+        let acceptance = SharedVirtualDisplayManager.displayModeValidationAcceptance(
+            snapshot: SharedVirtualDisplayManager.DisplayModeValidationSnapshot(
+                boundsSize: expectedLogical,
+                screenCaptureSize: expectedPixel,
+                modeLogicalSize: .zero,
+                modePixelSize: .zero,
+                modeRefreshRate: nil
+            ),
+            expectedLogicalResolution: expectedLogical,
+            expectedPixelResolution: expectedPixel,
+            expectedRefreshRate: 30
+        )
+
+        #expect(acceptance == .missingCoreGraphicsMode)
+    }
+
+    @Test("Display validation rejects wrong refresh when CoreGraphics reports a mode")
+    func displayValidationRejectsWrongRefreshWhenCoreGraphicsReportsMode() {
+        let expected = CGSize(width: 1280, height: 640)
+        let acceptance = SharedVirtualDisplayManager.displayModeValidationAcceptance(
+            snapshot: SharedVirtualDisplayManager.DisplayModeValidationSnapshot(
+                boundsSize: expected,
+                screenCaptureSize: expected,
+                modeLogicalSize: expected,
+                modePixelSize: expected,
+                modeRefreshRate: 60
+            ),
+            expectedLogicalResolution: expected,
+            expectedPixelResolution: expected,
+            expectedRefreshRate: 30
+        )
+
+        #expect(acceptance == nil)
+    }
+
     @Test("Retina requests accept stable 1x fallback when pixel resolution is preserved")
     func retinaRequestsAcceptStableOneXFallbackWhenPixelResolutionIsPreserved() {
         #expect(

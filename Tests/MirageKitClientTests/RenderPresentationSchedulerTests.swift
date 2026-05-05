@@ -85,6 +85,60 @@ struct RenderPresentationSchedulerTests {
         #expect(submitCount == 2)
     }
 
+    @Test("Active live display clock waits for ticks instead of arrival passes")
+    func activeLiveDisplayClockWaitsForTicksInsteadOfArrivalPasses() {
+        let streamID: StreamID = 906
+        var submitReferences: [CFTimeInterval] = []
+        var scheduledCallbacks: [@MainActor () -> Void] = []
+
+        let scheduler = MirageRenderPresentationScheduler(
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { referenceTime in
+                submitReferences.append(referenceTime)
+                return .submitted
+            },
+            hasPendingFrame: { false }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleFrameAvailable(referenceTime: 1)
+        scheduler.handleFrameAvailable(referenceTime: 2)
+
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(submitReferences.isEmpty)
+
+        scheduler.handleDisplayTick(referenceTime: 3)
+
+        #expect(submitReferences == [3])
+    }
+
+    @Test("Immediate submission waits for display tick while display clock is active")
+    func immediateSubmissionWaitsForDisplayTickWhileDisplayClockIsActive() {
+        let streamID: StreamID = 907
+        var submitReferences: [CFTimeInterval] = []
+
+        let scheduler = MirageRenderPresentationScheduler(
+            submit: { referenceTime in
+                submitReferences.append(referenceTime)
+                return .submitted
+            },
+            hasPendingFrame: { true }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.requestImmediateSubmission(referenceTime: 1)
+        #expect(submitReferences.isEmpty)
+
+        scheduler.handleDisplayTick(referenceTime: 2)
+        #expect(submitReferences == [2])
+    }
+
     @Test("Passive snapshot frame arrival submits immediately")
     func passiveSnapshotFrameArrivalSubmitsImmediately() {
         let streamID: StreamID = 903

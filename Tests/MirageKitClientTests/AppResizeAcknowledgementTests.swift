@@ -7,6 +7,7 @@
 
 @testable import MirageKitClient
 import Testing
+import CoreGraphics
 
 @Suite("App Resize Acknowledgement")
 struct AppResizeAcknowledgementTests {
@@ -106,5 +107,35 @@ struct AppResizeAcknowledgementTests {
         )
 
         #expect(decision == .recheckMinimumSize)
+    }
+
+    @Test("App stream presentation fills when host resize matches container aspect")
+    func fillsWhenResizeMatchesContainerAspect() {
+        let decision = appStreamAspectFitPresentationDecision(
+            containerSize: CGSize(width: 1366, height: 768),
+            streamContentSize: CGSize(width: 2732, height: 1536)
+        )
+
+        #expect(decision == .fill)
+    }
+
+    @Test("App stream presentation aspect fits when host resize leaves mismatched content")
+    func aspectFitsWhenResizeLeavesMismatchedContent() {
+        let decision = appStreamAspectFitPresentationDecision(
+            containerSize: CGSize(width: 1366, height: 768),
+            streamContentSize: CGSize(width: 1600, height: 1200)
+        )
+
+        #expect(decision == .aspectFit)
+    }
+
+    @Test("App stream presentation keeps small accepted aspect drift filled")
+    func fillsSmallAcceptedAspectDrift() {
+        let decision = appStreamAspectFitPresentationDecision(
+            containerSize: CGSize(width: 1366, height: 768),
+            streamContentSize: CGSize(width: 1366, height: 790)
+        )
+
+        #expect(decision == .fill)
     }
 }

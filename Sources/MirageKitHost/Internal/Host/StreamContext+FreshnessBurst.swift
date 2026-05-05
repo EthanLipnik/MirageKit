@@ -76,6 +76,45 @@ extension StreamContext {
         return true
     }
 
+    var usesSoftSenderDelaySmoothing: Bool {
+        performanceMode == .standard && (latencyMode == .auto || latencyMode == .smoothest)
+    }
+
+    func enterSoftFreshnessDrainIfNeeded(frameBudgetMs: Double, reason: String) {
+        guard usesSoftSenderDelaySmoothing else { return }
+        guard !freshnessBurstActive, !latencyBurstActive else { return }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let clearedBacklog = frameInbox.clear()
+        if clearedBacklog > 0 {
+            let droppedCount = UInt64(clearedBacklog)
+            captureDroppedIntervalCount += droppedCount
+            droppedFrameCount += droppedCount
+        }
+
+        softFreshnessDrainActive = true
+        softFreshnessDrainDeadline = now + max(0.12, min(0.35, frameBudgetMs * 3.0 / 1000.0))
+        softFreshnessDrainCount &+= 1
+        latencyBurstDrainsNewestFrames = true
+        scheduleProcessingIfNeeded()
+
+        MirageLogger.metrics(
+            "Soft freshness drain enter for stream \(streamID): " +
+                "reason=\(reason), clearedFrames=\(clearedBacklog), count=\(softFreshnessDrainCount)"
+        )
+    }
+
+    func expireSoftFreshnessDrainIfNeeded(at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        guard softFreshnessDrainActive else { return }
+        guard !freshnessBurstActive, !latencyBurstActive else { return }
+        guard now >= softFreshnessDrainDeadline else { return }
+
+        softFreshnessDrainActive = false
+        softFreshnessDrainDeadline = 0
+        latencyBurstDrainsNewestFrames = false
+        MirageLogger.metrics("Soft freshness drain exit for stream \(streamID)")
+    }
+
     @discardableResult
     func exitFreshnessBurstIfNeeded(queueBytes: Int, reason: String) async -> Bool {
         guard freshnessBurstActive else { return false }

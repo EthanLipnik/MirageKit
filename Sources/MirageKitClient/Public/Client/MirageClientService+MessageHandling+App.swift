@@ -225,6 +225,10 @@ extension MirageClientService {
                 appDimensionTokenByStream[mediaStreamID] = dimensionToken
             }
             registerStartupAttempt(update.startupAttemptID, for: mediaStreamID)
+            applyRenderLatencyMode(
+                to: mediaStreamID,
+                preferredLatencyMode: pendingStreamSetupLatencyMode ?? pendingAppRequestedLatencyMode
+            )
 
             if shouldSetupController {
                 streamStartupBaseTimes[mediaStreamID] = CFAbsoluteTimeGetCurrent()
@@ -357,6 +361,7 @@ extension MirageClientService {
                 streamingAppBundleID = nil
                 appWindowInventory = nil
                 pendingAppRequestedColorDepth = nil
+                pendingAppRequestedLatencyMode = nil
             }
             onAppTerminated?(terminated)
         } catch {

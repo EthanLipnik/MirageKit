@@ -151,16 +151,22 @@ struct StreamPacketSenderRegressionTests {
             timeoutSeconds: 2.0
         ) { snapshot in
             snapshot.sendStartDelayAverageMs > 0 &&
-                snapshot.sendCompletionAverageMs > 0
+                snapshot.sendCompletionAverageMs > 0 &&
+                snapshot.nonKeyframeSendStartDelayAverageMs > 0 &&
+                snapshot.nonKeyframeSendCompletionAverageMs > 0
         }
 
         let firstWindow = await sender.consumeTelemetrySnapshot()
         #expect(firstWindow.sendStartDelayAverageMs > 0)
         #expect(firstWindow.sendCompletionAverageMs > 0)
+        #expect(firstWindow.nonKeyframeSendStartDelayAverageMs > 0)
+        #expect(firstWindow.nonKeyframeSendCompletionAverageMs > 0)
 
         let secondWindow = await sender.consumeTelemetrySnapshot()
         #expect(secondWindow.sendStartDelayAverageMs == 0)
         #expect(secondWindow.sendCompletionAverageMs == 0)
+        #expect(secondWindow.nonKeyframeSendStartDelayAverageMs == 0)
+        #expect(secondWindow.nonKeyframeSendCompletionAverageMs == 0)
 
         await sender.stop()
     }
@@ -198,6 +204,231 @@ struct StreamPacketSenderRegressionTests {
 
         let secondWindow = await sender.consumeTelemetrySnapshot()
         #expect(secondWindow.generationAbortDrops == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Keyframe telemetry does not populate non-keyframe delay buckets")
+    func keyframeTelemetryDoesNotPopulateNonKeyframeDelayBuckets() async throws {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _, onComplete in
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 1_024),
+                streamID: 45,
+                frameNumber: 301,
+                sequenceNumberStart: 3_010,
+                generation: generation,
+                isKeyframe: true,
+                encodedAt: CFAbsoluteTimeGetCurrent() - 0.02
+            )
+        )
+
+        let snapshot = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.sendCompletionAverageMs > 0
+        }
+
+        #expect(snapshot.sendStartDelayAverageMs > 0)
+        #expect(snapshot.sendCompletionAverageMs > 0)
+        #expect(snapshot.nonKeyframeSendStartDelayAverageMs == 0)
+        #expect(snapshot.nonKeyframeSendCompletionAverageMs == 0)
+        #expect(snapshot.nonKeyframeSendStartDelayMaxMs == 0)
+        #expect(snapshot.nonKeyframeSendCompletionMaxMs == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Expired non-keyframes are dropped before packet submission")
+    func expiredNonKeyframesDropBeforePacketSubmission() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 45,
+                frameNumber: 302,
+                sequenceNumberStart: 3_010,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.stalePacketDrops == 1
+        }
+
+        #expect(submittedPackets.read { $0.isEmpty })
+        #expect(sender.queuedBytesSnapshot() == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Newer current-generation keyframes supersede older queued keyframes")
+    func newerCurrentGenerationKeyframesSupersedeOlderQueuedKeyframes() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let blockedFirstPacket = Locked(false)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                let shouldBlock = blockedFirstPacket.withLock { didBlock in
+                    guard !didBlock, header.frameNumber == 300 else { return false }
+                    didBlock = true
+                    return true
+                }
+                if shouldBlock { Thread.sleep(forTimeInterval: 0.05) }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 16),
+                streamID: 46,
+                frameNumber: 300,
+                sequenceNumberStart: 3_000,
+                generation: generation
+            )
+        )
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 310,
+                sequenceNumberStart: 3_100,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 311,
+                sequenceNumberStart: 3_110,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
+        let frameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
+        #expect(frameNumbers == [300, 311])
+        #expect((await sender.telemetrySnapshot()).stalePacketDrops == 1)
+
+        await sender.stop()
+    }
+
+    @Test("Stale-generation keyframes do not supersede current recovery keyframes")
+    func staleGenerationKeyframesDoNotSupersedeCurrentRecoveryKeyframes() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let blockedFirstPacket = Locked(false)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                let shouldBlock = blockedFirstPacket.withLock { didBlock in
+                    guard !didBlock, header.frameNumber == 400 else { return false }
+                    didBlock = true
+                    return true
+                }
+                if shouldBlock { Thread.sleep(forTimeInterval: 0.05) }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        await sender.bumpGeneration(reason: "test current recovery keyframe")
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 16),
+                streamID: 47,
+                frameNumber: 400,
+                sequenceNumberStart: 4_000,
+                generation: generation
+            )
+        )
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 47,
+                frameNumber: 401,
+                sequenceNumberStart: 4_010,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 47,
+                frameNumber: 499,
+                sequenceNumberStart: 4_990,
+                generation: generation &- 1,
+                isKeyframe: true
+            )
+        )
+
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.generationAbortDrops == 1
+        }
+
+        let frameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
+        #expect(frameNumbers == [400, 401])
 
         await sender.stop()
     }
@@ -261,7 +492,8 @@ struct StreamPacketSenderRegressionTests {
         sequenceNumberStart: UInt32,
         generation: UInt32,
         isKeyframe: Bool = false,
-        encodedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+        encodedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
+        sendDeadline: CFAbsoluteTime? = nil
     ) -> StreamPacketSender.WorkItem {
         StreamPacketSender.WorkItem(
             encodedData: payload,
@@ -280,6 +512,7 @@ struct StreamPacketSenderRegressionTests {
             logPrefix: "test",
             generation: generation,
             encodedAt: encodedAt,
+            sendDeadline: sendDeadline,
             pacingOverride: nil
         )
     }

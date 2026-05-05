@@ -696,6 +696,170 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("Old incomplete keyframes are capped by memory budget")
+    func oldIncompleteKeyframesAreCappedByMemoryBudget() {
+        let reassembler = FrameReassembler(
+            streamID: 1,
+            maxPayloadSize: 4,
+            memoryBudget: FrameReassembler.MemoryBudget(
+                maxPendingFrames: 12,
+                maxPendingKeyframes: 2,
+                maxPendingBytes: 1024
+            )
+        )
+        let lossCounter = LockedCounter()
+        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
+        reassembler.setFrameLossHandler { _, reason in
+            lossCounter.increment()
+            lossReason.value = reason
+        }
+
+        for frameNumber in UInt32(1) ... UInt32(3) {
+            let payload = Data([UInt8(frameNumber), 0x00, 0x00, 0x00])
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                    flags: [.keyframe],
+                    frameNumber: frameNumber,
+                    payload: payload,
+                    fragmentIndex: 0,
+                    fragmentCount: 4,
+                    frameByteCount: 16
+                )
+            )
+        }
+
+        let metrics = reassembler.snapshotMetrics()
+        #expect(metrics.pendingFrameCount == 2)
+        #expect(metrics.pendingKeyframeCount == 2)
+        #expect(metrics.budgetEvictions == 1)
+        #expect(lossCounter.value == 1)
+        #expect(lossReason.value == .memoryBudget)
+        #expect(reassembler.isAwaitingKeyframe() == true)
+    }
+
+    @Test("Pending encoded bytes preserve the newest oversized keyframe")
+    func pendingEncodedBytesPreserveNewestOversizedKeyframe() {
+        let budget = FrameReassembler.MemoryBudget(
+            maxPendingFrames: 12,
+            maxPendingKeyframes: 2,
+            maxPendingBytes: 12
+        )
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
+
+        let payload1 = Data([0x01, 0x01, 0x01, 0x01])
+        reassembler.processPacket(
+            payload1,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 1,
+                payload: payload1,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 8
+            )
+        )
+
+        let payload2 = Data([0x02, 0x02, 0x02, 0x02])
+        reassembler.processPacket(
+            payload2,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 2,
+                payload: payload2,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 8
+            )
+        )
+
+        var metrics = reassembler.snapshotMetrics()
+        #expect(metrics.pendingFrameBytes <= budget.maxPendingBytes)
+        #expect(metrics.pendingFrameCount == 1)
+
+        let oversizedPayload = Data([0x03, 0x03, 0x03, 0x03])
+        reassembler.processPacket(
+            oversizedPayload,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 3,
+                payload: oversizedPayload,
+                fragmentIndex: 0,
+                fragmentCount: 5,
+                frameByteCount: 20
+            )
+        )
+
+        metrics = reassembler.snapshotMetrics()
+        #expect(metrics.pendingFrameCount == 1)
+        #expect(metrics.pendingKeyframeCount == 1)
+        #expect(metrics.pendingFrameBytes == 20)
+        #expect(metrics.pendingFrameBytes > budget.maxPendingBytes)
+        #expect(metrics.budgetEvictions == 2)
+    }
+
+    @Test("Budget evicted frames release pooled buffers")
+    func budgetEvictedFramesReleasePooledBuffers() {
+        let reassembler = FrameReassembler(
+            streamID: 1,
+            maxPayloadSize: 4,
+            memoryBudget: FrameReassembler.MemoryBudget(
+                maxPendingFrames: 12,
+                maxPendingKeyframes: 2,
+                maxPendingBytes: 12
+            )
+        )
+
+        for frameNumber in UInt32(1) ... UInt32(2) {
+            let payload = Data([UInt8(frameNumber), UInt8(frameNumber), UInt8(frameNumber), UInt8(frameNumber)])
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                    flags: [.keyframe],
+                    frameNumber: frameNumber,
+                    payload: payload,
+                    fragmentIndex: 0,
+                    fragmentCount: 2,
+                    frameByteCount: 8
+                )
+            )
+        }
+
+        let metrics = reassembler.snapshotMetrics()
+        #expect(metrics.pendingFrameCount == 1)
+        #expect(metrics.frameBufferPoolRetainedBytes == 8)
+        #expect(metrics.budgetEvictions == 1)
+    }
+
+    @Test("Memory pressure trim clears pending reassembly and requests recovery")
+    func memoryPressureTrimClearsPendingReassemblyAndRequestsRecovery() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+
+        for frameNumber in UInt32(1) ... UInt32(2) {
+            let payload = Data([UInt8(frameNumber), 0x00, 0x00, 0x00])
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                    flags: [.keyframe],
+                    frameNumber: frameNumber,
+                    payload: payload,
+                    fragmentIndex: 0,
+                    fragmentCount: 3,
+                    frameByteCount: 12
+                )
+            )
+        }
+
+        let trimResult = reassembler.trimForMemoryPressure()
+        let metrics = reassembler.snapshotMetrics()
+        #expect(trimResult.evictedFrames == 2)
+        #expect(trimResult.awaitingKeyframe == true)
+        #expect(metrics.pendingFrameCount == 0)
+        #expect(metrics.pendingFrameBytes == 0)
+        #expect(metrics.frameBufferPoolRetainedBytes == 24)
+        #expect(reassembler.isAwaitingKeyframe() == true)
+    }
+
     @Test("Mismatched dimension-token keyframe is rejected")
     func mismatchedDimensionTokenKeyframeIsRejected() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)

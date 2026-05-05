@@ -13,30 +13,30 @@ import VideoToolbox
 #if os(macOS)
 @Suite("Standard Low Latency Tuning")
 struct StandardDesktopLowLatencyTuningTests {
-    @Test("Standard lowest latency suppresses VT low-latency rate control for desktop and window streams")
-    func standardLowestLatencySuppressesRateControlForDesktopAndWindowStreams() {
-        #expect(!VideoEncoder.standardLowLatencyVTTuningEnabled(
+    @Test("Standard lowest latency requests VT low-latency rate control for desktop and Ultra streams")
+    func standardLowestLatencyRequestsRateControlForDesktopAndUltraStreams() {
+        #expect(VideoEncoder.standardLowLatencyVTTuningEnabled(
             performanceMode: .standard,
             latencyMode: .lowestLatency,
             width: 6016,
             height: 3384,
             streamKind: .desktop
         ))
-        #expect(!VideoEncoder.standardLowLatencyVTTuningEnabled(
+        #expect(VideoEncoder.standardLowLatencyVTTuningEnabled(
             performanceMode: .standard,
             latencyMode: .lowestLatency,
             width: 1280,
             height: 720,
             streamKind: .desktop
         ))
-        #expect(VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+        #expect(!VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             performanceMode: .standard,
             latencyMode: .lowestLatency,
             width: 6016,
             height: 3384,
             streamKind: .desktop
         ))
-        #expect(VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+        #expect(!VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             performanceMode: .standard,
             latencyMode: .lowestLatency,
             width: 1280,
@@ -49,6 +49,22 @@ struct StandardDesktopLowLatencyTuningTests {
             width: 1280,
             height: 720,
             streamKind: .window
+        ))
+        #expect(VideoEncoder.standardLowLatencyVTTuningEnabled(
+            performanceMode: .standard,
+            latencyMode: .lowestLatency,
+            width: 1280,
+            height: 720,
+            streamKind: .window,
+            colorDepth: .ultra
+        ))
+        #expect(!VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+            performanceMode: .standard,
+            latencyMode: .lowestLatency,
+            width: 1280,
+            height: 720,
+            streamKind: .window,
+            colorDepth: .ultra
         ))
         #expect(VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             performanceMode: .standard,

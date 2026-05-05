@@ -226,6 +226,12 @@ public extension MirageClientService {
                     receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
                     receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
                     droppedFrames: metrics.droppedFrames,
+                    reassemblerPendingFrameCount: metrics.reassemblerPendingFrameCount,
+                    reassemblerPendingKeyframeCount: metrics.reassemblerPendingKeyframeCount,
+                    reassemblerPendingBytes: metrics.reassemblerPendingBytes,
+                    frameBufferPoolRetainedBytes: metrics.frameBufferPoolRetainedBytes,
+                    reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
+                    displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerAcceptedFPS: metrics.layerAcceptedFPS,
                     presentedFPS: metrics.presentedFPS,
@@ -234,7 +240,13 @@ public extension MirageClientService {
                     pendingFrameCount: metrics.pendingFrameCount,
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
+                    lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
+                    repeatedFrameCount: metrics.repeatedFrameCount,
+                    missedVSyncCount: metrics.missedVSyncCount,
+                    displayTickIntervalP95Ms: metrics.displayTickIntervalP95Ms,
+                    displayTickIntervalP99Ms: metrics.displayTickIntervalP99Ms,
+                    playoutDelayFrames: metrics.playoutDelayFrames,
                     presentationStallCount: metrics.presentationStallCount,
                     worstPresentationGapMs: metrics.worstPresentationGapMs,
                     frameIntervalP95Ms: metrics.frameIntervalP95Ms,
@@ -361,6 +373,17 @@ public extension MirageClientService {
         MirageLogger.client(
             "Prepared existing controller for desktop resize on stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
         )
+    }
+
+    internal func applyRenderLatencyMode(
+        to streamID: StreamID,
+        preferredLatencyMode: MirageStreamLatencyMode? = nil
+    ) {
+        let latencyMode = preferredLatencyMode ??
+            renderLatencyModeByStream[streamID] ??
+            .lowestLatency
+        renderLatencyModeByStream[streamID] = latencyMode
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: latencyMode)
     }
 
     func resolvedRequestedMediaMaxPacketSize() -> Int {
@@ -561,6 +584,7 @@ public extension MirageClientService {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
+        renderLatencyModeByStream.removeValue(forKey: streamID)
 
         metricsStore.clear(streamID: streamID)
         cursorStore.clear(streamID: streamID)
@@ -615,6 +639,7 @@ public extension MirageClientService {
 
         MirageRenderStreamStore.shared.clear(for: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
+        renderLatencyModeByStream.removeValue(forKey: streamID)
         desktopStreamStartTimeoutTask?.cancel()
         desktopStreamStartTimeoutTask = nil
         desktopStreamRequestStartTime = 0
@@ -648,6 +673,7 @@ public extension MirageClientService {
         clearDecoderColorDepthState(for: streamID)
         inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
         pendingDesktopRequestedColorDepth = nil
+        pendingDesktopRequestedLatencyMode = nil
         activeJitterHoldMs = 0
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         activeStreamCodecs.removeValue(forKey: streamID)

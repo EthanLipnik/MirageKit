@@ -24,8 +24,13 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
     public var controlAuthSecret: String
     public var autoEndpoints: [LoomBootstrapEndpoint]
     public var sshHostKeyFingerprints: [String]
+    public var manualWakeOnLANMACAddress: String
     public var wakeOnLANMACAddress: String
     public var wakeOnLANBroadcasts: [String]
+    public var wakeOnLANInterfaceName: String
+    public var wakeOnLANInterfaceDisplayName: String
+    public var wakeOnLANUsesWiFi: Bool
+    public var wakeOnLANWiFiPrivateAddressWarning: Bool
     public var remoteLoginReachable: Bool
     public var preloginDaemonReady: Bool
 
@@ -38,8 +43,13 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
         autoEndpoints: [LoomBootstrapEndpoint] = [],
         sshHostKeyFingerprints: [String] = [],
+        manualWakeOnLANMACAddress: String = "",
         wakeOnLANMACAddress: String = "",
         wakeOnLANBroadcasts: [String] = [],
+        wakeOnLANInterfaceName: String = "",
+        wakeOnLANInterfaceDisplayName: String = "",
+        wakeOnLANUsesWiFi: Bool = false,
+        wakeOnLANWiFiPrivateAddressWarning: Bool = false,
         remoteLoginReachable: Bool = false,
         preloginDaemonReady: Bool = false
     ) {
@@ -51,8 +61,13 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         self.controlAuthSecret = controlAuthSecret
         self.autoEndpoints = autoEndpoints
         self.sshHostKeyFingerprints = sshHostKeyFingerprints
+        self.manualWakeOnLANMACAddress = manualWakeOnLANMACAddress
         self.wakeOnLANMACAddress = wakeOnLANMACAddress
         self.wakeOnLANBroadcasts = wakeOnLANBroadcasts
+        self.wakeOnLANInterfaceName = wakeOnLANInterfaceName
+        self.wakeOnLANInterfaceDisplayName = wakeOnLANInterfaceDisplayName
+        self.wakeOnLANUsesWiFi = wakeOnLANUsesWiFi
+        self.wakeOnLANWiFiPrivateAddressWarning = wakeOnLANWiFiPrivateAddressWarning
         self.remoteLoginReachable = remoteLoginReachable
         self.preloginDaemonReady = preloginDaemonReady
     }
@@ -66,8 +81,13 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         case controlAuthSecret
         case autoEndpoints
         case sshHostKeyFingerprints
+        case manualWakeOnLANMACAddress
         case wakeOnLANMACAddress
         case wakeOnLANBroadcasts
+        case wakeOnLANInterfaceName
+        case wakeOnLANInterfaceDisplayName
+        case wakeOnLANUsesWiFi
+        case wakeOnLANWiFiPrivateAddressWarning
         case remoteLoginReachable
         case preloginDaemonReady
     }
@@ -86,8 +106,22 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             [String].self,
             forKey: .sshHostKeyFingerprints
         ) ?? []
+        manualWakeOnLANMACAddress = try container.decodeIfPresent(
+            String.self,
+            forKey: .manualWakeOnLANMACAddress
+        ) ?? ""
         wakeOnLANMACAddress = try container.decodeIfPresent(String.self, forKey: .wakeOnLANMACAddress) ?? ""
         wakeOnLANBroadcasts = try container.decodeIfPresent([String].self, forKey: .wakeOnLANBroadcasts) ?? []
+        wakeOnLANInterfaceName = try container.decodeIfPresent(String.self, forKey: .wakeOnLANInterfaceName) ?? ""
+        wakeOnLANInterfaceDisplayName = try container.decodeIfPresent(
+            String.self,
+            forKey: .wakeOnLANInterfaceDisplayName
+        ) ?? ""
+        wakeOnLANUsesWiFi = try container.decodeIfPresent(Bool.self, forKey: .wakeOnLANUsesWiFi) ?? false
+        wakeOnLANWiFiPrivateAddressWarning = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .wakeOnLANWiFiPrivateAddressWarning
+        ) ?? false
         remoteLoginReachable = try container.decodeIfPresent(Bool.self, forKey: .remoteLoginReachable) ?? false
         preloginDaemonReady = try container.decodeIfPresent(Bool.self, forKey: .preloginDaemonReady) ?? false
     }
@@ -108,7 +142,9 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         }
 
         let wakeInfo: LoomWakeOnLANInfo? = {
-            let mac = wakeOnLANMACAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+            let manualMAC = manualWakeOnLANMACAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+            let autoMAC = wakeOnLANMACAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mac = MirageBootstrapNetworkDetector.isValidWakeMACAddress(manualMAC) ? manualMAC : autoMAC
             guard !mac.isEmpty else { return nil }
             let broadcasts = wakeOnLANBroadcasts
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

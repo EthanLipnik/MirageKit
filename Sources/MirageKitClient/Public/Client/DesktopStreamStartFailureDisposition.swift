@@ -16,6 +16,7 @@ extension MirageClientService {
         pendingStreamSetupRequestID = nil
         pendingStreamSetupKind = nil
         pendingStreamSetupAppSessionID = nil
+        pendingStreamSetupLatencyMode = nil
     }
 
     func clearPendingDesktopStreamStartState() {
@@ -30,6 +31,7 @@ extension MirageClientService {
         desktopCaptureSource = .virtualDisplay
         desktopStreamAllowsClientResize = true
         pendingDesktopRequestedColorDepth = nil
+        pendingDesktopRequestedLatencyMode = nil
         clearPendingStreamSetup(kind: .desktop)
         desktopResizeCoordinator.clearAllState()
     }
