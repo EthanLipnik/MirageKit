@@ -856,7 +856,17 @@ public class InputCapturingView: UIView {
 
     private func applyPendingApplicationActivationHandlingIfPossible() {
         guard let activationDecision = pendingApplicationActivationDecision else { return }
-        guard window != nil else { return }
+        guard inputCapturingCanApplyPendingActivationHandling(
+            hasWindow: window != nil,
+            sceneActivationState: window?.windowScene?.activationState
+        ) else {
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client(
+                "Deferring pending activation recovery for stream \(streamIDText); " +
+                    "sceneState=\(String(describing: window?.windowScene?.activationState))"
+            )
+            return
+        }
         let recoveryDisposition = inputCapturingPendingActivationRecoveryDisposition(
             activationDecision: activationDecision,
             pendingDesktopSessionID: pendingActivationDesktopSessionID,

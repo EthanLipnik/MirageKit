@@ -6,6 +6,9 @@
 //
 
 import Foundation
+#if os(iOS) || os(visionOS)
+import UIKit
+#endif
 
 struct InputCapturingActivationRecoveryDecision: Equatable {
     let shouldResetPresentationState: Bool
@@ -60,3 +63,13 @@ func inputCapturingPendingActivationRecoveryDisposition(
     }
     return .applyPendingHandling
 }
+
+#if os(iOS) || os(visionOS)
+func inputCapturingCanApplyPendingActivationHandling(
+    hasWindow: Bool,
+    sceneActivationState: UIScene.ActivationState?
+) -> Bool {
+    guard hasWindow else { return false }
+    return sceneActivationState == .foregroundActive
+}
+#endif

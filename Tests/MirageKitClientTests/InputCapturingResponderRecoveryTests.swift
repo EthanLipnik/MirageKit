@@ -6,6 +6,7 @@
 //
 
 #if os(iOS) || os(visionOS)
+import MirageKit
 @testable import MirageKitClient
 import Testing
 import UIKit
@@ -91,6 +92,52 @@ struct InputCapturingResponderRecoveryTests {
         secondOperation()
 
         #expect(attemptedTargets == [.captureView])
+    }
+
+    @Test("Activation recovery waits for foreground-active scene")
+    func activationRecoveryWaitsForForegroundActiveScene() {
+        #expect(
+            !inputCapturingCanApplyPendingActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .background
+            )
+        )
+        #expect(
+            !inputCapturingCanApplyPendingActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .foregroundInactive
+            )
+        )
+        #expect(
+            inputCapturingCanApplyPendingActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .foregroundActive
+            )
+        )
+    }
+
+    @Test("Software keyboard input sends events while hardware keyboard is present")
+    func softwareKeyboardInputSendsEventsWhileHardwareKeyboardIsPresent() {
+        let view = InputCapturingView(frame: .zero)
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        view.updateHardwareKeyboardPresence(true)
+
+        view.handleSoftwareKeyboardInsertText("a")
+        view.handleSoftwareKeyboardDeleteBackward()
+
+        let keyEvents = events.compactMap { event -> MirageKeyEvent? in
+            switch event {
+            case let .keyDown(key), let .keyUp(key):
+                key
+            default:
+                nil
+            }
+        }
+        #expect(keyEvents.count == 4)
+        #expect(keyEvents[0].characters == "a")
+        #expect(keyEvents[0].charactersIgnoringModifiers == "a")
+        #expect(keyEvents[2].keyCode == 0x33)
     }
 
     private func makeContext(

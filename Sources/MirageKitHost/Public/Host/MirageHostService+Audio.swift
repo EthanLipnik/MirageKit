@@ -13,6 +13,8 @@ import Network
 
 #if os(macOS)
 
+private let hostAudioFirstSampleTimeout: Duration = .seconds(2)
+
 @MainActor
 extension MirageHostService {
     func updateHostAudioMuteState() {
@@ -29,7 +31,15 @@ extension MirageHostService {
     )
     async throws -> Bool {
         let previousSourceStreamID = audioSourceStreamByClientID[clientID]
+        cancelAudioFirstSampleWatchdog(for: clientID)
+        audioFirstSampleRetryAttemptedByClientID.remove(clientID)
+        audioLastSampleTimeByClientID.removeValue(forKey: clientID)
         audioConfigurationByClientID[clientID] = configuration
+        MirageLogger.host(
+            "Audio activation requested for client \(clientID), stream \(sourceStreamID): " +
+                "enabled=\(configuration.enabled), layout=\(configuration.channelLayout.rawValue), " +
+                "quality=\(configuration.quality.rawValue)"
+        )
         if let streamContext = streamsByID[sourceStreamID] {
             await streamContext.setRequestedAudioChannelCount(configuration.channelLayout.channelCount)
         }
@@ -103,6 +113,9 @@ extension MirageHostService {
                 ) else {
                     return
                 }
+                if !packets.isEmpty {
+                    recordClientMediaActivity(clientID: clientID)
+                }
                 for packet in packets {
                     sendAudioPacketForClient(clientID, data: packet) { [weak self] error in
                         guard let error else { return }
@@ -121,6 +134,7 @@ extension MirageHostService {
         }
 
         await setAudioSourceCaptureHandler(clientID: clientID, streamID: sourceStreamID)
+        scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: sourceStreamID)
         updateHostAudioMuteState()
         return true
     }
@@ -156,6 +170,7 @@ extension MirageHostService {
     async {
         guard audioSourceStreamByClientID[clientID] == streamID else { return }
         guard let pipeline = audioPipelinesByClientID[clientID] else { return }
+        recordCapturedAudioSample(clientID: clientID, streamID: streamID)
         await pipeline.enqueue(captured)
     }
 
@@ -186,6 +201,9 @@ extension MirageHostService {
     }
 
     func stopAudioPipeline(for clientID: UUID, reason: AudioStreamStopReason) async {
+        cancelAudioFirstSampleWatchdog(for: clientID)
+        audioFirstSampleRetryAttemptedByClientID.remove(clientID)
+        audioLastSampleTimeByClientID.removeValue(forKey: clientID)
         if let pipeline = audioPipelinesByClientID.removeValue(forKey: clientID) {
             await pipeline.stop()
         }
@@ -195,7 +213,8 @@ extension MirageHostService {
         }
         sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
         audioSendErrorReportedByClientID.remove(clientID)
-        if audioStartedMessageByClientID.removeValue(forKey: clientID) != nil {
+        let hadStartedMessage = audioStartedMessageByClientID.removeValue(forKey: clientID) != nil
+        if streamID > 0, hadStartedMessage || reason == .error {
             await sendAudioStreamStopped(
                 AudioStreamStoppedMessage(streamID: streamID, reason: reason),
                 toClientID: clientID
@@ -308,6 +327,74 @@ extension MirageHostService {
         await sendPendingAudioStartedIfPossible(clientID: clientID)
         MirageLogger.host("Opened Loom audio stream for client \(clientID)")
         return true
+    }
+
+    private func scheduleAudioFirstSampleWatchdog(clientID: UUID, streamID: StreamID) {
+        cancelAudioFirstSampleWatchdog(for: clientID)
+        let activationTime = CFAbsoluteTimeGetCurrent()
+        audioFirstSampleWatchdogsByClientID[clientID] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: hostAudioFirstSampleTimeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.handleAudioFirstSampleWatchdogTimeout(
+                clientID: clientID,
+                streamID: streamID,
+                activationTime: activationTime
+            )
+        }
+    }
+
+    private func cancelAudioFirstSampleWatchdog(for clientID: UUID) {
+        audioFirstSampleWatchdogsByClientID.removeValue(forKey: clientID)?.cancel()
+    }
+
+    private func recordCapturedAudioSample(clientID: UUID, streamID: StreamID) {
+        audioLastSampleTimeByClientID[clientID] = CFAbsoluteTimeGetCurrent()
+        if audioFirstSampleWatchdogsByClientID[clientID] != nil {
+            MirageLogger.host("First captured audio sample observed for client \(clientID), stream \(streamID)")
+        }
+        cancelAudioFirstSampleWatchdog(for: clientID)
+        audioFirstSampleRetryAttemptedByClientID.remove(clientID)
+    }
+
+    private func handleAudioFirstSampleWatchdogTimeout(
+        clientID: UUID,
+        streamID: StreamID,
+        activationTime: CFAbsoluteTime
+    )
+    async {
+        audioFirstSampleWatchdogsByClientID.removeValue(forKey: clientID)
+        let decision = HostAudioFirstSampleWatchdogPolicy.decision(
+            audioEnabled: audioConfigurationByClientID[clientID]?.enabled == true,
+            pipelineActive: audioPipelinesByClientID[clientID] != nil,
+            sourceMatches: audioSourceStreamByClientID[clientID] == streamID,
+            lastSampleTime: audioLastSampleTimeByClientID[clientID],
+            activationTime: activationTime,
+            retryAttempted: audioFirstSampleRetryAttemptedByClientID.contains(clientID)
+        )
+
+        switch decision {
+        case .ignore:
+            return
+        case .retryCapture:
+            audioFirstSampleRetryAttemptedByClientID.insert(clientID)
+            MirageLogger.host(
+                "Audio capture produced no first sample for client \(clientID), stream \(streamID); " +
+                    "restarting capture once with audio enabled"
+            )
+            await streamsByID[streamID]?.restartCaptureForAudioRecovery(reason: "audio_first_sample_timeout")
+            scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: streamID)
+        case .fail:
+            MirageLogger.host(
+                "Audio capture produced no first sample after retry for client \(clientID), stream \(streamID); " +
+                    "stopping audio stream"
+            )
+            await stopAudioPipeline(for: clientID, reason: .error)
+            await closeAudioTransportIfNeeded(for: clientID)
+        }
     }
 
     @discardableResult

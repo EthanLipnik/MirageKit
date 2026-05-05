@@ -160,6 +160,12 @@ extension MirageHostService {
         if resolvedAudioConfiguration != audioConfiguration {
             MirageLogger.host("Desktop stream audio disabled for secondary display mode")
         }
+        MirageLogger.host(
+            "Desktop stream audio configuration: requestedEnabled=\(audioConfiguration.enabled), " +
+                "effectiveEnabled=\(resolvedAudioConfiguration.enabled), " +
+                "layout=\(resolvedAudioConfiguration.channelLayout.rawValue), " +
+                "quality=\(resolvedAudioConfiguration.quality.rawValue), mode=\(mode.rawValue)"
+        )
 
         let resolvedClientScaleFactor: CGFloat? = if let clientScaleFactor, clientScaleFactor > 0 {
             max(1.0, clientScaleFactor)

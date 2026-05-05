@@ -65,6 +65,11 @@ extension StreamContext {
         requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(channelCount)
     }
 
+    func restartCaptureForAudioRecovery(reason: String) async {
+        guard let captureEngine else { return }
+        await captureEngine.restartCapture(reason: reason)
+    }
+
     func getRequestedAudioChannelCount() -> Int {
         requestedAudioChannelCount
     }

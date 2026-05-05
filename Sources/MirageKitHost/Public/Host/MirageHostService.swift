@@ -250,6 +250,10 @@ public final class MirageHostService {
     var sentAudioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
     // Clients whose current audio transport send failure has already been logged.
     var audioSendErrorReportedByClientID: Set<UUID> = []
+    // First-sample watchdogs for newly activated host audio capture.
+    var audioFirstSampleWatchdogsByClientID: [UUID: Task<Void, Never>] = [:]
+    var audioFirstSampleRetryAttemptedByClientID: Set<UUID> = []
+    var audioLastSampleTimeByClientID: [UUID: CFAbsoluteTime] = [:]
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []

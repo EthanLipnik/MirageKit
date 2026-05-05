@@ -70,6 +70,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -126,6 +127,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
         }
@@ -191,6 +193,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: resolvedSourceRect,
@@ -313,6 +316,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = existingConfig.showsCursor
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: resolvedSourceRect,
@@ -360,6 +364,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -417,6 +422,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = showsCursor
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -442,6 +448,7 @@ extension WindowCaptureEngine {
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = sckQueueDepth
+        applyAudioSettings(to: streamConfig)
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -492,6 +499,21 @@ extension WindowCaptureEngine {
             streamConfig.captureResolution = .best
             streamConfig.width = currentWidth
             streamConfig.height = currentHeight
+        }
+    }
+
+    func applyAudioSettings(
+        to streamConfig: SCStreamConfiguration,
+        enabled: Bool? = nil,
+        channelCount: Int? = nil
+    ) {
+        let audioEnabled = enabled ?? isAudioCaptureConfigured
+        streamConfig.capturesAudio = audioEnabled
+        guard audioEnabled else { return }
+        let resolvedChannelCount = channelCount ?? captureSessionConfig?.audioChannelCount
+        if let resolvedChannelCount {
+            streamConfig.sampleRate = 48_000
+            streamConfig.channelCount = resolvedChannelCount
         }
     }
 }

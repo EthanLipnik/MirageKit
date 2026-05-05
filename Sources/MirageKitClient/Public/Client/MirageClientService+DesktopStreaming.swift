@@ -52,6 +52,11 @@ public extension MirageClientService {
 
         let resolvedAudioConfiguration = (audioConfiguration ?? self.audioConfiguration)
             .resolvedForDesktopStreamMode(mode)
+        MirageLogger.client(
+            "Desktop stream audio request: enabled=\(resolvedAudioConfiguration.enabled), " +
+                "layout=\(resolvedAudioConfiguration.channelLayout.rawValue), " +
+                "quality=\(resolvedAudioConfiguration.quality.rawValue), mode=\(mode.rawValue)"
+        )
 
         let startupRequestID = UUID()
         pendingStreamSetupRequestID = startupRequestID

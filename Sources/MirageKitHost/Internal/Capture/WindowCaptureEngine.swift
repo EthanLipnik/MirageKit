@@ -91,6 +91,7 @@ actor WindowCaptureEngine {
     var isRestarting = false
     var capturedFrameHandler: (@Sendable (CapturedFrame) -> Void)?
     var capturedAudioHandler: (@Sendable (CapturedAudioBuffer) -> Void)?
+    var isAudioCaptureConfigured = false
     var dimensionChangeHandler: (@Sendable (Int, Int) -> Void)?
     var captureMode: CaptureMode?
     var captureSessionConfig: CaptureSessionConfiguration?
@@ -253,9 +254,16 @@ actor WindowCaptureEngine {
         admissionDropper = dropper
     }
 
-    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) {
+    func setCapturedAudioHandler(_ handler: (@Sendable (CapturedAudioBuffer) -> Void)?) async {
         capturedAudioHandler = handler
         streamOutput?.setAudioHandler(handler)
+        guard handler != nil else {
+            isAudioCaptureConfigured = false
+            return
+        }
+        guard isCapturing, !isAudioCaptureConfigured else { return }
+        MirageLogger.capture("Audio handler enabled on video-only capture; restarting capture with audio output")
+        await restartCapture(reason: "audio_capture_enable")
     }
 
     func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) {

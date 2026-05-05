@@ -75,7 +75,7 @@ extension MirageHostService {
     private static let livenessActiveControlWorkGraceThreshold: CFAbsoluteTime = 8.0
 
     nonisolated private static let minimumBackgroundLeaseDuration: TimeInterval = 1
-    nonisolated private static let maximumBackgroundLeaseDuration: TimeInterval = 30
+    nonisolated private static let maximumBackgroundLeaseDuration: TimeInterval = 120
 
     nonisolated func recordClientActivity(clientID: UUID) {
         clientLastActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }

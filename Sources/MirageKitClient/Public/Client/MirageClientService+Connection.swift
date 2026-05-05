@@ -20,6 +20,41 @@ import UIKit.UIDevice
 import AppKit
 #endif
 
+private final class MirageDisconnectNoticeWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isComplete = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let continuationToResume: CheckedContinuation<Void, Never>?
+            lock.lock()
+            if isComplete {
+                continuationToResume = continuation
+            } else {
+                self.continuation = continuation
+                continuationToResume = nil
+            }
+            lock.unlock()
+            continuationToResume?.resume()
+        }
+    }
+
+    func complete() {
+        let continuationToResume: CheckedContinuation<Void, Never>?
+        lock.lock()
+        if isComplete {
+            continuationToResume = nil
+        } else {
+            isComplete = true
+            continuationToResume = continuation
+            continuation = nil
+        }
+        lock.unlock()
+        continuationToResume?.resume()
+    }
+}
+
 @MainActor
 extension MirageClientService {
     private struct BootstrappedControlSession {
@@ -280,7 +315,6 @@ extension MirageClientService {
         invalidateCurrentConnectAttempt()
 
         if let controlChannel, case .connected = connectionState {
-            cancelStreamSetup()
             await sendDisconnectNoticeBeforeTeardown(over: controlChannel)
         }
 
@@ -293,25 +327,28 @@ extension MirageClientService {
     }
 
     private func sendDisconnectNoticeBeforeTeardown(over controlChannel: MirageControlChannel) async {
-        do {
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask {
-                    try await controlChannel.send(
-                        .disconnect,
-                        content: DisconnectMessage(reason: .userRequested, message: nil)
-                    )
-                }
-                group.addTask {
-                    try await Task.sleep(for: .milliseconds(250))
-                }
-
-                _ = try await group.next()
-                group.cancelAll()
+        let waiter = MirageDisconnectNoticeWaiter()
+        let sendTask = Task {
+            do {
+                try await controlChannel.send(
+                    .disconnect,
+                    content: DisconnectMessage(reason: .userRequested, message: nil)
+                )
+                try? await controlChannel.closeStream()
+            } catch {
+                // Disconnect is already in progress. Continue local teardown even if
+                // the peer closed the control channel before it could receive notice.
             }
-        } catch {
-            // Disconnect is already in progress. Continue local teardown even if
-            // the peer closed the control channel before it could receive notice.
+            waiter.complete()
         }
+        let timeoutTask = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            waiter.complete()
+        }
+
+        await waiter.wait()
+        sendTask.cancel()
+        timeoutTask.cancel()
     }
 
     func handleDisconnect(

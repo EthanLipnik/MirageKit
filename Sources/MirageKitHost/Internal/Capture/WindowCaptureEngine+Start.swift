@@ -96,11 +96,11 @@ extension WindowCaptureEngine {
 
         // Capture settings
         streamConfig.showsCursor = false // Don't capture cursor - iPad shows its own
-        streamConfig.capturesAudio = onAudio != nil
-        if let resolvedAudioChannelCount {
-            streamConfig.sampleRate = 48_000
-            streamConfig.channelCount = resolvedAudioChannelCount
-        }
+        applyAudioSettings(
+            to: streamConfig,
+            enabled: onAudio != nil,
+            channelCount: resolvedAudioChannelCount
+        )
         streamConfig.queueDepth = sckQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
         let queueDepth = streamConfig.queueDepth
@@ -176,6 +176,7 @@ extension WindowCaptureEngine {
                 sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.audio", qos: .utility)
             )
         }
+        isAudioCaptureConfigured = onAudio != nil
 
         // Start capturing
         MirageLogger.capture("event=stream_lifecycle phase=start_attempt mode=window")
@@ -196,6 +197,7 @@ extension WindowCaptureEngine {
             if clearSessionState {
                 stream = nil
                 streamOutput = nil
+                isAudioCaptureConfigured = false
                 captureSessionConfig = nil
                 captureMode = nil
                 capturedFrameHandler = nil
@@ -225,6 +227,7 @@ extension WindowCaptureEngine {
 
         stream = nil
         streamOutput = nil
+        isAudioCaptureConfigured = false
         if clearSessionState {
             captureSessionConfig = nil
             captureMode = nil
@@ -512,11 +515,11 @@ extension WindowCaptureEngine {
         // - Login screen: show cursor (true) for user interaction
         // - Desktop streaming: hide cursor (false) - client renders its own
         streamConfig.showsCursor = showsCursor
-        streamConfig.capturesAudio = onAudio != nil
-        if let resolvedAudioChannelCount {
-            streamConfig.sampleRate = 48_000
-            streamConfig.channelCount = resolvedAudioChannelCount
-        }
+        applyAudioSettings(
+            to: streamConfig,
+            enabled: onAudio != nil,
+            channelCount: resolvedAudioChannelCount
+        )
         streamConfig.queueDepth = sckQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
         let queueDepth = streamConfig.queueDepth
@@ -609,6 +612,7 @@ extension WindowCaptureEngine {
                 sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.audio", qos: .utility)
             )
         }
+        isAudioCaptureConfigured = onAudio != nil
 
         // Start capturing
         MirageLogger.capture("event=stream_lifecycle phase=start_attempt mode=display")

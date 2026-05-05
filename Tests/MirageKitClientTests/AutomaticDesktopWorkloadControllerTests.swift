@@ -192,6 +192,41 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target == .qhd60)
     }
 
+    @Test("Automatic 60fps floor prevents silent downgrade to 30fps")
+    func automatic60FPSFloorPreventsSilentDowngradeTo30FPS() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        let snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 60,
+            cadenceFPS: 25
+        )
+
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
+            snapshot: snapshot,
+            minimumTargetFrameRate: 60
+        )
+
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+    }
+
+    @Test("Workload reconfiguration is atomic when resize is unavailable")
+    func workloadReconfigurationIsAtomicWhenResizeIsUnavailable() {
+        let decision = MirageClientService.automaticDesktopWorkloadReconfigurationDecision(
+            needsFrameRateChange: true,
+            needsResize: true,
+            allowsAutomaticResolutionResize: false
+        )
+
+        #expect(!decision.shouldChangeFrameRate)
+        #expect(!decision.shouldResize)
+    }
+
     private func pipelineBoundSnapshot(
         width: Int,
         height: Int,
@@ -227,6 +262,7 @@ struct AutomaticDesktopWorkloadControllerTests {
     private func advanceThroughPipelinePressure(
         controller: inout MirageAutomaticDesktopWorkloadController,
         snapshot: MirageClientMetricsSnapshot,
+        minimumTargetFrameRate: Int = 30,
         startingAt start: Int = 0
     ) -> MirageAutomaticDesktopWorkloadController.Action {
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
@@ -234,6 +270,7 @@ struct AutomaticDesktopWorkloadControllerTests {
             let sampleAction = controller.advance(
                 snapshot: snapshot,
                 resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: minimumTargetFrameRate,
                 now: CFAbsoluteTime(sample)
             )
             if sampleAction != .none {

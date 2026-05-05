@@ -345,10 +345,23 @@ extension MirageClientService {
             mode: desktopStreamMode,
             allowsClientResize: desktopStreamAllowsClientResize
         )
+        let decision = Self.automaticDesktopWorkloadReconfigurationDecision(
+            needsFrameRateChange: needsFrameRateChange,
+            needsResize: needsResize,
+            allowsAutomaticResolutionResize: allowsAutomaticResolutionResize
+        )
 
-        guard needsFrameRateChange || (needsResize && allowsAutomaticResolutionResize) else { return false }
+        guard decision.shouldChangeFrameRate || decision.shouldResize else {
+            if needsResize && !allowsAutomaticResolutionResize {
+                MirageLogger.client(
+                    "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
+                        "target \(target.logLabel) requires resize but mode does not allow automatic resize"
+                )
+            }
+            return false
+        }
 
-        if needsFrameRateChange {
+        if decision.shouldChangeFrameRate {
             try await sendStreamEncoderSettingsChange(
                 streamID: streamID,
                 targetFrameRate: target.targetFrameRate
@@ -358,7 +371,7 @@ extension MirageClientService {
             refreshRateFallbackTargets.removeValue(forKey: streamID)
         }
 
-        if needsResize, allowsAutomaticResolutionResize {
+        if decision.shouldResize {
             let logicalResolution = automaticDesktopLogicalResolution(
                 forEncodedPixelSize: target.encodedPixelSize
             )
@@ -417,6 +430,28 @@ extension MirageClientService {
         allowsClientResize: Bool
     ) -> Bool {
         mode != .unified && allowsClientResize
+    }
+
+    struct AutomaticDesktopWorkloadReconfigurationDecision: Equatable {
+        let shouldChangeFrameRate: Bool
+        let shouldResize: Bool
+    }
+
+    nonisolated static func automaticDesktopWorkloadReconfigurationDecision(
+        needsFrameRateChange: Bool,
+        needsResize: Bool,
+        allowsAutomaticResolutionResize: Bool
+    ) -> AutomaticDesktopWorkloadReconfigurationDecision {
+        guard !needsResize || allowsAutomaticResolutionResize else {
+            return AutomaticDesktopWorkloadReconfigurationDecision(
+                shouldChangeFrameRate: false,
+                shouldResize: false
+            )
+        }
+        return AutomaticDesktopWorkloadReconfigurationDecision(
+            shouldChangeFrameRate: needsFrameRateChange,
+            shouldResize: needsResize && allowsAutomaticResolutionResize
+        )
     }
 
     func sendDesktopResizeRequest(

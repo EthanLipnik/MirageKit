@@ -67,6 +67,9 @@ public struct MirageStreamContentView: View {
 
     /// Whether the client is currently waiting for host to complete resize.
     @State private var isResizing: Bool = false
+    #if os(iOS) || os(visionOS)
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
     @State private var displayResolutionTask: Task<Void, Never>?
     @State private var pendingDisplayResolutionDispatchTarget: CGSize = .zero
     /// Tracks the last requested client display resolution, not the host's encoded output size.
@@ -1141,6 +1144,13 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleForegroundRecovery() {
+        guard scenePhase == .active else {
+            MirageLogger.client(
+                "Foreground recovery deferred for stream \(session.streamID); scenePhase=\(scenePhase)"
+            )
+            return
+        }
+
         scheduleResizeHoldoff()
 
         if isDesktopStream {

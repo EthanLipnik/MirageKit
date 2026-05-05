@@ -121,7 +121,6 @@ extension InputCapturingView {
     }
 
     func handleSoftwareKeyboardInsertText(_ text: String) {
-        guard !hardwareKeyboardPresent else { return }
         sendModifierStateIfNeeded(force: true)
         let modifiers = keyboardModifiers
         for scalar in text {
@@ -146,7 +145,6 @@ extension InputCapturingView {
     }
 
     func handleSoftwareKeyboardDeleteBackward() {
-        guard !hardwareKeyboardPresent else { return }
         sendModifierStateIfNeeded(force: true)
         let modifiers = keyboardModifiers
         sendSoftwareKeyEvent(keyCode: 0x33, characters: nil, charactersIgnoringModifiers: nil, modifiers: modifiers)

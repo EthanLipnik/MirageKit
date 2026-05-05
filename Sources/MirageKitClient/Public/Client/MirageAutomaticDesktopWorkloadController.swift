@@ -218,6 +218,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     public mutating func advance(
         snapshot: MirageClientMetricsSnapshot?,
         resizeCriticalSectionActive: Bool,
+        minimumTargetFrameRate: Int = 30,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Action {
         guard !resizeCriticalSectionActive else {
@@ -246,7 +247,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                   cooldownElapsed(now: now),
                   let targetTier = Self.targetTier(
                       currentTier: currentTier,
-                      pipelinePixelRate: observedPixelRate
+                      pipelinePixelRate: observedPixelRate,
+                      minimumTargetFrameRate: minimumTargetFrameRate
                   ) else {
                 return .none
             }
@@ -286,7 +288,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         }
         guard let targetTier = Self.targetTier(
             currentTier: currentTier,
-            pipelinePixelRate: hostPipelinePixelRate
+            pipelinePixelRate: hostPipelinePixelRate,
+            minimumTargetFrameRate: minimumTargetFrameRate
         ) else {
             return .none
         }
@@ -304,10 +307,14 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
 
     private static func targetTier(
         currentTier: MirageAutomaticDesktopWorkloadTier,
-        pipelinePixelRate: Double
+        pipelinePixelRate: Double,
+        minimumTargetFrameRate: Int
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
-        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers
+        let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
+        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
+            $0.targetFrameRate >= normalizedMinimumTargetFrameRate
+        }
         let sameFrameRateTier = tiers.first { tier in
             tier.targetFrameRate == currentTier.targetFrameRate &&
                 tier.pixelRate < currentTier.pixelRate &&
