@@ -43,6 +43,7 @@ actor StreamController {
         case freezeTimeout
         case keyframeRecoveryLoop
         case manualRecovery
+        case memoryBudget
         case startupKeyframeTimeout
 
         var logLabel: String {
@@ -57,6 +58,8 @@ actor StreamController {
                 "keyframe-recovery-loop"
             case .manualRecovery:
                 "manual-recovery"
+            case .memoryBudget:
+                "memory-budget"
             case .startupKeyframeTimeout:
                 "startup-keyframe-timeout"
             }
@@ -232,6 +235,7 @@ actor StreamController {
 
     /// Duration without decoded frame presentation progress before recovery is requested.
     static let freezeTimeout: CFAbsoluteTime = 1.25
+    static let memoryBudgetRecoveryDelay: Duration = .milliseconds(500)
 
     /// Interval for checking freeze state.
     static let freezeCheckInterval: Duration = .milliseconds(250)
@@ -328,6 +332,7 @@ actor StreamController {
     var keyframeRecoveryAttempt: Int = 0
     /// One-shot probe that verifies decode/presentation progress after passive->active promotion.
     var tierPromotionProbeTask: Task<Void, Never>?
+    var memoryBudgetRecoveryTask: Task<Void, Never>?
     var lastRecoveryRequestTime: CFAbsoluteTime = 0
 
     /// Whether we've decoded at least one frame.
@@ -561,6 +566,7 @@ actor StreamController {
         lastHardRecoveryStartTime = 0
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
+        cancelMemoryBudgetRecoveryTask()
         await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
         let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
@@ -1098,6 +1104,7 @@ actor StreamController {
         resizeDebounceTask = nil
         keyframeRecoveryTask?.cancel()
         keyframeRecoveryTask = nil
+        cancelMemoryBudgetRecoveryTask()
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
         lastSoftRecoveryRequestTime = 0

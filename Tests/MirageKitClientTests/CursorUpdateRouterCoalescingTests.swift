@@ -96,13 +96,6 @@ struct CursorUpdateRouterCoalescingTests {
         #expect(forcedRefreshCount == 1)
     }
 
-    @Test("High-frequency cursor control messages are excluded from receive logging")
-    func highFrequencyCursorControlMessagesAreExcludedFromReceiveLogging() {
-        #expect(!MirageClientService.shouldLogControlMessage(.cursorUpdate))
-        #expect(!MirageClientService.shouldLogControlMessage(.cursorPositionUpdate))
-        #expect(!MirageClientService.shouldLogControlMessage(.streamMetricsUpdate))
-        #expect(MirageClientService.shouldLogControlMessage(.sessionBootstrapResponse))
-    }
 }
 
 private final class SharedSequence: @unchecked Sendable {

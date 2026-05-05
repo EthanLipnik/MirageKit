@@ -93,4 +93,50 @@ struct ClientControlReceiveBufferTests {
         #expect(routedCount == 1)
         #expect(remainingBufferCount == 0)
     }
+
+    @Test("Bootstrap tail buffer drains without waiting for another incoming chunk")
+    func bootstrapTailBufferDrainsWithoutAnotherIncomingChunk() async throws {
+        let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
+        let counter = ReceiveCounter()
+        let bootstrapResponse = ControlMessage(type: .sessionBootstrapResponse)
+        let tailMessage = ControlMessage(type: .pong)
+        let stream = AsyncStream<Data> { continuation in
+            continuation.yield(bootstrapResponse.serialize() + tailMessage.serialize())
+            continuation.finish()
+        }
+
+        let received = try await service.receiveSingleControlMessage(from: stream)
+        #expect(received.type == .sessionBootstrapResponse)
+
+        await MainActor.run {
+            service.connectionState = .connected(host: "Test Host")
+            service.controlMessageHandlers[.pong] = { _ in
+                await counter.increment()
+            }
+            service.drainBufferedControlMessagesIfNeeded()
+        }
+
+        try await waitUntil("buffered bootstrap tail") {
+            await counter.value == 1
+        }
+
+        let remainingBufferCount = await MainActor.run { service.receiveBuffer.count }
+        #expect(remainingBufferCount == 0)
+    }
+
+    private func waitUntil(
+        _ label: String,
+        timeout: Duration = .seconds(2),
+        pollInterval: Duration = .milliseconds(20),
+        condition: @escaping @Sendable () async -> Bool
+    ) async throws {
+        let start = ContinuousClock.now
+        while !(await condition()) {
+            if ContinuousClock.now - start > timeout {
+                Issue.record("Timed out waiting for \(label)")
+                return
+            }
+            try await Task.sleep(for: pollInterval)
+        }
+    }
 }

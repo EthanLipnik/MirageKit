@@ -292,6 +292,90 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Default non-keyframe deadline drops stale encoded frames")
+    func defaultNonKeyframeDeadlineDropsStaleEncodedFrame() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 45,
+                frameNumber: 303,
+                sequenceNumberStart: 3_020,
+                generation: generation,
+                encodedAt: CFAbsoluteTimeGetCurrent() - 10
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.stalePacketDrops == 1
+        }
+
+        #expect(submittedPackets.read { $0.isEmpty })
+        #expect(sender.queuedBytesSnapshot() == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Infinite non-keyframe deadline preserves dependency frame")
+    func infiniteNonKeyframeDeadlinePreservesDependencyFrame() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 45,
+                frameNumber: 303,
+                sequenceNumberStart: 3_020,
+                generation: generation,
+                encodedAt: CFAbsoluteTimeGetCurrent() - 10,
+                sendDeadline: .greatestFiniteMagnitude
+            )
+        )
+
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
+
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [303])
+        #expect((await sender.telemetrySnapshot()).stalePacketDrops == 0)
+
+        await sender.stop()
+    }
+
     @Test("Newer current-generation keyframes supersede older queued keyframes")
     func newerCurrentGenerationKeyframesSupersedeOlderQueuedKeyframes() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])

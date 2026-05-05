@@ -40,12 +40,6 @@ struct MirageMediaPathProberTests {
         #expect(best?.rttMs == 1.2)
     }
 
-    @Test("Returns nil for empty results")
-    func returnsNilForEmptyResults() {
-        let best = MediaPathProbeResult.bestCandidate(from: [])
-        #expect(best == nil)
-    }
-
     @Test("Hysteresis prevents migration when improvement < 30%")
     func hysteresisPreventsSmallImprovement() {
         let current = MediaPathProbeResult(

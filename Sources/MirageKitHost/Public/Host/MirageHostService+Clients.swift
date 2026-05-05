@@ -71,8 +71,6 @@ extension MirageHostService {
         // Clear any stuck modifier state from this client's session
         inputController.clearAllModifiers()
 
-        // Fail closed before asynchronous teardown work so queued handlers no longer
-        // treat this client as active.
         var removedSessionID: UUID?
         var removedClientContext: ClientContext?
         if let expectedSessionID,
@@ -87,6 +85,13 @@ extension MirageHostService {
             removedClientContext = clientsBySessionID.removeValue(forKey: key)
             removedSessionID = key
             stopReceiveLoop(sessionID: key)
+        }
+        // Fail closed before asynchronous teardown work so queued handlers no longer
+        // treat this client session as active.
+        if let removedSessionID {
+            streamRegistry.unregisterInputSession(removedSessionID)
+        } else {
+            streamRegistry.unregisterInputSessions(for: client.id)
         }
         clientsByID.removeValue(forKey: client.id)
         peerIdentityByClientID.removeValue(forKey: client.id)

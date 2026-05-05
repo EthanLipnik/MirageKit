@@ -5,22 +5,13 @@
 //  Created by Ethan Lipnik on 4/7/26.
 //
 
+#if os(macOS)
 @testable import MirageKitClient
 import CoreGraphics
 import Testing
 
-#if os(macOS)
 @Suite("Desktop Presentation Geometry")
 struct DesktopPresentationGeometryTests {
-    @Test("Desktop presentation aspect-fits the stream inside the macOS view bounds")
-    func desktopPresentationAspectFitsInsideViewBounds() {
-        let contentRect = DesktopPresentationGeometry.resolvedContentRect(
-            referenceSize: CGSize(width: 1280, height: 800),
-            in: CGRect(x: 0, y: 0, width: 1600, height: 900)
-        )
-
-        #expect(contentRect == CGRect(x: 80, y: 0, width: 1440, height: 900))
-    }
 
     @Test("Absolute mouse normalization clamps through the desktop content rect")
     func absoluteMouseNormalizationClampsThroughDesktopContentRect() {

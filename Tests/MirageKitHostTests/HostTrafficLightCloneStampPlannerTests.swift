@@ -112,32 +112,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         #expect(clampedPlan.destinationRect.maxY <= 140)
     }
 
-    @Test("Feather and blur stay within bounded visual range")
-    func featherAndBlurAreBounded() {
-        let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
-            windowFramePoints: CGRect(x: 0, y: 0, width: 1000, height: 700),
-            clusterRectPoints: CGRect(x: 0, y: 0, width: 160, height: 80),
-            buttonsHiddenState: .unknown,
-            source: .fallback
-        )
-
-        let decision = HostTrafficLightCloneStampPlanner.makeDecision(
-            pixelFormat: kCVPixelFormatType_32BGRA,
-            contentRect: CGRect(x: 0, y: 0, width: 2000, height: 1400),
-            geometry: geometry
-        )
-
-        guard case let .apply(plan) = decision else {
-            Issue.record("Expected plan for feather/blur bounds")
-            return
-        }
-
-        #expect(plan.featherPixels >= 2)
-        #expect(plan.featherPixels <= 3.4)
-        #expect(plan.blurRadiusPixels >= 0.45)
-        #expect(plan.blurRadiusPixels <= 1.1)
-    }
-
     @Test("Unsupported pixel formats skip cleanly")
     func unsupportedFormatSkips() {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(

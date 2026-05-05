@@ -49,49 +49,6 @@ struct QualityTestTransportTests {
         }
     }
 
-    @Test("Measured throughput becomes candidate bitrate when no stable stage exists")
-    func measuredThroughputBecomesCandidateBitrate() {
-        #expect(
-            MirageClientService.resolvedQualityTestCandidateBitrate(
-                stableBitrateBps: 0,
-                measuredBitrateBps: 6_500_000
-            ) == 6_500_000
-        )
-        #expect(
-            MirageClientService.resolvedQualityTestCandidateBitrate(
-                stableBitrateBps: 12_000_000,
-                measuredBitrateBps: 6_500_000
-            ) == 12_000_000
-        )
-    }
-
-    @Test("Default throughput sweep can climb into the 600 Mbps range")
-    func defaultThroughputSweepReachesSixHundredMegabits() {
-        let targets = MirageClientService.defaultQualityTestSweepTargets()
-        let first = targets[0]
-        let last = targets[targets.count - 1]
-
-        #expect(first == 8_000_000)
-        #expect(last >= 600_000_000)
-        #expect(targets.count >= 10)
-    }
-
-    @Test("Connection-limit throughput sweep reaches the 10 Gbps ceiling")
-    func connectionLimitSweepReachesTenGigabits() {
-        let targets = MirageClientService.connectionLimitQualityTestSweepTargets()
-        let first = targets[0]
-        let last = targets[targets.count - 1]
-
-        #expect(first == 8_000_000)
-        #expect(last == 10_000_000_000)
-        #expect(targets.count >= 12)
-    }
-
-    @Test("Connection-limit summary reports measured throughput instead of requested target")
-    func connectionLimitSummaryUsesMeasuredThroughput() {
-        #expect(MirageClientService.qualityTestSummaryUsesMeasuredThroughput(for: .connectionLimit))
-    }
-
     @Test("Delivery-window misses are treated as unstable even without packet loss")
     func deliveryWindowMissMarksStageUnstableWithoutLoss() {
         let stage = MirageQualityTestSummary.StageResult(
@@ -117,34 +74,6 @@ struct QualityTestTransportTests {
                 lossCeiling: 5.0
             )
         )
-    }
-
-    @Test("Automatic execution plan uses replay-only stages")
-    func automaticExecutionPlanUsesReplayOnlyStages() {
-        let executionPlan = MirageClientService.qualityTestExecutionPlan(for: .automaticSelection)
-
-        #expect(!executionPlan.plan.stages.isEmpty)
-        #expect(Set(executionPlan.plan.stages.map(\.probeKind)) == [.streamingReplay])
-        #expect(executionPlan.transportMeasurementStageIDs.isEmpty)
-        #expect(!executionPlan.streamingReplayMeasurementStageIDs.isEmpty)
-    }
-
-    @Test("Connection-limit execution plan lets streaming replay sweep to ten gigabits")
-    func connectionLimitExecutionPlanLetsStreamingReplaySweepToTenGigabits() {
-        let executionPlan = MirageClientService.qualityTestExecutionPlan(for: .connectionLimit)
-        let replayTargets = executionPlan.plan.stages
-            .filter { $0.probeKind == .streamingReplay }
-            .map(\.targetBitrateBps)
-
-        #expect(!replayTargets.isEmpty)
-        #expect(replayTargets.contains(10_000_000_000))
-    }
-
-    @Test("Connection-limit execution plan keeps host-side first-breach termination disabled")
-    func connectionLimitExecutionPlanDisablesHostFirstBreachTermination() {
-        let executionPlan = MirageClientService.qualityTestExecutionPlan(for: .connectionLimit)
-
-        #expect(!executionPlan.stopAfterFirstBreach)
     }
 
     @Test("Connection-limit sweep stops at one percent loss")

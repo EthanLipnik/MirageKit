@@ -50,6 +50,7 @@ extension StreamController {
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
         await stopTierPromotionProbe()
+        cancelMemoryBudgetRecoveryTask()
         stopFirstPresentedFrameMonitor()
         MirageRenderStreamStore.shared.clear(for: streamID)
         stopFrameProcessingPipeline()
@@ -90,6 +91,7 @@ extension StreamController {
     )
     async {
         await stopTierPromotionProbe()
+        cancelMemoryBudgetRecoveryTask()
         stopFirstPresentedFrameMonitor()
         stopFrameProcessingPipeline()
         await decoder.setCodec(codec, streamDimensions: streamDimensions)

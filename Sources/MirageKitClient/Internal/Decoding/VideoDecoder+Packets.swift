@@ -257,7 +257,7 @@ extension FrameReassembler {
         // Clean up old pending frames
         let timeoutResult = cleanupOldFramesLocked()
         if timeoutResult.shouldEnterAwaitingKeyframe {
-            beginAwaitingKeyframe()
+            enterKeyframeOnlyModeLocked()
             MirageLogger.log(
                 .frameAssembly,
                 "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), keyframe=\(timeoutResult.timedOutKeyframes), anchor=\(hasDeliveredKeyframeAnchor)"
@@ -753,7 +753,7 @@ extension FrameReassembler {
         }
 
         if evictedCount > 0 {
-            beginAwaitingKeyframe()
+            enterKeyframeOnlyModeLocked()
             MirageLogger.client(
                 "Frame reassembler memory budget evicted \(evictedCount) pending frame(s) for stream \(streamID); " +
                     "pendingBytes=\(pendingFrameBytesLocked()), pendingFrames=\(pendingFrames.count)"

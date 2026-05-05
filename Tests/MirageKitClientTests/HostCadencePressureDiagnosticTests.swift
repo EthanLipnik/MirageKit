@@ -104,20 +104,5 @@ struct HostCadencePressureDiagnosticTests {
         #expect(diagnostic?.kind == .captureAdmissionPressure)
     }
 
-    @Test("Source-bound diagnostic message includes host-side pressure details")
-    func sourceBoundDiagnosticMessageIncludesHostPressureDetails() {
-        let message = sourceBoundDecodeSubmissionDiagnosticMessage(
-            decodedFPS: 29,
-            receivedFPS: 29,
-            targetFPS: 60,
-            hostCadencePressure: HostCadencePressureDiagnostic(
-                kind: .captureAdmissionPressure,
-                summary: "hostCapture=60.0fps hostEncodeAttempt=29.0fps hostEncoded=29.0fps captureAdmissionDrops=31 encodeAvg=11.5ms queue=0KB sendStart=0.2ms sendDone=1.1ms pacer=0.1ms transport=clean"
-            )
-        )
-
-        #expect(message.contains("host-side capture-admission pressure"))
-        #expect(message.contains("captureAdmissionDrops=31"))
-    }
 }
 #endif

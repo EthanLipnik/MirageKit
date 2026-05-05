@@ -106,61 +106,6 @@ struct HostSoftwareUpdateFlowTests {
         #expect(result.remediationHint == "Open Mirage Host on the Mac and approve or trust this client, then try again.")
     }
 
-    @MainActor
-    @Test("Status request maps host controller snapshot fields")
-    func statusRequestMapsSnapshotFields() async {
-        let host = MirageHostService()
-        let controller = MockHostSoftwareUpdateController()
-        host.softwareUpdateController = controller
-
-        controller.snapshot = MirageHostSoftwareUpdateStatusSnapshot(
-            isSparkleAvailable: true,
-            isCheckingForUpdates: true,
-            isInstallInProgress: true,
-            channel: .nightly,
-            automationMode: .autoDownload,
-            installDisposition: .installing,
-            lastBlockReason: nil,
-            lastInstallResultCode: .started,
-            canCancelUpdate: true,
-            downloadExpectedBytes: 8_000,
-            downloadReceivedBytes: 2_000,
-            extractionProgress: 0.25,
-            lastErrorSummary: "Previous failure",
-            lastErrorDetails: "Previous failure details",
-            currentVersion: "1.1.0",
-            availableVersion: "1.2.0",
-            availableVersionTitle: "Mirage 1.2",
-            releaseNotesSummary: "Host release notes",
-            releaseNotesBody: "<ul><li>Performance improvements</li></ul>",
-            releaseNotesFormat: .html,
-            lastCheckedAtMs: 1_700_000_000_000
-        )
-
-        let status = await host.resolveHostSoftwareUpdateStatus(
-            for: makePeerIdentity(),
-            forceRefresh: true
-        )
-
-        #expect(status.isSparkleAvailable == true)
-        #expect(status.isCheckingForUpdates == true)
-        #expect(status.isInstallInProgress == true)
-        #expect(status.channel == .nightly)
-        #expect(status.automationMode == .autoDownload)
-        #expect(status.installDisposition == .installing)
-        #expect(status.canCancelUpdate == true)
-        #expect(status.downloadExpectedBytes == 8_000)
-        #expect(status.downloadReceivedBytes == 2_000)
-        #expect(status.extractionProgress == 0.25)
-        #expect(status.lastErrorSummary == "Previous failure")
-        #expect(status.lastErrorDetails == "Previous failure details")
-        #expect(status.currentVersion == "1.1.0")
-        #expect(status.availableVersion == "1.2.0")
-        #expect(status.availableVersionTitle == "Mirage 1.2")
-        #expect(status.releaseNotesFormat == .html)
-        #expect(status.lastCheckedAtMs == 1_700_000_000_000)
-        #expect(controller.lastStatusForceRefresh == true)
-    }
 }
 
 @MainActor

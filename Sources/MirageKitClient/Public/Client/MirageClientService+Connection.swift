@@ -118,12 +118,7 @@ extension MirageClientService {
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
-            inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
-                guard let controlChannel else {
-                    throw MirageError.protocolError("Control channel unavailable")
-                }
-                try await controlChannel.sendSerialized(data)
-            }
+            installInputSendHandler(controlChannel: controlChannel)
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()
@@ -215,12 +210,7 @@ extension MirageClientService {
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
-            inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
-                guard let controlChannel else {
-                    throw MirageError.protocolError("Control channel unavailable")
-                }
-                try await controlChannel.sendSerialized(data)
-            }
+            installInputSendHandler(controlChannel: controlChannel)
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()
@@ -291,8 +281,7 @@ extension MirageClientService {
 
         if let controlChannel, case .connected = connectionState {
             cancelStreamSetup()
-            let disconnectMsg = DisconnectMessage(reason: .userRequested, message: nil)
-            controlChannel.sendBestEffort(.disconnect, content: disconnectMsg)
+            await sendDisconnectNoticeBeforeTeardown(over: controlChannel)
         }
 
         await handleDisconnect(
@@ -301,6 +290,28 @@ extension MirageClientService {
             notifyDelegate: false,
             forceCleanup: true
         )
+    }
+
+    private func sendDisconnectNoticeBeforeTeardown(over controlChannel: MirageControlChannel) async {
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await controlChannel.send(
+                        .disconnect,
+                        content: DisconnectMessage(reason: .userRequested, message: nil)
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+
+                _ = try await group.next()
+                group.cancelAll()
+            }
+        } catch {
+            // Disconnect is already in progress. Continue local teardown even if
+            // the peer closed the control channel before it could receive notice.
+        }
     }
 
     func handleDisconnect(
@@ -504,6 +515,20 @@ extension MirageClientService {
 
         if notifyDelegate {
             delegate?.clientService(self, didDisconnectFromHost: reason)
+        }
+    }
+
+    private func installInputSendHandler(controlChannel: MirageControlChannel) {
+        inputEventSender.updateSendHandler { [weak controlChannel] data, deliveryMode in
+            guard let controlChannel else {
+                throw MirageError.protocolError("Control channel unavailable")
+            }
+            let transportKind = await controlChannel.session.context?.transportKind
+            if deliveryMode == .droppableRealtime, transportKind == .udp {
+                try await controlChannel.sendSerializedUnreliable(data)
+                return
+            }
+            try await controlChannel.sendSerialized(data)
         }
     }
 
@@ -810,9 +835,7 @@ extension MirageClientService {
             snapshot: localNetworkMonitor.snapshot()
         )
         var attempts: [ControlSessionAttempt] = []
-        let transportOrder: [LoomTransportKind] = isOverlayControlHost(host)
-            ? [.tcp, .quic, .udp]
-            : [.tcp, .quic, .udp]
+        let transportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
 
         for transportKind in transportOrder {
             guard let endpoint = controlSessionEndpoint(
@@ -836,13 +859,14 @@ extension MirageClientService {
         }
 
         if attempts.isEmpty {
+            let candidateKind = controlSessionCandidateKind(for: host.endpoint, host: host)
             attempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
                     endpoint: host.endpoint,
                     transportKind: .tcp,
-                    candidateKind: controlSessionCandidateKind(for: host.endpoint, host: host),
-                    requiredInterfaceType: isOverlayControlHost(host) ? nil : preferredNetworkType.requiredInterfaceType
+                    candidateKind: candidateKind,
+                    requiredInterfaceType: candidateKind == .overlay ? nil : preferredNetworkType.requiredInterfaceType
                 )
             )
         }
@@ -900,18 +924,13 @@ extension MirageClientService {
             selectedHost = selection.host
             selectionSource = selection.source
         case .quic, .tcp:
-            if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
-                selectedHost = endpointHost
-                selectionSource = "endpoint-host"
-            } else {
-                let selection = controlSessionUDPHostSelection(
-                    for: host,
-                    endpointHost: endpointHost,
-                    localNetwork: localNetwork
-                )
-                selectedHost = selection.host
-                selectionSource = selection.source
-            }
+            let selection = controlSessionUDPHostSelection(
+                for: host,
+                endpointHost: endpointHost,
+                localNetwork: localNetwork
+            )
+            selectedHost = selection.host
+            selectionSource = selection.source
         }
 
         guard let selectedHost else { return nil }
@@ -984,7 +1003,8 @@ extension MirageClientService {
         }
 
         if let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
-           shouldPreferEndpointHostForDirectConnection(rememberedHost) {
+           shouldPreferEndpointHostForDirectConnection(rememberedHost),
+           !Self.isOverlayCandidateHost(rememberedHost) {
             return (rememberedHost, "remembered-direct-host")
         }
 
@@ -1061,17 +1081,6 @@ extension MirageClientService {
         )
     }
 
-    private func isOverlayControlHost(_ host: LoomPeer) -> Bool {
-        if host.advertisement.mirageVPNAccessEnabled {
-            return true
-        }
-        if let endpointHost = endpointHost(for: host.endpoint),
-           Self.isOverlayCandidateHost(endpointHost) {
-            return true
-        }
-        return false
-    }
-
     private func controlSessionCandidateKind(
         for endpoint: NWEndpoint,
         host: LoomPeer
@@ -1079,7 +1088,16 @@ extension MirageClientService {
         guard case let .hostPort(endpointHost, _) = endpoint else {
             return .local
         }
-        if host.advertisement.mirageVPNAccessEnabled || Self.isOverlayCandidateHost(endpointHost) {
+        if Self.isOverlayCandidateHost(endpointHost) {
+            return .overlay
+        }
+        if Self.isRemoteAccessAmbiguousLocalCandidate(endpointHost, host: host) {
+            return .overlay
+        }
+        if Self.isLocalControlCandidateHost(endpointHost) {
+            return .local
+        }
+        if host.advertisement.mirageVPNAccessEnabled {
             return .overlay
         }
         if Self.isPublicIPv6Candidate(endpointHost) {
@@ -1089,6 +1107,39 @@ extension MirageClientService {
             return .local
         }
         return .stun
+    }
+
+    private static func isRemoteAccessAmbiguousLocalCandidate(
+        _ endpointHost: NWEndpoint.Host,
+        host: LoomPeer
+    ) -> Bool {
+        guard host.advertisement.mirageVPNAccessEnabled else { return false }
+        if isLocalResolvedControlCandidate(endpointHost, host: host) {
+            return false
+        }
+
+        switch endpointHost {
+        case .name(let value, _):
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { return false }
+            return !normalized.contains(".")
+        case .ipv6(let addr):
+            let raw = addr.rawValue
+            guard raw.count >= 1 else { return false }
+            let first = raw[raw.startIndex]
+            return first == 0xfc || first == 0xfd
+        default:
+            return false
+        }
+    }
+
+    private static func isLocalResolvedControlCandidate(
+        _ endpointHost: NWEndpoint.Host,
+        host: LoomPeer
+    ) -> Bool {
+        host.resolvedAddresses.contains { resolvedAddress in
+            !isOverlayAddress(resolvedAddress) && resolvedAddress.debugDescription == endpointHost.debugDescription
+        }
     }
 
     private static func isOverlayCandidateHost(_ host: NWEndpoint.Host) -> Bool {
@@ -1103,6 +1154,32 @@ extension MirageClientService {
     private static func isPublicIPv6Candidate(_ host: NWEndpoint.Host) -> Bool {
         guard case .ipv6 = host else { return false }
         return !isScopeLessLinkLocalIPv6Address(host) && !isOverlayAddress(host)
+    }
+
+    private static func isLocalControlCandidateHost(_ host: NWEndpoint.Host) -> Bool {
+        switch host {
+        case .ipv4(let addr):
+            let raw = addr.rawValue
+            guard raw.count >= 4 else { return false }
+            let first = raw[raw.startIndex]
+            let second = raw[raw.startIndex.advanced(by: 1)]
+            if first == 10 { return true }
+            if first == 192 && second == 168 { return true }
+            if first == 172 && (16 ... 31).contains(second) { return true }
+            if first == 169 && second == 254 { return true }
+            return false
+        case .ipv6(let addr):
+            let raw = addr.rawValue
+            guard raw.count >= 1 else { return false }
+            let first = raw[raw.startIndex]
+            return first == 0xfc || first == 0xfd || isScopeLessLinkLocalIPv6Address(host)
+        case .name(let value, _):
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { return false }
+            return normalized.hasSuffix(".local") || !normalized.contains(".")
+        default:
+            return false
+        }
     }
 
     /// Returns `true` when the host is an overlay/VPN address (e.g. Tailscale CGNAT).

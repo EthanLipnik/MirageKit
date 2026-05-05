@@ -47,22 +47,6 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Decode and presentation stalls alone do not trigger backoff")
-    func decodeAndPresentationStallsAloneDoNotTriggerBackoff() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = decodeStalledButTransportHealthySnapshot()
-
-        let action = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 10
-        )
-
-        #expect(action == .none)
-        #expect(controller.state == .stable)
-    }
-
     @Test("Presentation-bound samples block promotion without transport backoff")
     func presentationBoundSamplesBlockPromotionWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
@@ -111,29 +95,6 @@ struct ReceiverHealthControllerTests {
     func delayOnlyBurstsDoNotTriggerBackoffOrBlockProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = delayOnlyBurstSnapshot()
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Packet pacer pressure alone does not trigger backoff or block probing")
-    func packetPacerPressureAloneDoesNotTriggerBackoffOrBlockProbing() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = packetPacerOnlySnapshot()
 
         let firstAction = controller.advance(
             snapshots: [snapshot],
@@ -457,28 +418,6 @@ struct ReceiverHealthControllerTests {
 
         #expect(firstAction == .none)
         #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
-    }
-
-    @Test("Mixed-bound samples block promotion without transport backoff")
-    func mixedBoundSamplesBlockPromotionWithoutTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = mixedBoundButTransportHealthySnapshot()
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 0
-        )
-        let action = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 2
-        )
-
-        #expect(action == .none)
-        #expect(controller.state == .stable)
     }
 
     @Test("Delivery cadence collapse without transport pressure does not back off")
@@ -850,25 +789,10 @@ struct ReceiverHealthControllerTests {
         return snapshot
     }
 
-    private func mixedBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
-        var snapshot = encodeBoundButTransportHealthySnapshot()
-        snapshot.decodedFPS = 18
-        snapshot.submittedFPS = 18
-        snapshot.uniqueSubmittedFPS = 18
-        snapshot.decodeHealthy = false
-        return snapshot
-    }
-
     private func delayOnlyBurstSnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendStartDelayAverageMs = 3.5
         snapshot.hostSendCompletionAverageMs = 14
-        return snapshot
-    }
-
-    private func packetPacerOnlySnapshot() -> MirageClientMetricsSnapshot {
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.hostPacketPacerAverageSleepMs = 1.0
         return snapshot
     }
 

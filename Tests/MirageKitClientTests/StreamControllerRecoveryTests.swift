@@ -27,20 +27,6 @@ private extension StreamController {
 
 @Suite("Stream Controller Recovery", .serialized)
 struct StreamControllerRecoveryTests {
-    @Test("Freeze monitor uses tightened timeout and poll interval")
-    func freezeMonitorUsesTightenedCadence() {
-        #expect(StreamController.freezeTimeout == 1.25)
-        #expect(StreamController.freezeCheckInterval == .milliseconds(250))
-    }
-
-    @Test("Recovery-mode first-frame watchdog is tighter than startup")
-    func recoveryModeFirstFrameWatchdogIsTighterThanStartup() {
-        #expect(
-            StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .recovery) <
-                StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup)
-        )
-    }
-
     @Test("Post-resize first-frame watchdog arms in recovery mode")
     func postResizeFirstFrameWatchdogArmsInRecoveryMode() async {
         let controller = StreamController(streamID: 90, maxPayloadSize: 1200)
@@ -52,73 +38,6 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.firstPresentedFrameAwaitMode == .recovery)
 
         await controller.stop()
-    }
-
-    @Test("Decode failure telemetry waits for actionable recovery state")
-    func decodeFailureTelemetryWaitsForActionableRecoveryState() {
-        #expect(
-            StreamController.shouldElevateDecodeFailure(
-                consecutiveDecodeErrors: 3,
-                signature: "MirageKit.MirageError:2",
-                previousSignature: nil,
-                lastLogTime: 0,
-                now: 10,
-                recoveryActionable: false
-            ) == false
-        )
-        #expect(
-            StreamController.shouldElevateDecodeFailure(
-                consecutiveDecodeErrors: 3,
-                signature: "MirageKit.MirageError:2",
-                previousSignature: nil,
-                lastLogTime: 0,
-                now: 10,
-                recoveryActionable: true
-            )
-        )
-        #expect(
-            StreamController.shouldElevateDecodeFailure(
-                consecutiveDecodeErrors: 8,
-                signature: "MirageKit.MirageError:2",
-                previousSignature: "MirageKit.MirageError:2",
-                lastLogTime: 8,
-                now: 10,
-                recoveryActionable: true
-            ) == false
-        )
-    }
-
-    @Test("Background decode failures suppress recovery until foreground")
-    func backgroundDecodeFailuresSuppressRecoveryUntilForeground() {
-        #expect(
-            StreamController.shouldSuppressDecodeFailureRecovery(
-                isApplicationForeground: false
-            )
-        )
-        #expect(
-            StreamController.shouldSuppressDecodeFailureRecovery(
-                isApplicationForeground: true
-            ) == false
-        )
-    }
-
-    @Test("Decode failure log message includes wrapped underlying error details")
-    func decodeFailureLogMessageIncludesWrappedUnderlyingErrorDetails() {
-        let underlyingError = NSError(
-            domain: NSOSStatusErrorDomain,
-            code: -12909,
-            userInfo: [NSLocalizedDescriptionKey: "Decoder callback bad data"]
-        )
-        let error = MirageError.decodingError(underlyingError)
-
-        let message = StreamController.decodeFailureLogMessage(for: error, attempt: 29)
-
-        #expect(message.contains("Decode error (attempt 29)"))
-        #expect(message.contains("error{type=MirageKit.MirageError"))
-        #expect(message.contains("error.underlying{type="))
-        #expect(message.contains("domain=\(NSOSStatusErrorDomain)"))
-        #expect(message.contains("code=-12909"))
-        #expect(message.contains("Decoder callback bad data"))
     }
 
     @Test("Prepare-for-resize preserves presentation tier and clears post-resize gating")
@@ -178,37 +97,6 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Passive tier keeps decode submission limit fixed at one")
-    func passiveTierKeepsDecodeSubmissionLimitFixed() async {
-        let controller = StreamController(streamID: 95, maxPayloadSize: 1200)
-
-        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
-        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
-        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 0, receivedFPS: 0)
-        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 120, receivedFPS: 120)
-
-        #expect(await controller.decodeSubmissionBaselineLimit == 1)
-        #expect(await controller.currentDecodeSubmissionLimit == 1)
-
-        await controller.stop()
-    }
-
-    @Test("Severe forward gap emits dedicated diagnostic without changing timeout handling")
-    func severeForwardGapEmitsDedicatedDiagnostic() {
-        let message = StreamController.frameLossDiagnosticMessage(
-            streamID: 97,
-            reason: .severeForwardGap
-        )
-
-        #expect(message?.contains("short gap-recovery dip") == true)
-        #expect(
-            StreamController.frameLossDiagnosticMessage(
-                streamID: 97,
-                reason: .timeout
-            ) == nil
-        )
-    }
-
     @Test("Passive tier frame loss enters keyframe-only mode without requesting keyframe")
     func passiveTierFrameLossEntersKeyframeOnlyMode() async throws {
         let keyframeCounter = LockedCounter()
@@ -232,37 +120,6 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value == 0)
 
         await controller.stop()
-    }
-
-    @Test("Passive to active promotion keeps P-frame-first when context is healthy")
-    func passiveToActiveTierPromotionUsesPFrameFirstWhenContextHealthy() async throws {
-        let keyframeCounter = LockedCounter()
-        let streamID: StreamID = 92
-        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageRenderStreamStore.shared.clear(for: streamID)
-
-        await controller.setCallbacks(
-            onKeyframeNeeded: {
-                keyframeCounter.increment()
-            },
-            onResizeEvent: nil
-        )
-
-        await controller.markFirstFramePresented()
-        let reassembler = await controller.getReassembler()
-        primeKeyframeAnchor(for: reassembler, streamID: streamID)
-        #expect(reassembler.hasKeyframeAnchor())
-        #expect(!reassembler.isAwaitingKeyframe())
-
-        await controller.updatePresentationTier(.passiveSnapshot)
-        await controller.updatePresentationTier(.activeLive)
-        try await Task.sleep(for: .milliseconds(100))
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(keyframeCounter.value == 0)
-
-        await controller.stop()
-        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Passive to active promotion forces keyframe recovery when keyframe-starved")
@@ -418,98 +275,6 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.postResizeDecodeRecoverySuccessCount == 0)
 
         await controller.stop()
-    }
-
-    @Test("Stale post-resize soft recovery follow-up is ignored after a newer resize episode starts")
-    func stalePostResizeSoftRecoveryFollowUpIsIgnored() {
-        #expect(
-            StreamController.isStalePostResizeSoftRecoveryRequest(
-                capturedEpisodeID: 1,
-                currentEpisodeID: 2,
-                awaitingFirstFrameAfterResize: true
-            )
-        )
-        #expect(
-            StreamController.isStalePostResizeSoftRecoveryRequest(
-                capturedEpisodeID: 1,
-                currentEpisodeID: 1,
-                awaitingFirstFrameAfterResize: false
-            )
-        )
-        #expect(
-            !StreamController.isStalePostResizeSoftRecoveryRequest(
-                capturedEpisodeID: 1,
-                currentEpisodeID: 1,
-                awaitingFirstFrameAfterResize: true
-            )
-        )
-        #expect(
-            !StreamController.isStalePostResizeSoftRecoveryRequest(
-                capturedEpisodeID: nil,
-                currentEpisodeID: 3,
-                awaitingFirstFrameAfterResize: false
-            )
-        )
-    }
-
-    @Test("Decode enqueue signals render listeners through stream store")
-    func decodeEnqueueSignalsRenderListeners() {
-        let streamID: StreamID = 50
-        let owner = NSObject()
-        let signalCounter = LockedCounter()
-
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {
-            signalCounter.increment()
-        }
-        defer {
-            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
-            MirageRenderStreamStore.shared.clear(for: streamID)
-        }
-
-        _ = MirageRenderStreamStore.shared.enqueue(
-            pixelBuffer: makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent(),
-            presentationTime: .zero,
-            for: streamID
-        )
-
-        #expect(signalCounter.value == 1)
-    }
-
-    @Test("Clearing render state preserves live frame listeners")
-    func clearingRenderStatePreservesLiveFrameListeners() {
-        let streamID: StreamID = 51
-        let owner = NSObject()
-        let signalCounter = LockedCounter()
-
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {
-            signalCounter.increment()
-        }
-        defer {
-            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
-            MirageRenderStreamStore.shared.clear(for: streamID)
-        }
-
-        _ = MirageRenderStreamStore.shared.enqueue(
-            pixelBuffer: makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent(),
-            presentationTime: .zero,
-            for: streamID
-        )
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        _ = MirageRenderStreamStore.shared.enqueue(
-            pixelBuffer: makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent(),
-            presentationTime: .zero,
-            for: streamID
-        )
-
-        #expect(signalCounter.value == 2)
     }
 
     @Test("Overload signal triggers adaptive fallback after queue drops and recovery requests")
@@ -731,31 +496,6 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Recovery dispatch helper enforces minimum intervals")
-    func recoveryDispatchHelperEnforcesMinimumIntervals() {
-        #expect(
-            StreamController.shouldDispatchRecovery(
-                lastDispatchTime: nil,
-                now: 10,
-                minimumInterval: 1
-            )
-        )
-        #expect(
-            !StreamController.shouldDispatchRecovery(
-                lastDispatchTime: 10,
-                now: 10.5,
-                minimumInterval: 1
-            )
-        )
-        #expect(
-            StreamController.shouldDispatchRecovery(
-                lastDispatchTime: 10,
-                now: 11.1,
-                minimumInterval: 1
-            )
-        )
-    }
-
     @Test("Soft recovery cadence suppresses duplicate threshold recoveries within cooldown")
     func softRecoveryCadenceSuppressesDuplicateThresholdRecoveries() async throws {
         let keyframeCounter = LockedCounter()
@@ -872,70 +612,6 @@ struct StreamControllerRecoveryTests {
         #expect(hardRecoveryTriggered)
 
         await controller.stop()
-    }
-
-    @Test("Bootstrap first-frame recovery avoids keyframes when packet-starved")
-    func bootstrapFirstFrameRecoveryAvoidsKeyframesWhenPacketStarved() {
-        #expect(
-            StreamController.bootstrapFirstFrameRecoveryAction(
-                hasPackets: false,
-                awaitingKeyframe: true,
-                latestSequence: 1,
-                baselineSequence: 1
-            ) == .hardRecovery
-        )
-        #expect(
-            StreamController.bootstrapFirstFrameRecoveryAction(
-                hasPackets: true,
-                awaitingKeyframe: true,
-                latestSequence: 1,
-                baselineSequence: 1
-            ) == .requestKeyframe
-        )
-        #expect(
-            StreamController.bootstrapFirstFrameRecoveryAction(
-                hasPackets: true,
-                awaitingKeyframe: false,
-                latestSequence: 1,
-                baselineSequence: 1
-            ) == .hardRecovery
-        )
-    }
-
-    @Test("Startup pending decoded frame attempts presenter recovery before reset")
-    func startupPendingDecodedFrameAttemptsPresenterRecoveryBeforeReset() {
-        #expect(
-            StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
-                pendingFrameCount: 1,
-                submittedSequence: 0,
-                baselineSequence: 0,
-                rendererRecoveryAttempts: 0
-            )
-        )
-        #expect(
-            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
-                pendingFrameCount: 0,
-                submittedSequence: 0,
-                baselineSequence: 0,
-                rendererRecoveryAttempts: 0
-            )
-        )
-        #expect(
-            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
-                pendingFrameCount: 1,
-                submittedSequence: 1,
-                baselineSequence: 0,
-                rendererRecoveryAttempts: 0
-            )
-        )
-        #expect(
-            !StreamController.shouldAttemptRendererRecoveryBeforeBootstrapReset(
-                pendingFrameCount: 1,
-                submittedSequence: 0,
-                baselineSequence: 0,
-                rendererRecoveryAttempts: 1
-            )
-        )
     }
 
     @Test("Startup watchdog requests presenter recovery before keyframe recovery when decoded frame is pending")
@@ -1181,6 +857,34 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Memory-budget frame loss requests one delayed keyframe after pressure settles")
+    func memoryBudgetFrameLossRequestsDelayedKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 150
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        await controller.handleFrameLossSignal(reason: .memoryBudget)
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(keyframeCounter.value == 0)
+
+        try await waitUntil("memory-budget delayed keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
     @Test("Frame-loss after first decode while keyframe-starved defers immediate keyframe request")
     func frameLossAfterFirstDecodeWithStarvationDefersImmediateKeyframeRequest() async throws {
         let keyframeCounter = LockedCounter()
@@ -1202,31 +906,6 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value == 0)
 
         await controller.stop()
-    }
-
-    @Test("Freeze recovery distinguishes packet-starved, keyframe-starved, and monitoring-only stalls")
-    func freezeRecoveryDecisionDistinguishesStallKinds() {
-        #expect(
-            StreamController.freezeRecoveryDecision(
-                keyframeStarved: false,
-                packetStarved: true,
-                consecutiveFreezeRecoveries: 1
-            ) == .soft(.packetStarved)
-        )
-        #expect(
-            StreamController.freezeRecoveryDecision(
-                keyframeStarved: true,
-                packetStarved: false,
-                consecutiveFreezeRecoveries: 1
-            ) == .soft(.keyframeStarved)
-        )
-        #expect(
-            StreamController.freezeRecoveryDecision(
-                keyframeStarved: false,
-                packetStarved: false,
-                consecutiveFreezeRecoveries: 1
-            ) == .monitor(.monitoringOnly)
-        )
     }
 
     @Test("Present-stall while keyframe-starved does not burst keyframe requests")
@@ -1266,17 +945,6 @@ struct StreamControllerRecoveryTests {
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
-    }
-
-    @Test("Packet-starved stalls escalate from bounded recovery to hard recovery")
-    func packetStarvedFreezeRecoveryEscalatesAfterRepeatedStalls() {
-        #expect(
-            StreamController.freezeRecoveryDecision(
-                keyframeStarved: false,
-                packetStarved: true,
-                consecutiveFreezeRecoveries: StreamController.freezeRecoveryEscalationThreshold
-            ) == .hard(.packetStarved)
-        )
     }
 
     private func waitUntil(

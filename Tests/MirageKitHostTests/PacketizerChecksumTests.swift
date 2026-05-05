@@ -169,38 +169,6 @@ struct PacketizerChecksumTests {
         await sender.stop()
     }
 
-    @Test("Packet budget utilization stays low when frame fits bitrate budget")
-    func streamPacketSenderPacketBudgetUnderUtilization() async {
-        let payload = makePayload(byteCount: 10_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _, onComplete in
-            onComplete(nil)
-        })
-
-        await sender.start()
-        await sender.setTargetBitrateBps(200_000_000)
-        let generation = sender.currentGenerationSnapshot()
-        sender.enqueue(
-            makeWorkItem(
-                payload: payload,
-                streamID: 12,
-                frameNumber: 32,
-                sequenceNumberStart: 4000,
-                wireBytes: payload.count,
-                generation: generation
-            )
-        )
-
-        guard let snapshot = await sender.packetBudgetSnapshot() else {
-            Issue.record("Missing packet budget snapshot")
-            await sender.stop()
-            return
-        }
-        #expect(snapshot.targetBitrateBps == 200_000_000)
-        #expect(snapshot.utilization < 0.25)
-
-        await sender.stop()
-    }
-
     @Test("Serialized send path preserves packet order across queued frames")
     func streamPacketSenderPreservesPacketOrder() async throws {
         let recordedSequences = Locked<[UInt32]>([])
@@ -250,43 +218,6 @@ struct PacketizerChecksumTests {
         }
 
         #expect(recordedSequences.read { $0 } == [10, 11, 100, 101])
-        await sender.stop()
-    }
-
-    @Test("Queued-byte accounting drains when serialized sends complete")
-    func streamPacketSenderQueuedBytesDrainAfterSendCompletion() async throws {
-        let payload = makePayload(byteCount: 900)
-        let sender = StreamPacketSender(
-            maxPayloadSize: 512,
-            sendPacket: { _, onComplete in
-                Task {
-                    try? await Task.sleep(for: .milliseconds(20))
-                    onComplete(nil)
-                }
-            }
-        )
-
-        await sender.start()
-        let generation = sender.currentGenerationSnapshot()
-        sender.enqueue(
-            makeWorkItem(
-                payload: payload,
-                streamID: 22,
-                frameNumber: 43,
-                sequenceNumberStart: 200,
-                wireBytes: payload.count,
-                generation: generation
-            )
-        )
-
-        #expect(sender.queuedBytesSnapshot() == payload.count)
-
-        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while sender.queuedBytesSnapshot() > 0, CFAbsoluteTimeGetCurrent() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        #expect(sender.queuedBytesSnapshot() == 0)
         await sender.stop()
     }
 

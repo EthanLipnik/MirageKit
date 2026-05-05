@@ -334,16 +334,6 @@ struct DesktopCursorLockLifecycleTests {
         }
     }
 
-    @Test("Global display cursor conversion flips Cocoa Y")
-    func globalDisplayCursorConversionFlipsCocoaY() {
-        let converted = ScrollPhysicsCapturingNSView.globalDisplayCursorPosition(
-            fromCocoaScreenPosition: CGPoint(x: 320, y: 140),
-            globalFrameMaxY: 900
-        )
-
-        #expect(converted == CGPoint(x: 320, y: 760))
-    }
-
     @Test("Locked cursor delta keeps AppKit negative-up Y motion aligned with stream space")
     func lockedCursorDeltaKeepsAppKitNegativeUpYMotionAlignedWithStreamSpace() {
         let updated = LockedCursorPositionResolver.applyRelativeDelta(

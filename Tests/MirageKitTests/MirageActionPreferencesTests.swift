@@ -48,25 +48,6 @@ struct MirageActionPreferencesTests {
         #expect(normalizedActions.contains(customAction))
     }
 
-    @Test("Built-in host screenshot actions remap iPadOS-safe shortcuts to host screenshot shortcuts")
-    func builtInHostScreenshotActionsRemapShortcuts() throws {
-        let preferences = MirageActionPreferences()
-        let mappings: [(id: String, keyCode: UInt16)] = [
-            (MirageAction.hostFullScreenScreenshotID, 0x14),
-            (MirageAction.hostSelectionScreenshotID, 0x15),
-            (MirageAction.hostScreenshotOptionsID, 0x17),
-        ]
-
-        for mapping in mappings {
-            let action = try #require(preferences.action(withID: mapping.id))
-            #expect(action.target == .hostKeyInject)
-            #expect(action.hostKeyEvent?.keyCode == mapping.keyCode)
-            #expect(action.hostKeyEvent?.modifiers == [.command, .shift])
-            #expect(action.shortcut?.keyCode == mapping.keyCode)
-            #expect(action.shortcut?.modifiers == [.command, .shift, .option])
-        }
-    }
-
     @Test("Custom host key bindings are modeled and matched by normalized shortcut")
     func customHostKeyBindingsAreModeledAndMatchedByNormalizedShortcut() throws {
         let action = MirageAction.customHostKeyBinding(

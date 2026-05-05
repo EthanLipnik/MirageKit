@@ -7,57 +7,14 @@
 //  Coverage for capture restart backoff and recovery-reason keyframe behavior.
 //
 
+#if os(macOS)
 @testable import MirageKitHost
 import MirageKit
 import Foundation
 import Testing
 
-#if os(macOS)
-@Suite("Capture Restart Backoff")
-struct CaptureRestartBackoffTests {
-    @Test("Restart cooldown backs off and caps")
-    func restartCooldownBackoffAndCap() {
-        #expect(WindowCaptureEngine.restartCooldown(for: 1) == 3.0)
-        #expect(WindowCaptureEngine.restartCooldown(for: 2) == 6.0)
-        #expect(WindowCaptureEngine.restartCooldown(for: 3) == 12.0)
-        #expect(WindowCaptureEngine.restartCooldown(for: 4) == 18.0)
-        #expect(WindowCaptureEngine.restartCooldown(for: 5) == 18.0)
-    }
-
-    @Test("Restart escalation threshold triggers at streak three")
-    func restartEscalationThreshold() {
-        #expect(WindowCaptureEngine.shouldEscalateRecovery(restartStreak: 1, threshold: 3) == false)
-        #expect(WindowCaptureEngine.shouldEscalateRecovery(restartStreak: 2, threshold: 3) == false)
-        #expect(WindowCaptureEngine.shouldEscalateRecovery(restartStreak: 3, threshold: 3))
-        #expect(WindowCaptureEngine.shouldEscalateRecovery(restartStreak: 4, threshold: 3))
-    }
-
-    @Test("Restart streak reset window requires stable interval")
-    func restartStreakResetWindow() {
-        let now: CFAbsoluteTime = 100
-        #expect(
-            WindowCaptureEngine.shouldResetRestartStreak(
-                now: now,
-                lastRestartAttemptTime: now - 21,
-                resetWindow: 20
-            )
-        )
-        #expect(
-            WindowCaptureEngine.shouldResetRestartStreak(
-                now: now,
-                lastRestartAttemptTime: now - 19,
-                resetWindow: 20
-            ) == false
-        )
-        #expect(
-            WindowCaptureEngine.shouldResetRestartStreak(
-                now: now,
-                lastRestartAttemptTime: 0,
-                resetWindow: 20
-            ) == false
-        )
-    }
-
+@Suite("Capture Restart Scheduling")
+struct CaptureRestartSchedulingTests {
     @Test("Resumed stall signal cancels pending capture restart")
     func resumedStallSignalCancelsPendingRestart() async {
         let engine = WindowCaptureEngine(

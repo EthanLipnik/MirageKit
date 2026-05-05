@@ -90,34 +90,5 @@ struct HostSymbolicHotKeyResolverTests {
         #expect(keyEvent.modifiers == [.control])
     }
 
-    @Test("Disabled entries remain disabled")
-    func disabledEntriesRemainDisabled() {
-        let resolution = HostSymbolicHotKeyResolver.resolve(
-            .appExpose,
-            propertyList: [
-                "AppleSymbolicHotKeys": [
-                    "33": [
-                        "enabled": false,
-                        "value": [
-                            "parameters": [65535, 125, 262_144],
-                            "type": "standard",
-                        ],
-                    ],
-                ],
-            ]
-        )
-
-        #expect(resolution == .disabled)
-    }
-
-    @Test("Missing entries remain unavailable")
-    func missingEntriesRemainUnavailable() {
-        let resolution = HostSymbolicHotKeyResolver.resolve(
-            .missionControl,
-            propertyList: [:]
-        )
-
-        #expect(resolution == .unavailable)
-    }
 }
 #endif

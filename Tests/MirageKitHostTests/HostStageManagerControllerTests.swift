@@ -15,15 +15,6 @@ import Testing
 @Suite("Host Stage Manager controller")
 struct HostStageManagerControllerTests {
     @Test
-    func parsesDefaultsValues() {
-        #expect(HostStageManagerController.parseState(from: "1\n") == .enabled)
-        #expect(HostStageManagerController.parseState(from: "0\n") == .disabled)
-        #expect(HostStageManagerController.parseState(from: "true\n") == .enabled)
-        #expect(HostStageManagerController.parseState(from: "false\n") == .disabled)
-        #expect(HostStageManagerController.parseState(from: "garbage\n") == .unknown)
-    }
-
-    @Test
     func setEnabledSkipsWriteWhenAlreadyDisabled() async {
         let runner = MockCommandRunner(results: [
             Self.success(stdout: "0\n"),

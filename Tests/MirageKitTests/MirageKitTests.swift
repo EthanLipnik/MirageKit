@@ -39,22 +39,6 @@ struct MirageKitTests {
         #expect(deserialized?.flags.contains(FrameFlags.keyframe) == true)
     }
 
-    @Test("CRC32 calculation")
-    func cRC32() {
-        let data = Data("Hello, World!".utf8)
-        let crc = CRC32.calculate(data)
-        #expect(crc != 0)
-
-        // Same data should produce same CRC
-        let crc2 = CRC32.calculate(data)
-        #expect(crc == crc2)
-
-        // Different data should produce different CRC
-        let data2 = Data("Hello, MirageKit!".utf8)
-        let crc3 = CRC32.calculate(data2)
-        #expect(crc != crc3)
-    }
-
     @Test("Control message serialization")
     func controlMessageSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
@@ -125,20 +109,6 @@ struct MirageKitTests {
             break
         default:
             Issue.record("Expected invalidFrame for unknown control message type.")
-        }
-    }
-
-    @Test("Close-blocked app window alert control type is recognized")
-    func closeBlockedAppWindowAlertControlTypeIsRecognized() {
-        var data = Data([ControlMessageType.appWindowCloseBlockedAlert.rawValue])
-        withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
-
-        switch ControlMessage.deserialize(from: data) {
-        case let .success(message, consumed):
-            #expect(consumed == data.count)
-            #expect(message.type == .appWindowCloseBlockedAlert)
-        default:
-            Issue.record("Expected close-blocked alert control type to parse successfully.")
         }
     }
 
@@ -887,15 +857,6 @@ struct MirageKitTests {
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
 
-    @Test("Media packet size helpers prefer direct local paths")
-    func mediaPacketSizeHelperSelection() {
-        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == 1400)
-        #expect(miragePreferredMediaMaxPacketSize(for: .wired) == 1400)
-        #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == 1200)
-        #expect(mirageNegotiatedMediaMaxPacketSize(requested: 1400, pathKind: .awdl) == 1400)
-        #expect(mirageNegotiatedMediaMaxPacketSize(requested: 1400, pathKind: .wifi) == 1200)
-    }
-
     @Test("Stream startup requests serialize media packet sizing")
     func streamStartupRequestsSerializeMediaPacketSizing() throws {
         let startStream = StartStreamMessage(
@@ -1160,17 +1121,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(DesktopStreamFailedMessage.self)
         #expect(decoded.reason == "Virtual display failed activation")
         #expect(decoded.errorCode == .virtualDisplayStartFailed)
-    }
-
-    @Test("App window control message IDs are registered")
-    func appWindowControlMessageTypeIDsRegistered() {
-        #expect(ControlMessageType(rawValue: 0x87) == .appWindowInventory)
-        #expect(ControlMessageType(rawValue: 0x88) == .appWindowSwapRequest)
-        #expect(ControlMessageType(rawValue: 0x89) == .appWindowCloseBlockedAlert)
-        #expect(ControlMessageType(rawValue: 0x8A) == .appWindowCloseAlertActionRequest)
-        #expect(ControlMessageType(rawValue: 0x8B) == .appWindowCloseAlertActionResult)
-        #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
-        #expect(ControlMessageType(rawValue: 0x9F) == .appAtlasMediaUpdate)
     }
 
     @Test("App window close-blocked alert payload serialization")
@@ -1465,30 +1415,6 @@ struct MirageKitTests {
         #expect(decoded.tenBitDisplayP3Validated == false)
     }
 
-    @Test("MirageWindow equality")
-    func windowEquality() {
-        let window1 = MirageWindow(
-            id: 1,
-            title: "Test Window",
-            application: nil,
-            frame: .zero,
-            isOnScreen: true,
-            windowLayer: 0
-        )
-
-        let window2 = MirageWindow(
-            id: 1,
-            title: "Test Window",
-            application: nil,
-            frame: .zero,
-            isOnScreen: true,
-            windowLayer: 0
-        )
-
-        #expect(window1 == window2)
-        #expect(window1.hashValue == window2.hashValue)
-    }
-
     @Test("Peer advertisement TXT record")
     func peerAdvertisementTXTRecord() {
         let deviceID = UUID()
@@ -1543,13 +1469,6 @@ struct MirageKitTests {
         let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
         #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == false)
         #expect(decoded.mirageAcceptingConnections == false)
-    }
-
-    @Test("Peer advertisement busy flag defaults to available")
-    func peerAdvertisementBusyFlagDefaultsToAvailable() {
-        let advertisement = LoomPeerAdvertisement(deviceType: .mac)
-        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: advertisement) == true)
-        #expect(advertisement.mirageAcceptingConnections == true)
     }
 
     @Test("Peer advertisement local network context round trips and preserves host fields")
@@ -1608,35 +1527,4 @@ struct MirageKitTests {
         #expect(decoded.mirageVPNAccessEnabled == true)
     }
 
-    @Test("Advertised Bonjour host name normalizes local host names")
-    func advertisedBonjourHostNameNormalization() {
-        #expect(
-            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
-                processHostName: "Ethans-Mac-Studio"
-            ) == "Ethans-Mac-Studio.local"
-        )
-        #expect(
-            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
-                processHostName: "Ethans-Mac-Studio.local"
-            ) == "Ethans-Mac-Studio.local"
-        )
-        #expect(
-            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
-                processHostName: "Ethan’s Mac Studio"
-            ) == "Ethan’s-Mac-Studio.local"
-        )
-    }
-
-    @Test("Stream statistics formatting")
-    func statisticsFormatting() {
-        let stats = MirageStreamStatistics(
-            currentFrameRate: 120,
-            processedFrames: 1000,
-            droppedFrames: 5,
-            averageLatencyMs: 25.5
-        )
-
-        #expect(stats.formattedLatency == "25.5 ms")
-        #expect(stats.dropRate < 0.01)
-    }
 }

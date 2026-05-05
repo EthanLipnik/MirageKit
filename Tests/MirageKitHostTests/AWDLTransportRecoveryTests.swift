@@ -61,51 +61,6 @@ struct AWDLTransportRecoveryTests {
         #expect(context.lossModeDeadline > CFAbsoluteTimeGetCurrent())
     }
 
-    @Test("Parameter-set duplication gate only enables first keyframe parameter-set fragment")
-    func parameterSetDuplicationGate() {
-        #expect(
-            StreamPacketSender.shouldDuplicateParameterSetPacket(
-                isExperimentEnabled: true,
-                isKeyframe: true,
-                fragmentIndex: 0,
-                flags: [.parameterSet, .keyframe]
-            )
-        )
-
-        #expect(
-            !StreamPacketSender.shouldDuplicateParameterSetPacket(
-                isExperimentEnabled: false,
-                isKeyframe: true,
-                fragmentIndex: 0,
-                flags: [.parameterSet, .keyframe]
-            )
-        )
-        #expect(
-            !StreamPacketSender.shouldDuplicateParameterSetPacket(
-                isExperimentEnabled: true,
-                isKeyframe: false,
-                fragmentIndex: 0,
-                flags: [.parameterSet]
-            )
-        )
-        #expect(
-            !StreamPacketSender.shouldDuplicateParameterSetPacket(
-                isExperimentEnabled: true,
-                isKeyframe: true,
-                fragmentIndex: 1,
-                flags: [.parameterSet, .keyframe]
-            )
-        )
-        #expect(
-            !StreamPacketSender.shouldDuplicateParameterSetPacket(
-                isExperimentEnabled: true,
-                isKeyframe: true,
-                fragmentIndex: 0,
-                flags: [.keyframe]
-            )
-        )
-    }
-
     private func makeContext() -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,

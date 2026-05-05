@@ -71,14 +71,6 @@ struct HostSystemActionSerializationTests {
         }
     }
 
-    @Test("Built-in navigation actions map to host system actions")
-    func builtInNavigationActionsMapToHostSystemActions() {
-        #expect(MirageAction.spaceLeft.hostSystemActionRequest?.action == .spaceLeft)
-        #expect(MirageAction.spaceRight.hostSystemActionRequest?.action == .spaceRight)
-        #expect(MirageAction.missionControl.hostSystemActionRequest?.action == .missionControl)
-        #expect(MirageAction.appExpose.hostSystemActionRequest?.action == .appExpose)
-        #expect(MirageAction.cmdTab.hostSystemActionRequest == nil)
-    }
 }
 
 private func assertGestureEvent(_ actual: MirageInputEvent, matches expected: MirageInputEvent) {

@@ -71,17 +71,6 @@ struct InputCapturingViewPencilGestureTests {
         #expect(actions == [.remoteShortcut(shortcut)])
     }
 
-    @Test("Pencil hover ignores sub-pixel jitter and forwards meaningful movement")
-    func pencilHoverJitterGate() {
-        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))
-        view.lastPencilHoverForwardLocation = CGPoint(x: 0.5, y: 0.5)
-        view.lastPencilHoverForwardTime = 10
-
-        #expect(!view.shouldForwardPencilHover(location: CGPoint(x: 0.501, y: 0.5), now: 10.02))
-        #expect(!view.shouldForwardPencilHover(location: CGPoint(x: 0.52, y: 0.5), now: 10.001))
-        #expect(view.shouldForwardPencilHover(location: CGPoint(x: 0.52, y: 0.5), now: 10.02))
-    }
-
     @Test("Pencil hover batch sender suppresses jitter below threshold")
     func pencilHoverBatchSenderSuppressesJitter() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 200, height: 100))

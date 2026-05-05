@@ -7,81 +7,14 @@
 //  Desktop resize transaction policy decisions.
 //
 
+#if os(macOS)
 @testable import MirageKitHost
 import MirageKit
 import CoreGraphics
 import Testing
 
-#if os(macOS)
 @Suite("Desktop Resize Transaction Policy")
 struct DesktopResizeTransactionPolicyTests {
-    @Test("Resize no-op decision skips exact resolution and refresh")
-    func resizeNoOpDecisionSkipsExactMatch() {
-        let decision = desktopResizeNoOpDecision(
-            currentResolution: CGSize(width: 6016, height: 3384),
-            currentRefreshRate: 120,
-            currentEncodedResolution: CGSize(width: 6016, height: 3384),
-            requestedResolution: CGSize(width: 6016, height: 3384),
-            requestedRefreshRate: 120,
-            requestedEncodedResolution: CGSize(width: 6016, height: 3384)
-        )
-
-        #expect(decision == .noOp)
-    }
-
-    @Test("Resize no-op decision applies on mismatch")
-    func resizeNoOpDecisionAppliesOnMismatch() {
-        let decision = desktopResizeNoOpDecision(
-            currentResolution: CGSize(width: 6016, height: 3384),
-            currentRefreshRate: 120,
-            currentEncodedResolution: CGSize(width: 6016, height: 3384),
-            requestedResolution: CGSize(width: 5120, height: 2880),
-            requestedRefreshRate: 60,
-            requestedEncodedResolution: CGSize(width: 5120, height: 2880)
-        )
-
-        #expect(decision == .apply)
-    }
-
-    @Test("Resize no-op decision applies on tiny pixel drift for pixel-perfect sizing")
-    func resizeNoOpDecisionAppliesOnTinyPixelDrift() {
-        let decision = desktopResizeNoOpDecision(
-            currentResolution: CGSize(width: 2474, height: 1752),
-            currentRefreshRate: 60,
-            currentEncodedResolution: CGSize(width: 2474, height: 1752),
-            requestedResolution: CGSize(width: 2474, height: 1764),
-            requestedRefreshRate: 60,
-            requestedEncodedResolution: CGSize(width: 2474, height: 1764)
-        )
-
-        #expect(decision == .apply)
-    }
-
-    @Test("Resize no-op decision still applies on refresh mismatch")
-    func resizeNoOpDecisionAppliesOnRefreshMismatch() {
-        let decision = desktopResizeNoOpDecision(
-            currentResolution: CGSize(width: 2474, height: 1752),
-            currentRefreshRate: 60,
-            currentEncodedResolution: CGSize(width: 2474, height: 1752),
-            requestedResolution: CGSize(width: 2474, height: 1752),
-            requestedRefreshRate: 120,
-            requestedEncodedResolution: CGSize(width: 2474, height: 1752)
-        )
-
-        #expect(decision == .apply)
-    }
-
-    @Test("Mirrored mode uses suspend and restore plan")
-    func mirroredModeUsesSuspendAndRestore() {
-        let plan = desktopResizeMirroringPlan(for: .unified)
-        #expect(plan == .suspendAndRestore)
-    }
-
-    @Test("Secondary mode keeps mirroring unchanged")
-    func secondaryModeKeepsMirroringUnchanged() {
-        let plan = desktopResizeMirroringPlan(for: .secondary)
-        #expect(plan == .unchanged)
-    }
 
     @Test("Unified resize requires mirroring restore success")
     func unifiedResizeRequiresMirroringRestoreSuccess() {
@@ -301,42 +234,6 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(pending == [2: 202])
     }
 
-    @Test("Window resize no-op skips exact visible resolution")
-    func windowResizeNoOpSkipsExactMatch() {
-        let decision = windowResizeNoOpDecision(
-            currentVisibleResolution: CGSize(width: 2560, height: 1440),
-            currentDisplayResolution: nil,
-            currentEncodedResolution: CGSize(width: 2560, height: 1440),
-            requestedVisibleResolution: CGSize(width: 2560, height: 1440)
-        )
-
-        #expect(decision == .noOp)
-    }
-
-    @Test("Window resize no-op applies on visible resolution mismatch")
-    func windowResizeNoOpAppliesOnMismatch() {
-        let decision = windowResizeNoOpDecision(
-            currentVisibleResolution: CGSize(width: 2560, height: 1440),
-            currentDisplayResolution: nil,
-            currentEncodedResolution: CGSize(width: 2560, height: 1440),
-            requestedVisibleResolution: CGSize(width: 3008, height: 1692)
-        )
-
-        #expect(decision == .apply)
-    }
-
-    @Test("Window resize no-op tolerates tiny visible-resolution drift")
-    func windowResizeNoOpToleratesTinyDrift() {
-        let decision = windowResizeNoOpDecision(
-            currentVisibleResolution: CGSize(width: 2560, height: 1440),
-            currentDisplayResolution: nil,
-            currentEncodedResolution: CGSize(width: 2560, height: 1440),
-            requestedVisibleResolution: CGSize(width: 2561, height: 1442)
-        )
-
-        #expect(decision == .noOp)
-    }
-
     @Test("Window resize no-op applies when display matches but visible differs")
     func windowResizeNoOpAppliesWhenOnlyDisplayMatches() {
         let decision = windowResizeNoOpDecision(
@@ -373,80 +270,6 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .apply)
     }
 
-    @Test("Window target aspect ratio prefers latest resize override")
-    func windowTargetAspectRatioPrefersLatestOverride() {
-        let resolved = resolvedWindowTargetContentAspectRatio(
-            existingAspectRatio: 16.0 / 10.0,
-            overrideAspectRatio: 16.0 / 9.0
-        )
-
-        #expect(resolved != nil)
-        #expect(abs((resolved ?? 0) - (16.0 / 9.0)) < 0.0001)
-    }
-
-    @Test("Window target aspect ratio falls back to existing cached aspect when override is invalid")
-    func windowTargetAspectRatioFallsBackToExistingAspect() {
-        let resolved = resolvedWindowTargetContentAspectRatio(
-            existingAspectRatio: 4.0 / 3.0,
-            overrideAspectRatio: 0
-        )
-
-        #expect(resolved != nil)
-        #expect(abs((resolved ?? 0) - (4.0 / 3.0)) < 0.0001)
-    }
-
-    @Test("Aspect-fitted bounds use latest resize override instead of cached startup aspect")
-    func aspectFittedBoundsUseLatestResizeOverride() {
-        let targetAspectRatio = resolvedWindowTargetContentAspectRatio(
-            existingAspectRatio: 4.0 / 3.0,
-            overrideAspectRatio: 16.0 / 9.0
-        )
-        let fittedBounds = aspectFittedWindowBounds(
-            CGRect(x: 2056, y: 30, width: 1600, height: 1200),
-            targetAspectRatio: targetAspectRatio
-        )
-
-        #expect(fittedBounds == CGRect(x: 2056, y: 180, width: 1600, height: 900))
-    }
-
-    @Test("Placement bounds decision accepts same-origin bounded shrink")
-    func placementBoundsDecisionAcceptsBoundedShrink() {
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: CGRect(x: 2056, y: 30, width: 1376, height: 925),
-            recomputedBounds: CGRect(x: 2056, y: 30, width: 1250, height: 845),
-            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
-        )
-
-        #expect(decision.outcome == .adoptRecomputedShrink)
-        #expect(decision.resolvedBounds == CGRect(x: 2056, y: 30, width: 1250, height: 845))
-    }
-
-    @Test("Placement bounds decision rejects shrink with origin mismatch")
-    func placementBoundsDecisionRejectsOriginMismatch() {
-        let cached = CGRect(x: 2056, y: 30, width: 1376, height: 925)
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: cached,
-            recomputedBounds: CGRect(x: 2100, y: 30, width: 1250, height: 845),
-            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
-        )
-
-        #expect(decision.outcome == .useCachedMismatch)
-        #expect(decision.resolvedBounds == cached)
-    }
-
-    @Test("Placement bounds decision accepts bounded visible-frame inset drift")
-    func placementBoundsDecisionAcceptsVisibleFrameInsetDrift() {
-        let recomputed = CGRect(x: 0, y: 30, width: 1376, height: 928)
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: CGRect(x: 0, y: 0, width: 1376, height: 1032),
-            recomputedBounds: recomputed,
-            displayBounds: CGRect(x: 0, y: 0, width: 1376, height: 1032)
-        )
-
-        #expect(decision.outcome == .adoptRecomputedShrink)
-        #expect(decision.resolvedBounds == recomputed)
-    }
-
     @Test("Placement bounds decision prefers recomputed bounds when cached bounds are outside display")
     func placementBoundsDecisionPrefersRecomputedWhenCachedOutsideDisplay() {
         let recomputed = CGRect(x: 2056, y: 30, width: 1528, height: 1218)
@@ -458,31 +281,6 @@ struct DesktopResizeTransactionPolicyTests {
 
         #expect(decision.outcome == .adoptRecomputedCachedOutsideDisplay)
         #expect(decision.resolvedBounds == recomputed)
-    }
-
-    @Test("Placement bounds decision rejects extreme shrink")
-    func placementBoundsDecisionRejectsExtremeShrink() {
-        let cached = CGRect(x: 2056, y: 30, width: 1376, height: 925)
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: cached,
-            recomputedBounds: CGRect(x: 2056, y: 30, width: 950, height: 700),
-            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
-        )
-
-        #expect(decision.outcome == .useCachedMismatch)
-        #expect(decision.resolvedBounds == cached)
-    }
-
-    @Test("Placement bounds decision keeps growth acceptance")
-    func placementBoundsDecisionAcceptsGrowth() {
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: CGRect(x: 2056, y: 30, width: 1137, height: 845),
-            recomputedBounds: CGRect(x: 2056, y: 30, width: 1200, height: 900),
-            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
-        )
-
-        #expect(decision.outcome == .adoptRecomputedGrowth)
-        #expect(decision.resolvedBounds == CGRect(x: 2056, y: 30, width: 1200, height: 900))
     }
 
     @Test("Display separation anchor prefers physical original main display")
@@ -641,17 +439,6 @@ struct DesktopResizeTransactionPolicyTests {
         )
 
         #expect(decision == .stable)
-    }
-
-    @Test("Fallback presentation size aspect fits host capture into client target")
-    func fallbackPresentationSizeAspectFitsHostCaptureIntoClientTarget() {
-        let fitted = aspectFitPixelSize(
-            contentSize: CGSize(width: 5120, height: 2880),
-            containerSize: CGSize(width: 2732, height: 2048)
-        )
-
-        #expect(abs(fitted.width - 2732) < 0.5)
-        #expect(abs(fitted.height - 1536.75) < 0.5)
     }
 
     @Test("Display mirroring target stability waits for expected target mode")

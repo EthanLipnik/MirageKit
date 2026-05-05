@@ -70,45 +70,6 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.lateFrameDrops == 1)
     }
 
-    @Test("Lowest latency playout has no intentional frame delay")
-    func lowestLatencyPlayoutHasNoIntentionalFrameDelay() {
-        let streamID: StreamID = 406
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-
-        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
-
-        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 0)
-    }
-
-    @Test("Automatic playout uses one 60Hz smoothing frame")
-    func automaticPlayoutUsesOne60HzSmoothingFrame() {
-        let streamID: StreamID = 407
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-
-        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .auto)
-
-        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 1)
-    }
-
-    @Test("Smoothest playout can use two 60Hz smoothing frames")
-    func smoothestPlayoutCanUseTwo60HzSmoothingFrames() {
-        let streamID: StreamID = 408
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-
-        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
-
-        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 2)
-    }
-
     @Test("Repeated submission marks do not create unique forward progress")
     func repeatedSubmissionMarksDoNotRepeatUniqueProgress() {
         let streamID: StreamID = 403

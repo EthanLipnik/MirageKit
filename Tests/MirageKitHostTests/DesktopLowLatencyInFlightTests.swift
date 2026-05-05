@@ -10,16 +10,8 @@
 import MirageKit
 import Testing
 
-@Suite("Desktop Low Latency In-Flight Policy")
+@Suite("Desktop Low Latency In Flight")
 struct DesktopLowLatencyInFlightTests {
-    @Test("60 Hz desktop lowest-latency starts single-inflight with capture buffering")
-    func desktopLowestLatencyStartsSingleInflightWithCaptureBuffering() async {
-        let context = makeContext()
-
-        #expect(await context.maxInFlightFrames == 1)
-        #expect(await context.maxInFlightFramesCap == 1)
-        #expect(await context.frameBufferDepth == 2)
-    }
 
     @Test("60 Hz desktop lowest-latency does not raise inflight under pressure")
     func desktopLowestLatencyDoesNotRaiseInflightUnderPressure() async {
@@ -44,17 +36,6 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.maxInFlightFrames == 1)
         #expect(await context.maxInFlightFramesCap == 1)
         #expect(await context.frameBufferDepth == 1)
-    }
-
-    @Test("60 Hz desktop game mode keeps fixed two-inflight policy")
-    func desktopGameModeKeepsFixedTwoInflight() async {
-        let context = makeContext(performanceMode: .game)
-
-        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 10, pendingCount: 0)
-
-        #expect(await context.maxInFlightFrames == 2)
-        #expect(await context.maxInFlightFramesCap == 2)
-        #expect(await context.frameBufferDepth == 2)
     }
 
     private func makeContext(

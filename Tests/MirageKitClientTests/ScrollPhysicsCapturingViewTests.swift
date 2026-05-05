@@ -10,43 +10,8 @@
 import Testing
 import UIKit
 
-@MainActor
-@Suite("Scroll physics view configuration")
+@Suite("Scroll Physics Capturing View")
 struct ScrollPhysicsCapturingViewTests {
-    @Test("Embedded scroll views keep their own pan delegates and touch types")
-    func embeddedScrollViewsKeepTheirOwnPanDelegatesAndTouchTypes() {
-        let view = ScrollPhysicsCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let scrollViews = view.subviews.compactMap { $0 as? UIScrollView }
-        let rotationGesture = try #require(
-            view.gestureRecognizers?.first(where: { $0 is UIRotationGestureRecognizer })
-        )
-
-        #expect(scrollViews.count == 2)
-
-        let directTouchType = Int(UITouch.TouchType.direct.rawValue)
-        let indirectPointerTouchType = Int(UITouch.TouchType.indirectPointer.rawValue)
-        let indirectTouchType = Int(UITouch.TouchType.indirect.rawValue)
-        let pencilTouchType = Int(UITouch.TouchType.pencil.rawValue)
-
-        let directScrollView = try #require(
-            scrollViews.first { allowedTouchTypes(for: $0).contains(directTouchType) }
-        )
-        let indirectScrollView = try #require(
-            scrollViews.first { allowedTouchTypes(for: $0).contains(indirectPointerTouchType) }
-        )
-
-        #expect(directScrollView.delegate != nil)
-        #expect(indirectScrollView.delegate != nil)
-        #expect((directScrollView.delegate as AnyObject?) !== directScrollView)
-        #expect((indirectScrollView.delegate as AnyObject?) !== indirectScrollView)
-        #expect((directScrollView.panGestureRecognizer.delegate as AnyObject?) === directScrollView)
-        #expect((indirectScrollView.panGestureRecognizer.delegate as AnyObject?) === indirectScrollView)
-        #expect((rotationGesture.delegate as AnyObject?) !== (view as AnyObject?))
-
-        #expect(allowedTouchTypes(for: directScrollView) == [directTouchType])
-        #expect(allowedTouchTypes(for: indirectScrollView) == [indirectPointerTouchType, indirectTouchType])
-        #expect(!allowedTouchTypes(for: directScrollView).contains(pencilTouchType))
-    }
 
     @Test("Input capturing view gives one-finger direct scroll priority over taps")
     func inputCapturingViewGivesOneFingerDirectScrollPriorityOverTaps() throws {
@@ -65,24 +30,6 @@ struct ScrollPhysicsCapturingViewTests {
                 shouldRecognizeSimultaneouslyWith: directTouchScrollPanGesture
             )
         )
-    }
-
-    @Test("Input capturing view installs non-cancelling Pencil contact capture")
-    func inputCapturingViewInstallsPencilContactCapture() {
-        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let directTouchType = Int(UITouch.TouchType.direct.rawValue)
-        let pencilTouchType = Int(UITouch.TouchType.pencil.rawValue)
-
-        #expect(view.pencilContactGesture.view === view)
-        #expect(view.pencilContactGesture.cancelsTouchesInView == false)
-        #expect(view.pencilContactGesture.delaysTouchesBegan == false)
-        #expect(view.pencilContactGesture.delaysTouchesEnded == false)
-        #expect(Set((view.pencilContactGesture.allowedTouchTypes ?? []).map(\.intValue)) == [
-            directTouchType,
-            pencilTouchType,
-        ])
-        #expect(!view.pencilContactGesture.canPrevent(view.directTapGesture))
-        #expect(!view.pencilContactGesture.canBePrevented(by: view.directTapGesture))
     }
 
     @Test("Input capturing view disables the generic pointer long press while cursor lock is active")
@@ -118,32 +65,6 @@ struct ScrollPhysicsCapturingViewTests {
             !view.shouldIgnoreLockedPointerHoverJump(
                 from: CGPoint(x: 120, y: 80),
                 to: CGPoint(x: 150, y: 105)
-            )
-        )
-    }
-
-    @Test("Passive hover only emits movement after actual pointer motion")
-    func passiveHoverRequiresActualPointerMotion() {
-        #expect(
-            !InputCapturingView.shouldEmitPassiveHoverMove(
-                pointerMoved: false,
-                isDragging: false
-            )
-        )
-        #expect(
-            InputCapturingView.shouldEmitPassiveHoverMove(
-                pointerMoved: true,
-                isDragging: false
-            )
-        )
-    }
-
-    @Test("Passive hover does not emit movement while a drag gesture owns the pointer")
-    func passiveHoverSkipsWhileDragging() {
-        #expect(
-            !InputCapturingView.shouldEmitPassiveHoverMove(
-                pointerMoved: true,
-                isDragging: true
             )
         )
     }

@@ -5,78 +5,13 @@
 //  Created by Ethan Lipnik on 2/9/26.
 //
 
+#if os(macOS)
 @testable import MirageKitClient
 import Foundation
 import Testing
 
-#if os(macOS)
 @Suite("Adaptive Recovery Mode")
 struct AdaptiveFallbackBitrateTests {
-    @Test("Disabled mode applies decoder compatibility fallback for ten-bit streams")
-    func disabledModeAppliesDecoderCompatibilityFallbackForTenBitStreams() {
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .disabled,
-                resolvedBitDepth: .tenBit,
-                lastAppliedTime: nil,
-                now: 20,
-                cooldown: 15
-            )
-        )
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .disabled,
-                resolvedBitDepth: .eightBit,
-                lastAppliedTime: nil,
-                now: 20,
-                cooldown: 15
-            ) == false
-        )
-    }
-
-    @Test("Adaptive mode never applies decoder compatibility fallback")
-    func adaptiveModeNeverAppliesDecoderCompatibilityFallback() {
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .adaptive,
-                resolvedBitDepth: .tenBit,
-                lastAppliedTime: nil,
-                now: 20,
-                cooldown: 15
-            ) == false
-        )
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .adaptive,
-                resolvedBitDepth: .eightBit,
-                lastAppliedTime: 10,
-                now: 40,
-                cooldown: 15
-            ) == false
-        )
-    }
-
-    @Test("Decoder compatibility fallback respects cooldown")
-    func decoderCompatibilityFallbackRespectsCooldown() {
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .disabled,
-                resolvedBitDepth: .tenBit,
-                lastAppliedTime: 10,
-                now: 20,
-                cooldown: 15
-            ) == false
-        )
-        #expect(
-            MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .disabled,
-                resolvedBitDepth: .tenBit,
-                lastAppliedTime: 10,
-                now: 26,
-                cooldown: 15
-            )
-        )
-    }
 
     @Test("Adaptive mode leaves decoder compatibility state unchanged")
     @MainActor

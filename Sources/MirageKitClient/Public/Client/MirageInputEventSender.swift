@@ -11,6 +11,12 @@ import Foundation
 import MirageKit
 
 public final class MirageInputEventSender: @unchecked Sendable {
+    enum DeliveryMode: Sendable, Equatable {
+        case reliable
+        case orderedBestEffort
+        case droppableRealtime
+    }
+
     private struct TemporaryPointerCoalescingState {
         var deadline: CFAbsoluteTime = 0
         var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
@@ -35,7 +41,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
     private let connectionLock = NSLock()
-    private var sendHandler: (@Sendable (Data, Bool) async throws -> Void)?
+    private var sendHandler: (@Sendable (Data, DeliveryMode) async throws -> Void)?
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
     private let interactionLock = NSLock()
@@ -50,7 +56,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Accessed only on `sendQueue`.
     private var pendingInputs: [PendingInput] = []
 
-    func updateSendHandler(_ handler: (@Sendable (Data, Bool) async throws -> Void)?) {
+    func updateSendHandler(_ handler: (@Sendable (Data, DeliveryMode) async throws -> Void)?) {
         connectionLock.lock()
         sendHandler = handler
         connectionLock.unlock()
@@ -89,7 +95,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
         let data = try makeInputMessageData(event: event, streamID: streamID)
         if let sendHandler = currentSendHandler() {
-            try await sendHandler(data, true)
+            try await sendHandler(data, .reliable)
             return
         }
         throw MirageError.protocolError("Not connected")
@@ -148,7 +154,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
             guard let self else { return }
             do {
                 let data = try self.makeInputMessageData(event: pending.event, streamID: pending.streamID)
-                try await handler(data, false)
+                try await handler(data, Self.deliveryMode(for: pending.event))
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {
                     MirageLogger.client("Dropped best-effort input because the stream closed: \(error.localizedDescription)")
@@ -215,7 +221,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return false
     }
 
-    private func currentSendHandler() -> (@Sendable (Data, Bool) async throws -> Void)? {
+    private func currentSendHandler() -> (@Sendable (Data, DeliveryMode) async throws -> Void)? {
         connectionLock.lock()
         let handler = sendHandler
         connectionLock.unlock()
@@ -326,6 +332,20 @@ public final class MirageInputEventSender: @unchecked Sendable {
     private func isDroppableContactMove(_ event: MirageInputEvent) -> Bool {
         guard case let .pointerSampleBatch(batch) = event else { return false }
         return batch.phase == .moved
+    }
+
+    private static func deliveryMode(for event: MirageInputEvent) -> DeliveryMode {
+        switch event {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            .droppableRealtime
+        case let .pointerSampleBatch(batch) where batch.phase == .hover:
+            .droppableRealtime
+        default:
+            .orderedBestEffort
+        }
     }
 
     private func recordInteractionIfNeeded(

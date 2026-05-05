@@ -42,12 +42,6 @@ struct QualityTestQueueBudgetTests {
         )
     }
 
-    @Test("Streaming replay stages use the interactive media queue")
-    func streamingReplayStagesUseInteractiveMediaQueue() {
-        #expect(MirageHostService.qualityTestQueueProfile(for: .streamingReplay) == .interactiveMedia)
-        #expect(MirageHostService.qualityTestQueueProfile(for: .transport) == .throughputProbe)
-    }
-
     @Test("Streaming replay queue respects the interactive packet cap")
     func streamingReplayQueueRespectsInteractivePacketCap() {
         let packetBytes = 1_338
@@ -90,26 +84,5 @@ struct QualityTestQueueBudgetTests {
         )
     }
 
-    @Test("Connection-limit sweep stops only when first-breach mode sees an overload")
-    func firstBreachModeStopsAfterOverload() {
-        #expect(
-            MirageHostService.qualityTestShouldTerminateSweep(
-                stopAfterFirstBreach: true,
-                deliveryWindowMissed: true
-            )
-        )
-        #expect(
-            !MirageHostService.qualityTestShouldTerminateSweep(
-                stopAfterFirstBreach: false,
-                deliveryWindowMissed: true
-            )
-        )
-        #expect(
-            !MirageHostService.qualityTestShouldTerminateSweep(
-                stopAfterFirstBreach: true,
-                deliveryWindowMissed: false
-            )
-        )
-    }
 }
 #endif

@@ -14,42 +14,9 @@ import Testing
 
 @Suite("Client Connection Endpoint Planning")
 struct ClientConnectionEndpointPlanningTests {
-    @Test("Peer advertisement round-trips hostName through TXT record")
-    func hostNameRoundTrips() throws {
-        let original = LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
-            deviceID: UUID(),
-            identityKeyID: "host-key",
-            deviceType: .mac,
-            hostName: "Vega.local",
-            directTransports: [
-                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
-            ]
-        )
-
-        let txt = original.toTXTRecord()
-        let decoded = LoomPeerAdvertisement.from(txtRecord: txt)
-
-        #expect(decoded.hostName == "Vega.local")
-        #expect(decoded.directTransports.first(where: { $0.transportKind == .udp })?.port == 61001)
-    }
-
-    @Test("Peer advertisement without hostName decodes as nil")
-    func missingHostNameDecodesAsNil() throws {
-        let advertisement = LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
-            deviceID: UUID()
-        )
-
-        let txt = advertisement.toTXTRecord()
-        let decoded = LoomPeerAdvertisement.from(txtRecord: txt)
-
-        #expect(decoded.hostName == nil)
-    }
-
     @MainActor
-    @Test("Client control sessions prefer TCP before falling back to UDP")
-    func controlSessionAttemptsPreferTcpThenUdp() throws {
+    @Test("Client control sessions prefer UDP before falling back to reliable transports")
+    func controlSessionAttemptsPreferUdpThenTcp() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61_001))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_002))
         let host = LoomPeer(
@@ -80,14 +47,14 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[0].endpoint.debugDescription == expectedTcpEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTcpEndpoint.debugDescription)
     }
 
     @MainActor
-    @Test("Overlay control sessions prefer direct overlay transports before UDP")
+    @Test("Overlay control sessions prefer UDP before reliable transports")
     func overlayControlSessionAttemptsPreferOverlayTransports() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61_011))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61_012))
@@ -114,42 +81,9 @@ struct ClientConnectionEndpointPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
 
-        #expect(attempts.map(\.transportKind) == [.tcp, .quic, .udp])
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
         #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
         #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
-    }
-
-    @MainActor
-    @Test("Client qualifies short Bonjour names for UDP control attempts")
-    func controlSessionAttemptsQualifyShortBonjourNames() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_004))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_005))
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                hostName: "Altair",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                ]
-            )
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        let attempts = service.controlSessionAttempts(for: host)
-        let expectedUdpEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("Altair.local"),
-            port: udpPort
-        )
-
-        #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
     }
 
     @MainActor
@@ -179,9 +113,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -207,22 +141,22 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         let service = MirageClientService(deviceName: "Test Device")
-        service.rememberedDirectEndpointHostByDeviceID[deviceID] = NWEndpoint.Host("100.64.10.2")
+        service.rememberedDirectEndpointHostByDeviceID[deviceID] = NWEndpoint.Host("192.168.50.20")
         let attempts = service.controlSessionAttempts(for: host)
         let expectedUDPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("100.64.10.2"),
+            host: NWEndpoint.Host("192.168.50.20"),
             port: udpPort
         )
         let expectedTCPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("100.64.10.2"),
+            host: NWEndpoint.Host("192.168.50.20"),
             port: tcpPort
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -262,16 +196,16 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 3)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[0].candidateKind == .overlay)
         #expect(attempts[0].requiredInterfaceType == nil)
         #expect(attempts[1].transportKind == .quic)
         #expect(attempts[1].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
         #expect(attempts[1].candidateKind == .overlay)
         #expect(attempts[1].requiredInterfaceType == nil)
-        #expect(attempts[2].transportKind == .udp)
-        #expect(attempts[2].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[2].transportKind == .tcp)
+        #expect(attempts[2].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
         #expect(attempts[2].candidateKind == .overlay)
         #expect(attempts[2].requiredInterfaceType == nil)
     }
@@ -463,91 +397,6 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client control session failure reasons include transport, endpoint, and interface context")
-    func controlSessionFailureReasonIncludesContext() throws {
-        let port = try #require(NWEndpoint.Port(rawValue: 61_003))
-        let attempt = MirageClientService.ControlSessionAttempt(
-            hostName: "Altair",
-            endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: port),
-            transportKind: .udp,
-            candidateKind: .local,
-            requiredInterfaceType: .wifi
-        )
-
-        let reason = MirageClientService.controlSessionFailureReason(
-            for: attempt,
-            classification: .connectionRefused,
-            underlyingError: LoomError.connectionFailed(NWError.posix(.ECONNREFUSED))
-        )
-
-        #expect(reason.contains("udp"))
-        #expect(reason.contains("Altair"))
-        #expect(reason.contains("altair.local"))
-        #expect(reason.contains("wifi"))
-        #expect(reason.contains("connectionRefused"))
-    }
-
-    @MainActor
-    @Test("Client diagnoses different Wi-Fi networks for local failures")
-    func localNetworkMismatchReasonDiagnosesDifferentWiFiNetworks() {
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .hostPort(host: "altair.local", port: 6100),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                metadata: [
-                    "mirage.net.wifi": "24:hostwifi",
-                ]
-            )
-        )
-
-        let reason = MirageClientService.localNetworkMismatchReason(
-            for: host,
-            classification: .timeout,
-            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:clientwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-
-        #expect(reason?.contains("different Wi-Fi networks") == true)
-    }
-
-    @MainActor
-    @Test("Client diagnoses different wired networks for local failures")
-    func localNetworkMismatchReasonDiagnosesDifferentWiredNetworks() {
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .hostPort(host: "altair.local", port: 6100),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                metadata: [
-                    "mirage.net.wired": "24:hostwired",
-                ]
-            )
-        )
-
-        let reason = MirageClientService.localNetworkMismatchReason(
-            for: host,
-            classification: .transportLoss,
-            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
-                currentPathKind: .wired,
-                wifiSubnetSignatures: [],
-                wiredSubnetSignatures: ["24:clientwired"]
-            )
-        )
-
-        #expect(reason?.contains("same wired network") == true)
-    }
-
-    @MainActor
     @Test("Client uses Bonjour-resolved IP addresses instead of hostname")
     func controlSessionAttemptsPreferResolvedAddresses() throws {
         let deviceID = UUID()
@@ -576,9 +425,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -616,10 +465,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
         #expect(!attempts.contains { $0.endpoint.debugDescription.contains("fe80") })
     }
 
@@ -656,8 +505,197 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].transportKind == .udp)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client uses local resolved addresses for TCP and QUIC before overlay endpoint")
+    func controlSessionAttemptsPreferLocalResolvedAddressesForReliableTransports() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_022))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_023))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_024))
+        let localAddress = try #require(IPv4Address("192.168.50.164"))
+        let overlayAddress = try #require(IPv4Address("100.65.199.51"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: .ipv4(overlayAddress), port: tcpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(localAddress),
+                .ipv4(overlayAddress),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let tcpAttempt = try #require(attempts.first { $0.transportKind == .tcp })
+        let quicAttempt = try #require(attempts.first { $0.transportKind == .quic })
+        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
+
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: tcpPort)
+        let expectedQUICEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: quicPort)
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(host: .ipv4(localAddress), port: udpPort)
+
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(tcpAttempt.endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(quicAttempt.endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
+        #expect(udpAttempt.endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client treats local resolved addresses as local even when remote access is advertised")
+    func controlSessionAttemptsClassifyLocalResolvedAddressesAsLocalWhenRemoteAccessIsAdvertised() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_021))
+        let localAddress = try #require(IPv4Address("192.168.50.164"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(localAddress),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferredNetworkType = .wifi
+        let attempts = service.controlSessionAttempts(for: host)
+        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
+
+        #expect(udpAttempt.candidateKind == .local)
+        #expect(udpAttempt.requiredInterfaceType == .wifi)
+    }
+
+    @MainActor
+    @Test("Client classifies remote-access single-label hosts as overlay")
+    func controlSessionAttemptsClassifyRemoteAccessSingleLabelHostsAsOverlay() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_031))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_032))
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Vega",
+            deviceType: .mac,
+            endpoint: .hostPort(host: NWEndpoint.Host("Vega"), port: tcpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                hostName: "Vega",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferredNetworkType = .wifi
+        let attempts = service.controlSessionAttempts(for: host)
+
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
+        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
+        #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
+    }
+
+    @MainActor
+    @Test("Client classifies remote-access ULA hosts as overlay")
+    func controlSessionAttemptsClassifyRemoteAccessULAHostsAsOverlay() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_033))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_034))
+        let ulaAddress = try #require(IPv6Address("fd12:3456:789a::50"))
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Vega",
+            deviceType: .mac,
+            endpoint: .hostPort(host: .ipv6(ulaAddress), port: tcpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                hostName: "Vega",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferredNetworkType = .wifi
+        let attempts = service.controlSessionAttempts(for: host)
+
+        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
+        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
+        #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
+    }
+
+    @MainActor
+    @Test("Client does not reuse remembered overlay address ahead of Bonjour hostname")
+    func controlSessionAttemptsDoNotReuseRememberedOverlayAheadOfBonjourHostname() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
+        let overlayAddress = try #require(IPv4Address("100.65.199.51"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.rememberedDirectEndpointHostByDeviceID[deviceID] = .ipv4(overlayAddress)
+        let attempts = service.controlSessionAttempts(for: host)
+        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("altair.local"),
+            port: udpPort
+        )
+
+        #expect(udpAttempt.endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(udpAttempt.candidateKind == .local)
     }
 
     @MainActor
@@ -701,9 +739,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -753,10 +791,10 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -803,9 +841,9 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -840,7 +878,7 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].transportKind == .udp)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 

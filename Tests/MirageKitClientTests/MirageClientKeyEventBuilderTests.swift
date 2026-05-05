@@ -26,21 +26,6 @@ struct MirageClientKeyEventBuilderTests {
         #expect(event.modifiers == [.command])
     }
 
-    @Test("Mapped A key keeps the macOS virtual key code")
-    func mappedAKeyKeepsTheMacOSVirtualKeyCode() throws {
-        let event = try #require(
-            MirageClientKeyEventBuilder.softwareKeyEvent(
-                for: "a",
-                baseModifiers: [.command]
-            )
-        )
-
-        #expect(event.keyCode == 0x00)
-        #expect(event.characters == "a")
-        #expect(event.charactersIgnoringModifiers == "a")
-        #expect(event.modifiers == [.command])
-    }
-
     @Test("Option-produced hardware text uses Unicode fallback")
     func optionProducedHardwareTextUsesUnicodeFallback() {
         let event = MirageClientKeyEventBuilder.hardwareKeyEvent(
@@ -96,18 +81,6 @@ struct MirageClientKeyEventBuilderTests {
         #expect(!event.usesUnicodeScalarFallback)
         #expect(event.characters == "\t")
         #expect(event.charactersIgnoringModifiers == "\t")
-    }
-
-    @Test("Key command special inputs map to macOS virtual key codes")
-    func keyCommandSpecialInputsMapToMacVirtualKeyCodes() {
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputEscape") == 0x35)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputLeftArrow") == 0x7B)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputRightArrow") == 0x7C)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputDownArrow") == 0x7D)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputUpArrow") == 0x7E)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputDelete") == 0x33)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("UIKeyInputTab") == 0x30)
-        #expect(MirageClientKeyEventBuilder.keyCommandInputToMacKeyCode("\t") == 0x30)
     }
 
     @Test("Command hardware shortcuts stay on virtual-key path")

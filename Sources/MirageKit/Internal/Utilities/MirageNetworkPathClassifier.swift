@@ -82,6 +82,44 @@ package enum MirageNetworkPathClassifier {
         )
     }
 
+    package static func classifyLocalDefaultRouteKind(
+        interfaceNames: [String],
+        usesWiFi: Bool,
+        usesWired: Bool,
+        usesCellular: Bool,
+        usesLoopback: Bool,
+        usesOther: Bool
+    ) -> MirageNetworkPathKind {
+        let sortedNames = interfaceNames
+            .map { $0.lowercased() }
+            .sorted()
+        let hasAWDLInterface = sortedNames.contains { $0.hasPrefix("awdl") }
+        let hasOverlayInterface = sortedNames.contains { $0.hasPrefix("utun") }
+
+        if usesWiFi {
+            return .wifi
+        }
+        if usesWired {
+            return .wired
+        }
+        if usesCellular {
+            return .cellular
+        }
+        if usesLoopback {
+            return .loopback
+        }
+        if hasAWDLInterface {
+            return .awdl
+        }
+        if hasOverlayInterface {
+            return .vpn
+        }
+        if usesOther {
+            return .other
+        }
+        return .unknown
+    }
+
     package static func classify(
         interfaceNames: [String],
         usesWiFi: Bool,

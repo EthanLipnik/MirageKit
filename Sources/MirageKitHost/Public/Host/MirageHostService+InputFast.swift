@@ -13,7 +13,13 @@ import MirageKit
 #if os(macOS)
 extension MirageHostService {
     /// Fast input event handler - runs on inputQueue, NOT MainActor.
-    nonisolated func handleInputEventFast(_ message: ControlMessage, from client: MirageConnectedClient) {
+    nonisolated func handleInputEventFast(
+        _ message: ControlMessage,
+        from client: MirageConnectedClient,
+        sessionID: UUID
+    ) {
+        guard streamRegistry.isInputSessionActive(sessionID, clientID: client.id) else { return }
+
         do {
             let inputMessage = try InputEventMessage.deserializePayload(message.payload)
 

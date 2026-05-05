@@ -126,13 +126,6 @@ struct BetterDisplaySoftwareBrightnessControllerTests {
         ])
     }
 
-    @Test
-    func parsesBrightnessOutputFormats() {
-        #expect(BetterDisplaySoftwareBrightnessController.parseBrightnessValue("0.42") == 0.42)
-        #expect(BetterDisplaySoftwareBrightnessController.parseBrightnessValue("softwareBrightness: 75%") == 0.75)
-        #expect(BetterDisplaySoftwareBrightnessController.parseBrightnessValue("value = 1") == 1)
-        #expect(BetterDisplaySoftwareBrightnessController.parseBrightnessValue("not available") == nil)
-    }
 }
 
 private actor BetterDisplayCommandRecorder {

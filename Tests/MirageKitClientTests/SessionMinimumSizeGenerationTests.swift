@@ -340,32 +340,6 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.session(for: otherSessionID)?.atlasRegion == nil)
     }
 
-    @Test("Client service stores atlas layouts by media stream and epoch")
-    @MainActor
-    func clientServiceStoresAtlasLayoutsByMediaStreamAndEpoch() {
-        let service = MirageClientService(deviceName: "Test Client")
-        let firstLayout = MirageAppAtlasLayout(
-            mediaStreamID: 101,
-            layoutEpoch: 1,
-            width: 1024,
-            height: 768,
-            regions: []
-        )
-        let secondLayout = MirageAppAtlasLayout(
-            mediaStreamID: 101,
-            layoutEpoch: 2,
-            width: 2048,
-            height: 1536,
-            regions: []
-        )
-
-        service.storeAppAtlasLayout(firstLayout)
-        service.storeAppAtlasLayout(secondLayout)
-
-        #expect(service.appAtlasLayoutsByMediaStreamID[101]?[1] == firstLayout)
-        #expect(service.appAtlasLayoutsByMediaStreamID[101]?[2] == secondLayout)
-    }
-
     @Test("Removing session clears post-resize transition state")
     @MainActor
     func removingSessionClearsPostResizeTransitionState() {

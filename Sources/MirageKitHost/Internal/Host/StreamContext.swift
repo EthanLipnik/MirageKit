@@ -209,6 +209,7 @@ actor StreamContext {
     var encodeSkipInactiveIntervalCount: UInt64 = 0
     var encodeSkipNoSessionIntervalCount: UInt64 = 0
     var lastPipelineStatsLogTime: CFAbsoluteTime = 0
+    var pipelineStatsLogScheduled = false
     let pipelineStatsInterval: CFAbsoluteTime = 2.0
     var lastCaptureIngressFPS: Double?
     var lastCaptureFPS: Double?
@@ -270,6 +271,7 @@ actor StreamContext {
     var transportSendErrorBursts: UInt64 = 0
     var senderFrameBudgetDelayOverrunCount: Int = 0
     let senderFrameBudgetDelayOverrunThreshold: Int = 2
+    let senderFrameBudgetDelayRecoveryMultiplier: Double = 2.0
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -703,10 +705,17 @@ actor StreamContext {
             frameRate == 60
     }
 
-    nonisolated func schedulePipelineStatsLog() {
-        Task(priority: .utility) {
-            await self.logPipelineStatsIfNeeded()
+    func schedulePipelineStatsLog() {
+        guard !pipelineStatsLogScheduled else { return }
+        pipelineStatsLogScheduled = true
+        Task(priority: .utility) { [weak self] in
+            await self?.runScheduledPipelineStatsLog()
         }
+    }
+
+    private func runScheduledPipelineStatsLog() async {
+        await logPipelineStatsIfNeeded()
+        pipelineStatsLogScheduled = false
     }
 
     nonisolated func scheduleEncoderTypingBurstUpdate(_ encoder: VideoEncoder, enabled: Bool) {

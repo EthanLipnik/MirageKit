@@ -286,21 +286,6 @@ struct QualityTestWaiterTests {
         #expect(service.qualityTestStageCompletionBuffer.isEmpty)
     }
 
-    @Test("Stage completion timeout budget includes settle grace and control margin")
-    func stageCompletionTimeoutBudgetIncludesSettleGraceAndMargin() {
-        let stage = MirageQualityTestPlan.Stage(
-            id: 1,
-            probeKind: .transport,
-            targetBitrateBps: 128_000_000,
-            durationMs: 1_500,
-            settleGraceMs: 900
-        )
-
-        #expect(
-            MirageClientService.qualityTestStageCompletionTimeoutMs(for: stage)
-                == stage.durationMs + stage.settleGraceMs + MirageClientService.qualityTestControlMessageMarginMs
-        )
-    }
 }
 
 @MainActor

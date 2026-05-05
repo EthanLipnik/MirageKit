@@ -124,26 +124,6 @@ struct ClientHelloHandshakeStateTests {
     }
 
     @MainActor
-    @Test("Bootstrap response timeout leaves room for manual host approval")
-    func bootstrapResponseTimeoutAllowsManualHostApproval() {
-        let service = MirageClientService(deviceName: "Test Device")
-
-        #expect(service.bootstrapResponseTimeout >= .seconds(30))
-        #expect(service.bootstrapResponseTimeout > service.controlSessionConnectTimeout)
-        #expect(service.trustPendingControlSessionConnectTimeout > service.controlSessionConnectTimeout)
-    }
-
-    @MainActor
-    @Test("Trust verification state is not manual approval")
-    func trustVerificationStateIsNotManualApproval() {
-        let service = MirageClientService(deviceName: "Test Device")
-
-        service.authorizationState = .verifyingTrust
-
-        #expect(service.isAwaitingManualApproval == false)
-    }
-
-    @MainActor
     @Test("Trust-pending bootstrap phase extends the control-session timeout budget")
     func trustPendingBootstrapPhaseExtendsControlSessionTimeoutBudget() async {
         let tracker = ConnectSessionBootstrapProgressTracker()

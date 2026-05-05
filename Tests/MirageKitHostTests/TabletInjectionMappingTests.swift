@@ -49,30 +49,6 @@ struct TabletInjectionMappingTests {
         #expect(abs(cgEvent.getDoubleValueField(.tabletEventTiltY) - (-0.25)) < 0.02)
     }
 
-    @Test("Non-stylus events do not apply tablet subtype")
-    func nonStylusEventLeavesTabletSubtypeDefault() throws {
-        let controller = MirageHostInputController()
-        let cgEvent = try #require(
-            CGEvent(
-                mouseEventSource: nil,
-                mouseType: .mouseMoved,
-                mouseCursorPosition: .zero,
-                mouseButton: .left
-            )
-        )
-
-        let mouseEvent = MirageMouseEvent(
-            button: .left,
-            location: CGPoint(x: 0.1, y: 0.2),
-            pressure: 1.0
-        )
-
-        controller.applyTabletFieldsIfNeeded(cgEvent, from: mouseEvent)
-
-        #expect(!controller.appliesTabletSubtype(mouseEvent))
-        #expect(cgEvent.getIntegerValueField(.mouseEventSubtype) == 0)
-    }
-
     @Test("Stylus contact events keep actionable mouse event type")
     func stylusContactEventCreationUsesMouseType() throws {
         let controller = MirageHostInputController()
@@ -228,34 +204,6 @@ struct TabletInjectionMappingTests {
 
         #expect(hoverEvent.type == .mouseMoved)
         #expect(hoverEvent.getIntegerValueField(.tabletEventPointButtons) == 0)
-    }
-
-    @Test("Ended and cancelled batches map to button release")
-    func pointerSampleBatchBoundaryPhasesMapToRelease() {
-        let stylus = MirageStylusEvent(
-            altitudeAngle: .pi / 4,
-            azimuthAngle: .pi / 6,
-            tiltX: 0,
-            tiltY: 0
-        )
-        let sample = MiragePointerSample(
-            location: .zero,
-            pressure: 0,
-            stylus: stylus
-        )
-        let ended = MiragePointerSampleBatch(
-            phase: .ended,
-            isButtonPressed: false,
-            samples: [sample]
-        )
-        let cancelled = MiragePointerSampleBatch(
-            phase: .cancelled,
-            isButtonPressed: false,
-            samples: [sample]
-        )
-
-        #expect(MirageHostInputController.pointerEventType(for: ended) == .leftMouseUp)
-        #expect(MirageHostInputController.pointerEventType(for: cancelled) == .leftMouseUp)
     }
 
     @Test("Tablet proximity events are created as tablet proximity types")

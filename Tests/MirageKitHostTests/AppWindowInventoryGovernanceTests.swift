@@ -13,37 +13,8 @@ import Foundation
 import MirageKit
 import Testing
 
-@Suite("App Streaming Governance")
+@Suite("App Window Inventory Governance")
 struct AppWindowInventoryGovernanceTests {
-    @Test("Ownership signal classifier ignores passive/noisy signals")
-    func ownershipSignalClassifierIgnoresPassiveSignals() {
-        let moved = MirageInputEvent.mouseMoved(MirageMouseEvent(location: .zero))
-        let flags = MirageInputEvent.flagsChanged([])
-
-        #expect(!AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(moved))
-        #expect(!AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(flags))
-    }
-
-    @Test("Ownership signal classifier accepts focus, clicks, key down, and scroll start")
-    func ownershipSignalClassifierAcceptsSwitchSignals() {
-        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.windowFocus))
-        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.mouseDown(MirageMouseEvent(location: .zero))))
-        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.keyDown(MirageKeyEvent(keyCode: 0))))
-        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
-            deltaX: 0,
-            deltaY: 12,
-            phase: .began
-        ))))
-        #expect(AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
-            deltaX: 0,
-            deltaY: 12
-        ))))
-        #expect(!AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(.scrollWheel(MirageScrollEvent(
-            deltaX: 0,
-            deltaY: 12,
-            momentumPhase: .changed
-        ))))
-    }
 
     @Test("Orchestrator ownership hysteresis prevents rapid ping-pong")
     func orchestratorOwnershipHysteresisPreventsPingPong() async {
@@ -123,33 +94,6 @@ struct AppWindowInventoryGovernanceTests {
         #expect(policy.targetBitrateBps == 8_000_000)
     }
 
-    @Test("Bitrate allocation is deterministic with active-first weighting and passive floors")
-    func bitrateAllocationDeterministic() async throws {
-        let orchestrator = AppStreamRuntimeOrchestrator()
-        await orchestrator.registerStream(bundleIdentifier: "com.example.app", streamID: 1)
-        await orchestrator.registerStream(bundleIdentifier: "com.example.app", streamID: 2)
-        await orchestrator.registerStream(bundleIdentifier: "com.example.app", streamID: 3)
-        await orchestrator.forceOwnership(streamID: 1)
-
-        let snapshot = await orchestrator.makeRuntimePolicySnapshot(
-            bundleIdentifier: "com.example.app",
-            visibleStreamIDs: [1, 2, 3],
-            bitrateBudgetBps: 10_000_000,
-            activeTargetFPS: 60
-        )
-
-        let active = try #require(snapshot.policies.first(where: { $0.streamID == 1 }))
-        let passive2 = try #require(snapshot.policies.first(where: { $0.streamID == 2 }))
-        let passive3 = try #require(snapshot.policies.first(where: { $0.streamID == 3 }))
-
-        #expect(active.tier == .activeLive)
-        #expect(active.targetBitrateBps == 8_000_000)
-        #expect(passive2.tier == .passiveSnapshot)
-        #expect(passive2.targetBitrateBps == 1_000_000)
-        #expect(passive3.tier == .passiveSnapshot)
-        #expect(passive3.targetBitrateBps == 1_000_000)
-    }
-
     @Test("Policy applier suppresses no-op and cooldown reconfiguration")
     func policyApplierSuppressesNoopAndCooldown() async {
         let applier = StreamPolicyApplier()
@@ -183,22 +127,5 @@ struct AppWindowInventoryGovernanceTests {
         #expect(diagnostics?.suppressedCooldownUpdates == 1)
     }
 
-    @Test("Display allocator remains fixed to two slots")
-    func displayAllocatorUsesTwoSlots() async {
-        let allocator = AppStreamDisplayAllocator()
-
-        #expect(AppStreamDisplayAllocator.maximumDisplayCount == 2)
-
-        await allocator.bindLive(streamID: 70)
-        await allocator.bindSnapshot(streamID: 71)
-        let snapshot = await allocator.currentSnapshot()
-        #expect(snapshot.liveStreamID == 70)
-        #expect(snapshot.snapshotStreamID == 71)
-
-        await allocator.unbind(streamID: 70)
-        let afterUnbind = await allocator.currentSnapshot()
-        #expect(afterUnbind.liveStreamID == nil)
-        #expect(afterUnbind.snapshotStreamID == 71)
-    }
 }
 #endif

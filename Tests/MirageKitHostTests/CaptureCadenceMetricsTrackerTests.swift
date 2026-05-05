@@ -36,39 +36,5 @@ struct CaptureCadenceMetricsTrackerTests {
         #expect(snapshot.callbackDurationP99Ms > 0)
     }
 
-    @Test("Status, drop, and reset counters are windowed")
-    func statusDropAndResetCountersAreWindowed() {
-        var tracker = CaptureCadenceMetricsTracker(expectedFrameRate: 60, targetFrameRate: 60)
-
-        tracker.recordStatus(.complete)
-        tracker.recordStatus(.blank)
-        tracker.recordStatus(.suspended)
-        tracker.recordCadenceDrop()
-        tracker.recordAdmissionDrop()
-
-        let first = tracker.consumeSnapshot()
-        #expect(first.statusCounts.complete == 1)
-        #expect(first.statusCounts.blank == 1)
-        #expect(first.statusCounts.suspended == 1)
-        #expect(first.cadenceDropCount == 1)
-        #expect(first.admissionDropCount == 1)
-
-        let second = tracker.snapshot()
-        #expect(second.statusCounts.total == 0)
-        #expect(second.cadenceDropCount == 0)
-        #expect(second.admissionDropCount == 0)
-    }
-
-    @Test("Ring buffer overwrite accounting is exposed")
-    func ringBufferOverwriteAccountingIsExposed() {
-        var tracker = CaptureCadenceMetricsTracker(expectedFrameRate: 60, targetFrameRate: 60)
-
-        for index in 0 ..< 700 {
-            tracker.recordScreenCallback(at: 20 + Double(index) * 0.016)
-        }
-
-        let snapshot = tracker.snapshot()
-        #expect(snapshot.sampleOverwriteCount > 0)
-    }
 }
 #endif

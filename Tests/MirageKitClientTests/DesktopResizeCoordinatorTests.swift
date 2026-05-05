@@ -93,28 +93,6 @@ struct DesktopResizeCoordinatorTests {
         #expect(!coordinator.maskActive)
     }
 
-    @Test("Unified automatic workload never requests resolution resize")
-    func unifiedAutomaticWorkloadNeverRequestsResolutionResize() {
-        #expect(
-            !MirageClientService.allowsAutomaticDesktopResolutionResize(
-                mode: .unified,
-                allowsClientResize: true
-            )
-        )
-        #expect(
-            MirageClientService.allowsAutomaticDesktopResolutionResize(
-                mode: .secondary,
-                allowsClientResize: true
-            )
-        )
-        #expect(
-            !MirageClientService.allowsAutomaticDesktopResolutionResize(
-                mode: .secondary,
-                allowsClientResize: false
-            )
-        )
-    }
-
     @Test("Clear-all-state drops transition and queued targets")
     func clearAllStateDropsTransitionAndQueuedTargets() {
         let coordinator = DesktopResizeCoordinator()

@@ -82,6 +82,11 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
+    private struct ReplaceableInputKey: Hashable {
+        let streamID: StreamID
+        let kind: ReplaceableKind
+    }
+
     private enum Priority: Equatable {
         case protected
         case contactMove
@@ -93,7 +98,7 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
-    private enum ReplaceableKind: Equatable {
+    private enum ReplaceableKind: Hashable {
         case mouseMoved
         case mouseDragged
         case rightMouseDragged
@@ -109,6 +114,7 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
     private let handler: @Sendable (ControlMessage) -> Void
     private let lock = NSLock()
     private var pendingMessages: [PendingMessage] = []
+    private var latestReplaceableInputTimestampByKey: [ReplaceableInputKey: TimeInterval] = [:]
     private var drainScheduled = false
 
     init(
@@ -149,9 +155,12 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
             return
         }
         let pending = pendingMessages.removeFirst()
+        let shouldDrop = shouldDropStaleReplaceableInput(pending)
         lock.unlock()
 
-        handler(pending.message)
+        if !shouldDrop {
+            handler(pending.message)
+        }
 
         lock.lock()
         let hasMore = !pendingMessages.isEmpty
@@ -207,6 +216,23 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
         return true
     }
 
+    private func shouldDropStaleReplaceableInput(_ pending: PendingMessage) -> Bool {
+        guard case let .replaceable(kind) = pending.priority,
+              let streamID = pending.streamID,
+              let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload) else {
+            return false
+        }
+
+        let timestamp = inputMessage.event.timestamp
+        let key = ReplaceableInputKey(streamID: streamID, kind: kind)
+        if let previousTimestamp = latestReplaceableInputTimestampByKey[key],
+           timestamp < previousTimestamp {
+            return true
+        }
+        latestReplaceableInputTimestampByKey[key] = timestamp
+        return false
+    }
+
     private static func classification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
         guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
             return (nil, .protected)
@@ -253,7 +279,7 @@ extension MirageHostService {
         recordClientActivity(clientID: clientID)
         let inputScheduler = HostInputMessageScheduler(inputQueue: inputQueue) { [weak self] message in
             guard let self else { return }
-            self.handleInputEventFast(message, from: clientContext.client)
+            self.handleInputEventFast(message, from: clientContext.client, sessionID: clientContext.sessionID)
         }
 
         let receiveLoop = HostReceiveLoop(

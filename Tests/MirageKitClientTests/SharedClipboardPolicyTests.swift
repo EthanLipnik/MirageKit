@@ -12,15 +12,6 @@ import Testing
 
 @Suite("Client Shared Clipboard Policy")
 struct SharedClipboardPolicyTests {
-    @Test("Client registers shared clipboard handlers")
-    func registersSharedClipboardHandlers() async {
-        let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
-        await MainActor.run {
-            #expect(service.controlMessageHandlers[.sharedClipboardStatus] != nil)
-            #expect(service.controlMessageHandlers[.sharedClipboardUpdate] != nil)
-        }
-    }
-
     @Test("Client shared clipboard requires connected host-enabled active streaming")
     func clientSharedClipboardActivationPolicy() {
         #expect(

@@ -197,6 +197,8 @@ actor StreamPacketSender {
     nonisolated static let packetBudgetMinWindowSeconds: CFAbsoluteTime = 0.20
     nonisolated static let packetPacerBurstWindowMs: Double = 6.0
     nonisolated static let packetPacerSteadyStateBurstWindowMs: Double = 0.5
+    nonisolated static let packetPacerSteadyStateFrameBurstFraction: Double = 0.25
+    nonisolated static let packetPacerSteadyStateFrameBurstMaxWindowMs: Double = 4.0
     nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
     nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
@@ -275,7 +277,11 @@ actor StreamPacketSender {
             guard let targetFrameIntervalMs, targetFrameIntervalMs > 0 else {
                 return packetPacerSteadyStateBurstWindowMs
             }
-            return min(16.7, max(packetPacerSteadyStateBurstWindowMs, targetFrameIntervalMs))
+            let frameScaledWindowMs = targetFrameIntervalMs * packetPacerSteadyStateFrameBurstFraction
+            return min(
+                packetPacerSteadyStateFrameBurstMaxWindowMs,
+                max(packetPacerSteadyStateBurstWindowMs, frameScaledWindowMs)
+            )
         }
         guard totalFragments > 0 else { return packetPacerBurstWindowMs }
         return packetPacerBurstWindowMs

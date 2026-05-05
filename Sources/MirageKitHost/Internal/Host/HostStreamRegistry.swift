@@ -20,6 +20,7 @@ final class HostStreamRegistry: @unchecked Sendable {
         var typingBurstHandlers: [StreamID: (@Sendable () -> Void)] = [:]
         var pointerCoalescingByStreamID: [StreamID: PointerCoalescingState] = [:]
         var customInputHandlers: [StreamID: any MirageCustomStreamInputHandler] = [:]
+        var activeInputSessionClientIDs: [UUID: UUID] = [:]
     }
 
     private static let pointerCoalescingSoftWindow: CFAbsoluteTime = 1.2
@@ -58,6 +59,26 @@ final class HostStreamRegistry: @unchecked Sendable {
 
     func customInputHandler(streamID: StreamID) -> (any MirageCustomStreamInputHandler)? {
         state.read { $0.customInputHandlers[streamID] }
+    }
+
+    func registerInputSession(_ sessionID: UUID, clientID: UUID) {
+        state.withLock { $0.activeInputSessionClientIDs[sessionID] = clientID }
+    }
+
+    func unregisterInputSession(_ sessionID: UUID) {
+        state.withLock { $0.activeInputSessionClientIDs.removeValue(forKey: sessionID) }
+    }
+
+    func unregisterInputSessions(for clientID: UUID) {
+        state.withLock { mutableState in
+            mutableState.activeInputSessionClientIDs = mutableState.activeInputSessionClientIDs.filter {
+                $0.value != clientID
+            }
+        }
+    }
+
+    func isInputSessionActive(_ sessionID: UUID, clientID: UUID) -> Bool {
+        state.read { $0.activeInputSessionClientIDs[sessionID] == clientID }
     }
 
     func registerPointerCoalescingRoute(streamID: StreamID) {

@@ -153,6 +153,34 @@ struct MirageInputEventSenderCoalescingTests {
         ])
     }
 
+    @Test("Only replaceable realtime input uses droppable delivery mode")
+    func onlyReplaceableRealtimeInputUsesDroppableDeliveryMode() async throws {
+        let sender = MirageInputEventSender()
+        let recorder = DeliveryModeRecorder()
+        let streamID: StreamID = 908
+        let keyEvent = MirageKeyEvent(keyCode: 0x7E, modifiers: [])
+
+        sender.updateSendHandler { _, deliveryMode in
+            await recorder.append(deliveryMode)
+        }
+
+        sender.sendInputFireAndForget(.mouseMoved(makeMouseEvent()), streamID: streamID)
+        sender.sendInputFireAndForget(.pointerSampleBatch(makePointerBatch(phase: .hover, isHovering: true)), streamID: streamID)
+        sender.sendInputFireAndForget(.keyDown(keyEvent), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(
+            MirageScrollEvent(deltaX: 0, deltaY: 1, location: CGPoint(x: 0.5, y: 0.5))
+        ), streamID: streamID)
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(await recorder.snapshot() == [
+            .droppableRealtime,
+            .droppableRealtime,
+            .orderedBestEffort,
+            .orderedBestEffort,
+        ])
+    }
+
     private func makeMouseEvent() -> MirageMouseEvent {
         MirageMouseEvent(location: CGPoint(x: 0.5, y: 0.5), timestamp: 0)
     }
@@ -195,6 +223,18 @@ private actor PointerBatchRecorder {
 
     func snapshot() -> [MiragePointerSampleBatch] {
         batches
+    }
+}
+
+private actor DeliveryModeRecorder {
+    private var modes: [MirageInputEventSender.DeliveryMode] = []
+
+    func append(_ mode: MirageInputEventSender.DeliveryMode) {
+        modes.append(mode)
+    }
+
+    func snapshot() -> [MirageInputEventSender.DeliveryMode] {
+        modes
     }
 }
 #endif

@@ -65,6 +65,14 @@ extension MirageClientService {
             guard let service = serviceBox.value else { return }
             await service.handleControlChannelClosure(controlChannel)
         }
+        drainBufferedControlMessagesIfNeeded()
+    }
+
+    func drainBufferedControlMessagesIfNeeded() {
+        guard !receiveBuffer.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            await self?.processReceivedData()
+        }
     }
 
     func processReceivedData() async {

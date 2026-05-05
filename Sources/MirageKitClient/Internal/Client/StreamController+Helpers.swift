@@ -265,6 +265,7 @@ extension StreamController {
     }
 
     func clearTransientRecoveryStateAfterPresentationProgress() async {
+        cancelMemoryBudgetRecoveryTask()
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
 
         switch clientRecoveryStatus {
@@ -643,6 +644,17 @@ extension StreamController {
             return
         }
 
+        if reason == .memoryBudget {
+            reassembler.enterKeyframeOnlyMode()
+            clearQueuedFramesForRecovery()
+            startFreezeMonitorIfNeeded()
+            scheduleMemoryBudgetRecoveryIfNeeded()
+            MirageLogger.client(
+                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); deferring recovery keyframe while memory pressure settles"
+            )
+            return
+        }
+
         // For active streams, frame loss from network congestion must NOT
         // trigger keyframe requests.  Keyframes are 100-150x larger than
         // P-frames and make congestion worse, creating a spiral.  Instead,
@@ -659,6 +671,50 @@ extension StreamController {
     ) -> String? {
         guard reason == .severeForwardGap else { return nil }
         return "Severe forward gap recovery fired for stream \(streamID); treating this as a short gap-recovery dip rather than a sustained host cadence collapse"
+    }
+
+    func cancelMemoryBudgetRecoveryTask() {
+        memoryBudgetRecoveryTask?.cancel()
+        memoryBudgetRecoveryTask = nil
+    }
+
+    private func scheduleMemoryBudgetRecoveryIfNeeded() {
+        guard presentationTier == .activeLive,
+              hasPresentedFirstFrame,
+              memoryBudgetRecoveryTask == nil else { return }
+
+        let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
+        memoryBudgetRecoveryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.memoryBudgetRecoveryDelay)
+            } catch {
+                return
+            }
+            await self?.requestMemoryBudgetRecoveryIfStillStalled(baselineSequence: baselineSequence)
+        }
+    }
+
+    private func requestMemoryBudgetRecoveryIfStillStalled(baselineSequence: UInt64) async {
+        memoryBudgetRecoveryTask = nil
+        guard !isStopping,
+              presentationTier == .activeLive,
+              hasPresentedFirstFrame,
+              reassembler.isAwaitingKeyframe() else { return }
+
+        let now = currentTime()
+        syncPresentationProgressFromFrameStore(now: now)
+        let currentSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
+        guard currentSequence <= baselineSequence else { return }
+
+        if let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
+           now - pendingKeyframeProgress.lastProgressTime < Self.firstPresentedFramePacketStallThreshold {
+            return
+        }
+
+        MirageLogger.client(
+            "Memory-budget recovery requesting a single keyframe for stream \(streamID) after deferred stall check"
+        )
+        await requestKeyframeRecovery(reason: .memoryBudget)
     }
 
     func requestKeyframeRecovery(reason: RecoveryReason) async {

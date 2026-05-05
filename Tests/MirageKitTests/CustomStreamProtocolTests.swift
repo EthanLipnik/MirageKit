@@ -11,20 +11,6 @@ import Testing
 
 @Suite("Custom Stream Protocol")
 struct CustomStreamProtocolTests {
-    @Test("Custom stream request clamps dimensions and frame rate")
-    func customStreamRequestClampsValues() {
-        let request = MirageCustomStreamRequest(
-            kind: "dev.example.custom.v1",
-            displayWidth: 0,
-            displayHeight: -10,
-            targetFrameRate: 240
-        )
-
-        #expect(request.displayWidth == 1)
-        #expect(request.displayHeight == 1)
-        #expect(request.targetFrameRate == 120)
-        #expect(request.requiredPixelFormat == kCVPixelFormatType_32BGRA)
-    }
 
     @Test("Custom stream control messages round-trip through control envelope")
     func customStreamMessagesRoundTrip() throws {

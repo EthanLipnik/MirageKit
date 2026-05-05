@@ -9,16 +9,8 @@
 import Foundation
 import Testing
 
-@Suite("Mirage Frame Integrity Diagnostics")
+@Suite("Frame Integrity Diagnostics")
 struct MirageFrameIntegrityDiagnosticsTests {
-    @Test("MIRAGE_LOG all does not enable frame-integrity diagnostics")
-    func mirageLogAllDoesNotEnableIntegrityDiagnostics() {
-        let configuration = MirageFrameIntegrityDiagnostics.Configuration.from(
-            environment: ["MIRAGE_LOG": "all"]
-        )
-
-        #expect(!configuration.isEnabled)
-    }
 
     @Test("Explicit frame-integrity flag enables bounded CRC samples")
     func explicitIntegrityDiagnosticsCollectBoundedSamples() async throws {

@@ -75,6 +75,10 @@ package final class MirageControlChannel: @unchecked Sendable {
         }
     }
 
+    package func sendSerializedUnreliable(_ data: Data) async throws {
+        try await stream.sendUnreliable(data)
+    }
+
     package func sendBestEffort(_ message: ControlMessage) {
         Task {
             try? await self.sendSerialized(message.serialize())

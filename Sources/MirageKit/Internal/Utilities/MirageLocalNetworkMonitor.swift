@@ -70,15 +70,22 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
     }
 
     private func record(_ path: NWPath) {
-        let snapshot = MirageNetworkPathClassifier.classify(path)
         let interfaceTypesByName = path.availableInterfaces.reduce(into: [String: NWInterface.InterfaceType]()) {
             partialResult,
             interface in
             partialResult[interface.name.lowercased()] = interface.type
         }
+        let localDefaultRouteKind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(
+            interfaceNames: path.availableInterfaces.map(\.name),
+            usesWiFi: path.usesInterfaceType(.wifi),
+            usesWired: path.usesInterfaceType(.wiredEthernet),
+            usesCellular: path.usesInterfaceType(.cellular),
+            usesLoopback: path.usesInterfaceType(.loopback),
+            usesOther: path.usesInterfaceType(.other)
+        )
 
         stateQueue.sync {
-            currentPathKind = snapshot.kind
+            currentPathKind = localDefaultRouteKind
             self.interfaceTypesByName = interfaceTypesByName
         }
     }

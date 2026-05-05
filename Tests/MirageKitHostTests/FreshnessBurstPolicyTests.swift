@@ -155,6 +155,32 @@ struct FreshnessBurstPolicyTests {
         #expect(burst.recoveryKeyframeCount == 1)
     }
 
+    @Test("Modest non-keyframe sender delay does not enter freshness burst")
+    func modestNonKeyframeSenderDelayDoesNotEnterFreshnessBurst() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 8
+        )
+        let telemetry = makeSenderTelemetry(
+            sendCompletionMaxMs: 25,
+            nonKeyframeSendCompletionMaxMs: 25
+        )
+
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+        await context.applySenderFrameBudgetRecoveryIfNeeded(
+            packetTelemetry: telemetry,
+            frameBudgetMs: 16.7
+        )
+
+        let burst = await context.freshnessBurstSnapshot()
+        #expect(!burst.isActive)
+        #expect(burst.entryCount == 0)
+        #expect(await context.senderFrameBudgetDelayOverrunCount == 0)
+    }
+
     @Test("Automatic non-keyframe sender delay uses soft drain instead of recovery burst")
     func automaticNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
         let context = makeContext(

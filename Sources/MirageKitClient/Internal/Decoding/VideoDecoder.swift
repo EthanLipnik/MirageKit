@@ -352,16 +352,17 @@ final class FrameReassembler: @unchecked Sendable {
             case .timeout:
                 false
             case .forwardGapTimeout,
-                 .memoryBudget,
                  .severeForwardGap:
                 true
+            case .memoryBudget:
+                false
             }
         }
     }
 
     struct MemoryBudget: Sendable, Equatable {
         static let `default` = MemoryBudget(
-            maxPendingFrames: 12,
+            maxPendingFrames: 60,
             maxPendingKeyframes: 2,
             maxPendingBytes: 128 * 1024 * 1024
         )

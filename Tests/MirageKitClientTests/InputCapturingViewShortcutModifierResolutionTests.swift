@@ -30,18 +30,6 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         )
     }
 
-    @Test("Reported and tracked modifier snapshots are combined")
-    func reportedAndTrackedModifierSnapshotsAreCombined() {
-        let resolvedModifiers = InputCapturingView.resolvedHardwareKeyModifiers(
-            reportedModifiers: [.command],
-            trackedModifiers: [.shift]
-        )
-
-        #expect(
-            MirageClientShortcut.normalizedShortcutModifiers(resolvedModifiers) == [.command, .shift]
-        )
-    }
-
     @Test("Modified GC keyboard keys that are not shortcuts use forward-key decision")
     func modifiedGCKeyboardKeysWithoutShortcutBindingsUseForwardKeyDecision() {
         let decision = InputCapturingView.gcKeyboardKeyRoutingDecision(

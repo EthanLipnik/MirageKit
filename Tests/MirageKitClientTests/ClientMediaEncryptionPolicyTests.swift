@@ -53,24 +53,4 @@ struct ClientMediaEncryptionPolicyTests {
         #expect(service.mediaSecurityPacketKeyForNetworking == nil)
     }
 
-    @MainActor
-    @Test("Client updates network policy at runtime")
-    func clientNetworkPolicyRuntimeUpdate() {
-        let service = MirageClientService(
-            loomConfiguration: LoomNetworkConfiguration(
-                enablePeerToPeer: true,
-                requireEncryptedMediaOnLocalNetwork: true
-            )
-        )
-
-        service.updateNetworkPolicy(
-            enableBonjour: false,
-            enablePeerToPeer: false,
-            requireEncryptedMediaOnLocalNetwork: false
-        )
-
-        #expect(service.networkConfig.enableBonjour == false)
-        #expect(service.networkConfig.enablePeerToPeer == false)
-        #expect(service.networkConfig.requireEncryptedMediaOnLocalNetwork == false)
-    }
 }

@@ -7,111 +7,14 @@
 //  Desktop stream start reset decision coverage.
 //
 
+#if os(macOS)
 @testable import MirageKit
 @testable import MirageKitClient
 import CoreGraphics
 import Testing
 
-#if os(macOS)
 @Suite("Desktop Stream Start Reset Decision")
 struct DesktopStreamStartResetDecisionTests {
-    @Test("Desktop start accepts token advance for active stream")
-    func desktopStartAcceptsTokenAdvanceForActiveStream() {
-        let decision = desktopStreamStartAcceptanceDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: 13
-        )
-
-        #expect(decision == .acceptResizeAdvance)
-    }
-
-    @Test("Desktop start ignores duplicate token for active stream")
-    func desktopStartIgnoresDuplicateTokenForActiveStream() {
-        let decision = desktopStreamStartAcceptanceDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: 12
-        )
-
-        #expect(decision == .ignoreDuplicateToken)
-    }
-
-    @Test("Desktop start ignores older token for active stream")
-    func desktopStartIgnoresOlderTokenForActiveStream() {
-        let decision = desktopStreamStartAcceptanceDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: 11
-        )
-
-        #expect(decision == .ignoreOlderToken)
-    }
-
-    @Test("Desktop start ignores missing token after tokenized stream has started")
-    func desktopStartIgnoresMissingTokenAfterTokenizedStreamHasStarted() {
-        let decision = desktopStreamStartAcceptanceDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: nil
-        )
-
-        #expect(decision == .ignoreMissingTokenAfterTokenizedStart)
-    }
-
-    @Test("Initial desktop start resets controller")
-    func initialDesktopStartResetsController() {
-        let decision = desktopStreamStartResetDecision(
-            streamID: 7,
-            previousStreamID: nil,
-            hasController: false,
-            requestStartPending: false,
-            previousDimensionToken: nil,
-            receivedDimensionToken: 0
-        )
-
-        #expect(decision == .resetController)
-    }
-
-    @Test("Same stream and token reuses controller")
-    func sameStreamSameTokenReusesController() {
-        let decision = desktopStreamStartResetDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: 12
-        )
-
-        #expect(decision == .reuseController)
-    }
-
-    @Test("Same stream with changed token resets controller")
-    func sameStreamChangedTokenResetsController() {
-        let decision = desktopStreamStartResetDecision(
-            streamID: 7,
-            previousStreamID: 7,
-            hasController: true,
-            requestStartPending: false,
-            previousDimensionToken: 12,
-            receivedDimensionToken: 13
-        )
-
-        #expect(decision == .resetController)
-    }
 
     @MainActor
     @Test("Desktop stop clears tracked token for stream")

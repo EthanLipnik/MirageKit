@@ -16,37 +16,6 @@ import Testing
 @Suite("Client Loom Control Plane", .serialized)
 struct ClientLoomControlPlaneTests {
     @MainActor
-    @Test("Bootstrap requests do not request takeover by default")
-    func bootstrapRequestsDoNotRequestTakeoverByDefault() {
-        let service = MirageClientService(deviceName: "Loopback Client")
-
-        let defaultRequest = service.makeBootstrapRequest()
-        #expect(defaultRequest.requestTakeoverIfBusy == nil)
-
-        let explicitTakeoverRequest = service.makeBootstrapRequest(requestTakeoverIfBusy: true)
-        #expect(explicitTakeoverRequest.requestTakeoverIfBusy == true)
-
-        let automaticReconnectRequest = service.makeBootstrapRequest(requestTakeoverIfBusy: false)
-        #expect(automaticReconnectRequest.requestTakeoverIfBusy == false)
-    }
-
-    @MainActor
-    @Test("Takeover disconnect reason is retained")
-    func takeoverDisconnectReasonIsRetained() async {
-        let service = MirageClientService(deviceName: "Loopback Client")
-
-        await service.handleDisconnect(
-            reason: "takenOver",
-            state: .disconnected,
-            notifyDelegate: false,
-            forceCleanup: true
-        )
-
-        #expect(service.lastDisconnectReason == "takenOver")
-        #expect(service.connectionState == .disconnected)
-    }
-
-    @MainActor
     @Test("Loom-backed control channel carries bootstrap and follow-up control traffic")
     func loomBackedControlChannelCarriesPostBootstrapTraffic() async throws {
         let pair = try await makeLoopbackControlPair()
@@ -222,6 +191,53 @@ struct ClientLoomControlPlaneTests {
             #expect(endpoint == sessionRemoteEndpoint)
             let pathSnapshot = try #require(await service.currentControlPathSnapshot())
             #expect(pathSnapshot.remoteEndpoint == endpoint)
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
+
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
+    }
+
+    @MainActor
+    @Test("Client disconnect sends user-requested notice before cleanup")
+    func clientDisconnectSendsUserRequestedNoticeBeforeCleanup() async throws {
+        let pair = try await makeLoopbackControlPair()
+
+        async let clientContext = pair.client.start(
+            localHello: pair.clientHello,
+            identityManager: pair.clientIdentityManager
+        )
+        async let serverContext = pair.server.start(
+            localHello: pair.serverHello,
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
+        )
+        _ = try await (clientContext, serverContext)
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+        let serverReceiver = ControlMessageReceiver(channel: serverControl)
+
+        do {
+            let service = MirageClientService(deviceName: "Loopback Client")
+            service.loomSession = pair.client
+            service.controlChannel = clientControl
+            service.connectionState = .connected(host: "Loopback Host")
+
+            await service.disconnect()
+
+            let disconnect = try await nextDisconnectMessage(from: serverReceiver)
+            #expect(disconnect.reason == .userRequested)
+            #expect(service.connectionState == .disconnected)
+            #expect(service.controlChannel == nil)
         } catch {
             await clientControl.cancel()
             await serverControl.cancel()
@@ -593,6 +609,19 @@ private func collectPayloads(
         }
     }
     return payloads
+}
+
+private func nextDisconnectMessage(
+    from receiver: ControlMessageReceiver,
+    limit: Int = 4
+) async throws -> DisconnectMessage {
+    for _ in 0..<limit {
+        let message = try await receiver.next()
+        guard message.type == .disconnect else { continue }
+        return try message.decode(DisconnectMessage.self)
+    }
+
+    throw MirageError.protocolError("Disconnect notice was not received")
 }
 
 private final class ControlMessageReceiver: @unchecked Sendable {

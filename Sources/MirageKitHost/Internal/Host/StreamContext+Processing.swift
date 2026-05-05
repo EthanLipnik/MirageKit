@@ -76,8 +76,12 @@ extension StreamContext {
         )
         let lowQueuePressure = queueBytes <= queuePressureBytes
         let hasNonKeyframeDelay = nonKeyframeSendDelayMaxMs > 0
+        let recoveryThresholdMs = max(
+            1.0,
+            frameBudgetMs * senderFrameBudgetDelayRecoveryMultiplier
+        )
         let exceedsFrameBudget = hasNonKeyframeDelay &&
-            nonKeyframeSendDelayMaxMs > max(1.0, frameBudgetMs)
+            nonKeyframeSendDelayMaxMs > recoveryThresholdMs
 
         if exceedsFrameBudget, lowQueuePressure {
             senderFrameBudgetDelayOverrunCount += 1

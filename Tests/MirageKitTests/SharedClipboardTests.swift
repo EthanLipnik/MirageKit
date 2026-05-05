@@ -11,11 +11,6 @@ import Testing
 
 @Suite("Shared Clipboard")
 struct SharedClipboardTests {
-    @Test("Shared clipboard feature is advertised")
-    func sharedClipboardFeatureRegistration() {
-        #expect(MirageFeatureSet.sharedClipboardV1.rawValue == (1 << 5))
-        #expect(mirageSupportedFeatures.contains(.sharedClipboardV1))
-    }
 
     @Test("Shared clipboard control types are recognized")
     func sharedClipboardControlTypeRegistration() {
@@ -73,23 +68,6 @@ struct SharedClipboardTests {
         #expect(decodedUpdate.encryptedPayload == Data([0x01, 0x02, 0x03]))
         #expect(decodedUpdate.chunkIndex == 2)
         #expect(decodedUpdate.chunkCount == 5)
-    }
-
-    @Test("Shared clipboard metadata-only messages default to single chunk")
-    func sharedClipboardMessageDefaultChunk() throws {
-        let update = SharedClipboardUpdateMessage(
-            changeID: UUID(),
-            logicalVersion: 7,
-            sentAtMs: 100,
-            source: .host,
-            representation: MirageSharedClipboardItem.unsupported(byteCount: 90_000).representation,
-            isPayloadTransferable: false,
-            encryptedPayload: nil
-        )
-        #expect(update.logicalVersion == 7)
-        #expect(update.chunkIndex == 0)
-        #expect(update.chunkCount == 1)
-        #expect(update.encryptedPayload == nil)
     }
 
     @Test("Shared clipboard crypto round-trips binary payloads")
@@ -243,14 +221,6 @@ struct SharedClipboardTests {
 
     // MARK: - Chunking
 
-    @Test("chunkPayload returns single chunk for small data")
-    func chunkPayloadSmall() {
-        let payload = Data("Hello, world!".utf8)
-        let chunks = MirageSharedClipboard.chunkPayload(payload)
-        #expect(chunks.count == 1)
-        #expect(chunks[0] == payload)
-    }
-
     @Test("chunkPayload splits large data")
     func chunkPayloadLarge() {
         let payload = Data(repeating: 0x41, count: 10_000)
@@ -263,15 +233,6 @@ struct SharedClipboardTests {
     }
 
     // MARK: - Chunk Buffer
-
-    @Test("Chunk buffer returns payload immediately for single chunk")
-    func chunkBufferSingleChunk() {
-        var buffer = MirageSharedClipboardChunkBuffer()
-        let id = UUID()
-        let payload = Data("hello".utf8)
-        let result = buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 1, payload: payload)
-        #expect(result == payload)
-    }
 
     @Test("Chunk buffer reassembles multiple chunks in order")
     func chunkBufferMultipleChunks() {

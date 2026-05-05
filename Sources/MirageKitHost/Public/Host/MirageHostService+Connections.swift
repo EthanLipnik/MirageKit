@@ -433,6 +433,7 @@ extension MirageHostService {
             mediaSecurityByClientID[client.id] = responseResult.mediaSecurity
             mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
             singleClientSessionID = sessionID
+            streamRegistry.registerInputSession(sessionID, clientID: client.id)
 
             await sendSessionState(to: clientContext)
             await activateDeferredAudioIfNeeded(clientID: client.id)

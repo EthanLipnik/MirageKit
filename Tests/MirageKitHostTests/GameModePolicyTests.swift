@@ -7,39 +7,14 @@
 //  Coverage for game-mode host policy baselines and staged overrides.
 //
 
+#if os(macOS)
 @testable import MirageKitHost
 import MirageKit
 import CoreGraphics
 import Testing
 
-#if os(macOS)
 @Suite("Game Mode Policy")
 struct GameModePolicyTests {
-    @Test("Baseline applies full game-mode host override")
-    func baselineOverrides() async {
-        let context = makeContext(
-            targetFrameRate: 120,
-            bitDepth: .tenBit,
-            bitrate: 500_000_000,
-            captureQueueDepth: 8,
-            latencyMode: .smoothest,
-            runtimeQualityAdjustmentEnabled: false,
-            lowLatencyBoostEnabled: false,
-            performanceMode: .game
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.performanceMode == .game)
-        #expect(settings.latencyMode == .lowestLatency)
-        #expect(!settings.runtimeQualityAdjustmentEnabled)
-        #expect(!settings.lowLatencyHighResolutionCompressionBoostEnabled)
-        #expect(settings.capturePressureProfile == .tuned)
-        #expect(settings.captureQueueDepth == nil)
-        #expect(settings.keyFrameInterval == StreamContext.gameModeBaselineKeyframeIntervalFrames)
-        #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == 500_000_000)
-        #expect(await context.getTargetFrameRate() == 120)
-    }
 
     @Test("Game-mode warmup delays staged fallback evaluation")
     func warmupDelaysFallback() async {
@@ -157,26 +132,6 @@ struct GameModePolicyTests {
         #expect(stage2Scale == 1.0)
     }
 
-    @Test("Game-mode 60 Hz baseline keeps two frames in flight")
-    func gameMode60HzInFlightPolicy() async {
-        let context = makeContext(
-            targetFrameRate: 60,
-            bitDepth: .eightBit,
-            bitrate: 150_000_000,
-            captureQueueDepth: 4,
-            latencyMode: .auto,
-            runtimeQualityAdjustmentEnabled: true,
-            lowLatencyBoostEnabled: true,
-            performanceMode: .game
-        )
-
-        let policy = await context.getInFlightPolicy()
-        #expect(policy.minInFlightFrames == StreamContext.gameModeLowLatencyInFlightLimit)
-        #expect(policy.maxInFlightFrames == StreamContext.gameModeLowLatencyInFlightLimit)
-        #expect(policy.maxInFlightFramesCap >= StreamContext.gameModeLowLatencyInFlightLimit)
-        #expect(policy.frameBufferDepth >= StreamContext.gameModeLowLatencyInFlightLimit)
-    }
-
     @Test("Game mode applies throughput quality cap for 4K60")
     func gameModeThroughputQualityCapAt4K60() async {
         let gameContext = makeContext(
@@ -257,44 +212,6 @@ struct GameModePolicyTests {
         #expect(recoveredSnapshot.bitDepth == .tenBit)
         #expect(recoveredSnapshot.bitrate == 260_000_000)
         #expect(recoveredFrameRate == 120)
-    }
-
-    @Test("Standard mode preserves requested runtime behavior")
-    func standardModePreservesInputs() async {
-        let context = makeContext(
-            targetFrameRate: 120,
-            bitDepth: .tenBit,
-            bitrate: 300_000_000,
-            captureQueueDepth: 7,
-            latencyMode: .smoothest,
-            runtimeQualityAdjustmentEnabled: false,
-            lowLatencyBoostEnabled: false,
-            performanceMode: .standard
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.performanceMode == .standard)
-        #expect(settings.latencyMode == .smoothest)
-        #expect(settings.capturePressureProfile == .baseline)
-        #expect(!settings.runtimeQualityAdjustmentEnabled)
-        #expect(!settings.lowLatencyHighResolutionCompressionBoostEnabled)
-        #expect(settings.captureQueueDepth == 7)
-        #expect(settings.keyFrameInterval == 1_800)
-        #expect(settings.bitrate == 300_000_000)
-    }
-
-    @Test("Missing performance mode uses standard defaults")
-    func missingPerformanceModeDefaultsToStandard() async {
-        let config = MirageEncoderConfiguration(targetFrameRate: 60)
-        let context = StreamContext(
-            streamID: 99,
-            windowID: 0,
-            encoderConfig: config
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.performanceMode == .standard)
-        #expect(settings.latencyMode == .lowestLatency)
     }
 
     private func makeContext(

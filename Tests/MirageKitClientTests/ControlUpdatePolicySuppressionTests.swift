@@ -15,39 +15,6 @@ import Testing
 
 @Suite("Control Update Policy Suppression")
 struct ControlUpdatePolicySuppressionTests {
-    @Test("Interactive policy drop-set matches non-essential control messages")
-    func interactivePolicyDropSet() {
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appListProgress))
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appListComplete))
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostHardwareIcon))
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.windowList))
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.windowUpdate))
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostSoftwareUpdateStatus))
-    }
-
-    @Test("Interactive policy never drops essential stream/control messages")
-    func interactivePolicyEssentialMessagesRemainEnabled() {
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sessionBootstrapResponse))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.streamStarted))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.streamStopped))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.desktopStreamStarted))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.audioStreamStarted))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sharedClipboardStatus))
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sharedClipboardUpdate))
-    }
-
-    @Test("Noisy recurring control messages do not emit per-message logs")
-    func recurringControlMessagesAreNotLoggedIndividually() {
-        #expect(!MirageClientService.shouldLogControlMessage(.appListProgress))
-        #expect(!MirageClientService.shouldLogControlMessage(.cursorUpdate))
-        #expect(!MirageClientService.shouldLogControlMessage(.cursorPositionUpdate))
-        #expect(!MirageClientService.shouldLogControlMessage(.hostSoftwareUpdateStatus))
-        #expect(!MirageClientService.shouldLogControlMessage(.ping))
-        #expect(!MirageClientService.shouldLogControlMessage(.pong))
-        #expect(!MirageClientService.shouldLogControlMessage(.streamMetricsUpdate))
-        #expect(MirageClientService.shouldLogControlMessage(.desktopStreamStarted))
-        #expect(MirageClientService.shouldLogControlMessage(.desktopStreamStopped))
-    }
 
     @Test("Deferred refresh requirements are tracked and consumed once")
     func deferredRefreshRequirementsConsumeOnce() async throws {

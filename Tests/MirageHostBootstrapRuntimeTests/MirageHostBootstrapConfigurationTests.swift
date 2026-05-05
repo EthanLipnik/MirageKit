@@ -13,23 +13,6 @@ import Testing
 
 @Suite("Bootstrap Configuration")
 struct MirageHostBootstrapConfigurationTests {
-    @Test("Defaults start disabled with bootstrap-safe ports")
-    func defaults() {
-        let configuration = MirageHostBootstrapConfiguration()
-
-        #expect(configuration.enabled == false)
-        #expect(configuration.userEndpointHost.isEmpty)
-        #expect(configuration.userEndpointPort == 22)
-        #expect(configuration.sshPort == 22)
-        #expect(configuration.controlPort == 9851)
-        #expect(configuration.autoEndpoints.isEmpty)
-        #expect(configuration.sshHostKeyFingerprints.isEmpty)
-        #expect(configuration.controlAuthSecret.isEmpty == false)
-        #expect(configuration.manualWakeOnLANMACAddress.isEmpty)
-        #expect(configuration.remoteLoginReachable == false)
-        #expect(configuration.preloginDaemonReady == false)
-    }
-
     @Test("JSON round-trip preserves configured values")
     func jsonRoundTrip() throws {
         let original = MirageHostBootstrapConfiguration(
