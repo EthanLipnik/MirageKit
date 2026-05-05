@@ -911,4 +911,37 @@ struct ClientConnectionEndpointPlanningTests {
 
         #expect(reason == nil)
     }
+
+    @MainActor
+    @Test("Local network mismatch reason uses Proximity Connect wording")
+    func localNetworkMismatchReasonUsesProximityConnectWording() throws {
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: "altair.local", port: 6100),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                metadata: [
+                    "mirage.net.wifi": "24:hostwifi",
+                ]
+            )
+        )
+
+        let reason = MirageClientService.localNetworkMismatchReason(
+            for: host,
+            classification: .timeout,
+            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:clientwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let message = try #require(reason)
+
+        #expect(message.contains("Proximity Connect"))
+        #expect(message.contains("Network settings"))
+        #expect(!message.lowercased().contains("peer-to-peer"))
+    }
 }

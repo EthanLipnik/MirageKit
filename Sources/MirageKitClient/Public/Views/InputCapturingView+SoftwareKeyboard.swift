@@ -28,6 +28,10 @@ extension InputCapturingView {
         inputView.onFirstResponderChanged = { [weak self] isFirstResponder in
             self?.handleSoftwareKeyboardResponderChange(isFirstResponder: isFirstResponder)
         }
+        inputView.onAttachmentChanged = { [weak self] isAttached in
+            guard isAttached else { return }
+            self?.requestResponderRecovery(.didMoveToWindow)
+        }
 
         let accessoryView = SoftwareKeyboardAccessoryView()
         accessoryView.onModifierToggle = { [weak self] key, isSelected in
@@ -65,7 +69,10 @@ extension InputCapturingView {
     func updateSoftwareKeyboardVisibility(allowDismissalReset: Bool = false) {
         guard let inputView = softwareKeyboardField else { return }
         let wantsSoftwareKeyboard = softwareKeyboardVisible
-        if allowDismissalReset && wantsSoftwareKeyboard && canPresentSoftwareKeyboardField(inputView) {
+        if allowDismissalReset,
+           wantsSoftwareKeyboard,
+           !softwareKeyboardDismissalPending,
+           canPresentSoftwareKeyboardField(inputView) {
             softwareKeyboardDismissalPending = false
         }
 
@@ -97,14 +104,12 @@ extension InputCapturingView {
     }
 
     func clearSoftwareKeyboardState() {
-        if softwareKeyboardVisible || isSoftwareKeyboardResponderActive {
-            softwareKeyboardDismissalPending = true
-        }
         if softwareKeyboardField?.isFirstResponder == true {
             softwareKeyboardField?.resignFirstResponder()
         } else {
             handleSoftwareKeyboardResponderChange(isFirstResponder: false)
         }
+        cancelPendingResponderRecovery()
     }
 
     func updateSoftwareModifierButtons() {
@@ -168,14 +173,15 @@ extension InputCapturingView {
             return
         }
 
-        if softwareKeyboardVisible {
-            softwareKeyboardDismissalPending = true
-        }
         softwareHeldModifiers = []
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
         refreshCursorUpdates(force: true)
-        notifySoftwareKeyboardVisibilityChanged(false)
+        if softwareKeyboardVisible && !softwareKeyboardDismissalPending {
+            requestResponderRecovery(.focusChanged)
+        } else {
+            notifySoftwareKeyboardVisibilityChanged(false)
+        }
     }
 
     func notifySoftwareKeyboardVisibilityChanged(_ isVisible: Bool) {
@@ -225,6 +231,7 @@ final class SoftwareKeyboardInputView: UITextField {
     var onInsertText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
     var onFirstResponderChanged: ((Bool) -> Void)?
+    var onAttachmentChanged: ((Bool) -> Void)?
 
     override var hasText: Bool { true }
 
@@ -252,6 +259,11 @@ final class SoftwareKeyboardInputView: UITextField {
             onFirstResponderChanged?(false)
         }
         return didResignFirstResponder
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onAttachmentChanged?(window != nil)
     }
 
     override func insertText(_ text: String) {

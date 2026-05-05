@@ -330,6 +330,8 @@ actor StreamController {
     /// Task that periodically requests keyframes during decoder recovery
     var keyframeRecoveryTask: Task<Void, Never>?
     var keyframeRecoveryAttempt: Int = 0
+    var recoveryCoordinator = RecoveryCoordinator()
+    var realtimeMediaSession: RealtimeMediaSession
     /// One-shot probe that verifies decode/presentation progress after passive->active promotion.
     var tierPromotionProbeTask: Task<Void, Never>?
     var memoryBudgetRecoveryTask: Task<Void, Never>?
@@ -422,8 +424,11 @@ actor StreamController {
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
+    var mediaFeedbackTask: Task<Void, Never>?
+    var mediaFeedbackSequence: UInt64 = 0
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let metricsDispatchInterval: Duration = .milliseconds(500)
+    static let mediaFeedbackDispatchInterval: Duration = .milliseconds(75)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     var awdlTransportActive: Bool = false
     var adaptiveJitterHoldMs: Int = 0
@@ -458,6 +463,8 @@ actor StreamController {
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
     /// The delegate should read from MirageRenderStreamStore if it needs the actual frame.
     private(set) var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)?
+    /// Called with receiver-side realtime media feedback for host-owned adaptation.
+    private(set) var onMediaFeedback: (@MainActor @Sendable (ReceiverMediaFeedbackMessage) -> Void)?
 
     /// Called when the first frame is decoded for a stream.
     private(set) var onFirstFrameDecoded: (@MainActor @Sendable () -> Void)?
@@ -484,6 +491,7 @@ actor StreamController {
         onResizeEvent: (@MainActor @Sendable (ResizeEvent) -> Void)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
+        onMediaFeedback: (@MainActor @Sendable (ReceiverMediaFeedbackMessage) -> Void)? = nil,
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onPostResizeFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
@@ -496,6 +504,7 @@ actor StreamController {
         self.onResizeEvent = onResizeEvent
         self.onResizeStateChanged = onResizeStateChanged
         self.onFrameDecoded = onFrameDecoded
+        self.onMediaFeedback = onMediaFeedback
         self.onFirstFrameDecoded = onFirstFrameDecoded
         self.onPostResizeFrameDecoded = onPostResizeFrameDecoded
         self.onFirstFramePresented = onFirstFramePresented
@@ -508,9 +517,29 @@ actor StreamController {
     func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
         guard clientRecoveryStatus != status else { return }
         clientRecoveryStatus = status
+        realtimeMediaSession.setRecoveryState(Self.mediaFeedbackRecoveryState(for: status))
         guard let onRecoveryStatusChanged else { return }
         await MainActor.run {
             onRecoveryStatusChanged(status)
+        }
+    }
+
+    nonisolated static func mediaFeedbackRecoveryState(
+        for status: MirageStreamClientRecoveryStatus
+    ) -> MirageMediaFeedbackRecoveryState {
+        switch status {
+        case .idle:
+            .idle
+        case .startup:
+            .startup
+        case .tierPromotionProbe:
+            .tierPromotionProbe
+        case .keyframeRecovery:
+            .keyframeRecovery
+        case .hardRecovery:
+            .hardRecovery
+        case .postResizeAwaitingFirstFrame:
+            .postResizeAwaitingFirstFrame
         }
     }
 
@@ -526,6 +555,7 @@ actor StreamController {
         self.streamID = streamID
         decoder = VideoDecoder()
         reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: maxPayloadSize)
+        realtimeMediaSession = RealtimeMediaSession(streamID: streamID, targetFrameRate: 60)
         self.nowProvider = nowProvider
         if let applicationForegroundProvider {
             self.applicationForegroundProvider = applicationForegroundProvider
@@ -564,6 +594,8 @@ actor StreamController {
         lastRecoveryRequestDispatchTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        recoveryCoordinator.reset()
+        realtimeMediaSession = RealtimeMediaSession(streamID: streamID, targetFrameRate: decodeSchedulerTargetFPS)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
         cancelMemoryBudgetRecoveryTask()
@@ -631,6 +663,7 @@ actor StreamController {
             stopFirstPresentedFrameMonitor()
         }
         startMetricsReporting()
+        startMediaFeedbackReporting()
     }
 
     func startFrameProcessingPipeline() async {
@@ -1086,12 +1119,14 @@ actor StreamController {
         // Stop frame processing - finish stream and cancel task
         stopFrameProcessingPipeline()
         stopMetricsReporting()
+        stopMediaFeedbackReporting()
         stopFreezeMonitor()
         stopFirstPresentedFrameMonitor()
         onKeyframeNeeded = nil
         onResizeEvent = nil
         onResizeStateChanged = nil
         onFrameDecoded = nil
+        onMediaFeedback = nil
         onFirstFrameDecoded = nil
         onPostResizeFrameDecoded = nil
         onFirstFramePresented = nil
@@ -1109,6 +1144,8 @@ actor StreamController {
         lastRecoveryRequestTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        recoveryCoordinator.reset()
+        realtimeMediaSession = RealtimeMediaSession(streamID: streamID, targetFrameRate: decodeSchedulerTargetFPS)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
         latestHostMetricsMessage = nil
@@ -1149,6 +1186,77 @@ actor StreamController {
     func stopMetricsReporting() {
         metricsTask?.cancel()
         metricsTask = nil
+    }
+
+    private func startMediaFeedbackReporting() {
+        mediaFeedbackTask?.cancel()
+        mediaFeedbackSequence = 0
+        mediaFeedbackTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: Self.mediaFeedbackDispatchInterval)
+                } catch {
+                    break
+                }
+                await dispatchMediaFeedback()
+            }
+        }
+    }
+
+    func stopMediaFeedbackReporting() {
+        mediaFeedbackTask?.cancel()
+        mediaFeedbackTask = nil
+        mediaFeedbackSequence = 0
+    }
+
+    private func dispatchMediaFeedback() async {
+        guard isRunning, !isStopping else { return }
+        let now = currentTime()
+        let frameSnapshot = metricsTracker.snapshot(now: now)
+        let reassemblerMetrics = reassembler.snapshotMetrics()
+        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID, now: now)
+        latestRenderTelemetrySnapshot = renderTelemetry
+        mediaFeedbackSequence &+= 1
+
+        let decodeBacklogFrames = queuedFrames.count + pendingOrderedFrames.count
+        let presentationBacklogFrames = renderTelemetry.pendingFrameCount
+        let queueEstimateFrames = reassemblerMetrics.pendingFrameCount +
+            decodeBacklogFrames +
+            presentationBacklogFrames
+        let ackRanges: [MediaFeedbackFrameRange] = reassemblerMetrics.framesDelivered > 0
+            ? [MediaFeedbackFrameRange(
+                startFrame: reassemblerMetrics.lastCompletedFrame,
+                endFrame: reassemblerMetrics.lastCompletedFrame
+            )]
+            : []
+        let feedback = ReceiverMediaFeedbackMessage(
+            streamID: streamID,
+            sequence: mediaFeedbackSequence,
+            sentAtUptime: now,
+            targetFPS: max(1, renderTelemetry.targetFPS),
+            ackRanges: ackRanges,
+            lostFrameCount: reassemblerMetrics.droppedFrames + frameSnapshot.queueDroppedFrames,
+            discardedPacketCount: reassemblerMetrics.discardedPackets,
+            jitterP95Ms: frameSnapshot.receivedFrameIntervalP95Ms,
+            jitterP99Ms: frameSnapshot.receivedFrameIntervalP99Ms,
+            queueEstimateFrames: queueEstimateFrames,
+            reassemblyBacklogFrames: reassemblerMetrics.pendingFrameCount,
+            reassemblyBacklogKeyframes: reassemblerMetrics.pendingKeyframeCount,
+            reassemblyBacklogBytes: reassemblerMetrics.pendingFrameBytes,
+            decodeBacklogFrames: decodeBacklogFrames,
+            presentationBacklogFrames: presentationBacklogFrames,
+            decodedFPS: frameSnapshot.decodedFPS,
+            receivedFPS: frameSnapshot.receivedFPS,
+            rendererAcceptedFPS: renderTelemetry.layerAcceptedFPS,
+            rendererPresentedFPS: renderTelemetry.uniqueSubmittedFPS,
+            recoveryState: Self.mediaFeedbackRecoveryState(for: clientRecoveryStatus)
+        )
+        realtimeMediaSession.recordFeedback(feedback)
+        let callback = onMediaFeedback
+        await MainActor.run {
+            callback?(feedback)
+        }
     }
 
     private func dispatchMetrics() async {

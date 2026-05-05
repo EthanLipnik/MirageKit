@@ -21,7 +21,6 @@ struct EncoderSettingsSnapshot: Sendable {
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
-    let performanceMode: MirageStreamPerformanceMode
     let runtimeQualityAdjustmentEnabled: Bool
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
@@ -249,7 +248,6 @@ extension StreamContext {
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
-            performanceMode: performanceMode,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             capturePressureProfile: capturePressureProfile,
@@ -261,10 +259,6 @@ extension StreamContext {
         )
     }
 
-    func getPerformanceMode() -> MirageStreamPerformanceMode {
-        performanceMode
-    }
-
     func logBitrateContract(event: String) {
         let enteredText = enteredTargetBitrate.map(String.init) ?? "nil"
         let requestedText = requestedTargetBitrate.map(String.init) ?? "nil"
@@ -274,14 +268,6 @@ extension StreamContext {
         MirageLogger.metrics(
             "event=bitrate_contract stream=\(streamID) phase=\(event) entered=\(enteredText) requested=\(requestedText) current=\(currentText) startup=\(startupText) ceiling=\(ceilingText)"
         )
-    }
-
-    func getGameModeStage() -> GameModeStage {
-        gameModeStage
-    }
-
-    func getGameModeStreamStartTime() -> CFAbsoluteTime {
-        gameModeStreamStartTime
     }
 
     func getEncoderRuntimeValidationSnapshot() async -> VideoEncoder.RuntimeValidationSnapshot? {

@@ -331,7 +331,8 @@ public class MirageSampleBufferView: UIView {
 
     func updatePresentationDisplayLinkFrameRate() {
         guard let presentationDisplayLink else { return }
-        let hostFPS = MirageRenderModePolicy.normalizedTargetFPS(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
+        let rawHostFPS = MirageRenderModePolicy.normalizedTargetFPS(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
+        let hostFPS = streamPresentationTier == .passiveSnapshot ? rawHostFPS : max(20, rawHostFPS)
         let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : hostFPS
         presentationDisplayLink.preferredFrameRateRange = CAFrameRateRange(
             minimum: Float(localFPS),

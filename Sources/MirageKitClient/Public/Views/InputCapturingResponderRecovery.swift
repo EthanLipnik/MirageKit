@@ -23,6 +23,7 @@ enum InputCapturingResponderRecoveryTrigger: String {
     case callbacksConfigured = "callbacks_configured"
     case streamIdentityUpdated = "stream_identity_updated"
     case hardwareKeyboardPresenceChanged = "hardware_keyboard_presence_changed"
+    case focusChanged = "focus_changed"
     case interaction = "interaction"
 }
 
@@ -109,6 +110,7 @@ enum InputCapturingResponderRecoveryPolicy {
              .callbacksConfigured,
              .streamIdentityUpdated,
              .hardwareKeyboardPresenceChanged,
+             .focusChanged,
              .interaction:
             return false
         }

@@ -96,7 +96,6 @@ extension MirageHostService {
         enteredBitrate: Int?,
         bitrate: Int?,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool?,
         lowLatencyHighResolutionCompressionBoost: Bool,
         disableResolutionCap: Bool,
@@ -275,11 +274,7 @@ extension MirageHostService {
                     "\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px"
             )
         }
-        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
-            .tuned
-        } else {
-            resolvedDesktopCapturePressureProfile()
-        }
+        let capturePressureProfile = resolvedDesktopCapturePressureProfile()
         MirageLogger.host(
             "Desktop capture pressure profile: \(capturePressureProfile.rawValue)"
         )
@@ -681,7 +676,6 @@ extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
-            performanceMode: performanceMode,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
@@ -694,11 +688,10 @@ extension MirageHostService {
         }
         await streamContext.logBitrateContract(event: "start")
         logDesktopStartStep("stream context created (\(streamID))")
-        MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
-        if performanceMode != .game, allowRuntimeQualityAdjustment == false {
+        if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for desktop stream \(streamID)")
         }
-        if performanceMode != .game, !lowLatencyHighResolutionCompressionBoost {
+        if !lowLatencyHighResolutionCompressionBoost {
             MirageLogger.host("Low-latency high-res compression boost disabled for desktop stream \(streamID)")
         }
         let metricsClientID = clientContext.client.id
@@ -1034,7 +1027,6 @@ extension MirageHostService {
             streamID: streamID,
             requestedPixelResolution: captureResolution
         )
-        MirageInstrumentation.record(.hostStreamDesktopStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
     }
 
     private func ensureDesktopStreamStartupCanContinue(

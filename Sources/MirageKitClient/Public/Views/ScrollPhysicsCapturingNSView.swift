@@ -146,6 +146,14 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    /// Whether macOS Input Monitoring backed shortcut forwarding is enabled.
+    var shortcutForwardingEnabled: Bool = true {
+        didSet {
+            guard shortcutForwardingEnabled != oldValue else { return }
+            handleInputActivityStateChange()
+        }
+    }
+
     /// The actual content we display (stays pinned to bounds)
     let contentView: NSView
 
@@ -302,7 +310,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func handleInputActivityStateChange() {
         if isInputProcessingActive {
             updateCursorLockMode()
-            shortcutForwardingEventTap.start()
+            if shortcutForwardingEnabled {
+                shortcutForwardingEventTap.start()
+            } else {
+                shortcutForwardingEventTap.stop()
+            }
             startModifierPollingIfNeeded()
             syncModifierStateFromSystem(force: true)
         } else {

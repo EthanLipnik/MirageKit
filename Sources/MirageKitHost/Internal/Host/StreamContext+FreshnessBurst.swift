@@ -77,7 +77,7 @@ extension StreamContext {
     }
 
     var usesSoftSenderDelaySmoothing: Bool {
-        performanceMode == .standard && (latencyMode == .auto || latencyMode == .smoothest)
+        latencyMode == .auto || latencyMode == .smoothest
     }
 
     func enterSoftFreshnessDrainIfNeeded(frameBudgetMs: Double, reason: String) {

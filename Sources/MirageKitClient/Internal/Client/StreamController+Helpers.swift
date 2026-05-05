@@ -26,9 +26,58 @@ extension StreamController {
 
     // MARK: - Private Helpers
 
+    nonisolated static func frameIntervalSeconds(targetFPS: Int) -> CFAbsoluteTime {
+        1.0 / Double(max(1, targetFPS))
+    }
+
+    nonisolated static func keyframeRequestCoalesceInterval(targetFPS: Int) -> CFAbsoluteTime {
+        let frameScaledInterval = frameIntervalSeconds(targetFPS: targetFPS) * 24.0
+        return max(recoveryRequestDispatchCooldown, min(1.0, frameScaledInterval))
+    }
+
+    nonisolated static func keyframeProgressFreshThreshold(targetFPS: Int) -> CFAbsoluteTime {
+        let frameScaledThreshold = frameIntervalSeconds(targetFPS: targetFPS) * 18.0
+        return min(0.50, max(0.15, frameScaledThreshold))
+    }
+
+    nonisolated static func keyframeRecoveryEpisodeDeadline(targetFPS: Int) -> CFAbsoluteTime {
+        let frameScaledDeadline = frameIntervalSeconds(targetFPS: targetFPS) * 120.0
+        return min(4.0, max(1.5, frameScaledDeadline))
+    }
+
+    nonisolated static func keyframeRecoveryRetryDelay(
+        attempt: Int,
+        targetFPS: Int
+    )
+    -> CFAbsoluteTime {
+        let frameInterval = frameIntervalSeconds(targetFPS: targetFPS)
+        switch attempt {
+        case 0:
+            return min(1.0, max(0.25, frameInterval * 18.0))
+        case 1:
+            return min(1.5, max(0.50, frameInterval * 36.0))
+        default:
+            return min(2.0, max(1.00, frameInterval * 60.0))
+        }
+    }
+
+    nonisolated static func duration(seconds: CFAbsoluteTime) -> Duration {
+        .milliseconds(Int64(max(1, Int((seconds * 1000).rounded(.up)))))
+    }
+
     func updateHostMetrics(_ metrics: StreamMetricsMessage?) {
         latestHostMetricsMessage = metrics
         latestHostCadencePressureSample = metrics.map(HostCadencePressureDiagnosticSample.init(metrics:))
+        if let targetFrameRate = metrics?.targetFrameRate {
+            reassembler.setTargetFrameRate(targetFrameRate)
+        }
+    }
+
+    func handleKeyframeRecoveryAck(_ ack: KeyframeRecoveryAckMessage) {
+        recoveryCoordinator.recordHostAck(ack, now: currentTime())
+        if ack.accepted {
+            realtimeMediaSession.setRecoveryState(.keyframeRecovery)
+        }
     }
 
     func maybeLogStreamingAnomalyDiagnostic(
@@ -266,6 +315,7 @@ extension StreamController {
 
     func clearTransientRecoveryStateAfterPresentationProgress() async {
         cancelMemoryBudgetRecoveryTask()
+        recoveryCoordinator.recordProgress()
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
 
         switch clientRecoveryStatus {
@@ -461,7 +511,9 @@ extension StreamController {
 
         if reassembler.isAwaitingKeyframe(),
            let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
-           now - pendingKeyframeProgress.lastProgressTime < Self.firstPresentedFramePacketStallThreshold {
+           now - pendingKeyframeProgress.lastProgressTime < Self.keyframeProgressFreshThreshold(
+               targetFPS: decodeSchedulerTargetFPS
+           ) {
             return
         }
 
@@ -640,6 +692,7 @@ extension StreamController {
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
             )
+            await startKeyframeRecoveryLoopIfNeeded()
             await requestKeyframeRecovery(reason: .frameLoss)
             return
         }
@@ -707,7 +760,9 @@ extension StreamController {
         guard currentSequence <= baselineSequence else { return }
 
         if let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
-           now - pendingKeyframeProgress.lastProgressTime < Self.firstPresentedFramePacketStallThreshold {
+           now - pendingKeyframeProgress.lastProgressTime < Self.keyframeProgressFreshThreshold(
+               targetFPS: decodeSchedulerTargetFPS
+           ) {
             return
         }
 
@@ -717,22 +772,62 @@ extension StreamController {
         await requestKeyframeRecovery(reason: .memoryBudget)
     }
 
-    func requestKeyframeRecovery(reason: RecoveryReason) async {
+    @discardableResult
+    func requestKeyframeRecovery(reason: RecoveryReason) async -> Bool {
         let now = currentTime()
+        let coalesceInterval = Self.keyframeRequestCoalesceInterval(targetFPS: decodeSchedulerTargetFPS)
         if lastRecoveryRequestDispatchTime > 0,
-           now - lastRecoveryRequestDispatchTime < Self.recoveryRequestDispatchCooldown {
-            return
+           now - lastRecoveryRequestDispatchTime < coalesceInterval {
+            return false
+        }
+        if shouldDeferKeyframeRequestForPendingProgress(now: now, reason: reason) {
+            return false
+        }
+        let recoveryDecision = recoveryCoordinator.requestAction(
+            now: now,
+            reason: reason.logLabel,
+            targetFPS: decodeSchedulerTargetFPS,
+            forceNewEpisode: reason == .manualRecovery || reason == .startupKeyframeTimeout
+        )
+        switch recoveryDecision {
+        case .dispatch:
+            break
+        case let .wait(deadline):
+            let remainingMs = Int(max(0, deadline - now) * 1000)
+            MirageLogger.client(
+                "Recovery keyframe deferred until episode deadline " +
+                    "(\(reason.logLabel), \(remainingMs)ms remaining) for stream \(streamID)"
+            )
+            return false
         }
         lastRecoveryRequestDispatchTime = now
+        lastRecoveryRequestTime = now
+        if keyframeRecoveryTask != nil, reason != .keyframeRecoveryLoop {
+            keyframeRecoveryAttempt = max(1, keyframeRecoveryAttempt)
+        }
 
         recoveryRequestTimestamps.append(now)
         trimOverloadWindow(now: now)
         maybeSignalAdaptiveFallback(now: now)
-        guard let handler = onKeyframeNeeded else { return }
+        guard let handler = onKeyframeNeeded else { return false }
         MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
         await MainActor.run {
             handler()
         }
+        return true
+    }
+
+    private func shouldDeferKeyframeRequestForPendingProgress(
+        now: CFAbsoluteTime,
+        reason: RecoveryReason
+    ) -> Bool {
+        guard reason != .manualRecovery else { return false }
+        guard reassembler.isAwaitingKeyframe(),
+              let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress() else {
+            return false
+        }
+        return now - pendingKeyframeProgress.lastProgressTime <
+            Self.keyframeProgressFreshThreshold(targetFPS: decodeSchedulerTargetFPS)
     }
 
     func handleDecodeErrorThresholdSignal() async {
@@ -993,15 +1088,58 @@ extension StreamController {
         keyframeRecoveryTask = nil
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        recoveryCoordinator.recordProgress()
         if clientRecoveryStatus == .keyframeRecovery {
             await setClientRecoveryStatus(.idle)
         }
     }
 
     private func runKeyframeRecoveryLoop() async {
-        // Keyframe recovery is driven exclusively by decode errors.
-        // The escalating retry loop (250ms → 500ms → 1s) was requesting keyframes
-        // independently of actual decode failures.
+        let episodeStartedAt = currentTime()
+        let episodeDeadline = episodeStartedAt + Self.keyframeRecoveryEpisodeDeadline(
+            targetFPS: decodeSchedulerTargetFPS
+        )
+        defer { keyframeRecoveryTask = nil }
+
+        while !Task.isCancelled {
+            guard presentationTier == .activeLive else { return }
+            guard reassembler.isAwaitingKeyframe() else { return }
+
+            let now = currentTime()
+            if now >= episodeDeadline ||
+                keyframeRecoveryAttempt >= Self.activeRecoveryMaxKeyframeAttempts {
+                MirageLogger.client(
+                    "Keyframe recovery episode ended for stream \(streamID) " +
+                        "(attempts=\(keyframeRecoveryAttempt), elapsedMs=\(Int((now - episodeStartedAt) * 1000)))"
+                )
+                return
+            }
+
+            let retryInterval = Self.keyframeRecoveryRetryDelay(
+                attempt: keyframeRecoveryAttempt,
+                targetFPS: decodeSchedulerTargetFPS
+            )
+            let nextRequestTime = lastRecoveryRequestTime > 0
+                ? lastRecoveryRequestTime + retryInterval
+                : now + retryInterval
+            let sleepUntil = min(nextRequestTime, episodeDeadline)
+            let sleepSeconds = sleepUntil - now
+            if sleepSeconds > 0 {
+                do {
+                    try await Task.sleep(for: Self.duration(seconds: sleepSeconds))
+                } catch {
+                    return
+                }
+                continue
+            }
+
+            let didDispatch = await requestKeyframeRecovery(reason: .keyframeRecoveryLoop)
+            if didDispatch {
+                keyframeRecoveryAttempt &+= 1
+            } else {
+                lastRecoveryRequestTime = currentTime()
+            }
+        }
     }
 
     private func startFreezeMonitorIfNeeded() {

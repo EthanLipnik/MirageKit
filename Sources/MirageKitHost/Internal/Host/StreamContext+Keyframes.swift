@@ -351,7 +351,8 @@ extension StreamContext {
     }
 
     /// Request a keyframe from the encoder.
-    func requestKeyframe() async {
+    @discardableResult
+    func requestKeyframe() async -> KeyframeRecoveryAckMessage {
         let now = CFAbsoluteTimeGetCurrent()
         resetRecoveryWindowIfNeeded(now: now)
 
@@ -359,19 +360,21 @@ extension StreamContext {
         let useHardRecovery = nextCount >= hardRecoveryThreshold
         let reason = useHardRecovery ? "Keyframe request (hard)" : "Keyframe request (soft)"
 
-        if coalesceKeyframeRecoveryForFreshnessBurst(reason: reason) { return }
-
-        let requiresReset = useHardRecovery && performanceMode != .game
+        if coalesceKeyframeRecoveryForFreshnessBurst(reason: reason) {
+            return keyframeRecoveryAck(accepted: true, reason: "\(reason):freshness-burst")
+        }
 
         let queued = queueKeyframe(
             reason: reason,
             checkInFlight: true,
             requiresFlush: useHardRecovery,
-            requiresReset: requiresReset,
-            advanceEpochOnReset: requiresReset,
+            requiresReset: useHardRecovery,
+            advanceEpochOnReset: useHardRecovery,
             urgent: true
         )
-        guard queued else { return }
+        guard queued else {
+            return keyframeRecoveryAck(accepted: false, reason: "\(reason):throttled")
+        }
 
         recoveryRequestCount = nextCount
         if useHardRecovery {
@@ -389,6 +392,24 @@ extension StreamContext {
                 "Recovery request=\(recoveryRequestCount) window=\(Int(softRecoveryWindow))s " +
                     "soft=\(softRecoveryCount) hard=\(hardRecoveryCount)"
             )
+        return keyframeRecoveryAck(accepted: true, reason: reason)
+    }
+
+    private func keyframeRecoveryAck(accepted: Bool, reason: String) -> KeyframeRecoveryAckMessage {
+        let now = CFAbsoluteTimeGetCurrent()
+        let deadlineMs: Int
+        if keyframeSendDeadline > now {
+            deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
+        } else {
+            deadlineMs = Int((keyframeRequestCooldown * 1000).rounded(.up))
+        }
+        return KeyframeRecoveryAckMessage(
+            streamID: streamID,
+            accepted: accepted,
+            hostEpoch: epoch,
+            deadlineMilliseconds: deadlineMs,
+            reason: reason
+        )
     }
 
     /// Force an immediate keyframe by flushing the encoder pipeline.

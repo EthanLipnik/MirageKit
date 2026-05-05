@@ -759,7 +759,6 @@ extension MirageHostService {
             let stageEncoder = VideoEncoder(
                 configuration: baseConfiguration,
                 latencyMode: .lowestLatency,
-                performanceMode: .standard,
                 streamKind: .desktop,
                 maximizePowerEfficiencyEnabled: lowPowerEnabled
             )

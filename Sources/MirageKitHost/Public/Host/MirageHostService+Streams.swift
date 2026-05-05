@@ -156,7 +156,6 @@ public extension MirageHostService {
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = false,
         disableResolutionCap: Bool = false,
@@ -264,11 +263,7 @@ public extension MirageHostService {
         }
 
         // Create stream context with capture and encoding
-        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
-            .tuned
-        } else {
-            .baseline
-        }
+        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let resolvedAudioConfiguration = audioConfiguration ?? .default
         let context = StreamContext(
             streamID: streamID,
@@ -285,7 +280,6 @@ public extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
-            performanceMode: performanceMode,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
@@ -293,14 +287,11 @@ public extension MirageHostService {
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
         }
-        MirageLogger.host("Performance mode for stream \(streamID): \(performanceMode.displayName)")
-        if performanceMode != .game {
-            MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
-        }
-        if performanceMode != .game, allowRuntimeQualityAdjustment == false {
+        MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
+        if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }
-        if performanceMode != .game, !lowLatencyHighResolutionCompressionBoost {
+        if !lowLatencyHighResolutionCompressionBoost {
             MirageLogger.host("Low-latency high-res compression boost disabled for stream \(streamID)")
         }
         // Reserve stream/window ownership before the first await after binding resolution.
@@ -508,7 +499,6 @@ public extension MirageHostService {
             app: session.window.application,
             usesVirtualDisplay: isStreamUsingVirtualDisplay(windowID: session.window.id)
         )
-        MirageInstrumentation.record(.hostStreamWindowStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
         if isStreamUsingVirtualDisplay(windowID: session.window.id) {
             ensureWindowVisibleFrameMonitor(streamID: streamID)
         }

@@ -17,8 +17,8 @@ private final class PendingFrameState: @unchecked Sendable {
 @MainActor
 @Suite("Render Presentation Scheduler")
 struct RenderPresentationSchedulerTests {
-    @Test("Active live frame arrival coalesces into one scheduled pass per turn")
-    func activeLiveFrameArrivalCoalescesIntoOneScheduledPassPerTurn() {
+    @Test("Active live frame arrival waits for display clock")
+    func activeLiveFrameArrivalWaitsForDisplayClock() {
         let streamID: StreamID = 901
         var submitCount = 0
         var scheduledCallbacks: [@MainActor () -> Void] = []
@@ -42,47 +42,42 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleFrameAvailable(referenceTime: 3)
 
         #expect(submitCount == 0)
-        #expect(scheduledCallbacks.count == 1)
-        let callback = scheduledCallbacks.removeFirst()
-        callback()
+        #expect(scheduledCallbacks.isEmpty)
+
+        scheduler.setDisplayClockActive(true)
+        scheduler.handleDisplayTick(referenceTime: 4)
         #expect(submitCount == 1)
     }
 
-    @Test("Active live scheduled pass queues exactly one follow-up when a newer frame is pending")
-    func activeLiveScheduledPassQueuesOneFollowUpWhenNewerFrameIsPending() {
+    @Test("Active live display ticks are the only active submission path")
+    func activeLiveDisplayTicksAreOnlyActiveSubmissionPath() {
         let streamID: StreamID = 902
         var submitCount = 0
-        var scheduledCallbacks: [@MainActor () -> Void] = []
         let pendingState = PendingFrameState()
 
         let scheduler = MirageRenderPresentationScheduler(
             referenceTimeProvider: { 99 },
-            enqueueCoalescedPass: { action in
-                scheduledCallbacks.append(action)
-            },
             submit: { _ in
                 submitCount += 1
-                if submitCount == 1 {
-                    pendingState.hasPendingAfterFirstSubmit = true
-                } else {
-                    pendingState.hasPendingAfterFirstSubmit = false
-                }
+                pendingState.hasPendingAfterFirstSubmit = false
                 return .submitted
             },
             hasPendingFrame: { pendingState.hasPendingAfterFirstSubmit }
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
+        pendingState.hasPendingAfterFirstSubmit = true
 
         scheduler.handleFrameAvailable(referenceTime: 1)
+        scheduler.requestImmediateSubmission(referenceTime: 2)
+        scheduler.requestReadinessRetry(referenceTime: 3)
 
-        #expect(scheduledCallbacks.count == 1)
-        let firstCallback = scheduledCallbacks.removeFirst()
-        firstCallback()
-        #expect(scheduledCallbacks.count == 1)
-        let secondCallback = scheduledCallbacks.removeFirst()
-        secondCallback()
-        #expect(submitCount == 2)
+        #expect(submitCount == 0)
+
+        scheduler.setDisplayClockActive(true)
+        scheduler.handleDisplayTick(referenceTime: 4)
+
+        #expect(submitCount == 1)
     }
 
     @Test("Active live display clock waits for ticks instead of arrival passes")
@@ -177,15 +172,23 @@ struct RenderPresentationSchedulerTests {
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
 
-        scheduler.requestImmediateSubmission(referenceTime: 1)
+        scheduler.handleDisplayTick(referenceTime: 1)
 
         #expect(submitCount == 1)
         #expect(readinessRetryCount == 1)
     }
 
-    @Test("Reset clears queued coalesced passes before they execute")
-    func resetClearsQueuedCoalescedPassesBeforeTheyExecute() {
+    @Test("macOS display clock throttles physical ticks to target FPS")
+    func macOSDisplayClockThrottlesPhysicalTicksToTargetFPS() {
+        #expect(MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 0, now: 10, targetFPS: 120))
+        #expect(!MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 10, now: 10.003, targetFPS: 120))
+        #expect(MirageMacDisplayClock.shouldEmitTick(lastEmittedTickTime: 10, now: 10.008, targetFPS: 120))
+    }
+
+    @Test("Reset clears queued passive passes before they execute")
+    func resetClearsQueuedPassivePassesBeforeTheyExecute() {
         let streamID: StreamID = 905
         var submitCount = 0
         var scheduledCallbacks: [@MainActor () -> Void] = []
@@ -201,9 +204,9 @@ struct RenderPresentationSchedulerTests {
             hasPendingFrame: { false }
         )
         scheduler.setStreamID(streamID)
-        scheduler.setPresentationTier(.activeLive)
+        scheduler.setPresentationTier(.passiveSnapshot)
 
-        scheduler.handleFrameAvailable(referenceTime: 1)
+        scheduler.requestReadinessRetry(referenceTime: 1)
         #expect(scheduledCallbacks.count == 1)
 
         scheduler.reset()

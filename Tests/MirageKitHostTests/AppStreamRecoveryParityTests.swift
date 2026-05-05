@@ -68,8 +68,7 @@ struct AppStreamRecoveryParityTests {
             runtimeQualityAdjustmentEnabled: true,
             lowLatencyHighResolutionCompressionBoostEnabled: true,
             capturePressureProfile: .baseline,
-            latencyMode: .lowestLatency,
-            performanceMode: .standard
+            latencyMode: .lowestLatency
         )
     }
 

@@ -47,6 +47,17 @@ extension FrameReassembler {
         MirageLogger.log(.frameAssembly, "Expected dimension token updated to \(token) for stream \(streamID)")
     }
 
+    func setTargetFrameRate(_ frameRate: Int) {
+        let sanitizedFrameRate = max(1, min(240, frameRate))
+        lock.lock()
+        let previousFrameRate = targetFrameRate
+        targetFrameRate = sanitizedFrameRate
+        lock.unlock()
+
+        guard previousFrameRate != sanitizedFrameRate else { return }
+        MirageLogger.log(.frameAssembly, "Reassembler target frame rate updated to \(sanitizedFrameRate)fps for stream \(streamID)")
+    }
+
     func processPacket(_ data: Data, header: FrameHeader) {
         var completedFrames: [CompletedFrame] = []
         var completionHandler: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
@@ -385,13 +396,15 @@ extension FrameReassembler {
 
             if hasForwardGap {
                 let gapFrames = frameNumber &- expectedNextFrame
+                let severeForwardGapFrameThreshold = severeForwardGapFrameThresholdLocked()
                 if gapFrames >= severeForwardGapFrameThreshold {
                     shouldDeliver = false
                     enterKeyframeOnlyModeLocked()
                     hasSignaledGapFrameLoss = true
                     MirageLogger.log(
                         .frameAssembly,
-                        "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames); entering keyframe-only mode"
+                        "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) " +
+                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold); entering keyframe-only mode"
                     )
                     return FrameCompletionResult(
                         frame: nil,
@@ -562,10 +575,7 @@ extension FrameReassembler {
 
     private func cleanupOldFramesLocked() -> TimeoutCleanupResult {
         let now = Date()
-        // P-frame timeout: 500ms - allows time for UDP packet jitter without dropping frames
-        let pFrameTimeout: TimeInterval = 0.5
-        // Keyframes are 600-900 packets and critical for recovery
-        // They need much more time to complete than small P-frames
+        let pFrameTimeout = pFrameTimeoutLocked()
 
         var timedOutPFrameCount: UInt64 = 0
         var timedOutKeyframeCount: UInt64 = 0
@@ -685,6 +695,24 @@ extension FrameReassembler {
 
         guard isFrameNewer(earliestBufferedForwardFrame.key, than: expectedFrame) else { return false }
         return now.timeIntervalSince(earliestBufferedForwardFrame.value.receivedAt) >= timeout
+    }
+
+    private func pFrameTimeoutLocked() -> TimeInterval {
+        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
+        return min(
+            pFrameTimeoutMaximum,
+            max(pFrameTimeoutMinimum, frameInterval * pFrameTimeoutFrameIntervalBudget)
+        )
+    }
+
+    private func severeForwardGapFrameThresholdLocked() -> UInt32 {
+        let frameRate = max(1, targetFrameRate)
+        let frameInterval = 1.0 / Double(frameRate)
+        let timeout = min(
+            pFrameTimeoutMaximum,
+            max(pFrameTimeoutMinimum, frameInterval * severeForwardGapFrameIntervalBudget)
+        )
+        return max(3, UInt32(ceil(timeout / frameInterval)))
     }
 
     private func shouldPromotePendingKeyframeLocked(now: Date) -> Bool {
@@ -836,9 +864,18 @@ extension FrameReassembler {
 
     func snapshotMetrics() -> Metrics {
         lock.lock()
+        let discardedPackets = packetsDiscardedOld +
+            packetsDiscardedCRC +
+            packetsDiscardedToken +
+            packetsDiscardedAwaitingKeyframe +
+            packetsDiscardedEpoch +
+            packetsDiscardedDeliveredKeyframe
         let metrics = Metrics(
             framesDelivered: framesDelivered,
+            lastCompletedFrame: lastCompletedFrame,
+            totalPacketsReceived: totalPacketsReceived,
             droppedFrames: droppedFrameCount,
+            discardedPackets: discardedPackets,
             pendingFrameCount: pendingFrames.count,
             pendingKeyframeCount: pendingKeyframeCountLocked(),
             pendingFrameBytes: pendingFrameBytesLocked(),

@@ -172,20 +172,6 @@ extension StreamContext {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsedMs = (now - lastEncodeActivityTime) * 1000
         guard elapsedMs > maxEncodeTimeMs else { return false }
-        if performanceMode == .game {
-            MirageLogger.stream("Encoder in-flight stalled for \(Int(elapsedMs))ms (\(label)), forcing keyframe (game mode)")
-            inFlightCount = 0
-            lastEncodeActivityTime = 0
-            isKeyframeEncoding = false
-            keyframeSendDeadline = 0
-            lastKeyframeRequestTime = 0
-            queueKeyframe(
-                reason: "Encoder stall recovery (game mode)",
-                checkInFlight: false,
-                urgent: true
-            )
-            return true
-        }
         MirageLogger.stream("Encoder in-flight stalled for \(Int(elapsedMs))ms (\(label)), scheduling reset")
         inFlightCount = 0
         lastEncodeActivityTime = 0
@@ -340,23 +326,10 @@ extension StreamContext {
 
             if encoderStuck {
                 let stuckTime = (CFAbsoluteTimeGetCurrent() - lastEncodeActivityTime) * 1000
-                if performanceMode == .game {
-                    MirageLogger.stream("Encoder stuck for \(Int(stuckTime))ms, forcing keyframe (game mode)")
-                    inFlightCount = 0
-                    lastEncodeActivityTime = 0
-                    keyframeSendDeadline = 0
-                    lastKeyframeRequestTime = 0
-                    queueKeyframe(
-                        reason: "Encoder stuck recovery (game mode)",
-                        checkInFlight: false,
-                        urgent: true
-                    )
-                } else {
-                    MirageLogger.stream("Encoder stuck for \(Int(stuckTime))ms, scheduling reset")
-                    inFlightCount = 0
-                    lastEncodeActivityTime = 0
-                    needsEncoderReset = true
-                }
+                MirageLogger.stream("Encoder stuck for \(Int(stuckTime))ms, scheduling reset")
+                inFlightCount = 0
+                lastEncodeActivityTime = 0
+                needsEncoderReset = true
             }
 
             let bufferSize = CGSize(
@@ -371,15 +344,10 @@ extension StreamContext {
                 let now = CFAbsoluteTimeGetCurrent()
                 if now - lastEncoderResetTime > encoderResetCooldown {
                     do {
-                        if performanceMode == .game {
-                            MirageLogger.stream("Resetting stuck encoder with flush-only recovery (game mode)")
-                            await encoder?.flush()
-                        } else {
-                            MirageLogger.stream("Resetting stuck encoder before next frame")
-                            advanceEpoch(reason: "encoder reset")
-                            await packetSender?.resetQueue(reason: "encoder reset")
-                            try await encoder?.reset()
-                        }
+                        MirageLogger.stream("Resetting stuck encoder before next frame")
+                        advanceEpoch(reason: "encoder reset")
+                        await packetSender?.resetQueue(reason: "encoder reset")
+                        try await encoder?.reset()
                         didResetEncoder = true
                         lastEncoderResetTime = now
                         needsEncoderReset = false
@@ -404,12 +372,7 @@ extension StreamContext {
             }
 
             let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
-            let backpressureTriggerBytes = performanceMode == .game
-                ? max(maxQueuedBytes, Self.gameModeBackpressureTriggerBytes)
-                : maxQueuedBytes
-            if performanceMode == .game, backpressureActive {
-                clearBackpressureState(log: false)
-            }
+            let backpressureTriggerBytes = maxQueuedBytes
 
             var forceKeyframe = didResetEncoder
             if !forceKeyframe, let captureEngine {
@@ -427,51 +390,36 @@ extension StreamContext {
             }
             if !forceKeyframe { forceKeyframe = shouldEmitPendingKeyframe(queueBytes: queueBytes) }
 
-            if performanceMode == .game {
+            if freshnessBurstActive {
+                if await exitFreshnessBurstIfNeeded(
+                    queueBytes: queueBytes,
+                    reason: "queue recovered"
+                ) {
+                    await logStreamStatsIfNeeded()
+                } else if queueBytes > backpressureTriggerBytes, !forceKeyframe {
+                    backpressureDropIntervalCount += 1
+                    droppedFrameCount += 1
+                    await logStreamStatsIfNeeded()
+                    continue
+                }
+            } else if queueBytes > backpressureTriggerBytes {
+                _ = await enterFreshnessBurstIfNeeded(
+                    queueBytes: queueBytes,
+                    reason: "severe queue pressure"
+                )
+                await logStreamStatsIfNeeded()
+                continue
+            }
+
+            if !freshnessBurstActive {
                 await adjustQualityForQueue(queueBytes: queueBytes)
-                if queueBytes > backpressureTriggerBytes, !forceKeyframe {
-                    // Sunshine-style behavior: do not enter sticky backpressure/reset loops.
-                    // Drop only the current frame when transport backlog spikes.
-                    backpressureActiveSnapshot = false
-                    backpressureActivatedAt = 0
-                    backpressureActive = false
-                    backpressureDropIntervalCount += 1
-                    droppedFrameCount += 1
-                    await logStreamStatsIfNeeded()
-                    continue
-                }
-            } else {
-                if freshnessBurstActive {
-                    if await exitFreshnessBurstIfNeeded(
-                        queueBytes: queueBytes,
-                        reason: "queue recovered"
-                    ) {
-                        await logStreamStatsIfNeeded()
-                    } else if queueBytes > backpressureTriggerBytes, !forceKeyframe {
-                        backpressureDropIntervalCount += 1
-                        droppedFrameCount += 1
-                        await logStreamStatsIfNeeded()
-                        continue
-                    }
-                } else if queueBytes > backpressureTriggerBytes {
-                    _ = await enterFreshnessBurstIfNeeded(
-                        queueBytes: queueBytes,
-                        reason: "severe queue pressure"
-                    )
-                    await logStreamStatsIfNeeded()
-                    continue
-                }
+            }
 
-                if !freshnessBurstActive {
-                    await adjustQualityForQueue(queueBytes: queueBytes)
-                }
-
-                if queueBytes > backpressureTriggerBytes, freshnessBurstActive, !forceKeyframe {
-                    backpressureDropIntervalCount += 1
-                    droppedFrameCount += 1
-                    await logStreamStatsIfNeeded()
-                    continue
-                }
+            if queueBytes > backpressureTriggerBytes, freshnessBurstActive, !forceKeyframe {
+                backpressureDropIntervalCount += 1
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
             }
 
             if shouldQueueScheduledKeyframe(queueBytes: queueBytes) { queueKeyframe(reason: "Scheduled keyframe", checkInFlight: true) }
@@ -1099,12 +1047,6 @@ extension StreamContext {
             pendingCount: pendingCount,
             at: now
         )
-        await evaluateGameModeDeficitWindowIfNeeded(
-            encodedFPS: encodeFPS,
-            averageEncodeMs: encodeAvgMs,
-            at: now
-        )
-
         captureIngressIntervalCount = 0
         captureIntervalCount = 0
         captureDroppedIntervalCount = 0
@@ -1277,20 +1219,13 @@ extension StreamContext {
 
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
-            let baselineLowLatencyLimit: Int
-            if performanceMode == .game {
-                baselineLowLatencyLimit = currentFrameRate >= 120
-                    ? 2
-                    : StreamContext.gameModeLowLatencyInFlightLimit
-            } else {
-                baselineLowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
-            }
+            let baselineLowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {
                 maxInFlightFrames = lowLatencyLimit
                 await encoder?.updateInFlightLimit(lowLatencyLimit)
                 MirageLogger.metrics(
-                    "In-flight depth forced to \(lowLatencyLimit) (low latency pipeline, mode=\(performanceMode.rawValue))"
+                    "In-flight depth forced to \(lowLatencyLimit) (low latency pipeline)"
                 )
             }
             return
@@ -1319,92 +1254,6 @@ extension StreamContext {
         let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
         let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
-    }
-
-    func evaluateGameModeDeficitWindowIfNeeded(
-        encodedFPS: Double,
-        averageEncodeMs: Double,
-        at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-    )
-    async {
-        guard performanceMode == .game else { return }
-        // Sunshine-compatible game mode keeps a static encoder policy in-session.
-        _ = encodedFPS
-        _ = averageEncodeMs
-        _ = now
-    }
-
-    private func advanceGameModeStage(encodedFPS: Double, averageEncodeMs: Double) async {
-        if gameModeStage == .stage3Emergency { return }
-        let priorStage = gameModeStage
-        let nextStage: GameModeStage = switch gameModeStage {
-        case .baseline:
-            .stage1FrameRate60
-        case .stage1FrameRate60:
-            .stage2EightBit
-        case .stage2EightBit:
-            .stage3Emergency
-        case .stage3Emergency:
-            .stage3Emergency
-        }
-        guard nextStage != priorStage else { return }
-        gameModeStage = nextStage
-        gameModeConsecutiveHealthyWindows = 0
-
-        let applied: Bool = switch nextStage {
-        case .stage1FrameRate60:
-            await applyGameModeStage1FrameRateOverride()
-        case .stage2EightBit:
-            await applyGameModeStage2BitDepthOverride()
-        case .stage3Emergency:
-            await applyGameModeStage3EmergencyOverride()
-        case .baseline:
-            false
-        }
-
-        let encodedText = encodedFPS.formatted(.number.precision(.fractionLength(2)))
-        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(2)))
-        MirageLogger
-            .metrics(
-                "event=game_mode_stage_transition stream=\(streamID) from=\(priorStage.logName) to=\(nextStage.logName) " +
-                    "applied=\(applied) encodedFPS=\(encodedText) avgEncodeMs=\(avgText)"
-            )
-    }
-
-    private func restoreGameModeStage(encodedFPS: Double, averageEncodeMs: Double) async {
-        guard gameModeStage != .baseline else { return }
-        let priorStage = gameModeStage
-        let nextStage: GameModeStage = switch gameModeStage {
-        case .baseline:
-            .baseline
-        case .stage1FrameRate60:
-            .baseline
-        case .stage2EightBit:
-            .stage1FrameRate60
-        case .stage3Emergency:
-            .stage2EightBit
-        }
-        guard nextStage != priorStage else { return }
-
-        let applied: Bool = switch priorStage {
-        case .stage3Emergency:
-            await restoreGameModeStage3EmergencyOverride()
-        case .stage2EightBit:
-            await restoreGameModeStage2BitDepthOverride()
-        case .stage1FrameRate60:
-            await restoreGameModeStage1FrameRateOverride()
-        case .baseline:
-            false
-        }
-        gameModeStage = nextStage
-
-        let encodedText = encodedFPS.formatted(.number.precision(.fractionLength(2)))
-        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(2)))
-        MirageLogger
-            .metrics(
-                "event=game_mode_stage_restore stream=\(streamID) from=\(priorStage.logName) to=\(nextStage.logName) " +
-                    "applied=\(applied) encodedFPS=\(encodedText) avgEncodeMs=\(avgText)"
-            )
     }
 
     private var usesAppOwnedBitrateAdaptation: Bool {
@@ -1461,18 +1310,11 @@ extension StreamContext {
         let packetWithinRaiseBudget = packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
             : true
-        let fixedGameModeQuality = performanceMode == .game && !gameModeAggressiveQualityDropEnabled
-        let allowEncodeDrivenQualityRelief = !usesAppOwnedBitrateAdaptation && !fixedGameModeQuality
+        let allowEncodeDrivenQualityRelief = !usesAppOwnedBitrateAdaptation
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
-        let baseDropThreshold = gameModeAggressiveQualityDropEnabled
-            ? gameModeAggressiveQualityDropThreshold
-            : qualityDropThreshold
-        let baseDropStep = gameModeAggressiveQualityDropEnabled
-            ? gameModeAggressiveQualityDropStep
-            : qualityDropStep
-        let baseHighPressureDropStep = gameModeAggressiveQualityDropEnabled
-            ? gameModeAggressiveQualityDropStepHighPressure
-            : qualityDropStepHighPressure
+        let baseDropThreshold = qualityDropThreshold
+        let baseDropStep = qualityDropStep
+        let baseHighPressureDropStep = qualityDropStepHighPressure
 
         let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
             state: MirageRuntimeQualityAdjustmentState(

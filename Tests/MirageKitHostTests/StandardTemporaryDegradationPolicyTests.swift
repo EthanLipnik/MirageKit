@@ -66,7 +66,6 @@ struct StreamBitrateContractTests {
             runtimeQualityAdjustmentEnabled: true,
             capturePressureProfile: .tuned,
             latencyMode: .lowestLatency,
-            performanceMode: .standard,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )
     }

@@ -68,8 +68,6 @@ package struct StartStreamMessage: Codable {
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
-    /// Client-requested host performance profile.
-    package var performanceMode: MirageStreamPerformanceMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
@@ -108,7 +106,6 @@ package struct StartStreamMessage: Codable {
         case colorDepth
         case bitrate
         case latencyMode
-        case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
         case disableResolutionCap
@@ -136,7 +133,6 @@ package struct StartStreamMessage: Codable {
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
-        performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -157,7 +153,6 @@ package struct StartStreamMessage: Codable {
         self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
-        self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap

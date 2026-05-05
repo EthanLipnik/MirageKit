@@ -60,6 +60,59 @@ struct MirageKitTests {
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }
 
+    @Test("Receiver media feedback serializes on control channel")
+    func receiverMediaFeedbackSerialization() throws {
+        let feedback = ReceiverMediaFeedbackMessage(
+            streamID: 42,
+            sequence: 7,
+            sentAtUptime: 123.5,
+            targetFPS: 120,
+            ackRanges: [MediaFeedbackFrameRange(startFrame: 100, endFrame: 100)],
+            lostFrameCount: 2,
+            discardedPacketCount: 3,
+            jitterP95Ms: 4.5,
+            jitterP99Ms: 6.5,
+            queueEstimateFrames: 4,
+            reassemblyBacklogFrames: 1,
+            reassemblyBacklogKeyframes: 1,
+            reassemblyBacklogBytes: 2048,
+            decodeBacklogFrames: 1,
+            presentationBacklogFrames: 2,
+            decodedFPS: 118,
+            receivedFPS: 120,
+            rendererAcceptedFPS: 117,
+            rendererPresentedFPS: 116,
+            recoveryState: .keyframeRecovery
+        )
+
+        let message = try ControlMessage(type: .receiverMediaFeedback, content: feedback)
+        let (parsed, consumed) = try requireParsedControlMessage(from: message.serialize())
+        let decoded = try parsed.decode(ReceiverMediaFeedbackMessage.self)
+
+        #expect(consumed == message.serialize().count)
+        #expect(parsed.type == .receiverMediaFeedback)
+        #expect(decoded == feedback)
+    }
+
+    @Test("Keyframe recovery ack serializes on control channel")
+    func keyframeRecoveryAckSerialization() throws {
+        let ack = KeyframeRecoveryAckMessage(
+            streamID: 9,
+            accepted: true,
+            hostEpoch: 4,
+            deadlineMilliseconds: 350,
+            reason: "Keyframe request (soft)"
+        )
+
+        let message = try ControlMessage(type: .keyframeRecoveryAck, content: ack)
+        let (parsed, consumed) = try requireParsedControlMessage(from: message.serialize())
+        let decoded = try parsed.decode(KeyframeRecoveryAckMessage.self)
+
+        #expect(consumed == message.serialize().count)
+        #expect(parsed.type == .keyframeRecoveryAck)
+        #expect(decoded == ack)
+    }
+
     @Test("Desktop stream start ignores unknown optional preferences")
     func desktopStreamStartIgnoresUnknownOptionalPreferences() throws {
         let payload = Data(
@@ -71,7 +124,6 @@ struct MirageKitTests {
               "mode": "future-mode",
               "colorDepth": "future-depth",
               "latencyMode": "future-latency",
-              "performanceMode": "game",
               "audioConfiguration": {
                 "enabled": true,
                 "channelLayout": "future-layout",
@@ -92,7 +144,6 @@ struct MirageKitTests {
         #expect(decoded.mode == nil)
         #expect(decoded.colorDepth == nil)
         #expect(decoded.latencyMode == nil)
-        #expect(decoded.performanceMode == .game)
         #expect(decoded.audioConfiguration == nil)
         #expect(decoded.codec == nil)
         #expect(decoded.upscalingMode == nil)
@@ -806,7 +857,6 @@ struct MirageKitTests {
             colorDepth: .pro,
             bitrate: 150_000_000,
             latencyMode: .smoothest,
-            performanceMode: .game,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -819,7 +869,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .smoothest)
-        #expect(decoded.performanceMode == .game)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
@@ -839,7 +888,6 @@ struct MirageKitTests {
             colorDepth: .pro,
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
-            performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
             disableResolutionCap: false,
@@ -852,7 +900,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.targetFrameRate == 90)
         #expect(decoded.latencyMode == .lowestLatency)
-        #expect(decoded.performanceMode == .game)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
@@ -1213,7 +1260,6 @@ struct MirageKitTests {
             mode: .unified,
             bitrate: 500_000_000,
             latencyMode: .auto,
-            performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -1227,7 +1273,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .auto)
-        #expect(decoded.performanceMode == .game)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)
@@ -1278,16 +1323,6 @@ struct MirageKitTests {
         #expect(decoded.cursorPresentation.source == .host)
         #expect(decoded.cursorPresentation.lockClientCursorWhenUsingMirageCursor == false)
         #expect(decoded.cursorPresentation.lockClientCursorWhenUsingHostCursor)
-    }
-
-    @Test("Start stream request omits performance mode when unset")
-    func startStreamPerformanceModeDefaultSerialization() throws {
-        let request = StartStreamMessage(windowID: 11, targetFrameRate: 60)
-
-        let envelope = try ControlMessage(type: .startStream, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
-        #expect(decoded.performanceMode == nil)
     }
 
     @Test("Stream metrics validation payload serialization")

@@ -48,6 +48,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         .streamScaleChange,
         .streamRefreshRateChange,
         .streamEncoderSettingsChange,
+        .receiverMediaFeedback,
     ]
 
     private let receiveChunk: @Sendable (

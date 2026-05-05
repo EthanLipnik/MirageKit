@@ -21,6 +21,11 @@ public class MirageSampleBufferView: NSView {
             guard streamID != oldValue else { return }
             presenter.setStreamID(streamID)
             presentationScheduler.setStreamID(streamID)
+            if streamID == nil {
+                stopPresentationDisplayClock()
+            } else {
+                startPresentationDisplayClockIfNeeded()
+            }
             requestImmediateSubmission()
         }
     }
@@ -30,6 +35,7 @@ public class MirageSampleBufferView: NSView {
             guard streamPresentationTier != oldValue else { return }
             presentationScheduler.setPresentationTier(streamPresentationTier)
             applyDisplayRefreshRateLock(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
+            updatePresentationDisplayClockFrameRate()
             requestImmediateSubmission()
         }
     }
@@ -73,6 +79,7 @@ public class MirageSampleBufferView: NSView {
     private var presenter: MirageSampleBufferPresenter!
     @MainActor private var presentationScheduler: MirageRenderPresentationScheduler!
     private var displayLayerReadinessRetryTask: Task<Void, Never>?
+    private var presentationDisplayClock: MirageMacDisplayClock?
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
     private var lastReportedDrawableSize: CGSize = .zero
@@ -113,9 +120,11 @@ public class MirageSampleBufferView: NSView {
         if window != nil {
             resumeRendering()
             applyRenderPreferences()
+            startPresentationDisplayClockIfNeeded()
             observeScreenChanges()
         } else {
             stopDisplayLayerReadinessRetry()
+            stopPresentationDisplayClock()
             suspendRendering()
             stopObservingScreenChanges()
         }
@@ -137,6 +146,7 @@ public class MirageSampleBufferView: NSView {
 
     func suspendRendering() {
         stopDisplayLayerReadinessRetry()
+        stopPresentationDisplayClock()
         presenter.setRenderingSuspended(true, clearCurrentFrame: true)
         presentationScheduler.setRenderingSuspended(true)
     }
@@ -144,6 +154,7 @@ public class MirageSampleBufferView: NSView {
     func resumeRendering() {
         presenter.setRenderingSuspended(false, clearCurrentFrame: false)
         presentationScheduler.setRenderingSuspended(false)
+        startPresentationDisplayClockIfNeeded()
         requestImmediateSubmission()
     }
 
@@ -198,6 +209,34 @@ public class MirageSampleBufferView: NSView {
 
     private func handleFrameAvailable() {
         presentationScheduler.handleFrameAvailable(referenceTime: CACurrentMediaTime())
+    }
+
+    private func startPresentationDisplayClockIfNeeded() {
+        guard window != nil else { return }
+        guard streamID != nil else { return }
+        let localFPS = localPresentationFPS()
+        if let presentationDisplayClock {
+            presentationDisplayClock.updateTargetFPS(localFPS)
+        } else {
+            let clock = MirageMacDisplayClock()
+            presentationDisplayClock = clock
+            clock.start(targetFPS: localFPS) { [weak self] referenceTime in
+                Task { @MainActor [weak self] in
+                    self?.presentationScheduler.handleDisplayTick(referenceTime: referenceTime)
+                }
+            }
+        }
+        presentationScheduler.setDisplayClockActive(true)
+    }
+
+    private func stopPresentationDisplayClock() {
+        presentationDisplayClock?.stop()
+        presentationDisplayClock = nil
+        presentationScheduler.setDisplayClockActive(false)
+    }
+
+    private func updatePresentationDisplayClockFrameRate() {
+        presentationDisplayClock?.updateTargetFPS(localPresentationFPS())
     }
 
     private func armDisplayLayerReadinessRetry() {
@@ -289,13 +328,14 @@ public class MirageSampleBufferView: NSView {
         maxRenderFPS = target
         presenter.setTargetFPS(target)
         applyDisplayRefreshRateLock(target)
+        updatePresentationDisplayClockFrameRate()
         onRefreshRateOverrideChange?(target)
         requestImmediateSubmission()
     }
 
     private func applyDisplayRefreshRateLock(_ fps: Int) {
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : clamped
+        let localFPS = localPresentationFPS(hostFPS: clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
 
@@ -303,6 +343,13 @@ public class MirageSampleBufferView: NSView {
         MirageLogger.renderer(
             "Applied macOS render refresh lock: host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
         )
+    }
+
+    private func localPresentationFPS(hostFPS: Int? = nil) -> Int {
+        let resolvedHostFPS = MirageRenderModePolicy.normalizedTargetFPS(
+            hostFPS ?? (appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
+        )
+        return streamPresentationTier == .passiveSnapshot ? 1 : max(20, resolvedHostFPS)
     }
 
     private func startObservingPreferences() {

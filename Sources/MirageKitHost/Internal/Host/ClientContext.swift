@@ -21,7 +21,7 @@ struct ClientContext {
     let remoteEndpoint: NWEndpoint?
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
 
-    /// Check if connection is peer-to-peer (local network, low latency)
+    /// Check if connection is direct local-network transport.
     /// Returns true when connected over local WiFi or a wired path to a local network address
     var isPeerToPeer: Bool {
         Self.isPeerToPeerConnection(

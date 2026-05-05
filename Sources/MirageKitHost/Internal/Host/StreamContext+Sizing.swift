@@ -147,21 +147,12 @@ extension StreamContext {
     func updateQueueLimits() {
         guard currentEncodedSize.width > 0, currentEncodedSize.height > 0 else { return }
         let pixelCount = Double(currentEncodedSize.width * currentEncodedSize.height)
-        let isGameMode = performanceMode == .game
-        let frameRateFactor: Double = if isGameMode {
-            currentFrameRate >= 120 ? 0.30 : 0.24
-        } else {
-            currentFrameRate >= 120 ? 0.22 : 0.15
-        }
+        let frameRateFactor: Double = currentFrameRate >= 120 ? 0.22 : 0.15
         let pixelBased = Int((pixelCount * frameRateFactor).rounded())
         let bitrateBased: Int
         if let bitrate = encoderConfig.bitrate, bitrate > 0 {
             let bytesPerSecond = Double(bitrate) / 8.0
-            let windowSeconds: Double = if isGameMode {
-                currentFrameRate >= 120 ? 0.20 : 0.24
-            } else {
-                currentFrameRate >= 120 ? 0.12 : 0.14
-            }
+            let windowSeconds: Double = currentFrameRate >= 120 ? 0.12 : 0.14
             bitrateBased = Int((bytesPerSecond * windowSeconds).rounded())
         } else {
             bitrateBased = 0
@@ -171,8 +162,6 @@ extension StreamContext {
         let queueCap: Int
         if isProRes {
             queueCap = 40_000_000
-        } else if isGameMode {
-            queueCap = Self.gameModeQueueCapBytes
         } else {
             queueCap = maxQueuedBytesCap
         }
@@ -181,8 +170,6 @@ extension StreamContext {
         let pressureRatio: Double
         if isProRes {
             pressureRatio = 0.80
-        } else if isGameMode {
-            pressureRatio = Self.gameModeQueuePressureRatio
         } else {
             pressureRatio = 0.60
         }

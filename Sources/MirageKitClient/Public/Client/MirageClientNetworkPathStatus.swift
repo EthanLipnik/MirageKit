@@ -135,7 +135,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     public var transportDiagnosticNote: String? {
         if interfaceNames.contains(where: Self.isAWDLInterface(_:)) {
-            return "The active control path exposes an AWDL interface, which is Apple's peer-to-peer transport."
+            return "The active control path is using Proximity Connect over Apple's AWDL transport."
         }
         if interfaceNames.contains(where: Self.isThunderboltBridgeInterface(_:)) {
             return "The active control path is using a Thunderbolt Bridge-style interface."

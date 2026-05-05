@@ -166,9 +166,10 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
 
         let pixelBuffer = presentationPixelBuffer(for: frame)
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
             from: pixelBuffer,
-            presentationTime: frame.presentationTime,
+            timing: timing,
             referenceTime: referenceTime
         ) else {
             return .blocked
@@ -244,18 +245,18 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     private func makeSampleBuffer(
         from pixelBuffer: CVPixelBuffer,
-        presentationTime: CMTime,
+        timing: MirageRenderPresentationTiming,
         referenceTime: CFTimeInterval
     ) -> (sampleBuffer: CMSampleBuffer, mappedPresentationTime: CMTime)? {
         guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
 
         let samplePresentationTime = mappedPresentationTime(
-            remotePresentationTime: presentationTime,
-            referenceTime: referenceTime
+            referenceTime: referenceTime,
+            timing: timing
         )
 
-        var timing = CMSampleTimingInfo(
-            duration: .invalid,
+        var sampleTiming = CMSampleTimingInfo(
+            duration: timing.frameDuration,
             presentationTimeStamp: samplePresentationTime,
             decodeTimeStamp: .invalid
         )
@@ -264,7 +265,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             allocator: kCFAllocatorDefault,
             imageBuffer: pixelBuffer,
             formatDescription: formatDescription,
-            sampleTiming: &timing,
+            sampleTiming: &sampleTiming,
             sampleBufferOut: &sampleBuffer
         )
 
@@ -273,39 +274,37 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return nil
         }
 
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
-           let first = (attachments as NSArray).firstObject as? NSMutableDictionary {
-            first[kCMSampleAttachmentKey_DisplayImmediately] = kCFBooleanTrue
-        }
         return (sampleBuffer, samplePresentationTime)
     }
 
     private func mappedPresentationTime(
-        remotePresentationTime _: CMTime,
-        referenceTime: CFTimeInterval
+        referenceTime: CFTimeInterval,
+        timing: MirageRenderPresentationTiming
     ) -> CMTime {
-        let fallbackNow = CMTime(seconds: referenceTime, preferredTimescale: Self.cmTimeScale)
-        return makeMonotonicPresentationTime(from: fallbackNow)
+        let scheduledTime = timing.presentationTime(
+            referenceTime: referenceTime,
+            timescale: Self.cmTimeScale
+        )
+        return makeMonotonicPresentationTime(
+            from: scheduledTime,
+            minimumStep: timing.frameDuration
+        )
     }
 
-    private func makeMonotonicPresentationTime(from candidate: CMTime) -> CMTime {
+    private func makeMonotonicPresentationTime(from candidate: CMTime, minimumStep: CMTime) -> CMTime {
         guard lastMappedPresentationTime.isValid else {
             lastMappedPresentationTime = candidate
             return candidate
         }
 
-        if CMTimeCompare(candidate, lastMappedPresentationTime) > 0 {
+        let minimumPresentationTime = CMTimeAdd(lastMappedPresentationTime, minimumStep)
+        if CMTimeCompare(candidate, minimumPresentationTime) >= 0 {
             lastMappedPresentationTime = candidate
             return candidate
         }
 
-        let minStepTimescale = max(60, maxRenderFPS)
-        let stepped = CMTimeAdd(
-            lastMappedPresentationTime,
-            CMTime(value: 1, timescale: CMTimeScale(minStepTimescale))
-        )
-        lastMappedPresentationTime = stepped
-        return stepped
+        lastMappedPresentationTime = minimumPresentationTime
+        return minimumPresentationTime
     }
 
     private func formatDescription(for pixelBuffer: CVPixelBuffer) -> CMVideoFormatDescription? {

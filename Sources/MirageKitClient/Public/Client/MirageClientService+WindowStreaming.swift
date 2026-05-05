@@ -263,6 +263,9 @@ public extension MirageClientService {
                 }
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
+            onMediaFeedback: { [weak self] feedback in
+                self?.sendReceiverMediaFeedback(feedback)
+            },
             onFirstFrameDecoded: { [weak self] in
                 self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(capturedStreamID)")

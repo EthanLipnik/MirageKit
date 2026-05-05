@@ -234,7 +234,6 @@ struct FreshnessBurstPolicyTests {
             runtimeQualityAdjustmentEnabled: true,
             capturePressureProfile: .tuned,
             latencyMode: latencyMode,
-            performanceMode: .standard,
             enteredBitrate: bitrate
         )
     }

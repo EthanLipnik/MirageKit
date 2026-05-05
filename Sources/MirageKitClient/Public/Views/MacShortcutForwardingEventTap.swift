@@ -27,7 +27,6 @@ final class MacShortcutForwardingEventTap {
     func start() {
         guard eventTap == nil else { return }
         guard CGPreflightListenEventAccess() else {
-            CGRequestListenEventAccess()
             return
         }
 

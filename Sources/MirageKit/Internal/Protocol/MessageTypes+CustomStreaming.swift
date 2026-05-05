@@ -23,7 +23,6 @@ package struct StartCustomStreamMessage: Codable, Sendable {
     package var colorDepth: MirageStreamColorDepth?
     package var bitrate: Int?
     package var latencyMode: MirageStreamLatencyMode?
-    package var performanceMode: MirageStreamPerformanceMode?
     package var allowRuntimeQualityAdjustment: Bool?
     package var lowLatencyHighResolutionCompressionBoost: Bool?
     package var disableResolutionCap: Bool?

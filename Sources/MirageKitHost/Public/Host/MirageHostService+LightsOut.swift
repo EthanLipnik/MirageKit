@@ -28,9 +28,10 @@ extension MirageHostService {
         hasPendingDesktopStreamStart: Bool,
         desktopStreamMode: MirageDesktopStreamMode = .unified,
         lightsOutEnabled: Bool,
-        lightsOutDisabledByEnvironment: Bool = false
+        lightsOutDisabledByEnvironment: Bool = false,
+        inputMonitoringGranted: Bool = true
     ) -> Bool {
-        guard !lightsOutDisabledByEnvironment, lightsOutEnabled else { return false }
+        guard !lightsOutDisabledByEnvironment, lightsOutEnabled, inputMonitoringGranted else { return false }
         let hasMirroredDesktopWorkload = (hasDesktopStream || hasPendingDesktopStreamStart) &&
             desktopStreamMode == .unified
         return hasAppStreams ||
@@ -118,6 +119,7 @@ extension MirageHostService {
         let hasDesktopStream = desktopStreamContext != nil
         let hasPendingAppStreamStart = pendingAppStreamStartCount > 0
         let hasPendingDesktopStreamStart = pendingDesktopStreamStartCount > 0
+        let inputMonitoringGranted = Self.isLightsOutInputMonitoringGranted()
         let shouldEnableLightsOut = Self.shouldEnableLightsOut(
             hasAppStreams: hasAppStreams,
             hasDesktopStream: hasDesktopStream,
@@ -125,9 +127,23 @@ extension MirageHostService {
             hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
             desktopStreamMode: desktopStreamMode,
             lightsOutEnabled: lightsOutEnabled,
-            lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment
+            lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment,
+            inputMonitoringGranted: inputMonitoringGranted
         )
         guard shouldEnableLightsOut else {
+            if !inputMonitoringGranted,
+               Self.shouldEnableLightsOut(
+                   hasAppStreams: hasAppStreams,
+                   hasDesktopStream: hasDesktopStream,
+                   hasPendingAppStreamStart: hasPendingAppStreamStart,
+                   hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
+                   desktopStreamMode: desktopStreamMode,
+                   lightsOutEnabled: lightsOutEnabled,
+                   lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment,
+                   inputMonitoringGranted: true
+               ) {
+                MirageLogger.host("Lights Out skipped: Input Monitoring not granted")
+            }
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return
@@ -135,6 +151,10 @@ extension MirageHostService {
 
         lightsOutController.updateTarget(.physicalDisplays)
         await refreshLightsOutCaptureExclusions()
+    }
+
+    nonisolated static func isLightsOutInputMonitoringGranted() -> Bool {
+        CGPreflightListenEventAccess()
     }
 
     func handleLightsOutScreenshotShortcut() async {

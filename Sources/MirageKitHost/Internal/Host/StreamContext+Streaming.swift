@@ -58,7 +58,6 @@ extension StreamContext {
         let encoder = VideoEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
-            performanceMode: performanceMode,
             streamKind: streamKind,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled

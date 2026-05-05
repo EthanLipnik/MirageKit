@@ -459,6 +459,21 @@ extension MirageClientService {
         MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
     }
 
+    func sendReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
+        guard case .connected = connectionState else { return }
+        _ = sendControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
+    }
+
+    func handleKeyframeRecoveryAck(_ message: ControlMessage) {
+        guard let ack = try? message.decode(KeyframeRecoveryAckMessage.self),
+              let controller = controllersByStream[ack.streamID] else {
+            return
+        }
+        Task {
+            await controller.handleKeyframeRecoveryAck(ack)
+        }
+    }
+
     nonisolated static func shouldSendKeyframeRequest(
         lastRequestTime: CFAbsoluteTime?,
         now: CFAbsoluteTime,

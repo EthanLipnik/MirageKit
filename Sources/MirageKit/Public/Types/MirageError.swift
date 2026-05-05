@@ -97,7 +97,7 @@ public struct MirageConnectionRejection: Sendable, Equatable, Codable {
         case .takeoverRequiresTrustedRequester:
             return "\(hostPrefix)Host is busy and takeover requires a trusted client."
         case .localNetworkBlocked:
-            return "\(hostPrefix)Mirage can see the host but cannot open a control connection. Put both devices on the same local network or re-enable peer-to-peer/local network access."
+            return "\(hostPrefix)Mirage can see the host but cannot open a control connection. Use the same local network, VPN Access, or turn on Proximity Connect in Network settings."
         case .malformedBootstrap:
             return "\(hostPrefix)The host received an incompatible Mirage handshake. Update Mirage on both devices."
         case .rejected:

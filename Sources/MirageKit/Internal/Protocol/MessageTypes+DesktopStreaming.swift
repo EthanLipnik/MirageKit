@@ -47,8 +47,6 @@ package struct StartDesktopStreamMessage: Codable {
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
-    /// Client-requested host performance profile.
-    package var performanceMode: MirageStreamPerformanceMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
@@ -90,7 +88,6 @@ package struct StartDesktopStreamMessage: Codable {
         case enteredBitrate
         case bitrate
         case latencyMode
-        case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
         case disableResolutionCap
@@ -120,7 +117,6 @@ package struct StartDesktopStreamMessage: Codable {
         enteredBitrate: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
-        performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -143,7 +139,6 @@ package struct StartDesktopStreamMessage: Codable {
         self.enteredBitrate = enteredBitrate
         self.bitrate = bitrate
         self.latencyMode = latencyMode
-        self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -172,7 +167,6 @@ package struct StartDesktopStreamMessage: Codable {
         enteredBitrate = container.decodeLossyIfPresent(Int.self, forKey: .enteredBitrate)
         bitrate = container.decodeLossyIfPresent(Int.self, forKey: .bitrate)
         latencyMode = container.decodeLossyIfPresent(MirageStreamLatencyMode.self, forKey: .latencyMode)
-        performanceMode = container.decodeLossyIfPresent(MirageStreamPerformanceMode.self, forKey: .performanceMode)
         allowRuntimeQualityAdjustment = container.decodeLossyIfPresent(
             Bool.self,
             forKey: .allowRuntimeQualityAdjustment

@@ -79,6 +79,19 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Active presentation tier never inherits passive one FPS target")
+    func activePresentationTierNeverInheritsPassiveOneFPSTarget() async {
+        let controller = StreamController(streamID: 94, maxPayloadSize: 1200)
+
+        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
+        #expect(await controller.decodeSchedulerTargetFPS == 1)
+
+        await controller.updatePresentationTier(.activeLive, targetFPS: 1)
+        #expect(await controller.decodeSchedulerTargetFPS >= 20)
+
+        await controller.stop()
+    }
+
     @Test("Incoming resize priming fences packets before the full reset")
     func incomingResizePrimingFencesPacketsBeforeReset() async {
         let controller = StreamController(streamID: 94, maxPayloadSize: 1200)

@@ -111,15 +111,22 @@ final class HostLightsOutController {
         let sampleCount: UInt32
     }
 
-    private final class EscapeHoldState: @unchecked Sendable {
+    enum EscapeHoldSource: Sendable, Equatable {
+        case eventTap
+        case physicalPoll
+    }
+
+    final class EscapeHoldState: @unchecked Sendable {
         private let lock = NSLock()
         private var holdStart: UInt64 = 0
         private var triggered = false
+        private var holdSource: EscapeHoldSource?
 
-        func begin() {
+        func begin(source: EscapeHoldSource) {
             lock.withLock {
                 holdStart = mach_absolute_time()
                 triggered = false
+                holdSource = source
             }
         }
 
@@ -127,6 +134,18 @@ final class HostLightsOutController {
             lock.withLock {
                 holdStart = 0
                 triggered = false
+                holdSource = nil
+            }
+        }
+
+        @discardableResult
+        func reset(ifSource source: EscapeHoldSource) -> Bool {
+            lock.withLock {
+                guard holdSource == source else { return false }
+                holdStart = 0
+                triggered = false
+                holdSource = nil
+                return true
             }
         }
 
@@ -151,6 +170,10 @@ final class HostLightsOutController {
 
         var isTracking: Bool {
             lock.withLock { holdStart != 0 }
+        }
+
+        var source: EscapeHoldSource? {
+            lock.withLock { holdSource }
         }
     }
 
@@ -505,7 +528,7 @@ final class HostLightsOutController {
         if type == .keyDown {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             if Self.shouldBeginEscapeHold(keyCode: keyCode, isTracking: escapeHoldState.isTracking) {
-                escapeHoldState.begin()
+                escapeHoldState.begin(source: .eventTap)
                 Task { @MainActor [weak self] in
                     self?.startEscapeHoldCheck()
                 }
@@ -555,10 +578,10 @@ final class HostLightsOutController {
             guard Self.shouldBeginEscapeHold(keyCode: 0x35, isTracking: escapeHoldState.isTracking) else {
                 return
             }
-            escapeHoldState.begin()
+            escapeHoldState.begin(source: .physicalPoll)
             startEscapeHoldCheck()
-        } else if escapeHoldState.isTracking {
-            escapeHoldState.reset()
+        } else {
+            escapeHoldState.reset(ifSource: .physicalPoll)
         }
     }
 

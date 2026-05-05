@@ -496,14 +496,22 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         )
     }
 
+    func presentationTiming(for streamID: StreamID) -> MirageRenderPresentationTiming {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        let timing = MirageRenderPresentationTiming(
+            targetFPS: state.targetFPS,
+            playoutDelayFrames: state.playoutDelayFrames
+        )
+        state.lock.unlock()
+        return timing
+    }
+
     func setTargetFPS(for streamID: StreamID, targetFPS: Int) {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
-        state.playoutDelayFrames = Self.resolvedPlayoutDelayFrames(
-            targetFPS: state.targetFPS,
-            latencyMode: state.latencyMode
-        )
+        state.playoutDelayFrames = MirageRenderModePolicy.playoutDelayFrames(for: state.latencyMode)
         state.lock.unlock()
     }
 
@@ -511,10 +519,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.latencyMode = latencyMode
-        state.playoutDelayFrames = Self.resolvedPlayoutDelayFrames(
-            targetFPS: state.targetFPS,
-            latencyMode: latencyMode
-        )
+        state.playoutDelayFrames = MirageRenderModePolicy.playoutDelayFrames(for: latencyMode)
         state.lock.unlock()
     }
 
@@ -761,18 +766,4 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return max(0, now - decodeTime) * 1000
     }
 
-    private nonisolated static func resolvedPlayoutDelayFrames(
-        targetFPS: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Int {
-        switch latencyMode {
-        case .lowestLatency:
-            return 0
-        case .auto:
-            return targetFPS >= 55 ? 1 : 0
-        case .smoothest:
-            return targetFPS >= 55 ? 2 : 1
-        }
-    }
 }

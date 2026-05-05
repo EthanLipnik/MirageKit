@@ -335,12 +335,7 @@ extension MirageHostService {
         atlasEncoderConfig = atlasEncoderConfig.withInternalOverrides(pixelFormat: .bgra8)
 
         let latencyMode = selectRequest.latencyMode ?? .lowestLatency
-        let performanceMode = selectRequest.performanceMode ?? .standard
-        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
-            .tuned
-        } else {
-            .baseline
-        }
+        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
         let context = StreamContext(
             streamID: mediaStreamID,
@@ -357,7 +352,6 @@ extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
-            performanceMode: performanceMode,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight

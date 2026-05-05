@@ -20,6 +20,7 @@ public enum MirageKit {
     public static let version = "0.15.6"
     public static let protocolVersion: UInt8 = mirageProtocolVersion
     public static let serviceType = "_mirage._tcp"
+    public static let overlayProbePort: UInt16 = 9852
     public static let relayHeaderPrefix = "x-mirage"
     public static let identityService = "com.mirage.identity.account.v2"
     public static let sharedDeviceIDKey = "com.mirage.shared.deviceID"

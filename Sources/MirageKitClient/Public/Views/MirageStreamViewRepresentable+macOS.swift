@@ -59,6 +59,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Whether input capture should actively process mouse/keyboard events.
     public var inputEnabled: Bool
 
+    /// Whether macOS system-level shortcut forwarding should be enabled.
+    public var systemShortcutForwardingEnabled: Bool
+
     /// Active vs passive presentation tier.
     public var presentationTier: StreamPresentationTier
 
@@ -99,6 +102,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         inputEnabled: Bool = true,
+        systemShortcutForwardingEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
@@ -125,6 +129,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.inputEnabled = inputEnabled
+        self.systemShortcutForwardingEnabled = systemShortcutForwardingEnabled
         self.presentationTier = presentationTier
         self.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         self.maxDrawableSize = maxDrawableSize
@@ -182,6 +187,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         wrapper.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         wrapper.syntheticCursorEnabled = syntheticCursorEnabled
         wrapper.inputEnabled = inputEnabled
+        wrapper.shortcutForwardingEnabled = systemShortcutForwardingEnabled
         wrapper.streamID = streamID
 
         // Configure scroll callback for native trackpad physics
@@ -239,6 +245,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
             wrapper.syntheticCursorEnabled = syntheticCursorEnabled
             wrapper.inputEnabled = inputEnabled
+            wrapper.shortcutForwardingEnabled = systemShortcutForwardingEnabled
             wrapper.streamID = streamID
             wrapper.clientShortcuts = clientShortcuts
             wrapper.onClientShortcut = onClientShortcut

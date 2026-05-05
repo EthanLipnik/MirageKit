@@ -39,7 +39,6 @@ actor VideoEncoder {
     var configuration: MirageEncoderConfiguration
     let codec: MirageVideoCodec
     let latencyMode: MirageStreamLatencyMode
-    let performanceMode: MirageStreamPerformanceMode
     let streamKind: StreamKind
 
     var isProRes: Bool { codec == .proRes4444 }
@@ -57,7 +56,6 @@ actor VideoEncoder {
     var didLogPixelFormat = false
     var baseQuality: Float
     var qualityOverrideActive = false
-    var gameModeEmergencyQualityClampsEnabled = false
     let compressionQualityCeiling: Float = 0.94
     let performanceTracker = EncodePerformanceTracker()
     var maximizePowerEfficiencyEnabled: Bool
@@ -98,7 +96,6 @@ actor VideoEncoder {
     init(
         configuration: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        performanceMode: MirageStreamPerformanceMode = .standard,
         streamKind: StreamKind = .window,
         inFlightLimit: Int? = nil,
         maximizePowerEfficiencyEnabled: Bool = false
@@ -106,7 +103,6 @@ actor VideoEncoder {
         self.configuration = configuration
         self.codec = configuration.codec
         self.latencyMode = latencyMode
-        self.performanceMode = performanceMode
         self.streamKind = streamKind
         self.maximizePowerEfficiencyEnabled = maximizePowerEfficiencyEnabled
         activePixelFormat = configuration.pixelFormat
@@ -153,12 +149,7 @@ actor VideoEncoder {
         }
     }
 
-    static func shouldApplyQPClamps(
-        for performanceMode: MirageStreamPerformanceMode,
-        gameModeEmergencyQualityClampsEnabled: Bool
-    ) -> Bool {
-        _ = performanceMode
-        _ = gameModeEmergencyQualityClampsEnabled
+    static func shouldApplyQPClamps() -> Bool {
         // Keep QP clamps active in all modes. On some Macs VT ignores `Quality`,
         // so QP bounds are the only reliable way to enforce throughput targets.
         return true

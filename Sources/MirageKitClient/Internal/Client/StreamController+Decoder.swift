@@ -139,6 +139,7 @@ extension StreamController {
         }
 
         decodeSchedulerTargetFPS = resolvedTargetFPS
+        realtimeMediaSession.updateTargetFrameRate(resolvedTargetFPS)
         decodeSubmissionBaselineLimit = resolvedBaseline
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
@@ -158,8 +159,15 @@ extension StreamController {
         presentationTier = tier
         await GlobalDecodeBudgetController.shared.updateTier(streamID: streamID, tier: tier)
 
-        let resolvedTargetFPS = max(1, min(120, targetFPS ?? (tier == .activeLive ? 60 : 1)))
+        let requestedTargetFPS = targetFPS ?? (tier == .activeLive ? 60 : 1)
+        let resolvedTargetFPS = switch tier {
+        case .activeLive:
+            max(20, min(120, requestedTargetFPS))
+        case .passiveSnapshot:
+            1
+        }
         decodeSchedulerTargetFPS = resolvedTargetFPS
+        realtimeMediaSession.updateTargetFrameRate(resolvedTargetFPS)
         if tier == .passiveSnapshot {
             decodeSubmissionBaselineLimit = 1
         } else {

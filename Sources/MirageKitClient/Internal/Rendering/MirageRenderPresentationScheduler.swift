@@ -95,7 +95,7 @@ final class MirageRenderPresentationScheduler {
 
     func requestImmediateSubmission(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
-        if displayClockActive, presentationTier == .activeLive {
+        if presentationTier == .activeLive {
             if hasPendingFrame() {
                 displayClockFramePending = true
             }
@@ -110,13 +110,17 @@ final class MirageRenderPresentationScheduler {
 
     func requestReadinessRetry(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
+        if presentationTier == .activeLive {
+            displayClockFramePending = true
+            return
+        }
         schedulePass(referenceTime: referenceTime)
     }
 
     func handleFrameAvailable(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
 
-        if displayClockActive, presentationTier == .activeLive {
+        if presentationTier == .activeLive {
             displayClockFramePending = true
             return
         }
@@ -143,11 +147,11 @@ final class MirageRenderPresentationScheduler {
     }
 
     private var shouldUseCoalescedFrameArrivalSubmission: Bool {
-        presentationTier == .activeLive
+        false
     }
 
     private var shouldAllowFollowUpScheduling: Bool {
-        presentationTier == .activeLive
+        false
     }
 
     private func schedulePass(referenceTime: CFTimeInterval) {

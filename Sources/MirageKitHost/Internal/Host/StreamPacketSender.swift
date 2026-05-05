@@ -193,6 +193,16 @@ actor StreamPacketSender {
         let didMissDeadline: Bool
     }
 
+    private struct QueuedWorkItem: Sendable {
+        let item: WorkItem
+        let accountedBytes: Int
+    }
+
+    private enum QueueAdmissionResult: Sendable {
+        case enqueued(queuedBytes: Int)
+        case dropped
+    }
+
     nonisolated static let packetBudgetWindowSeconds: CFAbsoluteTime = 0.75
     nonisolated static let packetBudgetMinWindowSeconds: CFAbsoluteTime = 0.20
     nonisolated static let packetPacerBurstWindowMs: Double = 6.0
@@ -204,6 +214,8 @@ actor StreamPacketSender {
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
     nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 2.0
     nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.050
+    nonisolated static let maxQueuedWorkItems: Int = 8
+    nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
     private let maxPayloadSize: Int
     private let mediaSecurityKey: MirageMediaPacketKey?
@@ -214,15 +226,19 @@ actor StreamPacketSender {
     private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     private var sendTask: Task<Void, Never>?
     /// Accessed from encoder callbacks; lifecycle is managed by start/stop.
-    private nonisolated(unsafe) var sendContinuation: AsyncStream<WorkItem>.Continuation?
+    private nonisolated(unsafe) var sendContinuation: AsyncStream<Void>.Continuation?
     // Snapshot read from encoder callbacks to tag enqueued frames.
     private nonisolated(unsafe) var generation: UInt32 = 0
+    private nonisolated(unsafe) var queuedWorkItems: [QueuedWorkItem] = []
     private nonisolated(unsafe) var queuedBytes: Int = 0
     private nonisolated(unsafe) var packetBudgetSamples: [PacketBudgetSample] = []
     private nonisolated(unsafe) var packetBudgetSampleBytes: Int = 0
     private nonisolated(unsafe) var dropNonKeyframesUntilKeyframe: Bool = false
     private nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     private nonisolated(unsafe) var latestKeyframeGeneration: UInt32 = 0
+    private nonisolated(unsafe) var queuedStalePacketDropCount: UInt64 = 0
+    private nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
+    private nonisolated(unsafe) var queuedNonKeyframeHoldDropCount: UInt64 = 0
     private let queueLock = NSLock()
 
     private var pacerRateBps: Int = 0
@@ -361,9 +377,10 @@ actor StreamPacketSender {
 
     func start() {
         guard sendTask == nil else { return }
-        let (stream, continuation) = AsyncStream.makeStream(of: WorkItem.self, bufferingPolicy: .unbounded)
+        let (stream, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         sendContinuation = continuation
         queueLock.withLock {
+            queuedWorkItems.removeAll(keepingCapacity: true)
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
@@ -373,8 +390,10 @@ actor StreamPacketSender {
         resetTelemetry()
         sendTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            for await item in stream {
-                await handle(item)
+            for await _ in stream {
+                while let item = self.dequeueNextWorkItem() {
+                    await self.handle(item)
+                }
             }
         }
     }
@@ -385,6 +404,7 @@ actor StreamPacketSender {
         sendTask?.cancel()
         sendTask = nil
         queueLock.withLock {
+            queuedWorkItems.removeAll(keepingCapacity: true)
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
@@ -416,6 +436,7 @@ actor StreamPacketSender {
     func resetQueue(reason: String) async {
         generation &+= 1
         queueLock.withLock {
+            queuedWorkItems.removeAll(keepingCapacity: true)
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
@@ -444,7 +465,14 @@ actor StreamPacketSender {
     }
 
     private func makeTelemetrySnapshot() -> TelemetrySnapshot {
-        let queuedBytesSnapshot = queueLock.withLock { self.queuedBytes }
+        let queueSnapshot = queueLock.withLock {
+            (
+                queuedBytes: self.queuedBytes,
+                staleDrops: queuedStalePacketDropCount,
+                generationDrops: queuedGenerationAbortDropCount,
+                nonKeyframeHoldDrops: queuedNonKeyframeHoldDropCount
+            )
+        }
         let sendStartDelayAverageMs = sendStartDelayCount > 0
             ? sendStartDelayTotalMs / Double(sendStartDelayCount)
             : 0
@@ -464,7 +492,7 @@ actor StreamPacketSender {
             ? Double(pacerSleepTotalMs) / Double(pacerSleepPacketCount)
             : 0
         return TelemetrySnapshot(
-            queuedBytes: queuedBytesSnapshot,
+            queuedBytes: queueSnapshot.queuedBytes,
             sendStartDelayAverageMs: sendStartDelayAverageMs,
             sendStartDelayMaxMs: sendStartDelayMaxMs,
             sendCompletionAverageMs: sendCompletionAverageMs,
@@ -480,9 +508,9 @@ actor StreamPacketSender {
             packetPacerSleepMaxMs: pacerSleepMaxMs,
             packetPacerFrameMaxSleepMs: pacerFrameSleepMaxMs,
             packetPacerSleepCount: UInt64(pacerSleepPacketCount),
-            stalePacketDrops: stalePacketDropCount,
-            generationAbortDrops: generationAbortDropCount,
-            nonKeyframeHoldDrops: nonKeyframeHoldDropCount
+            stalePacketDrops: stalePacketDropCount + queueSnapshot.staleDrops,
+            generationAbortDrops: generationAbortDropCount + queueSnapshot.generationDrops,
+            nonKeyframeHoldDrops: nonKeyframeHoldDropCount + queueSnapshot.nonKeyframeHoldDrops
         )
     }
 
@@ -519,27 +547,72 @@ actor StreamPacketSender {
     }
 
     nonisolated func enqueue(_ item: WorkItem) {
-        guard sendContinuation != nil else { return }
         let accountedBytes = accountedWireBytes(for: item)
         let estimatedPacketWireBytes = estimatedPacketWireBytes(for: item)
         let now = CFAbsoluteTimeGetCurrent()
-        let queuedBytesSnapshot = queueLock.withLock {
-            queuedBytes += accountedBytes
-            recordPacketBudgetSampleLocked(bytes: estimatedPacketWireBytes, now: now)
-            if item.isKeyframe, item.generation == generation,
-               latestKeyframeGeneration != item.generation || item.frameNumber >= latestKeyframeFrameNumber {
+        let admission = queueLock.withLock {
+            enqueueLocked(
+                item,
+                accountedBytes: accountedBytes,
+                estimatedPacketWireBytes: estimatedPacketWireBytes,
+                now: now
+            )
+        }
+        guard case let .enqueued(queuedBytesSnapshot) = admission else { return }
+        diagnosticsBuffer?.recordQueueDepth(streamID: item.streamID, queuedBytes: queuedBytesSnapshot, now: now)
+        sendContinuation?.yield(())
+    }
+
+    private nonisolated func enqueueLocked(
+        _ item: WorkItem,
+        accountedBytes: Int,
+        estimatedPacketWireBytes: Int,
+        now: CFAbsoluteTime
+    )
+    -> QueueAdmissionResult {
+        guard sendContinuation != nil else { return .dropped }
+        discardExpiredQueuedNonKeyframesLocked(now: now)
+
+        guard item.generation == generation else {
+            queuedGenerationAbortDropCount &+= 1
+            return .dropped
+        }
+
+        if isExpiredNonKeyframe(item, now: now) {
+            queuedStalePacketDropCount &+= 1
+            return .dropped
+        }
+
+        if item.isKeyframe {
+            if latestKeyframeGeneration != item.generation || item.frameNumber >= latestKeyframeFrameNumber {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
                 latestKeyframeGeneration = item.generation
             }
-            return queuedBytes
+            discardQueuedNonKeyframesLocked(countAsHoldDrops: true)
+            discardSupersededQueuedKeyframesLocked(newestFrameNumber: item.frameNumber, generation: item.generation)
+        } else if dropNonKeyframesUntilKeyframe, latestKeyframeGeneration == item.generation {
+            queuedNonKeyframeHoldDropCount &+= 1
+            return .dropped
         }
-        diagnosticsBuffer?.recordQueueDepth(
-            streamID: item.streamID,
-            queuedBytes: queuedBytesSnapshot,
-            now: now
-        )
-        sendContinuation?.yield(item)
+
+        queuedWorkItems.append(QueuedWorkItem(item: item, accountedBytes: accountedBytes))
+        queuedBytes += accountedBytes
+        recordPacketBudgetSampleLocked(bytes: estimatedPacketWireBytes, now: now)
+
+        if !item.isKeyframe {
+            enforceRealtimeQueueBoundsLocked(now: now)
+        }
+
+        return .enqueued(queuedBytes: queuedBytes)
+    }
+
+    private nonisolated func dequeueNextWorkItem() -> WorkItem? {
+        queueLock.withLock {
+            discardExpiredQueuedNonKeyframesLocked(now: CFAbsoluteTimeGetCurrent())
+            guard !queuedWorkItems.isEmpty else { return nil }
+            return queuedWorkItems.removeFirst().item
+        }
     }
 
     private func handle(_ item: WorkItem) async {
@@ -580,7 +653,6 @@ actor StreamPacketSender {
             return
         }
 
-        await fragmentAndSendPackets(item, accountedBytes: accountedBytes)
         if item.isKeyframe {
             queueLock.withLock {
                 if latestKeyframeGeneration == item.generation, latestKeyframeFrameNumber == item.frameNumber {
@@ -588,6 +660,7 @@ actor StreamPacketSender {
                 }
             }
         }
+        await fragmentAndSendPackets(item, accountedBytes: accountedBytes)
     }
 
     private func fragmentAndSendPackets(_ item: WorkItem, accountedBytes: Int) async {
@@ -702,7 +775,7 @@ actor StreamPacketSender {
 
                 let packetPayloadLength = wirePayload?.count ?? fragmentSize
                 let packetLength = mirageHeaderSize + packetPayloadLength
-                let sendDeadline = firstPacketSendDeadline(for: item, didRecordSendStart: didRecordSendStart)
+                let sendDeadline = packetSendDeadline(for: item)
                 if sendDeadline != nil, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
                     dropStaleNonKeyframeDuringFragmentation(
                         remainingQueuedBytes: remainingQueuedBytes,
@@ -878,7 +951,7 @@ actor StreamPacketSender {
                     wirePayload = parityData
                 }
 
-                let sendDeadline = firstPacketSendDeadline(for: item, didRecordSendStart: didRecordSendStart)
+                let sendDeadline = packetSendDeadline(for: item)
                 if sendDeadline != nil, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
                     dropStaleNonKeyframeDuringFragmentation(
                         remainingQueuedBytes: remainingQueuedBytes,
@@ -1004,12 +1077,12 @@ actor StreamPacketSender {
         return min(maxPayload, remaining)
     }
 
-    private func firstPacketSendDeadline(for item: WorkItem, didRecordSendStart: Bool) -> CFAbsoluteTime? {
-        guard !didRecordSendStart, !item.isKeyframe, item.sendDeadline.isFinite else { return nil }
+    private func packetSendDeadline(for item: WorkItem) -> CFAbsoluteTime? {
+        guard !item.isKeyframe, item.sendDeadline.isFinite else { return nil }
         return item.sendDeadline
     }
 
-    private func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
+    private nonisolated func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
         guard !item.isKeyframe, item.sendDeadline.isFinite else { return false }
         return now >= item.sendDeadline
     }
@@ -1033,6 +1106,72 @@ actor StreamPacketSender {
 
     private nonisolated func accountedWireBytes(for item: WorkItem) -> Int {
         max(0, max(item.wireBytes, fecPayloadBudgetBytes(for: item)))
+    }
+
+    private nonisolated func discardExpiredQueuedNonKeyframesLocked(now: CFAbsoluteTime) {
+        guard !queuedWorkItems.isEmpty else { return }
+        var retainedItems: [QueuedWorkItem] = []
+        retainedItems.reserveCapacity(queuedWorkItems.count)
+        for queuedItem in queuedWorkItems {
+            if isExpiredNonKeyframe(queuedItem.item, now: now) {
+                queuedBytes = max(0, queuedBytes - queuedItem.accountedBytes)
+                queuedStalePacketDropCount &+= 1
+            } else {
+                retainedItems.append(queuedItem)
+            }
+        }
+        queuedWorkItems = retainedItems
+    }
+
+    private nonisolated func discardQueuedNonKeyframesLocked(countAsHoldDrops: Bool) {
+        guard !queuedWorkItems.isEmpty else { return }
+        var retainedItems: [QueuedWorkItem] = []
+        retainedItems.reserveCapacity(queuedWorkItems.count)
+        for queuedItem in queuedWorkItems {
+            if queuedItem.item.isKeyframe {
+                retainedItems.append(queuedItem)
+            } else {
+                queuedBytes = max(0, queuedBytes - queuedItem.accountedBytes)
+                if countAsHoldDrops {
+                    queuedNonKeyframeHoldDropCount &+= 1
+                } else {
+                    queuedStalePacketDropCount &+= 1
+                }
+            }
+        }
+        queuedWorkItems = retainedItems
+    }
+
+    private nonisolated func discardSupersededQueuedKeyframesLocked(
+        newestFrameNumber: UInt32,
+        generation: UInt32
+    ) {
+        guard !queuedWorkItems.isEmpty else { return }
+        var retainedItems: [QueuedWorkItem] = []
+        retainedItems.reserveCapacity(queuedWorkItems.count)
+        for queuedItem in queuedWorkItems {
+            let queuedFrame = queuedItem.item
+            let isSupersededKeyframe = queuedFrame.isKeyframe &&
+                queuedFrame.generation == generation &&
+                queuedFrame.frameNumber < newestFrameNumber
+            if isSupersededKeyframe {
+                queuedBytes = max(0, queuedBytes - queuedItem.accountedBytes)
+                queuedStalePacketDropCount &+= 1
+            } else {
+                retainedItems.append(queuedItem)
+            }
+        }
+        queuedWorkItems = retainedItems
+    }
+
+    private nonisolated func enforceRealtimeQueueBoundsLocked(now: CFAbsoluteTime) {
+        discardExpiredQueuedNonKeyframesLocked(now: now)
+        while queuedWorkItems.count > Self.maxQueuedWorkItems || queuedBytes > Self.maxQueuedBytes {
+            guard let evictionIndex = queuedWorkItems.firstIndex(where: { !$0.item.isKeyframe }) else { break }
+            let evictedItem = queuedWorkItems.remove(at: evictionIndex)
+            queuedBytes = max(0, queuedBytes - evictedItem.accountedBytes)
+            queuedStalePacketDropCount &+= 1
+        }
     }
 
     private nonisolated func fecPayloadBudgetBytes(for item: WorkItem) -> Int {
@@ -1272,6 +1411,11 @@ actor StreamPacketSender {
         stalePacketDropCount = 0
         generationAbortDropCount = 0
         nonKeyframeHoldDropCount = 0
+        queueLock.withLock {
+            queuedStalePacketDropCount = 0
+            queuedGenerationAbortDropCount = 0
+            queuedNonKeyframeHoldDropCount = 0
+        }
     }
 
     private func recordFramePacerSleep(streamID: StreamID, totalMs: Int, maxMs: Int) {

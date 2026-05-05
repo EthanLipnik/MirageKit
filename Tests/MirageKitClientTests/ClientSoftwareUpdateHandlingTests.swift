@@ -79,6 +79,20 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(rejection.userFacingMessage == "Host: The host received an incompatible Mirage handshake. Update Mirage on both devices.")
     }
 
+    @Test("Local network blocked rejection uses Proximity Connect wording")
+    func localNetworkBlockedRejectionUsesProximityConnectWording() {
+        let rejection = MirageConnectionRejection(
+            reason: .localNetworkBlocked,
+            hostName: "Host"
+        )
+        let message = rejection.userFacingMessage
+
+        #expect(rejection.isTerminal)
+        #expect(message.contains("Proximity Connect"))
+        #expect(message.contains("Network settings"))
+        #expect(!message.lowercased().contains("peer-to-peer"))
+    }
+
     @MainActor
     @Test("Host update bootstrap rejection maps to update-in-progress message")
     func hostUpdateBootstrapRejectionMapsToUpdateInProgressMessage() {

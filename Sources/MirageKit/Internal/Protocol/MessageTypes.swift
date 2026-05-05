@@ -39,6 +39,7 @@ package enum ControlMessageType: UInt8, Codable {
 
     /// Keyframe control
     case keyframeRequest = 0x42
+    case keyframeRecoveryAck = 0x43
 
     /// Cursor updates
     case cursorUpdate = 0x50
@@ -49,6 +50,7 @@ package enum ControlMessageType: UInt8, Codable {
     case streamScaleChange = 0x62
     case streamRefreshRateChange = 0x63
     case streamEncoderSettingsChange = 0x64
+    case receiverMediaFeedback = 0x65
 
     // Session state (for headless Mac support)
     case sessionStateUpdate = 0x70

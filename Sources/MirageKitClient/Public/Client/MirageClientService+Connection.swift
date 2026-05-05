@@ -1023,7 +1023,7 @@ extension MirageClientService {
                 preferredBonjourHost: preferredBonjourHost,
                 resolvedAddresses: usableResolvedAddresses
             ), let preferredBonjourHost {
-                return (preferredBonjourHost, "bonjour-peer-to-peer")
+                return (preferredBonjourHost, "bonjour-proximity-connect")
             }
             if let preferred = localAddresses.first {
                 return (preferred, "resolved-local-address")
@@ -1548,10 +1548,10 @@ extension MirageClientService {
             if !localWiFi.isEmpty,
                !hostWiFi.isEmpty,
                localWiFi.intersection(hostWiFi).isEmpty {
-                return "The host and client appear to be on different Wi-Fi networks. Connect both devices to the same Wi-Fi network or re-enable peer-to-peer."
+                return "The host and client appear to be on different Wi-Fi networks. Use the same Wi-Fi network, VPN Access, or turn on Proximity Connect in Network settings."
             }
             if !anyOverlap {
-                return "The host and client appear to be on different local networks. Connect both devices to the same LAN or re-enable peer-to-peer."
+                return "The host and client appear to be on different local networks. Use the same LAN, VPN Access, or turn on Proximity Connect in Network settings."
             }
         case .wired:
             if !localWired.isEmpty,

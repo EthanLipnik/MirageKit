@@ -58,7 +58,6 @@ extension VideoEncoder {
             height: Int32(height),
             codecType: kCMVideoCodecType_HEVC,
             encoderSpecification: VideoEncoder.encoderSpecification(
-                for: .standard,
                 latencyMode: .auto,
                 width: width,
                 height: height,

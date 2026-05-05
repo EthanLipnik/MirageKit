@@ -384,7 +384,10 @@ final class FrameReassembler: @unchecked Sendable {
 
     struct Metrics: Sendable {
         let framesDelivered: UInt64
+        let lastCompletedFrame: UInt32
+        let totalPacketsReceived: UInt64
         let droppedFrames: UInt64
+        let discardedPackets: UInt64
         let pendingFrameCount: Int
         let pendingKeyframeCount: Int
         let pendingFrameBytes: Int
@@ -421,7 +424,11 @@ final class FrameReassembler: @unchecked Sendable {
     let startupKeyframeTimeout: TimeInterval = 5.0
     let pendingKeyframePromotionDelay: TimeInterval = 0.15
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
-    let severeForwardGapFrameThreshold: UInt32 = 24
+    let pFrameTimeoutFrameIntervalBudget: Double = 18.0
+    let pFrameTimeoutMinimum: TimeInterval = 0.12
+    let pFrameTimeoutMaximum: TimeInterval = 0.60
+    let severeForwardGapFrameIntervalBudget: Double = 18.0
+    var targetFrameRate: Int = 60
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token - frames with mismatched tokens are silently discarded.

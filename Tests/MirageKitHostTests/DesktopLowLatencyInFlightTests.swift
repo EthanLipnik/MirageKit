@@ -38,10 +38,7 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 1)
     }
 
-    private func makeContext(
-        streamKind: VideoEncoder.StreamKind = .desktop,
-        performanceMode: MirageStreamPerformanceMode = .standard
-    ) -> StreamContext {
+    private func makeContext(streamKind: VideoEncoder.StreamKind = .desktop) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
@@ -57,8 +54,7 @@ struct DesktopLowLatencyInFlightTests {
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: false,
             lowLatencyHighResolutionCompressionBoostEnabled: false,
-            latencyMode: .lowestLatency,
-            performanceMode: performanceMode
+            latencyMode: .lowestLatency
         )
     }
 }

@@ -163,7 +163,7 @@ extension MirageSampleBufferView {
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : clamped
+        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : max(20, clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
         updatePresentationDisplayLinkFrameRate()

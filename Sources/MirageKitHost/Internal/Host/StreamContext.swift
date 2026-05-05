@@ -38,26 +38,6 @@ actor StreamContext {
 
     let mediaMaxPacketSize: Int
 
-    enum GameModeStage: Int, Sendable {
-        case baseline
-        case stage1FrameRate60
-        case stage2EightBit
-        case stage3Emergency
-
-        var logName: String {
-            switch self {
-            case .baseline:
-                "baseline"
-            case .stage1FrameRate60:
-                "stage1_force60hz"
-            case .stage2EightBit:
-                "stage2_force8bit"
-            case .stage3Emergency:
-                "stage3_emergency"
-            }
-        }
-    }
-
     var captureMode: CaptureMode = .window
     /// Max payload size per UDP packet (excludes Mirage header).
     nonisolated let maxPayloadSize: Int
@@ -132,6 +112,8 @@ actor StreamContext {
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var captureCadenceRecoveryPolicy = HostCaptureCadenceRecoveryPolicy()
+    var realtimeMediaSession: RealtimeMediaSession
+    var realtimeAdaptationController = HostRealtimeAdaptationController()
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
@@ -347,8 +329,6 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
-    /// Performance profile requested by the client and resolved by host policy.
-    let performanceMode: MirageStreamPerformanceMode
     /// Aggressive typing burst is active only in auto mode.
     let supportsTypingBurst: Bool
     /// When true, force low-latency buffering regardless of overrides.
@@ -369,35 +349,6 @@ actor StreamContext {
     var encoderLowPowerEnabled: Bool
     /// Capture pressure profile for SCK buffering/copy behavior.
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
-    /// Current game-mode staged override progression.
-    var gameModeStage: GameModeStage = .baseline
-    /// Consecutive game-mode deficit windows.
-    var gameModeConsecutiveDeficitWindows: Int = 0
-    /// Consecutive healthy windows used for staged restoration.
-    var gameModeConsecutiveHealthyWindows: Int = 0
-    let gameModeDeficitWindowFailuresRequired: Int = 3
-    let gameModeRecoveryWindowSuccessesRequired: Int = 3
-    let gameModeWarmupSeconds: CFAbsoluteTime = 5.0
-    let gameModeTargetFPSScale: Double = 0.97
-    let gameModeTargetEncodeScale: Double = 1.02
-    var gameModeStreamStartTime: CFAbsoluteTime = 0
-    var gameModeAggressiveQualityDropEnabled: Bool = false
-    let gameModeAggressiveQualityDropThreshold: Int = 1
-    let gameModeAggressiveQualityDropStep: Float = 0.04
-    let gameModeAggressiveQualityDropStepHighPressure: Float = 0.09
-    let gameModeBaselineFrameRate: Int
-    let gameModeBaselineColorDepth: MirageStreamColorDepth
-    let gameModeBaselineBitrate: Int?
-    let gameModeBaselineStreamScale: CGFloat
-
-    nonisolated static let gameModeBaselineKeyframeIntervalFrames: Int = 7_200
-    nonisolated static let gameModeEmergencyBitrateCapBps: Int = 180_000_000
-    nonisolated static let gameModeLowLatencyInFlightLimit: Int = 2
-    nonisolated static let gameModeStage2ScaleFactor: CGFloat = 0.85
-    nonisolated static let gameModeMinimumScale: CGFloat = 0.50
-    nonisolated static let gameModeQueueCapBytes: Int = 12_000_000
-    nonisolated static let gameModeBackpressureTriggerBytes: Int = 6_000_000
-    nonisolated static let gameModeQueuePressureRatio: Double = 0.80
     nonisolated static let canonical6KWidth: Int = 6_016
     nonisolated static let canonical6KHeight: Int = 3_384
     nonisolated static let minAudioCaptureChannelCount: Int = 1
@@ -423,7 +374,6 @@ actor StreamContext {
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        performanceMode: MirageStreamPerformanceMode = .standard,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -441,29 +391,16 @@ actor StreamContext {
             resolvedEncoderConfig.bitrate = bitrateAdaptationCeiling
         }
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
-        if performanceMode == .game {
-            resolvedLatencyMode = .lowestLatency
-            // Sunshine-style game mode keeps latency-first VT policy but avoids
-            // forced runtime adaptation layers unless explicitly requested.
-            resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
-            resolvedLowLatencyHighResolutionCompressionBoostEnabled =
-                lowLatencyHighResolutionCompressionBoostEnabled
-            resolvedCapturePressureProfile = .tuned
-            resolvedEncoderConfig.captureQueueDepth = nil
-            resolvedEncoderConfig.keyFrameInterval = Self.gameModeBaselineKeyframeIntervalFrames
-            if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
-                bitrate: resolvedEncoderConfig.bitrate
-            ) {
-                resolvedEncoderConfig.bitrate = normalizedBitrate
-            }
-        }
 
         self.streamID = streamID
+        realtimeMediaSession = RealtimeMediaSession(
+            streamID: streamID,
+            targetFrameRate: resolvedEncoderConfig.targetFrameRate
+        )
         self.windowID = windowID
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
         self.latencyMode = resolvedLatencyMode
-        self.performanceMode = performanceMode
         supportsTypingBurst = resolvedLatencyMode == .auto
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
@@ -494,8 +431,7 @@ actor StreamContext {
         let usesDesktopLowLatency60HzBufferPolicy = Self.usesStandardDesktopLowLatency60HzBufferPolicy(
             streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: resolvedLatencyMode,
-            performanceMode: performanceMode
+            latencyMode: resolvedLatencyMode
         )
         var bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
@@ -517,14 +453,6 @@ actor StreamContext {
         )
         if usesDesktopLowLatency60HzBufferPolicy {
             bufferDepth = max(bufferDepth, 2)
-        }
-        if performanceMode == .game,
-           useLowLatencyPipeline,
-           resolvedEncoderConfig.targetFrameRate <= 60 {
-            let gameModeInFlightLimit = Self.gameModeLowLatencyInFlightLimit
-            bufferDepth = max(bufferDepth, gameModeInFlightLimit)
-            minInFlight = max(minInFlight, gameModeInFlightLimit)
-            inFlightCap = max(inFlightCap, gameModeInFlightLimit)
         }
         let resolvedInFlightCap = max(1, inFlightCap)
         let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)
@@ -553,28 +481,11 @@ actor StreamContext {
         )
         keyframeIntervalSeconds = cadence.interval
         keyframeMaxIntervalSeconds = cadence.maxInterval
-        gameModeStreamStartTime = CFAbsoluteTimeGetCurrent()
-        gameModeBaselineFrameRate = resolvedEncoderConfig.targetFrameRate
-        gameModeBaselineColorDepth = resolvedEncoderConfig.colorDepth
-        gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
-        gameModeBaselineStreamScale = clampedScale
         self.enteredTargetBitrate = enteredBitrate ?? requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = resolvedEncoderConfig.bitrate
 
-        if performanceMode == .game {
-            let bitrateText = String(resolvedEncoderConfig.bitrate ?? 0)
-            MirageLogger
-                .stream(
-                    "event=game_mode_baseline stream=\(streamID) latency=\(resolvedLatencyMode.rawValue) " +
-                        "runtimeQuality=\(resolvedRuntimeQualityAdjustmentEnabled) lowLatencyBoost=\(resolvedLowLatencyHighResolutionCompressionBoostEnabled) " +
-                        "captureProfile=\(resolvedCapturePressureProfile.rawValue) keyframeInterval=\(resolvedEncoderConfig.keyFrameInterval) " +
-                        "bitrate=\(bitrateText) targetFPS=\(resolvedEncoderConfig.targetFrameRate) " +
-                        "colorDepth=\(resolvedEncoderConfig.colorDepth.rawValue) inFlight=\(resolvedInitialInFlight)/\(resolvedInFlightCap) " +
-                        "bufferDepth=\(bufferDepth)"
-                )
-        }
     }
 
     func setStartupBaseTime(_ baseTime: CFAbsoluteTime, label: String) {
@@ -695,12 +606,10 @@ actor StreamContext {
     static func usesStandardDesktopLowLatency60HzBufferPolicy(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        performanceMode: MirageStreamPerformanceMode
+        latencyMode: MirageStreamLatencyMode
     )
     -> Bool {
         streamKind == .desktop &&
-            performanceMode == .standard &&
             latencyMode == .lowestLatency &&
             frameRate == 60
     }

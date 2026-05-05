@@ -53,6 +53,7 @@ public struct MirageStreamContentView: View {
     public let onCursorLockEscapeRequested: (() -> Void)?
     public let onCursorLockRecaptureRequested: (() -> Void)?
     public let useHostResolution: Bool
+    public let macSystemShortcutForwardingEnabled: Bool
     public let keyboardAvoidanceEnabled: Bool
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
@@ -109,6 +110,7 @@ public struct MirageStreamContentView: View {
     ///   - onResolvedPointerLockStateChanged: Optional callback when UIKit resolves pointer lock.
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
     ///   - dictationLocalePreference: Dictation language selection.
+    ///   - macSystemShortcutForwardingEnabled: Whether macOS should use Input Monitoring backed shortcut forwarding.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
     public init(
         session: MirageStreamSessionState,
@@ -143,6 +145,7 @@ public struct MirageStreamContentView: View {
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         useHostResolution: Bool = false,
+        macSystemShortcutForwardingEnabled: Bool = true,
         keyboardAvoidanceEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
@@ -180,6 +183,7 @@ public struct MirageStreamContentView: View {
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.useHostResolution = useHostResolution
+        self.macSystemShortcutForwardingEnabled = macSystemShortcutForwardingEnabled
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
@@ -386,6 +390,7 @@ public struct MirageStreamContentView: View {
                     onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
                     syntheticCursorEnabled: syntheticCursorEnabled,
                     inputEnabled: macOSInputEnabled,
+                    systemShortcutForwardingEnabled: macSystemShortcutForwardingEnabled,
                     presentationTier: streamPresentationTier,
                     preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                     maxDrawableSize: maxDrawableSize,

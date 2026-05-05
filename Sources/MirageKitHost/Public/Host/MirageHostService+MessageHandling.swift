@@ -47,14 +47,17 @@ extension MirageHostService {
             .streamEncoderSettingsChange: { [weak self] message, _ in
                 await self?.handleStreamEncoderSettingsChangeMessage(message)
             },
+            .receiverMediaFeedback: { [weak self] message, _ in
+                await self?.handleReceiverMediaFeedbackMessage(message)
+            },
             .desktopCursorPresentationChange: { [weak self] message, _ in
                 await self?.handleDesktopCursorPresentationChangeMessage(message)
             },
             .stopStream: { [weak self] message, _ in
                 await self?.handleStopStreamMessage(message)
             },
-            .keyframeRequest: { [weak self] message, _ in
-                await self?.handleKeyframeRequestMessage(message)
+            .keyframeRequest: { [weak self] message, clientContext in
+                await self?.handleKeyframeRequestMessage(message, from: clientContext)
             },
             .ping: { [weak self] _, clientContext in
                 self?.handlePingMessage(clientContext: clientContext)
@@ -203,7 +206,6 @@ extension MirageHostService {
             let colorDepth = request.colorDepth
             let bitrate = request.bitrate
             let latencyMode = request.latencyMode ?? .lowestLatency
-            let performanceMode = request.performanceMode ?? .standard
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? false
             let disableResolutionCap = request.disableResolutionCap ?? false
@@ -216,7 +218,6 @@ extension MirageHostService {
             )
             MirageLogger.host("Frame rate: \(targetFrameRate)fps")
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
-            MirageLogger.host("Performance mode: \(performanceMode.displayName)")
 
             pendingLightsOutSetup = true
             await beginPendingAppStreamLightsOutSetup()
@@ -233,7 +234,6 @@ extension MirageHostService {
                 captureQueueDepth: request.captureQueueDepth,
                 bitrate: bitrate,
                 latencyMode: latencyMode,
-                performanceMode: performanceMode,
                 allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
                 lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
                 disableResolutionCap: disableResolutionCap,
@@ -382,11 +382,20 @@ extension MirageHostService {
         }
     }
 
-    private func handleKeyframeRequestMessage(_ message: ControlMessage) async {
+    private func handleKeyframeRequestMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
         if let request = try? message.decode(KeyframeRequestMessage.self),
            let context = streamsByID[request.streamID] {
-            await context.requestKeyframe()
+            let ack = await context.requestKeyframe()
+            clientContext.sendBestEffort(.keyframeRecoveryAck, content: ack)
         }
+    }
+
+    private func handleReceiverMediaFeedbackMessage(_ message: ControlMessage) async {
+        guard let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self),
+              let context = streamsByID[feedback.streamID] else {
+            return
+        }
+        await context.recordReceiverMediaFeedback(feedback)
     }
 
     private func handlePingMessage(clientContext: ClientContext) {
