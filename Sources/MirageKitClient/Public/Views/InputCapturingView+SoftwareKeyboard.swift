@@ -260,9 +260,11 @@ final class SoftwareKeyboardInputView: UIView, UIKeyInput {
 
     override var canBecomeFirstResponder: Bool { true }
 
+    #if !os(visionOS)
     override var inputAccessoryView: UIView? {
         softwareInputAccessoryView
     }
+    #endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
