@@ -89,6 +89,7 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
         #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe() == false)
 
         let dependentPFramePayload = Data([0x00, 0x00, 0x00, 0x03, 0x02, 0x04])
         reassembler.processPacket(
@@ -253,7 +254,7 @@ struct FrameReassemblerStaleKeyframeTests {
     }
 
     @Test("Severe forward gap immediately enters keyframe wait")
-    func severeForwardGapImmediatelyRequestsRecovery() {
+    func severeForwardGapImmediatelyEntersKeyframeWait() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = LockedCounter()
         let lossCounter = LockedCounter()
@@ -729,8 +730,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe() == true)
     }
 
-    @Test("Pending encoded bytes preserve the newest oversized keyframe")
-    func pendingEncodedBytesPreserveNewestOversizedKeyframe() {
+    @Test("Pending encoded bytes preserve the most progressed keyframe")
+    func pendingEncodedBytesPreserveMostProgressedKeyframe() {
         let budget = FrameReassembler.MemoryBudget(
             maxPendingFrames: 12,
             maxPendingKeyframes: 2,
@@ -784,9 +785,66 @@ struct FrameReassemblerStaleKeyframeTests {
         metrics = reassembler.snapshotMetrics()
         #expect(metrics.pendingFrameCount == 1)
         #expect(metrics.pendingKeyframeCount == 1)
-        #expect(metrics.pendingFrameBytes == 20)
-        #expect(metrics.pendingFrameBytes > budget.maxPendingBytes)
+        #expect(metrics.pendingFrameBytes == 8)
+        #expect(metrics.pendingFrameBytes <= budget.maxPendingBytes)
         #expect(metrics.budgetEvictions == 2)
+    }
+
+    @Test("Memory budget preserves a progressing recovery keyframe")
+    func memoryBudgetPreservesProgressingRecoveryKeyframe() {
+        let budget = FrameReassembler.MemoryBudget(
+            maxPendingFrames: 12,
+            maxPendingKeyframes: 2,
+            maxPendingBytes: 20
+        )
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
+
+        let keyframe10Fragment0 = Data([0x10, 0x00, 0x00, 0x00])
+        reassembler.processPacket(
+            keyframe10Fragment0,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 10,
+                payload: keyframe10Fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        let keyframe10Fragment1 = Data([0x10, 0x01, 0x00, 0x00])
+        reassembler.processPacket(
+            keyframe10Fragment1,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 10,
+                payload: keyframe10Fragment1,
+                fragmentIndex: 1,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        let keyframe11Fragment0 = Data([0x11, 0x00, 0x00, 0x00])
+        reassembler.processPacket(
+            keyframe11Fragment0,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 11,
+                payload: keyframe11Fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        let metrics = reassembler.snapshotMetrics()
+        let preservedKeyframe = reassembler.latestPendingKeyframeProgress()
+        #expect(metrics.pendingFrameCount == 1)
+        #expect(metrics.pendingKeyframeCount == 1)
+        #expect(metrics.budgetEvictions == 1)
+        #expect(preservedKeyframe?.frameNumber == 10)
+        #expect(preservedKeyframe?.receivedCount == 2)
     }
 
     @Test("Memory pressure trim clears pending reassembly and requests recovery")

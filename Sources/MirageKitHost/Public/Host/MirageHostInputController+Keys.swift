@@ -76,8 +76,7 @@ extension MirageHostInputController {
     func injectKeyEvent(
         isKeyDown: Bool,
         _ event: MirageKeyEvent,
-        domain: HostKeyboardInjectionDomain,
-        app _: MirageApplication?
+        domain: HostKeyboardInjectionDomain
     ) {
         guard let cgEvent = makeInjectedKeyboardEvent(isKeyDown: isKeyDown, event) else { return }
 
@@ -101,8 +100,7 @@ extension MirageHostInputController {
 
     func injectFlagsChanged(
         _ modifiers: MirageModifierFlags,
-        domain: HostKeyboardInjectionDomain,
-        app _: MirageApplication?
+        domain: HostKeyboardInjectionDomain
     ) {
         let transitionPlan = Self.modifierTransitionPlan(from: lastSentModifiers, to: modifiers)
 

@@ -20,6 +20,7 @@ struct HostRealtimeAdaptationInput: Sendable, Equatable {
     let colorDepth: MirageStreamColorDepth
     let streamScale: CGFloat
     let currentFrameRate: Int
+    let appOwnedBitrateAdaptation: Bool
 }
 
 enum HostRealtimeAdaptationAction: Sendable, Equatable {
@@ -34,30 +35,57 @@ enum HostRealtimeAdaptationAction: Sendable, Equatable {
 struct HostRealtimeAdaptationController: Sendable, Equatable {
     private(set) var sustainedBudgetFailureCount: Int = 0
     private(set) var stableCount: Int = 0
+    private(set) var feedbackSampleCount: Int = 0
+    private(set) var firstFeedbackTime: CFAbsoluteTime = 0
     private(set) var lastActionTime: CFAbsoluteTime = 0
     private(set) var lastLostFrameCount: UInt64 = 0
     private(set) var lastDiscardedPacketCount: UInt64 = 0
 
     private let actionCooldown: CFAbsoluteTime = 1.0
+    private let minimumSamplesBeforeAction: Int = 6
+    private let minimumObservationDuration: CFAbsoluteTime = 2.0
 
     mutating func decide(
         input: HostRealtimeAdaptationInput,
         now: CFAbsoluteTime
     ) -> HostRealtimeAdaptationAction {
+        guard !input.appOwnedBitrateAdaptation else {
+            sustainedBudgetFailureCount = 0
+            stableCount = 0
+            feedbackSampleCount = 0
+            firstFeedbackTime = now
+            lastLostFrameCount = input.feedback.lostFrameCount
+            lastDiscardedPacketCount = input.feedback.discardedPacketCount
+            return .hold
+        }
+
+        if firstFeedbackTime == 0 {
+            firstFeedbackTime = now
+        }
+        feedbackSampleCount += 1
+
         let pressure = pressureAssessment(input: input)
-        if pressure.isBudgetFailure {
+        if input.feedback.recoveryState != .idle {
+            sustainedBudgetFailureCount = 0
+            stableCount = 0
+            feedbackSampleCount = 0
+            firstFeedbackTime = now
+        } else if pressure.isBudgetFailure {
             sustainedBudgetFailureCount += 1
             stableCount = 0
         } else if pressure.isStable {
             stableCount += 1
-            if stableCount >= 8 {
+            if stableCount >= 4 {
                 sustainedBudgetFailureCount = 0
             }
         }
         lastLostFrameCount = input.feedback.lostFrameCount
         lastDiscardedPacketCount = input.feedback.discardedPacketCount
 
+        guard pressure.isBudgetFailure else { return .hold }
         guard sustainedBudgetFailureCount >= 3 else { return .hold }
+        guard feedbackSampleCount >= minimumSamplesBeforeAction else { return .hold }
+        guard now - firstFeedbackTime >= minimumObservationDuration else { return .hold }
         guard lastActionTime == 0 || now - lastActionTime >= actionCooldown else { return .hold }
 
         if let bitrateAction = bitrateAction(input: input, reason: pressure.reason) {
@@ -115,29 +143,41 @@ struct HostRealtimeAdaptationController: Sendable, Equatable {
         let acceptedRatio = feedback.rendererAcceptedFPS / targetFPS
         let decodedRatio = feedback.decodedFPS / targetFPS
         let frameBudgetMs = 1000.0 / targetFPS
-        let lossAdvanced = feedback.lostFrameCount > lastLostFrameCount ||
-            feedback.discardedPacketCount > lastDiscardedPacketCount
-        let backlogStressed = feedback.queueEstimateFrames >= max(3, Int(targetFPS / 30.0))
-        let jitterStressed = feedback.jitterP95Ms > frameBudgetMs * 2.5
+        let lostFramesAdvanced = feedback.lostFrameCount > lastLostFrameCount
+        let discardedPacketsAdvanced = feedback.discardedPacketCount > lastDiscardedPacketCount
+        let reassemblyBacklogStressed = feedback.reassemblyBacklogFrames >= max(6, Int(targetFPS / 10.0)) ||
+            feedback.reassemblyBacklogBytes >= 24 * 1024 * 1024
+        let jitterStressed = feedback.jitterP95Ms > frameBudgetMs * 2.5 ||
+            feedback.jitterP99Ms > frameBudgetMs * 4.0
         let receiverBehind = acceptedRatio < 0.88 || decodedRatio < 0.88
         let recovering = feedback.recoveryState != .idle
+        let discardedPacketsPressure = discardedPacketsAdvanced && !recovering
+        let transportPressure = !recovering && (lostFramesAdvanced ||
+            discardedPacketsPressure ||
+            reassemblyBacklogStressed ||
+            jitterStressed)
 
         var reasons: [String] = []
-        if receiverBehind { reasons.append("receiver-fps") }
-        if backlogStressed { reasons.append("backlog") }
+        if lostFramesAdvanced { reasons.append("loss") }
+        if discardedPacketsPressure {
+            reasons.append("discard")
+        } else if discardedPacketsAdvanced {
+            reasons.append("discard-telemetry")
+        }
+        if reassemblyBacklogStressed { reasons.append("reassembly-backlog") }
         if jitterStressed { reasons.append("jitter") }
-        if lossAdvanced { reasons.append("loss") }
+        if receiverBehind { reasons.append("receiver-fps-telemetry") }
         if recovering { reasons.append("recovery") }
 
-        let isBudgetFailure = receiverBehind || backlogStressed || jitterStressed || lossAdvanced || recovering
-        let isStable = acceptedRatio >= 0.95 &&
-            decodedRatio >= 0.95 &&
-            feedback.queueEstimateFrames <= 1 &&
+        let isBudgetFailure = transportPressure
+        let isStable = !transportPressure &&
+            feedback.reassemblyBacklogFrames <= 1 &&
+            feedback.reassemblyBacklogBytes < 4 * 1024 * 1024 &&
             feedback.recoveryState == .idle
         return (
             isBudgetFailure: isBudgetFailure,
             isStable: isStable,
-            reason: reasons.isEmpty ? "receiver-budget" : reasons.joined(separator: "+")
+            reason: reasons.isEmpty ? "transport-budget" : reasons.joined(separator: "+")
         )
     }
 }

@@ -662,13 +662,11 @@ public struct MirageAudioConfiguration: Sendable, Codable, Equatable {
 /// Latency preference for stream buffering behavior.
 public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
     case lowestLatency
-    case auto
     case smoothest
 
     public var displayName: String {
         switch self {
         case .lowestLatency: "Lowest Latency"
-        case .auto: "Auto"
         case .smoothest: "Smoothest"
         }
     }
@@ -679,8 +677,6 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
             "Targets 60Hz continuously, prioritizing visual cadence over interaction latency with deeper buffering and frame hold/repeat when needed."
         case .lowestLatency:
             "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
-        case .auto:
-            "Uses a small smoothing buffer to absorb short cadence stalls, then switches to latency-first during qualifying text-entry key bursts; mouse input and keyboard shortcuts do not trigger."
         }
     }
 }

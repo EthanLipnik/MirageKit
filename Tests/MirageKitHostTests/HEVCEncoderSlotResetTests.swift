@@ -21,7 +21,7 @@ struct VideoEncoderSlotResetTests {
                 targetFrameRate: 60,
                 bitDepth: .eightBit
             ),
-            latencyMode: .auto,
+            latencyMode: .lowestLatency,
             inFlightLimit: 2
         )
 

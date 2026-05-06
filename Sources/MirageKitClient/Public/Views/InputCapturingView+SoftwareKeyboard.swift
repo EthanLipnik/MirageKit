@@ -51,7 +51,7 @@ extension InputCapturingView {
             accessoryView.heightAnchor.constraint(equalToConstant: 44),
         ])
         #else
-        inputView.inputAccessoryView = accessoryView
+        inputView.softwareInputAccessoryView = accessoryView
         #endif
 
         addSubview(inputView)
@@ -78,9 +78,17 @@ extension InputCapturingView {
 
         let shouldShow = wantsSoftwareKeyboard && !softwareKeyboardDismissalPending
         if shouldShow {
-            guard canPresentSoftwareKeyboardField(inputView) else { return }
+            guard canPresentSoftwareKeyboardField(inputView) else {
+                if !allowDismissalReset {
+                    requestResponderRecovery(.focusChanged)
+                }
+                return
+            }
             if !inputView.isFirstResponder {
-                inputView.becomeFirstResponder()
+                let didBecomeFirstResponder = inputView.becomeFirstResponder()
+                if !didBecomeFirstResponder && !allowDismissalReset {
+                    requestResponderRecovery(.focusChanged)
+                }
             }
             if inputView.isFirstResponder {
                 inputView.reloadInputViews()
@@ -227,13 +235,34 @@ struct SoftwareModifierKey: Hashable {
     let modifier: MirageModifierFlags
 }
 
-final class SoftwareKeyboardInputView: UITextField {
+final class SoftwareKeyboardInputView: UIView, UIKeyInput {
     var onInsertText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
     var onFirstResponderChanged: ((Bool) -> Void)?
     var onAttachmentChanged: ((Bool) -> Void)?
+    var softwareInputAccessoryView: UIView?
 
-    override var hasText: Bool { true }
+    var autocapitalizationType: UITextAutocapitalizationType = .none
+    var autocorrectionType: UITextAutocorrectionType = .no
+    var spellCheckingType: UITextSpellCheckingType = .no
+    var smartDashesType: UITextSmartDashesType = .no
+    var smartQuotesType: UITextSmartQuotesType = .no
+    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+    var keyboardType: UIKeyboardType = .asciiCapable
+    var keyboardAppearance: UIKeyboardAppearance = .default
+    var returnKeyType: UIReturnKeyType = .default
+    var enablesReturnKeyAutomatically = false
+    var isSecureTextEntry = false
+    var textContentType: UITextContentType?
+    var passwordRules: UITextInputPasswordRules?
+
+    var hasText: Bool { true }
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var inputAccessoryView: UIView? {
+        softwareInputAccessoryView
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -266,40 +295,16 @@ final class SoftwareKeyboardInputView: UITextField {
         onAttachmentChanged?(window != nil)
     }
 
-    override func insertText(_ text: String) {
+    func insertText(_ text: String) {
         onInsertText?(text)
-        self.text = nil
     }
 
-    override func deleteBackward() {
+    func deleteBackward() {
         onDeleteBackward?()
-        text = nil
-    }
-
-    override func caretRect(for position: UITextPosition) -> CGRect {
-        .zero
-    }
-
-    override func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-        []
     }
 
     private func configure() {
-        autocapitalizationType = .none
-        autocorrectionType = .no
-        spellCheckingType = .no
-        smartDashesType = .no
-        smartQuotesType = .no
-        smartInsertDeleteType = .no
-        keyboardType = .asciiCapable
-        keyboardAppearance = .default
-        returnKeyType = .default
-        enablesReturnKeyAutomatically = false
-        isSecureTextEntry = false
-        textContentType = .none
-        passwordRules = nil
-        borderStyle = .none
-        textColor = .clear
+        isOpaque = false
         tintColor = .clear
     }
 }

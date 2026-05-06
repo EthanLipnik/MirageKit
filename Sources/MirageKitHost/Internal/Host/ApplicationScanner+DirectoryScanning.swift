@@ -87,8 +87,7 @@ extension ApplicationScanner {
                     runningAppPathsByBundle: runningAppPathsByBundle,
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
-                    byBundle: &byBundle,
-                    byPath: &byPath
+                    byBundle: &byBundle
                 ) else {
                     continue
                 }
@@ -133,8 +132,7 @@ extension ApplicationScanner {
         runningAppPathsByBundle: [String: Set<String>],
         defaultAppPathByBundleIdentifier: inout [String: String],
         missingDefaultAppPathBundleIdentifiers: inout Set<String>,
-        byBundle: inout [String: AppCandidate],
-        byPath _: inout [String: AppCandidate]
+        byBundle: inout [String: AppCandidate]
     )
     -> ProcessCandidateResult? {
         guard shouldConsiderApp(at: url, allowBundleContents: allowBundleContents) else { return nil }
@@ -223,8 +221,7 @@ extension ApplicationScanner {
                     runningAppPathsByBundle: runningAppPathsByBundle,
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
-                    byBundle: &byBundle,
-                    byPath: &byPath
+                    byBundle: &byBundle
                 ) {
                     if let preferredCandidate = result.preferredCandidate {
                         await onPreferredCandidate?(preferredCandidate)
@@ -337,8 +334,7 @@ extension ApplicationScanner {
                     runningAppPathsByBundle: runningAppPathsByBundle,
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
-                    byBundle: &byBundle,
-                    byPath: &byPath
+                    byBundle: &byBundle
                 ) {
                     if let preferredCandidate = result.preferredCandidate {
                         await onPreferredCandidate?(preferredCandidate)

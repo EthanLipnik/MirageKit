@@ -10,6 +10,15 @@ import Foundation
 package enum MirageSharedClipboard {
     package static let maximumPayloadBytes = 64 * 1024
     package static let chunkSize = 4 * 1024
+    package static let automaticStreamChunkPacingDelay: Duration = .milliseconds(12)
+
+    package struct ContentFingerprint: Sendable, Equatable {
+        package let kind: SharedClipboardRepresentationKind
+        package let contentType: String?
+        package let filename: String?
+        package let byteCount: Int
+        package let payloadHash: UInt64?
+    }
 
     package static func validatedPayload(_ payload: Data?) -> Data? {
         guard let payload, !payload.isEmpty else { return nil }
@@ -28,6 +37,25 @@ package enum MirageSharedClipboard {
             offset = end
         }
         return chunks
+    }
+
+    package static func contentFingerprint(for item: MirageSharedClipboardItem) -> ContentFingerprint {
+        ContentFingerprint(
+            kind: item.representation.kind,
+            contentType: item.representation.contentType,
+            filename: item.representation.filename,
+            byteCount: item.representation.byteCount,
+            payloadHash: item.payload.map(stablePayloadHash(_:))
+        )
+    }
+
+    private static func stablePayloadHash(_ payload: Data) -> UInt64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in payload {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return hash
     }
 
     package static func currentTimestampMs() -> Int64 {
@@ -117,6 +145,7 @@ package struct MirageSharedClipboardState: Sendable {
     package private(set) var latestOrderingToken: MirageSharedClipboardOrderingToken?
     package private(set) var maxKnownLogicalVersion: UInt64 = 0
     package private(set) var suppressLocalSendUntilChangeCount: Int?
+    package private(set) var latestAutomaticLocalFingerprint: MirageSharedClipboard.ContentFingerprint?
 
     package init() {}
 
@@ -126,6 +155,7 @@ package struct MirageSharedClipboardState: Sendable {
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
         suppressLocalSendUntilChangeCount = nil
+        latestAutomaticLocalFingerprint = nil
     }
 
     package mutating func deactivate() {
@@ -134,6 +164,7 @@ package struct MirageSharedClipboardState: Sendable {
         latestOrderingToken = nil
         maxKnownLogicalVersion = 0
         suppressLocalSendUntilChangeCount = nil
+        latestAutomaticLocalFingerprint = nil
     }
 
     package func shouldApplyRemoteUpdate(
@@ -152,6 +183,7 @@ package struct MirageSharedClipboardState: Sendable {
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = localClipboardChanged ? nil : changeCount
+        latestAutomaticLocalFingerprint = nil
     }
 
     package mutating func recordRemoteWrite(
@@ -162,6 +194,7 @@ package struct MirageSharedClipboardState: Sendable {
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = changeCount
+        latestAutomaticLocalFingerprint = nil
     }
 
     package func shouldSuppressLocalSend(changeCount: Int) -> Bool {
@@ -199,8 +232,16 @@ package struct MirageSharedClipboardState: Sendable {
         changeCount: Int
     ) -> MirageSharedClipboardLocalSend? {
         guard isActive else { return nil }
-        guard lastObservedChangeCount != changeCount else { return nil }
-        return prepareLocalSend(currentItem: item, changeCount: changeCount)
+        let fingerprint = MirageSharedClipboard.contentFingerprint(for: item)
+        if lastObservedChangeCount == changeCount || latestAutomaticLocalFingerprint == fingerprint {
+            lastObservedChangeCount = changeCount
+            return nil
+        }
+        guard let localSend = prepareLocalSend(currentItem: item, changeCount: changeCount) else {
+            return nil
+        }
+        latestAutomaticLocalFingerprint = fingerprint
+        return localSend
     }
 
     private mutating func mintLocalOrderingToken() -> MirageSharedClipboardOrderingToken {

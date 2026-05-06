@@ -181,12 +181,12 @@ struct FreshnessBurstPolicyTests {
         #expect(await context.senderFrameBudgetDelayOverrunCount == 0)
     }
 
-    @Test("Automatic non-keyframe sender delay uses soft drain instead of recovery burst")
-    func automaticNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
+    @Test("Smoothest non-keyframe sender delay uses soft drain instead of recovery burst")
+    func smoothestNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
         let context = makeContext(
             bitrate: 120_000_000,
             captureQueueDepth: 8,
-            latencyMode: .auto
+            latencyMode: .smoothest
         )
         let telemetry = makeSenderTelemetry(
             sendCompletionMaxMs: 55,

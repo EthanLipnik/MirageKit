@@ -139,7 +139,6 @@ extension MirageHostService {
     }
 
     private func refreshVisibleAppStreamCaptureCluster(
-        bundleID _: String,
         streamID: StreamID,
         reason: String
     ) async {
@@ -187,7 +186,6 @@ extension MirageHostService {
         let mirageWindow = candidate.window
         let processID = mirageWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
-            windowID: windowID,
             processID: processID
         )
         await appStreamManager.upsertHiddenWindow(
@@ -230,7 +228,6 @@ extension MirageHostService {
             "Detected attached auxiliary window \(candidate.window.id) for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
         )
         await refreshVisibleAppStreamCaptureCluster(
-            bundleID: bundleID,
             streamID: streamID,
             reason: "auxiliary window detected"
         )
@@ -295,7 +292,6 @@ extension MirageHostService {
             "Attached auxiliary window \(windowID) closed for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
         )
         await refreshVisibleAppStreamCaptureCluster(
-            bundleID: bundleID,
             streamID: streamID,
             reason: "auxiliary window closed"
         )
@@ -395,7 +391,6 @@ extension MirageHostService {
         let windowID = candidate.window.id
         let processID = candidate.window.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
-            windowID: windowID,
             processID: processID
         )
         await appStreamManager.upsertHiddenWindow(

@@ -22,8 +22,6 @@ enum MirageRenderModePolicy {
         switch latencyMode {
         case .lowestLatency:
             0
-        case .auto:
-            1
         case .smoothest:
             2
         }

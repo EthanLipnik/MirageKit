@@ -50,9 +50,14 @@ extension MirageClientService {
         }
 
         desktopStreamID = streamID
-        desktopStreamResolution = CGSize(width: started.width, height: started.height)
+        let displaySize = CGSize(width: started.width, height: started.height)
+        desktopStreamResolution = displaySize
         let presentationSize = started.presentationSize
         desktopStreamPresentationResolution = presentationSize
+        desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
+            logicalResolution: presentationSize,
+            displayPixelSize: displaySize
+        )
         desktopCaptureSource = started.captureSource
         desktopStreamAllowsClientResize = started.allowsClientResize
         updateObservedFrameRate(started.frameRate, for: streamID)
@@ -74,7 +79,7 @@ extension MirageClientService {
             postResizeTransitionTimeoutTasks[streamID]?.cancel()
             postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
             sessionStore.clearPostResizeTransition(for: streamID)
-            desktopResizeCoordinator.finishTransition(outcome: outcome)
+            desktopResizeCoordinator.finishTransition()
             await dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
             return true
         }
@@ -91,7 +96,7 @@ extension MirageClientService {
             mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
             dimensionToken: started.dimensionToken
         )
-        desktopResizeCoordinator.finishTransition(outcome: outcome)
+        desktopResizeCoordinator.finishTransition()
         if !started.allowsClientResize {
             desktopResizeCoordinator.clearAllState()
             sessionStore.clearPostResizeTransition(for: streamID)
@@ -219,9 +224,14 @@ extension MirageClientService {
             }
             desktopStreamID = streamID
             desktopSessionID = receivedDesktopSessionID
-            desktopStreamResolution = CGSize(width: started.width, height: started.height)
+            let displaySize = CGSize(width: started.width, height: started.height)
+            desktopStreamResolution = displaySize
             let presentationSize = started.presentationSize
             desktopStreamPresentationResolution = presentationSize
+            desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
+                logicalResolution: presentationSize,
+                displayPixelSize: displaySize
+            )
             desktopCaptureSource = started.captureSource
             desktopStreamAllowsClientResize = started.allowsClientResize
             if let generation = started.desktopPresentationGeneration {

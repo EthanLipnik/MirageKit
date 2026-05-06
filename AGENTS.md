@@ -32,6 +32,7 @@
 - Use `Task.sleep(for:)`, not `Task.sleep(nanoseconds:)`.
 - Avoid force unwraps / force `try` unless failure is unrecoverable.
 - For SwiftUI, prefer modern APIs (`NavigationStack`, `Tab`, `foregroundStyle`, etc.) and avoid `AnyView` unless necessary.
+- Do not keep unused owned function parameters as `_:` placeholders after refactors; remove the parameter and update call sites unless a framework, protocol, override, selector, or compatibility boundary requires the signature.
 
 ## Build and Test
 - Build MirageKit: `swift build --package-path MirageKit`

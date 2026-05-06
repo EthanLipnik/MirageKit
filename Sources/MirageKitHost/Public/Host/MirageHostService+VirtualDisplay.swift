@@ -322,7 +322,7 @@ extension MirageHostService {
         desktopSharedDisplayTransitionDepth = max(0, desktopSharedDisplayTransitionDepth - 1)
     }
 
-    private func virtualDisplayScaleFactor(for _: MirageConnectedClient?) -> CGFloat {
+    private func virtualDisplayScaleFactor() -> CGFloat {
         max(1.0, sharedVirtualDisplayScaleFactor)
     }
 
@@ -340,7 +340,7 @@ extension MirageHostService {
         let scale: CGFloat = if let scaleFactorOverride, scaleFactorOverride > 0 {
             max(1.0, scaleFactorOverride)
         } else {
-            virtualDisplayScaleFactor(for: client)
+            virtualDisplayScaleFactor()
         }
         let width = CGFloat(StreamContext.alignedEvenPixel(logicalResolution.width * scale))
         let height = CGFloat(StreamContext.alignedEvenPixel(logicalResolution.height * scale))
@@ -353,7 +353,7 @@ extension MirageHostService {
     )
     -> CGSize {
         guard pixelResolution.width > 0, pixelResolution.height > 0 else { return pixelResolution }
-        let scale = virtualDisplayScaleFactor(for: client)
+        let scale = virtualDisplayScaleFactor()
         return CGSize(
             width: pixelResolution.width / scale,
             height: pixelResolution.height / scale

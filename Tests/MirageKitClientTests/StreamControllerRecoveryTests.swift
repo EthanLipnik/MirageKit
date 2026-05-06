@@ -870,6 +870,43 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Keyframe recovery loop escalates once to hard recovery when keyframes never arrive")
+    func keyframeRecoveryLoopEscalatesToHardRecoveryWhenKeyframesNeverArrive() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 151, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+
+        await controller.startKeyframeRecoveryLoopIfNeeded()
+        await controller.requestKeyframeRecovery(reason: .frameLoss)
+
+        var hardRecoveryTriggered = false
+        let timeoutAt = ContinuousClock.now + .seconds(6)
+        while ContinuousClock.now < timeoutAt {
+            if await controller.lastHardRecoveryStartTime > 0 {
+                hardRecoveryTriggered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(hardRecoveryTriggered)
+        #expect(keyframeCounter.value >= 1)
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+
+        await controller.stop()
+    }
+
     @Test("Memory-budget frame loss requests one delayed keyframe after pressure settles")
     func memoryBudgetFrameLossRequestsDelayedKeyframe() async throws {
         let keyframeCounter = LockedCounter()

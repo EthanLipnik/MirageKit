@@ -647,8 +647,7 @@ extension MirageHostService {
 
             let startupReadiness = await captureEngine.captureStartupReadiness()
             if let invalidReason = captureBenchmarkInvalidMeasurementReason(
-                startupReadiness: startupReadiness,
-                targetFrameRate: stage.targetFrameRate
+                startupReadiness: startupReadiness
             ) {
                 throw MirageHostCaptureBenchmarkError.measurementInvalid(invalidReason)
             }
@@ -828,8 +827,7 @@ extension MirageHostService {
 
             let startupReadiness = await stageCaptureEngine.displayStartupReadiness()
             if let invalidReason = captureBenchmarkInvalidMeasurementReason(
-                startupReadiness: startupReadiness,
-                targetFrameRate: stage.targetFrameRate
+                startupReadiness: startupReadiness
             ) {
                 throw MirageHostCaptureBenchmarkError.measurementInvalid(invalidReason)
             }

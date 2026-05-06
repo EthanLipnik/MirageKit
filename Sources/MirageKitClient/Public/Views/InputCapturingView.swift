@@ -1126,16 +1126,16 @@ public class InputCapturingView: UIView {
             onInputEvent?(.rotate(event))
         }
         scrollPhysicsView!.onPencilTouchesBegan = { [weak self] touches, event in
-            self?.handlePencilTouchesBegan(touches, event: event)
+            self?.handlePencilTouchesBegan(touches)
         }
         scrollPhysicsView!.onPencilTouchesMoved = { [weak self] touches, event in
             self?.handlePencilTouchesMoved(touches, event: event)
         }
         scrollPhysicsView!.onPencilTouchesEnded = { [weak self] touches, event in
-            self?.handlePencilTouchesEnded(touches, event: event)
+            self?.handlePencilTouchesEnded(touches)
         }
         scrollPhysicsView!.onPencilTouchesCancelled = { [weak self] touches, event in
-            self?.handlePencilTouchesCancelled(touches, event: event)
+            self?.handlePencilTouchesCancelled(touches)
         }
         scrollPhysicsView!.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
@@ -1159,8 +1159,7 @@ public class InputCapturingView: UIView {
 
     func responderRecoveryTarget() -> InputCapturingResponderTarget {
         InputCapturingResponderRecoveryPolicy.target(
-            softwareKeyboardVisible: softwareKeyboardVisible,
-            hardwareKeyboardPresent: hardwareKeyboardPresent
+            softwareKeyboardVisible: softwareKeyboardVisible
         )
     }
 
@@ -1317,16 +1316,16 @@ public class InputCapturingView: UIView {
             self?.isStylusTouch(touch) ?? false
         }
         gesture.onTouchesBegan = { [weak self] touches, event in
-            self?.handlePencilTouchesBegan(touches, event: event)
+            self?.handlePencilTouchesBegan(touches)
         }
         gesture.onTouchesMoved = { [weak self] touches, event in
             self?.handlePencilTouchesMoved(touches, event: event)
         }
         gesture.onTouchesEnded = { [weak self] touches, event in
-            self?.handlePencilTouchesEnded(touches, event: event)
+            self?.handlePencilTouchesEnded(touches)
         }
         gesture.onTouchesCancelled = { [weak self] touches, event in
-            self?.handlePencilTouchesCancelled(touches, event: event)
+            self?.handlePencilTouchesCancelled(touches)
         }
         pencilContactGesture = gesture
         addGestureRecognizer(gesture)
@@ -2161,7 +2160,7 @@ public class InputCapturingView: UIView {
 
     override public func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         let touchSplit = splitStylusTouches(touches)
-        handlePencilTouchesBegan(touchSplit.stylus, event: event)
+        handlePencilTouchesBegan(touchSplit.stylus)
 
         if !touchSplit.nonStylus.isEmpty {
             super.touchesBegan(touchSplit.nonStylus, with: event)
@@ -2179,7 +2178,7 @@ public class InputCapturingView: UIView {
 
     override public func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         let touchSplit = splitStylusTouches(touches)
-        handlePencilTouchesEnded(touchSplit.stylus, event: event)
+        handlePencilTouchesEnded(touchSplit.stylus)
 
         if !touchSplit.nonStylus.isEmpty {
             super.touchesEnded(touchSplit.nonStylus, with: event)
@@ -2188,7 +2187,7 @@ public class InputCapturingView: UIView {
 
     override public func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         let touchSplit = splitStylusTouches(touches)
-        handlePencilTouchesCancelled(touchSplit.stylus, event: event)
+        handlePencilTouchesCancelled(touchSplit.stylus)
 
         if !touchSplit.nonStylus.isEmpty {
             super.touchesCancelled(touchSplit.nonStylus, with: event)
@@ -2231,7 +2230,7 @@ public class InputCapturingView: UIView {
         return false
     }
 
-    private func handlePencilTouchesBegan(_ touches: Set<UITouch>, event _: UIEvent?) {
+    private func handlePencilTouchesBegan(_ touches: Set<UITouch>) {
         guard !touches.isEmpty else { return }
         noteInteractionForResponderRecovery()
         if let touch = touches.first, activePencilTouchID == nil {
@@ -2248,7 +2247,7 @@ public class InputCapturingView: UIView {
         }
     }
 
-    private func handlePencilTouchesEnded(_ touches: Set<UITouch>, event _: UIEvent?) {
+    private func handlePencilTouchesEnded(_ touches: Set<UITouch>) {
         guard !touches.isEmpty else { return }
         if let activePencilTouchID,
            let touch = touches.first(where: { ObjectIdentifier($0) == activePencilTouchID }) {
@@ -2256,7 +2255,7 @@ public class InputCapturingView: UIView {
         }
     }
 
-    private func handlePencilTouchesCancelled(_ touches: Set<UITouch>, event _: UIEvent?) {
+    private func handlePencilTouchesCancelled(_ touches: Set<UITouch>) {
         guard !touches.isEmpty else { return }
         if let activePencilTouchID,
            let touch = touches.first(where: { ObjectIdentifier($0) == activePencilTouchID }) {

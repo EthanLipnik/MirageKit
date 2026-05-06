@@ -45,11 +45,13 @@ public struct MirageReceiverHealthController: Sendable {
         }
     }
 
-    private static let minimumBitrateBps = 2_000_000
-    private static let severeBackoffStep = 0.75
-    private static let normalBackoffStep = 0.85
-    private static let backoffCooldownSeconds: CFAbsoluteTime = 2
-    private static let recoveryHealthySampleThreshold = 2
+    private static let minimumBitrateBps = 6_000_000
+    private static let severeBackoffStep = 0.85
+    private static let normalBackoffStep = 0.92
+    private static let backoffCooldownSeconds: CFAbsoluteTime = 8
+    private static let recoveryHealthySampleThreshold = 3
+    private static let severeStressSampleThreshold = 2
+    private static let normalStressSampleThreshold = 3
     private static let probeHealthySampleThreshold = 3
     private static let fastStartProbeHealthySampleThreshold = 2
     private static let probeIncreaseFloorBps = 6_000_000
@@ -79,7 +81,10 @@ public struct MirageReceiverHealthController: Sendable {
     private static let sendCompletionSevereMs = 28.0
     private static let packetPacerStressMs = 0.75
     private static let packetPacerSevereMs = 2.0
-    private static let transportDropSevereCount: UInt64 = 12
+    private static let transportDropStressCount: UInt64 = 4
+    private static let transportDropSevereCount: UInt64 = 24
+    private static let deliveryStressRatio = 0.90
+    private static let deliverySevereRatio = 0.70
 
     public private(set) var state: State = .stable
 
@@ -169,7 +174,8 @@ public struct MirageReceiverHealthController: Sendable {
         currentBitrateBps: Int,
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
-        allowsNewProbe: Bool = true
+        allowsNewProbe: Bool = true,
+        allowsBackoff: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0, !snapshots.isEmpty else {
             reset()
@@ -182,7 +188,8 @@ public struct MirageReceiverHealthController: Sendable {
             currentBitrateBps: currentBitrateBps,
             ceilingBps: ceilingBps,
             now: now,
-            allowsNewProbe: allowsNewProbe
+            allowsNewProbe: allowsNewProbe,
+            allowsBackoff: allowsBackoff
         )
     }
 
@@ -191,7 +198,8 @@ public struct MirageReceiverHealthController: Sendable {
         currentBitrateBps: Int,
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
-        allowsNewProbe: Bool = true
+        allowsNewProbe: Bool = true,
+        allowsBackoff: Bool = true
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0 else {
             reset()
@@ -209,10 +217,15 @@ public struct MirageReceiverHealthController: Sendable {
             from: snapshot
         )
 
-        if sample.isStress {
+        if sample.hasTransportPressure && allowsBackoff {
             healthySampleCount = 0
             promotionHealthySampleCount = 0
             stressSampleCount += 1
+        } else if sample.hasTransportPressure {
+            healthySampleCount = 0
+            promotionHealthySampleCount = 0
+            stressSampleCount = 0
+            pendingPromotion = nil
         } else {
             healthySampleCount += 1
             if sample.allowsProbePromotion {
@@ -226,7 +239,8 @@ public struct MirageReceiverHealthController: Sendable {
         if let promotionAction = advancePendingPromotion(
             sample: sample,
             currentBitrateBps: currentBitrateBps,
-            now: now
+            now: now,
+            allowsBackoff: allowsBackoff
         ) {
             return promotionAction
         }
@@ -236,7 +250,7 @@ public struct MirageReceiverHealthController: Sendable {
 
         switch state {
         case .stable:
-            if shouldBackOff(sample: sample, now: now) {
+            if allowsBackoff, shouldBackOff(sample: sample, now: now) {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
@@ -260,7 +274,7 @@ public struct MirageReceiverHealthController: Sendable {
             }
 
         case .backingOff:
-            if shouldBackOff(sample: sample, now: now) {
+            if allowsBackoff, shouldBackOff(sample: sample, now: now) {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
@@ -298,7 +312,7 @@ public struct MirageReceiverHealthController: Sendable {
         currentBitrateBps: Int,
         now: CFAbsoluteTime
     ) -> Action {
-        let step = sample.isSevere ? Self.severeBackoffStep : Self.normalBackoffStep
+        let step = sample.hasSevereTransportPressure ? Self.severeBackoffStep : Self.normalBackoffStep
         let nextBitrate = max(Self.minimumBitrateBps, Int(Double(currentBitrateBps) * step))
         recordBackoffMemory(
             sample: sample,
@@ -319,19 +333,20 @@ public struct MirageReceiverHealthController: Sendable {
         sample: Sample,
         now: CFAbsoluteTime
     ) -> Bool {
-        guard sample.isStress else { return false }
-        if sample.isSevere {
-            guard let lastTransitionAt else { return true }
-            return now - lastTransitionAt >= Self.backoffCooldownSeconds
-        }
-        guard stressSampleCount >= Self.recoveryHealthySampleThreshold else { return false }
+        guard sample.hasTransportPressure else { return false }
+        let requiredSampleCount = sample.hasSevereTransportPressure
+            ? Self.severeStressSampleThreshold
+            : Self.normalStressSampleThreshold
+        guard stressSampleCount >= requiredSampleCount else { return false }
         guard let lastTransitionAt else { return true }
         return now - lastTransitionAt >= Self.backoffCooldownSeconds
     }
 
     private struct Sample: Sendable {
-        let isSevere: Bool
-        let isStress: Bool
+        // Only transport pressure is allowed to lower bitrate or roll back a probe.
+        // Decode and presentation health only gate upward promotion.
+        let hasSevereTransportPressure: Bool
+        let hasTransportPressure: Bool
         let isHealthy: Bool
         let allowsProbePromotion: Bool
     }
@@ -346,7 +361,8 @@ public struct MirageReceiverHealthController: Sendable {
     private mutating func advancePendingPromotion(
         sample: Sample,
         currentBitrateBps: Int,
-        now: CFAbsoluteTime
+        now: CFAbsoluteTime,
+        allowsBackoff: Bool
     ) -> Action? {
         guard var pendingPromotion else { return nil }
         guard currentBitrateBps >= pendingPromotion.targetBitrateBps else {
@@ -354,11 +370,16 @@ public struct MirageReceiverHealthController: Sendable {
             return nil
         }
 
-        if sample.isStress {
+        if sample.hasTransportPressure {
+            guard allowsBackoff else {
+                self.pendingPromotion = nil
+                state = .stable
+                return nil
+            }
             recordFailedPromotion(
                 failedBitrateBps: pendingPromotion.targetBitrateBps,
                 fallbackBitrateBps: pendingPromotion.previousBitrateBps,
-                severe: sample.isSevere,
+                severe: sample.hasSevereTransportPressure,
                 now: now
             )
             self.pendingPromotion = nil
@@ -440,10 +461,10 @@ public struct MirageReceiverHealthController: Sendable {
         nextBitrateBps: Int,
         now: CFAbsoluteTime
     ) {
-        let ceilingStep = sample.isSevere
+        let ceilingStep = sample.hasSevereTransportPressure
             ? Self.severeBackoffPromotionCeilingStep
             : Self.normalBackoffPromotionCeilingStep
-        let cooldown = sample.isSevere
+        let cooldown = sample.hasSevereTransportPressure
             ? Self.severeBackoffPromotionCooldownSeconds
             : Self.normalBackoffPromotionCooldownSeconds
         let rememberedCeiling = max(nextBitrateBps, Int(Double(currentBitrateBps) * ceilingStep))
@@ -525,6 +546,9 @@ public struct MirageReceiverHealthController: Sendable {
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
         let transportDropCount = snapshot.hostStalePacketDrops ?? 0
+        let assessedTransportDropCount = transportDropCount >= Self.transportDropStressCount
+            ? transportDropCount
+            : 0
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: queueBytes,
@@ -539,15 +563,23 @@ public struct MirageReceiverHealthController: Sendable {
                 sendCompletionAverageMs: sendCompletionAverageMs,
                 sendCompletionStressThresholdMs: Self.sendCompletionStressMs,
                 sendCompletionSevereThresholdMs: Self.sendCompletionSevereMs,
-                transportDropCount: transportDropCount,
-                transportDropSevereCount: Self.transportDropSevereCount
+                transportDropCount: assessedTransportDropCount,
+                transportDropSevereCount: Self.transportDropSevereCount,
+                encodedFPS: snapshot.hostEncodedFPS > 0 ? snapshot.hostEncodedFPS : nil,
+                deliveredFPS: snapshot.receivedFPS > 0 ? snapshot.receivedFPS : nil,
+                deliveryStressRatio: Self.deliveryStressRatio,
+                deliverySevereRatio: Self.deliverySevereRatio
             )
         )
         let pacingOnlyStress = transportAssessment.isPacerOnlyStress
         let severeDelayOnly = transportAssessment.isDelayOnlyBurst && transportAssessment.advisoryDelaySevere
-        let severe = (transportAssessment.isSevere || severeDelayOnly) && !pacingOnlyStress
-        let sustainedLoss = (transportAssessment.isStress || severeDelayOnly) && !pacingOnlyStress
-        let healthy = !severe && !sustainedLoss
+        let deliveryStress = transportAssessment.pipelineCadenceStress && snapshot.hasHostMetrics
+        let deliverySevere = transportAssessment.pipelineCadenceSevere && snapshot.hasHostMetrics
+        let severeTransportPressure = (transportAssessment.isSevere || severeDelayOnly || deliverySevere) &&
+            !pacingOnlyStress
+        let sustainedTransportPressure = (transportAssessment.isStress || severeDelayOnly || deliveryStress) &&
+            !pacingOnlyStress
+        let transportHealthy = !severeTransportPressure && !sustainedTransportPressure
         let targetFrameIntervalMs = 1000.0 / targetFPS
         let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
             snapshot.clientWorstPresentationGapMs < max(250, targetFrameIntervalMs * 4) &&
@@ -560,9 +592,9 @@ public struct MirageReceiverHealthController: Sendable {
                     snapshot.clientDisplayTickIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
             )
         return Sample(
-            isSevere: severe,
-            isStress: severe || sustainedLoss,
-            isHealthy: healthy,
+            hasSevereTransportPressure: severeTransportPressure,
+            hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
+            isHealthy: transportHealthy,
             allowsProbePromotion: snapshot.hasHostMetrics &&
                 targetFPS > 0 &&
                 snapshot.decodeHealthy &&
@@ -604,6 +636,9 @@ public struct MirageReceiverHealthController: Sendable {
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
         let transportDropCount = snapshot.hostStalePacketDrops ?? 0
+        let assessedTransportDropCount = transportDropCount >= Self.transportDropStressCount
+            ? transportDropCount
+            : 0
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: queueBytes,
@@ -618,8 +653,12 @@ public struct MirageReceiverHealthController: Sendable {
                 sendCompletionAverageMs: sendCompletionAverageMs,
                 sendCompletionStressThresholdMs: Self.sendCompletionStressMs,
                 sendCompletionSevereThresholdMs: Self.sendCompletionSevereMs,
-                transportDropCount: transportDropCount,
-                transportDropSevereCount: Self.transportDropSevereCount
+                transportDropCount: assessedTransportDropCount,
+                transportDropSevereCount: Self.transportDropSevereCount,
+                encodedFPS: snapshot.hostEncodedFPS > 0 ? snapshot.hostEncodedFPS : nil,
+                deliveredFPS: snapshot.receivedFPS > 0 ? snapshot.receivedFPS : nil,
+                deliveryStressRatio: Self.deliveryStressRatio,
+                deliverySevereRatio: Self.deliverySevereRatio
             )
         )
         let pacingOnlyStress = transportAssessment.isPacerOnlyStress
@@ -652,6 +691,11 @@ public struct MirageReceiverHealthController: Sendable {
         }
         if transportDropCount > 0 {
             score += 200
+        }
+        if transportAssessment.pipelineCadenceSevere {
+            score += 550
+        } else if transportAssessment.pipelineCadenceStress {
+            score += 350
         }
 
         return score

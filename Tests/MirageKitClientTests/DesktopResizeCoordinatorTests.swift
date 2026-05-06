@@ -57,13 +57,42 @@ struct DesktopResizeCoordinatorTests {
         )
         coordinator.queueLatestTarget(queuedTarget)
 
-        coordinator.finishTransition(outcome: .resized)
+        coordinator.finishTransition()
 
         #expect(coordinator.activeTransition == nil)
         #expect(coordinator.queuedTarget == queuedTarget)
         #expect(coordinator.latestRequestedTarget == queuedTarget)
         #expect(coordinator.isResizing)
         #expect(coordinator.maskActive)
+    }
+
+    @Test("Accepted startup geometry clears duplicate queued resize")
+    func acceptedStartupGeometryClearsDuplicateQueuedResize() {
+        let coordinator = DesktopResizeCoordinator()
+        let duplicateTarget = target(logicalWidth: 1600, logicalHeight: 1200)
+        let nextTarget = target(logicalWidth: 1512, logicalHeight: 982)
+        coordinator.queueLatestTarget(duplicateTarget)
+        coordinator.isResizing = true
+        coordinator.maskActive = true
+
+        coordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayPixelSize: CGSize(width: 3200, height: 2400)
+        )
+
+        #expect(coordinator.queuedTarget == nil)
+        #expect(coordinator.latestRequestedTarget == nil)
+        #expect(!coordinator.isResizing)
+        #expect(!coordinator.maskActive)
+
+        coordinator.queueLatestTarget(nextTarget)
+        coordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayPixelSize: CGSize(width: 3200, height: 2400)
+        )
+
+        #expect(coordinator.queuedTarget == nextTarget)
+        #expect(coordinator.latestRequestedTarget == nextTarget)
     }
 
     @Test("Local timeout clears presentation UI but preserves active transition")

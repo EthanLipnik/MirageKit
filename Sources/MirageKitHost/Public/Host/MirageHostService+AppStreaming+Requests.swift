@@ -835,7 +835,6 @@ extension MirageHostService {
                 let attachment = started.attachment
                 let processID = targetWindow.application?.id ?? 0
                 let isResizable = appStreamManager.checkWindowResizability(
-                    windowID: targetWindowID,
                     processID: processID
                 )
                 await appStreamManager.replaceVisibleWindowForStream(
@@ -1022,7 +1021,7 @@ extension MirageHostService {
         activateWindow(targetWindow)
 
         let processID = targetWindow.application?.id ?? 0
-        let isResizable = appStreamManager.checkWindowResizability(windowID: targetWindowID, processID: processID)
+        let isResizable = appStreamManager.checkWindowResizability(processID: processID)
         await appStreamManager.replaceVisibleWindowForStream(
             bundleIdentifier: bundleIdentifier,
             streamID: targetSlotStreamID,
@@ -1229,8 +1228,7 @@ extension MirageHostService {
             }
             let selectedProcessID = selectedWindow.application?.id ?? 0
             let initialIsResizable = appStreamManager.checkWindowResizability(
-                windowID: selectedWindow.id,
-                processID: selectedProcessID
+                    processID: selectedProcessID
             )
             let started = try await startAppAtlasWindowCapture(
                 app: app,
@@ -1262,8 +1260,7 @@ extension MirageHostService {
 
             let processID = streamSession.window.application?.id ?? selectedWindow.application?.id ?? 0
             let isResizable = appStreamManager.checkWindowResizability(
-                windowID: resolvedWindowID,
-                processID: processID
+                    processID: processID
             )
             let assignedSlot = await appStreamManager.addWindowToSession(
                 bundleIdentifier: app.bundleIdentifier,
@@ -1630,7 +1627,6 @@ extension MirageHostService {
                 let resolved = binding.resolvedWindow
                 let processID = resolved.application?.id ?? binding.candidate.window.application?.id ?? 0
                 let isResizable = appStreamManager.checkWindowResizability(
-                    windowID: resolved.id,
                     processID: processID
                 )
                 await appStreamManager.upsertHiddenWindow(
@@ -1883,8 +1879,7 @@ extension MirageHostService {
                         currentBinding.candidate.window.application?.id ??
                         0
                     let isResizable = appStreamManager.checkWindowResizability(
-                        windowID: resolved.id,
-                        processID: processID
+                    processID: processID
                     )
                     await appStreamManager.upsertHiddenWindow(
                         bundleIdentifier: app.bundleIdentifier,
@@ -1963,8 +1958,7 @@ extension MirageHostService {
     ) async throws -> InitialStartedAppWindow {
         let initialProcessID = preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
         let initialIsResizable = appStreamManager.checkWindowResizability(
-            windowID: preferredWindow.id,
-            processID: initialProcessID
+                    processID: initialProcessID
         )
         let started = try await startAppAtlasWindowCapture(
             app: app,
@@ -1989,8 +1983,7 @@ extension MirageHostService {
         let resolvedWindow = streamSession.window
         let processID = resolvedWindow.application?.id ?? preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
-            windowID: resolvedWindow.id,
-            processID: processID
+                    processID: processID
         )
 
         if let existingStreamID = await appStreamManager.streamIDForWindow(

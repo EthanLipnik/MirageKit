@@ -731,7 +731,6 @@ extension MirageHostService {
         desktopStreamClientContext = clientContext
         desktopRequestedScaleFactor = desktopBackingScale.scaleFactor
         streamsByID[streamID] = streamContext
-        registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
         var effectiveAudioConfiguration = resolvedAudioConfiguration
@@ -763,7 +762,7 @@ extension MirageHostService {
         }
         desktopStreamClientContext = activeClientContext
 
-        syncSharedClipboardState(reason: "desktop_stream_started")
+        syncSharedClipboardState()
         await updateLightsOutState()
         let excludedWindows = await resolveLightsOutExcludedWindows()
         try await ensureDesktopStreamStartupCanContinue(
@@ -1061,7 +1060,6 @@ extension MirageHostService {
         if let failedStreamID {
             cancelPendingStartupAttempt(streamID: failedStreamID)
             streamsByID.removeValue(forKey: failedStreamID)
-            unregisterTypingBurstRoute(streamID: failedStreamID)
             unregisterStallWindowPointerRoute(streamID: failedStreamID)
             streamStartupBaseTimes.removeValue(forKey: failedStreamID)
             streamStartupRegistrationLogged.remove(failedStreamID)
@@ -1153,7 +1151,6 @@ extension MirageHostService {
         desktopSessionID = nil
         desktopStreamClientContext = nil
         streamsByID.removeValue(forKey: streamID)
-        unregisterTypingBurstRoute(streamID: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
@@ -1205,7 +1202,7 @@ extension MirageHostService {
         await syncAppListRequestDeferralForInteractiveWorkload()
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
 
-        syncSharedClipboardState(reason: "desktop_stream_stopped")
+        syncSharedClipboardState()
         await updateLightsOutState()
         lockHostIfStreamingStopped(triggeredByExplicitStreamStop: triggeredByExplicitStreamStop)
 

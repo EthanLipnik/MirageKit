@@ -77,7 +77,7 @@ extension StreamContext {
     }
 
     var usesSoftSenderDelaySmoothing: Bool {
-        latencyMode == .auto || latencyMode == .smoothest
+        latencyMode == .smoothest
     }
 
     func enterSoftFreshnessDrainIfNeeded(frameBudgetMs: Double, reason: String) {
@@ -121,18 +121,16 @@ extension StreamContext {
         guard queueBytes <= queuePressureBytes else { return false }
 
         let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
-        let restoredQueueDepthText = preLatencyBurstCaptureQueueDepthOverride.map(String.init) ?? "auto"
+        let restoredQueueDepthText = preLatencyBurstCaptureQueueDepthOverride.map(String.init) ?? "default"
 
         freshnessBurstActive = false
         clearBackpressureState(log: false)
 
-        if !typingBurstActive {
-            await exitLatencyBurst(now: CFAbsoluteTimeGetCurrent(), reason: "freshness burst (\(reason))")
-        }
+        await exitLatencyBurst(now: CFAbsoluteTimeGetCurrent(), reason: "freshness burst (\(reason))")
 
         MirageLogger.metrics(
             "Freshness burst exit for stream \(streamID): " +
-                "reason=\(reason), queue=\(queuedKB)KB, typingBurstActive=\(typingBurstActive), restoredQueueDepth=\(restoredQueueDepthText)"
+                "reason=\(reason), queue=\(queuedKB)KB, restoredQueueDepth=\(restoredQueueDepthText)"
         )
         return true
     }

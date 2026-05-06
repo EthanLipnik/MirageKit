@@ -84,20 +84,6 @@ extension MirageHostService {
     }
 
     @MainActor
-    func registerTypingBurstRoute(streamID: StreamID, context: StreamContext) {
-        streamRegistry.registerTypingBurstHandler(streamID: streamID) { [weak context] in
-            Task(priority: .userInitiated) {
-                await context?.noteTypingBurstActivity()
-            }
-        }
-    }
-
-    @MainActor
-    func unregisterTypingBurstRoute(streamID: StreamID) {
-        streamRegistry.unregisterTypingBurstHandler(streamID: streamID)
-    }
-
-    @MainActor
     func registerStallWindowPointerRoute(streamID: StreamID, context: StreamContext) async {
         streamRegistry.registerPointerCoalescingRoute(streamID: streamID)
         await context.setCaptureStallStageHandler { [weak self] stage in

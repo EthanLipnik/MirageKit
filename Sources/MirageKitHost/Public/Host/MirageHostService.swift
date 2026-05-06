@@ -43,7 +43,7 @@ public final class MirageHostService {
     public var sharedClipboardEnabled: Bool = false {
         didSet {
             guard oldValue != sharedClipboardEnabled else { return }
-            syncSharedClipboardState(reason: "setting_changed", forceStatusBroadcast: true)
+            syncSharedClipboardState(forceStatusBroadcast: true)
         }
     }
 

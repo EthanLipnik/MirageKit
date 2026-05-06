@@ -62,7 +62,7 @@ extension WindowCaptureEngine {
         switch latencyMode {
         case .lowestLatency:
             break
-        case .auto, .smoothest:
+        case .smoothest:
             depth += 1
         }
 
@@ -85,8 +85,7 @@ extension WindowCaptureEngine {
             let debounce: CFAbsoluteTime
 
             switch latencyMode {
-            case .auto,
-                 .smoothest:
+            case .smoothest:
                 soft = min(max(safeConfiguredSoft, 0.60), 1.00)
                 hard = min(max(max(soft + 0.20, soft * 1.20), 1.10), 1.25)
                 debounce = 0.08
@@ -238,10 +237,6 @@ extension WindowCaptureEngine {
             displayRefreshRate: currentDisplayRefreshRate,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )
-    }
-
-    func effectiveCaptureRate() -> Int {
-        minimumFrameIntervalRate()
     }
 
     func usesNativeRefreshMinimumFrameInterval() -> Bool {

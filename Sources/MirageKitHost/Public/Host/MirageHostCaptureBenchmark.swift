@@ -766,8 +766,7 @@ func captureBenchmarkSourceFrameMatchesExpected(
 func captureBenchmarkInvalidMeasurementReason(
     displayValidationResult: MirageHostCaptureBenchmarkDisplayValidationResult? = nil,
     displayCadenceProbeFailed: Bool = false,
-    startupReadiness: DisplayCaptureStartupReadiness? = nil,
-    targetFrameRate _: Int
+    startupReadiness: DisplayCaptureStartupReadiness? = nil
 ) -> String? {
     if case let .invalid(reason)? = displayValidationResult {
         return reason

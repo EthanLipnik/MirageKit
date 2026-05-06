@@ -17,7 +17,7 @@ import Foundation
 public extension AppStreamManager {
     /// Check if a window is resizable using Accessibility API
     /// Checks if the kAXSizeAttribute is settable for the window
-    nonisolated func checkWindowResizability(windowID _: WindowID, processID: Int32) -> Bool {
+    nonisolated func checkWindowResizability(processID: Int32) -> Bool {
         let appElement = AXUIElementCreateApplication(processID)
 
         var windowsRef: CFTypeRef?

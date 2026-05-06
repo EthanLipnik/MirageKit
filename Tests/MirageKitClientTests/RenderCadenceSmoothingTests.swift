@@ -22,7 +22,7 @@ struct RenderCadenceSmoothingTests {
         let streamID: StreamID = 401
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .auto)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
         for index in 0 ..< 5 {
             _ = MirageRenderStreamStore.shared.enqueue(
@@ -40,15 +40,15 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 3)
         #expect(telemetry.overwrittenPendingFrames == 2)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 2)
     }
 
-    @Test("Display tick drops late frames while preserving bounded playout")
-    func displayTickDropsLateFramesWhilePreservingBoundedPlayout() {
+    @Test("Lowest latency display tick takes the newest decoded frame")
+    func lowestLatencyDisplayTickTakesNewestDecodedFrame() {
         let streamID: StreamID = 402
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .auto)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
 
         for index in 0 ..< 3 {
             _ = MirageRenderStreamStore.shared.enqueue(
@@ -61,13 +61,12 @@ struct RenderCadenceSmoothingTests {
         }
 
         let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(frame?.sequence == 2)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
+        #expect(frame?.sequence == 3)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 1)
-        #expect(telemetry.lateFrameDrops == 1)
+        #expect(telemetry.pendingFrameCount == 0)
+        #expect(telemetry.lateFrameDrops == 2)
     }
 
     @Test("Repeated submission marks do not create unique forward progress")
@@ -155,5 +154,6 @@ struct RenderCadenceSmoothingTests {
         }
         return buffer
     }
+
 }
 #endif

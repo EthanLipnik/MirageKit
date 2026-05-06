@@ -46,21 +46,19 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
         qualityRaiseStep: Float
     ) -> MirageRuntimeQualityAdjustmentDecision {
         var nextState = state
-        let pacingOnlyStress = transportAssessment.isPacerOnlyStress
-        let transportStress = transportAssessment.isStress && !pacingOnlyStress
-        let transportHighPressure = transportAssessment.isSevere && !pacingOnlyStress
+        let senderBacklogStress = transportAssessment.queueStress || transportAssessment.packetBudgetStress
+        let senderBacklogSevere = transportAssessment.queueSevere || transportAssessment.packetBudgetSevere
+        let transportDropStress = transportAssessment.transportDropStress && senderBacklogStress
+        let transportDropSevere = transportAssessment.transportDropSevere && senderBacklogStress
+        let transportStress = senderBacklogStress || transportDropStress
+        let transportHighPressure = senderBacklogSevere ||
+            transportDropSevere ||
+            (transportStress && transportAssessment.advisoryDelaySevere)
         let qualityDropSignal = transportStress || (allowEncodeDrivenQualityRelief && encodeOverBudget)
 
-        if !qualityDropSignal, transportAssessment.isDelayOnlyBurst || pacingOnlyStress {
+        if !qualityDropSignal {
             nextState.qualityOverBudgetCount = 0
-            nextState.qualityUnderBudgetCount = 0
-            return MirageRuntimeQualityAdjustmentDecision(
-                state: nextState,
-                action: .hold
-            )
-        }
-
-        if qualityDropSignal {
+        } else {
             nextState.qualityUnderBudgetCount = 0
             nextState.qualityOverBudgetCount += 1
 
@@ -93,7 +91,12 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
                 if nextQuality < nextState.activeQuality {
                     nextState.activeQuality = nextQuality
                     nextState.qualityOverBudgetCount = 0
-                    var reasonTokens = pacingOnlyStress ? [] : transportAssessment.reasonTokens
+                    var reasonTokens: [String] = []
+                    if transportAssessment.queueStress { reasonTokens.append("queue") }
+                    if transportAssessment.packetBudgetStress { reasonTokens.append("budget") }
+                    if transportAssessment.packetPacerStress { reasonTokens.append("pacer") }
+                    if transportDropStress { reasonTokens.append("drops") }
+                    if transportAssessment.advisoryDelayStress { reasonTokens.append("delay") }
                     if allowEncodeDrivenQualityRelief, encodeOverBudget {
                         reasonTokens.append("encode")
                     }

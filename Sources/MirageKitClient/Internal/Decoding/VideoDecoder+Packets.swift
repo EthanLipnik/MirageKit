@@ -770,7 +770,7 @@ extension FrameReassembler {
         }
 
         while pendingKeyframeCountLocked() > memoryBudget.maxPendingKeyframes,
-              let frameNumber = oldestPendingKeyframeLocked(excluding: newestPendingKeyframeNumberLocked()) {
+              let frameNumber = oldestPendingKeyframeLocked(excluding: bestPendingKeyframeNumberLocked()) {
             evict(frameNumber)
         }
 
@@ -797,7 +797,7 @@ extension FrameReassembler {
         }) {
             return nonKeyframe
         }
-        return oldestPendingKeyframeLocked(excluding: newestPendingKeyframeNumberLocked())
+        return oldestPendingKeyframeLocked(excluding: bestPendingKeyframeNumberLocked())
     }
 
     private func oldestPendingKeyframeLocked(excluding excludedFrameNumber: UInt32?) -> UInt32? {
@@ -806,16 +806,26 @@ extension FrameReassembler {
         }
     }
 
-    private func newestPendingKeyframeNumberLocked() -> UInt32? {
+    private func bestPendingKeyframeNumberLocked() -> UInt32? {
         pendingFrames
             .filter { $0.value.isKeyframe }
             .max { lhs, rhs in
-                if lhs.key == rhs.key {
+                let lhsProgress = keyframeProgressRatioLocked(lhs.value)
+                let rhsProgress = keyframeProgressRatioLocked(rhs.value)
+                if lhsProgress != rhsProgress {
+                    return lhsProgress < rhsProgress
+                }
+                if lhs.value.lastProgressAt != rhs.value.lastProgressAt {
                     return lhs.value.lastProgressAt < rhs.value.lastProgressAt
                 }
                 return isFrameNewer(rhs.key, than: lhs.key)
             }?
             .key
+    }
+
+    private func keyframeProgressRatioLocked(_ frame: PendingFrame) -> Double {
+        guard frame.dataFragmentCount > 0 else { return 0 }
+        return Double(frame.receivedCount) / Double(frame.dataFragmentCount)
     }
 
     private func oldestPendingFrameNumberLocked(
@@ -915,6 +925,36 @@ extension FrameReassembler {
         return result
     }
 
+    @discardableResult
+    func trimPendingFramesForRecovery(reason: String) -> MemoryTrimResult {
+        lock.lock()
+        let evictedFrames = pendingFrames.count
+        let releasedPendingBytes = pendingFrameBytesLocked()
+        for frame in pendingFrames.values {
+            frame.buffer.release()
+        }
+        pendingFrames.removeAll(keepingCapacity: false)
+        if evictedFrames > 0 {
+            droppedFrameCount += UInt64(evictedFrames)
+        }
+        beginAwaitingKeyframe()
+        let result = MemoryTrimResult(
+            evictedFrames: evictedFrames,
+            releasedPendingBytes: releasedPendingBytes,
+            awaitingKeyframe: awaitingKeyframe
+        )
+        lock.unlock()
+
+        if evictedFrames > 0 {
+            MirageLogger.client(
+                "Recovery trimmed \(evictedFrames) reassembler frame(s) for stream \(streamID); " +
+                    "reason=\(reason), releasedPendingBytes=\(releasedPendingBytes)"
+            )
+        }
+
+        return result
+    }
+
     func enterKeyframeOnlyMode() {
         lock.lock()
         enterKeyframeOnlyModeLocked()
@@ -962,11 +1002,11 @@ extension FrameReassembler {
 
     func latestPendingKeyframeProgress() -> PendingKeyframeProgress? {
         lock.lock()
-        let progress = pendingFrames
-            .filter { $0.value.isKeyframe }
-            .max { lhs, rhs in
-                if lhs.key == rhs.key { return lhs.value.lastProgressAt < rhs.value.lastProgressAt }
-                return isFrameNewer(rhs.key, than: lhs.key)
+        let progress = bestPendingKeyframeNumberLocked()
+            .flatMap { frameNumber in
+                pendingFrames[frameNumber].map { frame in
+                    (frameNumber, frame)
+                }
             }
             .map { frameNumber, frame in
                 PendingKeyframeProgress(

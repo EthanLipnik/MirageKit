@@ -701,6 +701,16 @@ extension StreamController {
             reassembler.enterKeyframeOnlyMode()
             clearQueuedFramesForRecovery()
             startFreezeMonitorIfNeeded()
+            if memoryBudgetRecoveryTask != nil {
+                cancelMemoryBudgetRecoveryTask()
+                MirageLogger.client(
+                    "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
+                        "memory-budget recovery churn, requesting keyframe"
+                )
+                await startKeyframeRecoveryLoopIfNeeded()
+                await requestKeyframeRecovery(reason: .memoryBudget)
+                return
+            }
             scheduleMemoryBudgetRecoveryIfNeeded()
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); deferring recovery keyframe while memory pressure settles"
@@ -708,11 +718,19 @@ extension StreamController {
             return
         }
 
-        // For active streams, frame loss from network congestion must NOT
-        // trigger keyframe requests.  Keyframes are 100-150x larger than
-        // P-frames and make congestion worse, creating a spiral.  Instead,
-        // freeze on the last decoded frame and let the periodic keyframe
-        // interval (or an actual decode error) provide natural recovery.
+        if reason == .timeout, reassembler.isAwaitingKeyframe() {
+            MirageLogger.client(
+                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
+                    "reassembler is awaiting keyframe, requesting bounded recovery"
+            )
+            await startKeyframeRecoveryLoopIfNeeded()
+            await requestKeyframeRecovery(reason: .frameLoss)
+            return
+        }
+
+        // Active streams avoid keyframe requests for non-blocking packet loss.
+        // Once the reassembler enters keyframe wait, the timeout branch above
+        // requests bounded recovery because dependent P-frames cannot resume decoding.
         MirageLogger.client(
             "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); waiting for natural keyframe or decode error"
         )
@@ -795,7 +813,7 @@ extension StreamController {
         case let .wait(deadline):
             let remainingMs = Int(max(0, deadline - now) * 1000)
             MirageLogger.client(
-                "Recovery keyframe deferred until episode deadline " +
+                "Recovery keyframe deferred until retry deadline " +
                     "(\(reason.logLabel), \(remainingMs)ms remaining) for stream \(streamID)"
             )
             return false
@@ -858,7 +876,7 @@ extension StreamController {
             await requestSoftRecovery(reason: .decodeErrorThreshold)
             return
         }
-        if shouldAttemptStartupDecodeErrorRecovery(now: now) {
+        if shouldAttemptStartupDecodeErrorRecovery() {
             firstPresentedFrameLastRecoveryRequestTime = now
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
             MirageLogger.client(
@@ -922,7 +940,7 @@ extension StreamController {
         }
     }
 
-    func shouldAttemptStartupDecodeErrorRecovery(now _: CFAbsoluteTime) -> Bool {
+    func shouldAttemptStartupDecodeErrorRecovery() -> Bool {
         guard !hasPresentedFirstFrame else { return false }
         return awaitingFirstPresentedFrame
     }
@@ -1029,6 +1047,7 @@ extension StreamController {
             resetPostResizeRecoveryTracking(clearResizeRecovery: false)
         }
         clearQueuedFramesForRecovery()
+        reassembler.trimPendingFramesForRecovery(reason: reason.logLabel)
         reassembler.enterKeyframeOnlyMode()
         if postResizeRecoveryActive {
             await armPostResizeRecoveryWindow(reason: "post-resize-soft-recovery")
@@ -1112,6 +1131,10 @@ extension StreamController {
                     "Keyframe recovery episode ended for stream \(streamID) " +
                         "(attempts=\(keyframeRecoveryAttempt), elapsedMs=\(Int((now - episodeStartedAt) * 1000)))"
                 )
+                await escalateKeyframeRecoveryAfterExhaustion(
+                    episodeStartedAt: episodeStartedAt,
+                    now: now
+                )
                 return
             }
 
@@ -1137,9 +1160,36 @@ extension StreamController {
             if didDispatch {
                 keyframeRecoveryAttempt &+= 1
             } else {
-                lastRecoveryRequestTime = currentTime()
+                do {
+                    try await Task.sleep(for: .milliseconds(20))
+                } catch {
+                    return
+                }
             }
         }
+    }
+
+    private func escalateKeyframeRecoveryAfterExhaustion(
+        episodeStartedAt: CFAbsoluteTime,
+        now: CFAbsoluteTime
+    ) async {
+        guard hasPresentedFirstFrame,
+              presentationTier == .activeLive,
+              reassembler.isAwaitingKeyframe(),
+              clientRecoveryStatus != .hardRecovery else {
+            return
+        }
+
+        MirageLogger.client(
+            "Keyframe recovery exhausted for stream \(streamID); escalating to hard recovery " +
+                "(elapsedMs=\(Int((now - episodeStartedAt) * 1000)))"
+        )
+        await requestRecovery(
+            reason: .frameLoss,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "keyframe-recovery-hard-reset"
+        )
     }
 
     private func startFreezeMonitorIfNeeded() {
@@ -1178,11 +1228,17 @@ extension StreamController {
         guard lastPresentedProgressTime > 0,
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
         guard reassembler.isAwaitingKeyframe() else { return }
+        let lastPacketTime = reassembler.latestPacketReceivedTime()
+        let packetStarved = lastPacketTime <= 0 || now - lastPacketTime >= Self.freezeTimeout
         MirageLogger.client(
             "Freeze detected for stream \(streamID): presentation stalled " +
             "\(Int((now - lastPresentedProgressTime) * 1000))ms, reassembler awaiting keyframe"
         )
-        await requestKeyframeRecovery(reason: .freezeTimeout)
+        await maybeTriggerFreezeRecovery(
+            now: now,
+            keyframeStarved: true,
+            packetStarved: packetStarved
+        )
     }
 
     nonisolated static func defaultApplicationForegroundProvider() async -> Bool {

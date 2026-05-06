@@ -649,8 +649,6 @@ extension StreamContext {
         guard isRunning else { return }
         isRunning = false
         disableStartupTransportProtection()
-        typingBurstExpiryTask?.cancel()
-        typingBurstExpiryTask = nil
 
         await stopAllAuxiliaryCaptures()
 

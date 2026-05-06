@@ -30,10 +30,7 @@ extension MirageHostService {
         return hasAppStreams || hasDesktopStream
     }
 
-    func syncSharedClipboardState(
-        reason _: String,
-        forceStatusBroadcast: Bool = false
-    ) {
+    func syncSharedClipboardState(forceStatusBroadcast: Bool = false) {
         let hasAppStreams = !activeStreams.isEmpty
         let hasDesktopStream = desktopStreamID != nil
         let connectedClientIDs = Set(clientsByID.keys)
@@ -198,9 +195,11 @@ extension MirageHostService {
                     mediaSecurityContext: mediaSecurityContext,
                     source: .host
                 )
-                for message in messages {
+                for (index, message) in messages.enumerated() {
                     try await clientContext.send(message)
-                    if messages.count > 1 { await Task.yield() }
+                    guard index < messages.count - 1 else { continue }
+                    await Task.yield()
+                    try? await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
                 }
             } catch {
                 MirageLogger.error(.host, error: error, message: "Failed to send shared clipboard update to \(clientContext.client.name): ")

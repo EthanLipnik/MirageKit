@@ -1073,6 +1073,10 @@ actor StreamController {
         return frames.count
     }
 
+    func shouldDeferSharedClipboardApply() -> Bool {
+        clientRecoveryStatus != .idle || reassembler.isAwaitingKeyframe()
+    }
+
     @discardableResult
     func handleMemoryPressure() async -> Bool {
         let queuedFramesTrimmed = clearQueuedFramesForRecovery()

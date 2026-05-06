@@ -21,8 +21,7 @@ extension MirageHostInputController {
     func injectScrollEvent(
         _ event: MirageScrollEvent,
         _ windowFrame: CGRect,
-        windowID: WindowID,
-        app _: MirageApplication?
+        windowID: WindowID
     ) {
         let resolvedFrame = resolvedInputWindowFrame(for: windowID, streamFrame: windowFrame)
         let scrollPoint = Self.scrollInjectionPoint(event.location, in: resolvedFrame)

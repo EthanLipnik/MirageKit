@@ -126,7 +126,7 @@ extension WindowCaptureEngine {
         guard let stream else { throw MirageError.protocolError("Failed to create stream") }
 
         // Create output handler with windowID for fallback capture during SCK pauses
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let stallPolicy = resolvedStallPolicy(
             windowID: window.windowID,
             frameRate: captureRate,
@@ -562,7 +562,7 @@ extension WindowCaptureEngine {
         guard let stream else { throw MirageError.protocolError("Failed to create display stream") }
 
         // Create output handler
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let resolvedWindowID: CGWindowID = contentWindowID.map { CGWindowID($0) } ?? 0
         let stallPolicy = resolvedStallPolicy(
             windowID: resolvedWindowID,

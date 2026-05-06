@@ -52,6 +52,18 @@ final class DesktopResizeCoordinator {
             abs(lhs.width - rhs.width) <= 1 &&
                 abs(lhs.height - rhs.height) <= 1
         }
+
+        func isEffectivelySameAcceptedStreamGeometry(
+            logicalResolution acceptedLogicalResolution: CGSize,
+            displayPixelSize acceptedDisplayPixelSize: CGSize
+        ) -> Bool {
+            guard Self.approximatelyEqual(logicalResolution.width, acceptedLogicalResolution.width),
+                  Self.approximatelyEqual(logicalResolution.height, acceptedLogicalResolution.height) else {
+                return false
+            }
+
+            return Self.pixelSizesEqual(resolvedGeometry.displayPixelSize, acceptedDisplayPixelSize)
+        }
     }
 
     struct ActiveTransition: Equatable {
@@ -96,7 +108,7 @@ final class DesktopResizeCoordinator {
         return true
     }
 
-    func finishTransition(outcome _: MirageDesktopTransitionOutcome?) {
+    func finishTransition() {
         activeTransition = nil
         if queuedTarget == nil {
             isResizing = false
@@ -104,6 +116,29 @@ final class DesktopResizeCoordinator {
         } else {
             isResizing = true
             maskActive = true
+        }
+    }
+
+    func clearQueuedTargetsMatchingAcceptedStreamGeometry(
+        logicalResolution acceptedLogicalResolution: CGSize,
+        displayPixelSize acceptedDisplayPixelSize: CGSize
+    ) {
+        if queuedTarget?.isEffectivelySameAcceptedStreamGeometry(
+            logicalResolution: acceptedLogicalResolution,
+            displayPixelSize: acceptedDisplayPixelSize
+        ) == true {
+            queuedTarget = nil
+        }
+
+        if latestRequestedTarget?.isEffectivelySameAcceptedStreamGeometry(
+            logicalResolution: acceptedLogicalResolution,
+            displayPixelSize: acceptedDisplayPixelSize
+        ) == true {
+            latestRequestedTarget = nil
+        }
+
+        if activeTransition == nil, queuedTarget == nil {
+            clearLocalPresentationState()
         }
     }
 

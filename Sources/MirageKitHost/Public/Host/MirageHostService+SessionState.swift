@@ -58,7 +58,7 @@ extension MirageHostService {
             await syncAppListRequestDeferralForInteractiveWorkload()
         }
 
-        syncSharedClipboardState(reason: "session_state_changed")
+        syncSharedClipboardState()
         await updateLightsOutState()
     }
 

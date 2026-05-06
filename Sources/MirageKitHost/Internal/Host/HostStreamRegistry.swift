@@ -17,7 +17,6 @@ final class HostStreamRegistry: @unchecked Sendable {
     }
 
     private struct State {
-        var typingBurstHandlers: [StreamID: (@Sendable () -> Void)] = [:]
         var pointerCoalescingByStreamID: [StreamID: PointerCoalescingState] = [:]
         var customInputHandlers: [StreamID: any MirageCustomStreamInputHandler] = [:]
         var activeInputSessionClientIDs: [UUID: UUID] = [:]
@@ -29,22 +28,6 @@ final class HostStreamRegistry: @unchecked Sendable {
     private static let pointerCoalescingMinInterval: CFAbsoluteTime = 1.0 / 60.0
 
     private let state = Locked(State())
-
-    func registerTypingBurstHandler(
-        streamID: StreamID,
-        _ handler: @escaping @Sendable () -> Void
-    ) {
-        state.withLock { $0.typingBurstHandlers[streamID] = handler }
-    }
-
-    func unregisterTypingBurstHandler(streamID: StreamID) {
-        state.withLock { $0.typingBurstHandlers.removeValue(forKey: streamID) }
-    }
-
-    func notifyTypingBurst(streamID: StreamID) {
-        let handler = state.read { $0.typingBurstHandlers[streamID] }
-        handler?()
-    }
 
     func registerCustomInputHandler(
         streamID: StreamID,

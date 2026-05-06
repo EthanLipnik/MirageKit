@@ -203,7 +203,7 @@ extension MirageHostService {
         }
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
-        syncSharedClipboardState(reason: "client_disconnected")
+        syncSharedClipboardState()
     }
 
     nonisolated static func shouldIgnoreDisconnectForExpectedSession(

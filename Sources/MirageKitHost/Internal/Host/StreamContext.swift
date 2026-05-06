@@ -133,6 +133,7 @@ actor StreamContext {
     var pendingKeyframeRequiresFlush: Bool = false
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
+    nonisolated(unsafe) var suppressEncodedNonKeyframesUntilKeyframe = false
     var idleRecoveryFrameAdmissionPending = false
     var idleRecoveryFrameQueued = false
     var lastQualityAdjustmentTime: CFAbsoluteTime = 0
@@ -152,12 +153,7 @@ actor StreamContext {
     let transportDropHighPressureThreshold: UInt64 = 12
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
-    let typingBurstWindow: CFAbsoluteTime = 0.35
-    let typingBurstInFlightLimit = 1
     let latencyBurstCaptureQueueDepth = 2
-    var typingBurstDeadline: CFAbsoluteTime = 0
-    var typingBurstActive = false
-    var typingBurstExpiryTask: Task<Void, Never>?
     var freshnessBurstActive = false
     var freshnessBurstEntryCount: UInt64 = 0
     var freshnessBurstQueueResetCount: UInt64 = 0
@@ -329,8 +325,6 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
-    /// Aggressive typing burst is active only in auto mode.
-    let supportsTypingBurst: Bool
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -381,10 +375,6 @@ actor StreamContext {
         captureShowsCursor: Bool = false
     ) {
         var resolvedEncoderConfig = encoderConfig
-        var resolvedLatencyMode = latencyMode
-        var resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
-        var resolvedLowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
-        var resolvedCapturePressureProfile = capturePressureProfile
         if let bitrateAdaptationCeiling,
            let requestedBitrate = resolvedEncoderConfig.bitrate,
            requestedBitrate > bitrateAdaptationCeiling {
@@ -400,8 +390,7 @@ actor StreamContext {
         self.windowID = windowID
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
-        self.latencyMode = resolvedLatencyMode
-        supportsTypingBurst = resolvedLatencyMode == .auto
+        self.latencyMode = latencyMode
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
@@ -415,44 +404,46 @@ actor StreamContext {
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
         captureFrameRateOverride = nil
         captureFrameRate = resolvedEncoderConfig.targetFrameRate
-        self.runtimeQualityAdjustmentEnabled = resolvedRuntimeQualityAdjustmentEnabled
+        self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled =
-            resolvedLowLatencyHighResolutionCompressionBoostEnabled
+            lowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
-        self.capturePressureProfile = resolvedCapturePressureProfile
+        self.capturePressureProfile = capturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
         activePixelFormat = resolvedEncoderConfig.pixelFormat
-        let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
-        let latencySensitive = resolvedLatencyMode == .lowestLatency
+        let prefersSmoothness = latencyMode == .smoothest
+        let latencySensitive = latencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
         let usesDesktopLowLatency60HzBufferPolicy = Self.usesStandardDesktopLowLatency60HzBufferPolicy(
             streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: resolvedLatencyMode
+            latencyMode: latencyMode
         )
         var bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: resolvedLatencyMode
+            latencyMode: latencyMode
         )
         var minInFlight = Self.minInFlightFrames(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: resolvedLatencyMode
+            latencyMode: latencyMode
         )
         var inFlightCap = min(
             bufferDepth,
             Self.inFlightCap(
                 useLowLatencyPipeline: useLowLatencyPipeline,
                 frameRate: resolvedEncoderConfig.targetFrameRate,
-                latencyMode: resolvedLatencyMode
+                latencyMode: latencyMode
             )
         )
         if usesDesktopLowLatency60HzBufferPolicy {
             bufferDepth = max(bufferDepth, 2)
+            minInFlight = max(minInFlight, 2)
+            inFlightCap = max(inFlightCap, 2)
         }
         let resolvedInFlightCap = max(1, inFlightCap)
         let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)
@@ -533,7 +524,7 @@ actor StreamContext {
 
     func refreshCaptureCadence() async {
         guard let captureEngine else { return }
-        let effectiveRate = await captureEngine.effectiveCaptureRate()
+        let effectiveRate = await captureEngine.minimumFrameIntervalRate()
         captureFrameRate = effectiveRate
     }
 
@@ -549,10 +540,6 @@ actor StreamContext {
             if frameRate >= 120 { return 6 }
             if frameRate >= 60 { return 5 }
             return 3
-        case .auto:
-            if frameRate >= 120 { return 4 }
-            if frameRate >= 60 { return 3 }
-            return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
             if frameRate >= 60 { return 2 }
@@ -572,10 +559,6 @@ actor StreamContext {
             if frameRate >= 120 { return 5 }
             if frameRate >= 60 { return 4 }
             return 2
-        case .auto:
-            if frameRate >= 120 { return 3 }
-            if frameRate >= 60 { return 2 }
-            return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
             return 1
@@ -594,10 +577,6 @@ actor StreamContext {
             if frameRate >= 120 { return 4 }
             if frameRate >= 60 { return 3 }
             return 1
-        case .auto:
-            if frameRate >= 120 { return 2 }
-            if frameRate >= 60 { return 2 }
-            return 1
         case .lowestLatency:
             return 1
         }
@@ -614,6 +593,21 @@ actor StreamContext {
             frameRate == 60
     }
 
+    static func lowLatencyPipelineInFlightLimit(
+        streamKind: VideoEncoder.StreamKind,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        if usesStandardDesktopLowLatency60HzBufferPolicy(
+            streamKind: streamKind,
+            frameRate: frameRate,
+            latencyMode: latencyMode
+        ) {
+            return 2
+        }
+        return frameRate >= 120 ? 2 : 1
+    }
+
     func schedulePipelineStatsLog() {
         guard !pipelineStatsLogScheduled else { return }
         pipelineStatsLogScheduled = true
@@ -625,12 +619,6 @@ actor StreamContext {
     private func runScheduledPipelineStatsLog() async {
         await logPipelineStatsIfNeeded()
         pipelineStatsLogScheduled = false
-    }
-
-    nonisolated func scheduleEncoderTypingBurstUpdate(_ encoder: VideoEncoder, enabled: Bool) {
-        Task(priority: .userInitiated) {
-            await encoder.updateAutoTypingBurstLowLatency(enabled)
-        }
     }
 }
 

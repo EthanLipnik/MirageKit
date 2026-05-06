@@ -142,6 +142,58 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(decision.state.qualityOverBudgetCount == 0)
     }
 
+    @Test("Drop and pacer telemetry without sender backlog does not lower active quality")
+    func dropAndPacerTelemetryWithoutSenderBacklogDoesNotLowerActiveQuality() {
+        let assessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: 0,
+                queueStressBytes: 1_200_000,
+                queueSevereBytes: 2_000_000,
+                packetBudgetUtilization: 0.20,
+                packetBudgetStressThreshold: 1.05,
+                packetBudgetSevereThreshold: 1.20,
+                packetPacerAverageSleepMs: 1.0,
+                packetPacerStressThresholdMs: 0.75,
+                packetPacerSevereThresholdMs: 2.0,
+                sendStartDelayAverageMs: 5.0,
+                sendStartDelayStressThresholdMs: 1.0,
+                sendStartDelaySevereThresholdMs: 4.0,
+                sendCompletionAverageMs: 10.0,
+                sendCompletionStressThresholdMs: 8.0,
+                sendCompletionSevereThresholdMs: 16.0,
+                transportDropCount: 20,
+                transportDropSevereCount: 12
+            )
+        )
+
+        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.75,
+                qualityOverBudgetCount: 2,
+                qualityUnderBudgetCount: 0
+            ),
+            qualityFloor: 0.28,
+            qualityCeiling: 0.75,
+            encodeOverBudget: false,
+            packetWithinRaiseBudget: true,
+            transportAssessment: assessment,
+            allowEncodeDrivenQualityRelief: false,
+            bitrateConstrained: true,
+            adaptiveTransportRelief: true,
+            qualityDropThreshold: 3,
+            qualityRaiseThreshold: 4,
+            qualityDropStep: 0.02,
+            qualityDropStepHighPressure: 0.05,
+            qualityRaiseStep: 0.03
+        )
+
+        #expect(assessment.transportDropStress)
+        #expect(assessment.packetPacerStress)
+        #expect(decision.action == .hold)
+        #expect(decision.state.activeQuality == 0.75)
+        #expect(decision.state.qualityOverBudgetCount == 0)
+    }
+
     @Test("Delivery cadence pressure alone does not lower active quality")
     func deliveryCadencePressureAloneDoesNotLowerActiveQuality() {
         let assessment = MirageTransportPressure.assess(
@@ -178,6 +230,47 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(assessment.isStress == false)
         #expect(decision.action == .hold)
         #expect(decision.state.activeQuality == 0.75)
+    }
+
+    @Test("Stable samples raise active quality after pressure clears")
+    func stableSamplesRaiseActiveQualityAfterPressureClears() {
+        let assessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: 0,
+                queueStressBytes: 1_200_000,
+                queueSevereBytes: 2_000_000,
+                packetBudgetUtilization: 0.10,
+                packetBudgetStressThreshold: 1.05,
+                packetBudgetSevereThreshold: 1.20
+            )
+        )
+
+        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.66,
+                qualityOverBudgetCount: 2,
+                qualityUnderBudgetCount: 3
+            ),
+            qualityFloor: 0.28,
+            qualityCeiling: 0.75,
+            encodeOverBudget: false,
+            packetWithinRaiseBudget: true,
+            transportAssessment: assessment,
+            allowEncodeDrivenQualityRelief: false,
+            bitrateConstrained: true,
+            adaptiveTransportRelief: true,
+            qualityDropThreshold: 3,
+            qualityRaiseThreshold: 4,
+            qualityDropStep: 0.02,
+            qualityDropStepHighPressure: 0.05,
+            qualityRaiseStep: 0.03
+        )
+
+        #expect(!assessment.isStress)
+        #expect(decision.action == .raise)
+        #expect(abs(decision.state.activeQuality - 0.69) < 0.0001)
+        #expect(decision.state.qualityOverBudgetCount == 0)
+        #expect(decision.state.qualityUnderBudgetCount == 0)
     }
 }
 #endif

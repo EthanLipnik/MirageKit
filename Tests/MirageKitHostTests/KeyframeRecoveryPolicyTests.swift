@@ -258,7 +258,7 @@ struct KeyframeRecoveryPolicyTests {
         frameRate: Int = 60,
         bitrate: Int = 600_000_000,
         runtimeQualityAdjustmentEnabled: Bool = true,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(

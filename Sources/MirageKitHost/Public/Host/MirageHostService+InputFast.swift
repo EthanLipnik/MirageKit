@@ -61,10 +61,6 @@ extension MirageHostService {
                 }
             }
 
-            if MirageTypingBurstClassifier.shouldTrigger(for: inputMessage.event) {
-                notifyTypingBurst(for: inputMessage.streamID)
-            }
-
             if cacheEntry.window.id == 0,
                Self.shouldThrottlePointerEventForStallWindow(inputMessage.event),
                streamRegistry.shouldCoalesceDesktopPointerEvent(streamID: inputMessage.streamID) {
@@ -77,10 +73,6 @@ extension MirageHostService {
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode input event: ")
         }
-    }
-
-    private nonisolated func notifyTypingBurst(for streamID: StreamID) {
-        streamRegistry.notifyTypingBurst(streamID: streamID)
     }
 
     nonisolated static func shouldThrottlePointerEventForStallWindow(_ event: MirageInputEvent) -> Bool {

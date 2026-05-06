@@ -150,6 +150,34 @@ struct MirageKitTests {
         #expect(decoded.disableResolutionCap == true)
     }
 
+    @Test("Desktop stream start treats removed auto latency as unknown")
+    func desktopStreamStartTreatsRemovedAutoLatencyAsUnknown() throws {
+        let payload = Data(
+            """
+            {
+              "displayWidth": 1366,
+              "displayHeight": 1024,
+              "latencyMode": "auto"
+            }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+
+        #expect(decoded.displayWidth == 1366)
+        #expect(decoded.displayHeight == 1024)
+        #expect(decoded.latencyMode == nil)
+    }
+
+    @Test("Latency mode rejects removed auto value")
+    func latencyModeRejectsRemovedAutoValue() {
+        let payload = Data(#""auto""#.utf8)
+
+        #expect(throws: Error.self) {
+            try JSONDecoder().decode(MirageStreamLatencyMode.self, from: payload)
+        }
+    }
+
     @Test("Control parser rejects unknown control type")
     func controlParserRejectsUnknownControlType() {
         var data = Data([0x06])
@@ -1259,7 +1287,7 @@ struct MirageKitTests {
             colorDepth: .pro,
             mode: .unified,
             bitrate: 500_000_000,
-            latencyMode: .auto,
+            latencyMode: .lowestLatency,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -1272,7 +1300,7 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
-        #expect(decoded.latencyMode == .auto)
+        #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)

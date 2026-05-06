@@ -114,6 +114,40 @@ extension StreamContext {
         if !queued { MirageLogger.stream("Fallback keyframe skipped (unable to queue after restart)") }
     }
 
+    func handlePacketSenderDependencyFrameDrop(
+        streamID droppedStreamID: StreamID,
+        frameNumber: UInt32,
+        reason: StreamPacketSender.DependencyFrameDropReason
+    ) async {
+        guard droppedStreamID == streamID, isRunning else { return }
+        suppressEncodedNonKeyframesUntilKeyframe = true
+        let clearedFrames = frameInbox.clear()
+        if clearedFrames > 0 {
+            droppedFrameCount += UInt64(clearedFrames)
+        }
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        let label = "Packet sender dependency drop"
+        let queued = queueKeyframe(
+            reason: label,
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: false,
+            urgent: true
+        )
+        guard queued else {
+            MirageLogger.stream("\(label) skipped after frame \(frameNumber) (\(reason.rawValue))")
+            return
+        }
+
+        noteLossEvent(reason: label, enablePFrameFEC: true)
+        markKeyframeRequestIssued()
+        scheduleProcessingIfNeeded()
+        MirageLogger.stream(
+            "Scheduled recovery keyframe after packet sender dropped frame \(frameNumber) (\(reason.rawValue))"
+        )
+    }
+
     func scheduleCoalescedRecoveryKeyframe(
         reason: String,
         resetFrameNumber: Bool = false,
@@ -225,6 +259,7 @@ extension StreamContext {
 
     func markKeyframeSent() {
         lastKeyframeTime = CFAbsoluteTimeGetCurrent()
+        suppressEncodedNonKeyframesUntilKeyframe = false
         pendingKeyframeReason = nil
         pendingKeyframeDeadline = 0
         pendingKeyframeRequiresFlush = false

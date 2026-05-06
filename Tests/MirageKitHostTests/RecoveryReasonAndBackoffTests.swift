@@ -19,7 +19,7 @@ struct CaptureRestartSchedulingTests {
     func resumedStallSignalCancelsPendingRestart() async {
         let engine = WindowCaptureEngine(
             configuration: MirageEncoderConfiguration(targetFrameRate: 60),
-            latencyMode: .auto,
+            latencyMode: .lowestLatency,
             captureFrameRate: 60
         )
         await engine.setCaptureStateForTesting(isCapturing: true, captureMode: .display)

@@ -169,10 +169,6 @@ extension MirageHostService {
         )
     }
 
-    func registerAppStreamDesiredFrameRate(streamID _: StreamID, frameRate _: Int) {
-        // Runtime keeps fixed host-authoritative policy targets.
-    }
-
     func clearAppStreamGovernorState(streamID: StreamID) {
         stopWindowVisibleFrameMonitor(streamID: streamID)
         pendingWindowResizeResolutionByStreamID.removeValue(forKey: streamID)

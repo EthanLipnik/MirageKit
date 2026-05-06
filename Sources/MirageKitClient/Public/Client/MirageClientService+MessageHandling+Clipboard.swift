@@ -104,7 +104,7 @@ extension MirageClientService {
             return
         }
 
-        await ensureSharedClipboardBridge().applyRemoteItem(
+        await applyReceivedClipboardItemWhenMediaStable(
             MirageSharedClipboardItem(
                 representation: representation,
                 payload: validatedPayload
@@ -112,5 +112,43 @@ extension MirageClientService {
             orderingToken: orderingToken,
             sentAtMs: sentAtMs
         )
+    }
+
+    private func applyReceivedClipboardItemWhenMediaStable(
+        _ item: MirageSharedClipboardItem,
+        orderingToken: MirageSharedClipboardOrderingToken,
+        sentAtMs: Int64,
+        attempt: Int = 0
+    ) async {
+        if await shouldDeferSharedClipboardPayloadApplication(), attempt < 20 {
+            if attempt == 0 {
+                MirageLogger.client(
+                    "Deferring shared clipboard payload apply while media recovery is active"
+                )
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+            await applyReceivedClipboardItemWhenMediaStable(
+                item,
+                orderingToken: orderingToken,
+                sentAtMs: sentAtMs,
+                attempt: attempt + 1
+            )
+            return
+        }
+
+        await ensureSharedClipboardBridge().applyRemoteItem(
+            item,
+            orderingToken: orderingToken,
+            sentAtMs: sentAtMs
+        )
+    }
+
+    private func shouldDeferSharedClipboardPayloadApplication() async -> Bool {
+        for controller in controllersByStream.values {
+            if await controller.shouldDeferSharedClipboardApply() {
+                return true
+            }
+        }
+        return false
     }
 }

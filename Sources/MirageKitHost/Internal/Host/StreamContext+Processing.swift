@@ -193,6 +193,7 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        suppressEncodedNonKeyframesUntilKeyframe = false
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
         idleRecoveryFrameAdmissionPending = false
@@ -208,10 +209,6 @@ extension StreamContext {
         lastEncodedPresentationTime = .invalid
         lastSyntheticFrameTime = 0
         lastSyntheticLogTime = 0
-        typingBurstExpiryTask?.cancel()
-        typingBurstExpiryTask = nil
-        typingBurstActive = false
-        typingBurstDeadline = 0
         freshnessBurstActive = false
         if latencyBurstCaptureQueueDepthOverride != nil {
             encoderConfig.captureQueueDepth = preLatencyBurstCaptureQueueDepthOverride
@@ -222,8 +219,7 @@ extension StreamContext {
         latencyBurstCaptureQueueDepthOverride = nil
         preLatencyBurstCaptureQueueDepthOverride = nil
         captureCadenceRecoveryPolicy.reset()
-        if let encoder { scheduleEncoderTypingBurstUpdate(encoder, enabled: false) }
-        maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
+        maxInFlightFrames = min(minInFlightFrames, maxInFlightFramesCap)
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
         frameInbox.clear()
@@ -1206,20 +1202,13 @@ extension StreamContext {
         at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     )
     async {
-        await refreshTypingBurstStateIfNeeded(now: now)
-
-        if supportsTypingBurst, typingBurstActive {
-            let forcedLimit = min(max(typingBurstInFlightLimit, 1), maxInFlightFramesCap)
-            if maxInFlightFrames != forcedLimit {
-                maxInFlightFrames = forcedLimit
-                await encoder?.updateInFlightLimit(forcedLimit)
-            }
-            return
-        }
-
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
-            let baselineLowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
+            let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit(
+                streamKind: streamKind,
+                frameRate: currentFrameRate,
+                latencyMode: latencyMode
+            )
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {
                 maxInFlightFrames = lowLatencyLimit
@@ -1236,7 +1225,7 @@ extension StreamContext {
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         var desired = maxInFlightFrames
 
-        let smoothnessFirstMode = latencyMode == .smoothest || latencyMode == .auto
+        let smoothnessFirstMode = latencyMode == .smoothest
         let increaseThreshold = smoothnessFirstMode ? 1.02 : 1.10
         let decreaseThreshold = smoothnessFirstMode ? 0.90 : 0.80
         if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
@@ -1263,13 +1252,11 @@ extension StreamContext {
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
         guard runtimeQualityAdjustmentEnabled else { return }
-        await refreshTypingBurstStateIfNeeded()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling {
             activeQuality = qualityCeiling
             await encoder.updateQuality(activeQuality)
         }
-        if supportsTypingBurst, typingBurstActive { return }
         let now = CFAbsoluteTimeGetCurrent()
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 

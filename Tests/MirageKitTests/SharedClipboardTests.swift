@@ -189,6 +189,38 @@ struct SharedClipboardTests {
         )
     }
 
+    @Test("Automatic shared clipboard suppresses duplicate content fingerprints")
+    func automaticSharedClipboardSuppressesDuplicateContentFingerprints() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 0)
+
+        let first = state.prepareLocalDeclaration(item: textItem("same"), changeCount: 1)
+        let duplicateWithNewChangeCount = state.prepareLocalDeclaration(item: textItem("same"), changeCount: 2)
+        let changed = state.prepareLocalDeclaration(item: textItem("different"), changeCount: 3)
+
+        #expect(first?.text == "same")
+        #expect(duplicateWithNewChangeCount == nil)
+        #expect(changed?.text == "different")
+    }
+
+    @Test("Manual shared clipboard does not use automatic duplicate fingerprint suppression")
+    func manualSharedClipboardDoesNotUseAutomaticDuplicateSuppression() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 0)
+
+        let first = state.prepareLocalSend(currentItem: textItem("same"), changeCount: 1)
+        let second = state.prepareLocalSend(currentItem: textItem("same"), changeCount: 2)
+
+        #expect(first?.text == "same")
+        #expect(second?.text == "same")
+        #expect(first?.orderingToken != second?.orderingToken)
+    }
+
+    @Test("Automatic shared clipboard chunks are paced during streaming")
+    func automaticSharedClipboardChunksArePacedDuringStreaming() {
+        #expect(MirageSharedClipboard.automaticStreamChunkPacingDelay > .zero)
+    }
+
     @Test("Shared clipboard tie-breaks concurrent logical versions deterministically")
     func sharedClipboardTieBreaksConcurrentLogicalVersionsDeterministically() {
         let tokenA = MirageSharedClipboardOrderingToken(

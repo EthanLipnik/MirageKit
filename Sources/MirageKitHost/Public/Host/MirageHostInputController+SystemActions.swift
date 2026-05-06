@@ -121,18 +121,18 @@ extension MirageHostInputController {
         clearUnexpectedSystemModifiers(domain: domain)
 
         if !keyEvent.modifiers.isEmpty {
-            injectFlagsChanged(keyEvent.modifiers, domain: domain, app: nil)
+            injectFlagsChanged(keyEvent.modifiers, domain: domain)
         }
-        injectKeyEvent(isKeyDown: true, keyEvent, domain: domain, app: nil)
+        injectKeyEvent(isKeyDown: true, keyEvent, domain: domain)
 
         accessibilityQueue.asyncAfter(
             deadline: .now() + Self.systemActionKeyReleaseDelay
         ) { [weak self] in
             guard let self else { return }
 
-            self.injectKeyEvent(isKeyDown: false, keyEvent, domain: domain, app: nil)
+            self.injectKeyEvent(isKeyDown: false, keyEvent, domain: domain)
             if !keyEvent.modifiers.isEmpty {
-                self.injectFlagsChanged([], domain: domain, app: nil)
+                self.injectFlagsChanged([], domain: domain)
             }
         }
     }

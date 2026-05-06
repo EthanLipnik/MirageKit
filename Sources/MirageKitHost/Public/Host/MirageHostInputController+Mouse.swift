@@ -23,7 +23,7 @@ extension MirageHostInputController {
         domain: HostKeyboardInjectionDomain
     ) {
         if modifiers != lastSentModifiers {
-            injectFlagsChanged(modifiers, domain: domain, app: nil)
+            injectFlagsChanged(modifiers, domain: domain)
             return
         }
 

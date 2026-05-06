@@ -116,11 +116,11 @@ extension MirageHostInputController {
             case let .hostSystemAction(request):
                 executeHostSystemAction(request)
             case let .keyDown(e):
-                injectKeyEvent(isKeyDown: true, e, domain: .hid, app: nil)
+                injectKeyEvent(isKeyDown: true, e, domain: .hid)
             case let .keyUp(e):
-                injectKeyEvent(isKeyDown: false, e, domain: .hid, app: nil)
+                injectKeyEvent(isKeyDown: false, e, domain: .hid)
             case let .flagsChanged(modifiers):
-                injectFlagsChanged(modifiers, domain: .hid, app: nil)
+                injectFlagsChanged(modifiers, domain: .hid)
             case .pixelResize,
                  .relativeResize,
                  .windowResize:

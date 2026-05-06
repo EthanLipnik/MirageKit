@@ -1248,9 +1248,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
 
                     configureDisplaySeparation(
                         virtualDisplayID: displayID,
-                        originalMainDisplayID: originalMainDisplayID,
-                        requestedWidth: width,
-                        requestedHeight: height
+                        originalMainDisplayID: originalMainDisplayID
                     )
 
                     creationResult = VirtualDisplayContext(

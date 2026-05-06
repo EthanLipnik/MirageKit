@@ -48,7 +48,7 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 302
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .auto)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
         for index in 0 ..< 5 {
             _ = MirageRenderStreamStore.shared.enqueue(
@@ -62,10 +62,9 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 4)
-        #expect(secondFrame?.sequence == 5)
-        #expect(MirageRenderStreamStore.shared.takePendingFrame(for: streamID) == nil)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(firstFrame?.sequence == 3)
+        #expect(secondFrame?.sequence == 4)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
     }
 
     @Test("Submission snapshot does not regress on older sequence marks")

@@ -89,12 +89,6 @@ extension MirageClientService {
         qualityTestSweepTargets(profile: qualityTestProfile(for: .connectionLimit).transport)
     }
 
-    nonisolated static func qualityTestSummaryUsesMeasuredThroughput(
-        for _: MirageQualityTestMode
-    ) -> Bool {
-        true
-    }
-
     nonisolated static let qualityTestControlMessageMarginMs = 1_500
     nonisolated static let connectionLimitLossThresholdPercent = 1.0
 
@@ -262,11 +256,11 @@ extension MirageClientService {
         return result
     }
 
-    func handlePing(_: ControlMessage) {
+    func handlePing() {
         sendControlMessageBestEffort(ControlMessage(type: .pong))
     }
 
-    func handlePong(_: ControlMessage) {
+    func handlePong() {
         completePingRequest(
             expectedRequestID: pingRequestID,
             result: .success(())

@@ -298,7 +298,6 @@ public extension MirageHostService {
         // This closes a startup race where concurrent starts could otherwise bind the same
         // resolved live window before either stream reached registration.
         streamsByID[streamID] = context
-        registerTypingBurstRoute(streamID: streamID, context: context)
         await registerStallWindowPointerRoute(streamID: streamID, context: context)
         registerActiveStreamSession(session)
         await syncAppListRequestDeferralForInteractiveWorkload()
@@ -589,7 +588,6 @@ public extension MirageHostService {
         stopWindowVisibleFrameMonitor(streamID: streamID)
         streamsByID.removeValue(forKey: streamID)
         transportSendErrorReported.remove(streamID)
-        unregisterTypingBurstRoute(streamID: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)
         removeActiveStreamSession(streamID: streamID)
         await syncAppListRequestDeferralForInteractiveWorkload()
@@ -993,7 +991,7 @@ public extension MirageHostService {
             activeStreams.append(session)
         }
 
-        syncSharedClipboardState(reason: "app_stream_registered")
+        syncSharedClipboardState()
     }
 
     func removeActiveStreamSession(streamID: StreamID) {
@@ -1012,7 +1010,7 @@ public extension MirageHostService {
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: mappedWindowID)
         }
 
-        syncSharedClipboardState(reason: "app_stream_removed")
+        syncSharedClipboardState()
     }
 
     func stopStream(
@@ -1065,7 +1063,6 @@ public extension MirageHostService {
         await WindowSpaceManager.shared.restoreAllWindowsOwned(by: session.id)
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
-        unregisterTypingBurstRoute(streamID: session.id)
         unregisterStallWindowPointerRoute(streamID: session.id)
         removeActiveStreamSession(streamID: session.id)
         await syncAppListRequestDeferralForInteractiveWorkload()

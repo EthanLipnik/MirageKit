@@ -279,7 +279,7 @@ actor WindowCaptureEngine {
     }
 
     func capturePolicySnapshot() -> CapturePolicySnapshot {
-        let effectiveCaptureRate = effectiveCaptureRate()
+        let effectiveCaptureRate = minimumFrameIntervalRate()
         let minimumFrameIntervalRate = minimumFrameIntervalRate()
         let usesNativeRefreshMinimumFrameInterval = usesNativeRefreshMinimumFrameInterval()
         return CapturePolicySnapshot(
@@ -294,12 +294,12 @@ actor WindowCaptureEngine {
 
     func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
         guard captureMode == .display else { return captureStartupReadiness() }
-        return streamOutput?.displayStartupReadiness() ?? .noScreenSamples
+        return streamOutput?.captureStartupReadiness() ?? .noScreenSamples
     }
 
     func hasObservedDisplayStartupSample() -> Bool {
         guard captureMode == .display else { return hasObservedCaptureStartupSample() }
-        return streamOutput?.hasObservedDisplayStartupSample() ?? false
+        return streamOutput?.hasObservedStartupSample() ?? false
     }
 
     func captureStartupReadiness() -> DisplayCaptureStartupReadiness {

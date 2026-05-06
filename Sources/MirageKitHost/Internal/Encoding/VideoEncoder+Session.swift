@@ -49,8 +49,6 @@ extension VideoEncoder {
         ]
         if standardLowLatencyVTTuningEnabled(
             latencyMode: latencyMode,
-            width: width,
-            height: height,
             streamKind: streamKind,
             colorDepth: colorDepth,
             pixelFormat: pixelFormat
@@ -65,16 +63,12 @@ extension VideoEncoder {
     ) -> Bool {
         standardLowLatencyVTTuningEnabled(
             latencyMode: latencyMode,
-            width: 0,
-            height: 0,
             streamKind: .window
         )
     }
 
     nonisolated static func standardLowLatencyVTTuningEnabled(
         latencyMode: MirageStreamLatencyMode,
-        width _: Int,
-        height _: Int,
         streamKind: StreamKind,
         colorDepth: MirageStreamColorDepth? = nil,
         pixelFormat: MiragePixelFormat? = nil
@@ -101,8 +95,6 @@ extension VideoEncoder {
 
     nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
         latencyMode: MirageStreamLatencyMode,
-        width _: Int,
-        height _: Int,
         streamKind: StreamKind,
         colorDepth: MirageStreamColorDepth? = nil,
         pixelFormat: MiragePixelFormat? = nil
@@ -188,17 +180,12 @@ extension VideoEncoder {
     }
 
     func resolvedSessionLatencyMode() -> MirageStreamLatencyMode {
-        if latencyMode == .auto, autoTypingBurstLowLatencyActive {
-            return .lowestLatency
-        }
         return latencyMode
     }
 
     func frameDelayCount(for mode: MirageStreamLatencyMode) -> Int {
         switch mode {
         case .smoothest:
-            2
-        case .auto:
             2
         case .lowestLatency:
             0
@@ -341,8 +328,6 @@ extension VideoEncoder {
                 )
             } else if Self.standardLowLatencyVTTuningEnabled(
                 latencyMode: resolvedSessionLatencyMode(),
-                width: width,
-                height: height,
                 streamKind: streamKind,
                 colorDepth: configuration.colorDepth,
                 pixelFormat: activePixelFormat
@@ -881,16 +866,12 @@ extension VideoEncoder {
         let resolvedLatencyMode = resolvedSessionLatencyMode()
         let standardLowLatencyTuningEnabled = Self.standardLowLatencyVTTuningEnabled(
             latencyMode: resolvedLatencyMode,
-            width: width,
-            height: height,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
             pixelFormat: activePixelFormat
         )
         let suppressedStandardLowLatencyThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             latencyMode: resolvedLatencyMode,
-            width: width,
-            height: height,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
             pixelFormat: activePixelFormat

@@ -168,9 +168,7 @@ extension CGVirtualDisplayBridge {
     /// Uses retry logic to handle race conditions with other display software
     static func configureDisplaySeparation(
         virtualDisplayID: CGDirectDisplayID,
-        originalMainDisplayID: CGDirectDisplayID,
-        requestedWidth _: Int,
-        requestedHeight _: Int
+        originalMainDisplayID: CGDirectDisplayID
     ) {
         MirageLogger.host("=== DISPLAY SEPARATION CONFIGURATION ===")
 

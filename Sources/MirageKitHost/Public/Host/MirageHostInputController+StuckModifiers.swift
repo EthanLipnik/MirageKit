@@ -52,8 +52,7 @@ extension MirageHostInputController {
             let remainingModifiers = lastSentModifiers.subtracting(stuckModifiers)
             injectFlagsChanged(
                 remainingModifiers,
-                domain: lastModifierInjectionDomain,
-                app: nil
+                domain: lastModifierInjectionDomain
             )
         }
 

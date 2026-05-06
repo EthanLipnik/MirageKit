@@ -86,7 +86,7 @@ extension MirageHostInputController {
                         trigger: .windowFocus
                     )
                 }
-                injectScrollEvent(e, windowFrame, windowID: window.id, app: window.application)
+                injectScrollEvent(e, windowFrame, windowID: window.id)
             case let .magnify(e):
                 injectMagnifyEvent(e, bounds: windowFrame, domain: .session)
             case let .rotate(e):
@@ -109,18 +109,16 @@ extension MirageHostInputController {
                 injectKeyEvent(
                     isKeyDown: true,
                     e,
-                    domain: .session,
-                    app: window.application
+                    domain: .session
                 )
             case let .keyUp(e):
                 injectKeyEvent(
                     isKeyDown: false,
                     e,
-                    domain: .session,
-                    app: window.application
+                    domain: .session
                 )
             case let .flagsChanged(modifiers):
-                injectFlagsChanged(modifiers, domain: .session, app: window.application)
+                injectFlagsChanged(modifiers, domain: .session)
             case .pixelResize,
                  .relativeResize,
                  .windowResize:

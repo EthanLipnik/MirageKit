@@ -1149,40 +1149,52 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleForegroundRecovery() {
-        guard scenePhase == .active else {
-            MirageLogger.client(
-                "Foreground recovery deferred for stream \(session.streamID); scenePhase=\(scenePhase)"
-            )
-            return
-        }
+        let swiftUIScenePhase = MirageStreamForegroundRecoverySwiftUIScenePhase(scenePhase)
+        let decision = MirageStreamForegroundRecoveryPolicy.decisionForInputCaptureApplicationActivation(
+            swiftUIScenePhase: swiftUIScenePhase,
+            isDesktopStream: isDesktopStream,
+            activeDesktopSessionID: activeDesktopSessionID,
+            hasPresentedFrame: session.hasPresentedFrame,
+            hasController: clientService.controller(for: session.streamID) != nil
+        )
 
         scheduleResizeHoldoff()
 
-        if isDesktopStream {
-            guard let desktopSessionID = activeDesktopSessionID else {
-                MirageLogger.client(
-                    "Foreground recovery skipped for inactive desktop stream \(session.streamID)"
-                )
-                return
-            }
-            guard session.hasPresentedFrame else {
-                MirageLogger.client(
-                    "Foreground recovery skipped before first frame for stream \(session.streamID), session=\(desktopSessionID.uuidString)"
-                )
-                return
-            }
-        }
+        switch decision {
+        case .dispatch(let swiftUIScenePhase):
+            logForegroundRecoveryDispatch(swiftUIScenePhase: swiftUIScenePhase)
+            clientService.requestApplicationActivationRecovery(for: session.streamID)
 
-        guard clientService.controller(for: session.streamID) != nil else {
+        case .deferUntilControllerAvailable(let swiftUIScenePhase):
             MirageLogger.client(
-                "Foreground recovery deferred for stream \(session.streamID) until controller is available"
+                "Foreground recovery deferred for stream \(session.streamID) until controller is available " +
+                    "(UIKit activation confirmed, SwiftUI scenePhase=\(swiftUIScenePhase.logLabel))"
             )
             clientService.requestApplicationActivationRecovery(for: session.streamID)
-            return
-        }
 
-        MirageLogger.client("Foreground recovery dispatch for stream \(session.streamID)")
-        clientService.requestApplicationActivationRecovery(for: session.streamID)
+        case .skipInactiveDesktopStream:
+            MirageLogger.client(
+                "Foreground recovery skipped for inactive desktop stream \(session.streamID)"
+            )
+
+        case .skipBeforeFirstFrame(let desktopSessionID):
+            MirageLogger.client(
+                "Foreground recovery skipped before first frame for stream \(session.streamID), session=\(desktopSessionID.uuidString)"
+            )
+        }
+    }
+
+    private func logForegroundRecoveryDispatch(
+        swiftUIScenePhase: MirageStreamForegroundRecoverySwiftUIScenePhase
+    ) {
+        if swiftUIScenePhase == .active {
+            MirageLogger.client("Foreground recovery dispatch for stream \(session.streamID)")
+        } else {
+            MirageLogger.client(
+                "Foreground recovery dispatch for stream \(session.streamID) after UIKit-confirmed " +
+                    "activation while SwiftUI scenePhase=\(swiftUIScenePhase.logLabel)"
+            )
+        }
     }
     #endif
 }

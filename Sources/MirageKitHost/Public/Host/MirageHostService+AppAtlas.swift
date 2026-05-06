@@ -172,8 +172,7 @@ extension MirageHostService {
         )
         let processID = resolvedWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
-            windowID: resolvedWindowID,
-            processID: processID
+                    processID: processID
         )
         let attachment = try await coordinator.replaceWindow(
             streamID: streamSession.id,
@@ -252,7 +251,6 @@ extension MirageHostService {
         cancelPendingStartupAttempt(streamID: mediaStreamID)
         await coordinator.stop()
         streamsByID.removeValue(forKey: mediaStreamID)
-        unregisterTypingBurstRoute(streamID: mediaStreamID)
         unregisterStallWindowPointerRoute(streamID: mediaStreamID)
         await deactivateAudioSourceIfNeeded(streamID: mediaStreamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: mediaStreamID) {

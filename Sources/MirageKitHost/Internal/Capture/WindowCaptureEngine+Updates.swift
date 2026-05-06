@@ -204,7 +204,7 @@ extension WindowCaptureEngine {
         try await stream.updateContentFilter(newFilter)
         try await stream.updateConfiguration(streamConfig)
 
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let stallPolicy = resolvedStallPolicy(
             windowID: captureSessionConfig?.windowID ?? 0,
             frameRate: captureRate,
@@ -329,7 +329,7 @@ extension WindowCaptureEngine {
         try await stream.updateConfiguration(streamConfig)
         let resolvedWindowID = CGWindowID(resolvedContentWindowID ?? 0)
         streamOutput?.updateWindowID(resolvedWindowID)
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let stallPolicy = resolvedStallPolicy(
             windowID: resolvedWindowID,
             frameRate: captureRate,
@@ -372,7 +372,7 @@ extension WindowCaptureEngine {
         )
 
         try await stream.updateConfiguration(streamConfig)
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
         let stallPolicy = resolvedStallPolicy(
@@ -456,7 +456,7 @@ extension WindowCaptureEngine {
         )
 
         try await stream.updateConfiguration(streamConfig)
-        let captureRate = effectiveCaptureRate()
+        let captureRate = minimumFrameIntervalRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
         let stallPolicy = resolvedStallPolicy(

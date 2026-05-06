@@ -13,18 +13,19 @@ import Testing
 @Suite("Desktop Low Latency In Flight")
 struct DesktopLowLatencyInFlightTests {
 
-    @Test("60 Hz desktop lowest-latency does not raise inflight under pressure")
-    func desktopLowestLatencyDoesNotRaiseInflightUnderPressure() async {
+    @Test("60 Hz desktop lowest-latency keeps bounded two-frame inflight")
+    func desktopLowestLatencyKeepsBoundedTwoFrameInflight() async {
         let context = makeContext()
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
 
-        #expect(await context.maxInFlightFrames == 1)
-        #expect(await context.maxInFlightFramesCap == 1)
+        #expect(await context.maxInFlightFrames == 2)
+        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.frameBufferDepth == 2)
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 10, pendingCount: 0)
 
-        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFrames == 2)
     }
 
     @Test("60 Hz window lowest-latency stays single-inflight")
@@ -38,7 +39,24 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 1)
     }
 
-    private func makeContext(streamKind: VideoEncoder.StreamKind = .desktop) -> StreamContext {
+    @Test("60 Hz desktop smoothest keeps smoothing capacity")
+    func desktopSmoothestKeepsSmoothingCapacity() async {
+        let context = makeContext(latencyMode: .smoothest)
+
+        #expect(await context.minInFlightFrames == 3)
+        #expect(await context.maxInFlightFrames == 3)
+        #expect(await context.maxInFlightFramesCap == 4)
+        #expect(await context.frameBufferDepth == 5)
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 4)
+    }
+
+    private func makeContext(
+        streamKind: VideoEncoder.StreamKind = .desktop,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency
+    ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
@@ -54,7 +72,7 @@ struct DesktopLowLatencyInFlightTests {
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: false,
             lowLatencyHighResolutionCompressionBoostEnabled: false,
-            latencyMode: .lowestLatency
+            latencyMode: latencyMode
         )
     }
 }

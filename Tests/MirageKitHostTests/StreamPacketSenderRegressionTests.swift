@@ -292,8 +292,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Default non-keyframe deadline drops stale encoded frames")
-    func defaultNonKeyframeDeadlineDropsStaleEncodedFrame() async throws {
+    @Test("Default non-keyframe deadline expires stale dependency frames")
+    func defaultNonKeyframeDeadlineExpiresStaleDependencyFrame() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
@@ -332,6 +332,102 @@ struct StreamPacketSenderRegressionTests {
 
         #expect(submittedPackets.read { $0.isEmpty })
         #expect(sender.queuedBytesSnapshot() == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Expired dependency frame holds P-frames until a recovery keyframe")
+    func expiredDependencyFrameHoldsPFramesUntilRecoveryKeyframe() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let dependencyDrops = Locked<[DependencyDrop]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                onComplete(nil)
+            },
+            onDependencyFrameDropped: { streamID, frameNumber, reason in
+                dependencyDrops.withLock {
+                    $0.append(DependencyDrop(streamID: streamID, frameNumber: frameNumber, reason: reason))
+                }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 401,
+                sequenceNumberStart: 4_010,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.stalePacketDrops == 1
+        }
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 402,
+                sequenceNumberStart: 4_020,
+                generation: generation
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.nonKeyframeHoldDrops == 1
+        }
+
+        let drops = dependencyDrops.read { $0 }
+        #expect(drops.count == 1)
+        #expect(drops.first?.streamID == 46)
+        #expect(drops.first?.frameNumber == 401)
+        #expect(drops.first?.reason == .expiredBeforeEnqueue)
+        #expect(submittedPackets.read { $0.isEmpty })
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 403,
+                sequenceNumberStart: 4_030,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 46,
+                frameNumber: 404,
+                sequenceNumberStart: 4_040,
+                generation: generation
+            )
+        )
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
+
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [403, 404])
 
         await sender.stop()
     }
@@ -605,6 +701,12 @@ struct StreamPacketSenderRegressionTests {
 private struct SubmittedPacket: Sendable {
     let frameNumber: UInt32
     let sequenceNumber: UInt32
+}
+
+private struct DependencyDrop: Sendable {
+    let streamID: StreamID
+    let frameNumber: UInt32
+    let reason: StreamPacketSender.DependencyFrameDropReason
 }
 
 private final class PendingSendCompletion: @unchecked Sendable {

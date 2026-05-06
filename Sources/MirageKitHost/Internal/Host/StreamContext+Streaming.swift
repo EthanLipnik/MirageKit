@@ -42,7 +42,16 @@ extension StreamContext {
             mediaSecurityContext: mediaSecurityContext,
             diagnosticsBuffer: diagnosticsBuffer,
             sendPacket: sendPacket,
-            onSendError: onSendError
+            onSendError: onSendError,
+            onDependencyFrameDropped: { [weak self] streamID, frameNumber, reason in
+                Task(priority: .userInitiated) {
+                    await self?.handlePacketSenderDependencyFrameDrop(
+                        streamID: streamID,
+                        frameNumber: frameNumber,
+                        reason: reason
+                    )
+                }
+            }
         )
         self.packetSender = sender
         await sender.start()
@@ -99,6 +108,13 @@ extension StreamContext {
                 guard let self else { return }
 
                 let now = CFAbsoluteTimeGetCurrent()
+                if !isKeyframe, self.suppressEncodedNonKeyframesUntilKeyframe {
+                    return
+                }
+                if isKeyframe {
+                    self.suppressEncodedNonKeyframesUntilKeyframe = false
+                }
+
                 let fecBlockSize = self.resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
                 let reservation = callbackSequencer.reserve(
                     frameByteCount: encodedData.count,

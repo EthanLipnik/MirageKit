@@ -42,7 +42,6 @@ actor VideoEncoder {
     let streamKind: StreamKind
 
     var isProRes: Bool { codec == .proRes4444 }
-    var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
     var lastEncodedChromaSampling: MirageStreamChromaSampling?

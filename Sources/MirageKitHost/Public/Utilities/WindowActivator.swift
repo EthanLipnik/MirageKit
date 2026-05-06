@@ -96,7 +96,7 @@ public final class WindowActivator {
 
         // Try each method in order
         for method in configuration.methods {
-            let result = tryMethod(method, app: app, runningApp: runningApp, window: window, axWindow: axWindow)
+            let result = tryMethod(method, app: app, runningApp: runningApp, axWindow: axWindow)
 
             switch result {
             case .success:
@@ -124,7 +124,6 @@ public final class WindowActivator {
         _ method: ActivationMethod,
         app: MirageApplication,
         runningApp: NSRunningApplication,
-        window _: MirageWindow?,
         axWindow: AXUIElement?
     )
     -> ActivationResult {

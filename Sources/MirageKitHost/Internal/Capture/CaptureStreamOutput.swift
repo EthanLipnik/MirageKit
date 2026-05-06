@@ -239,14 +239,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         startupReadinessLock.withLock { startupReadinessState.hasObservedSample }
     }
 
-    func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
-        captureStartupReadiness()
-    }
-
-    func hasObservedDisplayStartupSample() -> Bool {
-        hasObservedStartupSample()
-    }
-
     func updateExpectations(
         frameRate: Int,
         gapThreshold: CFAbsoluteTime,
