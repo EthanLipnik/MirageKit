@@ -71,7 +71,14 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
         maxRenderFPS = normalized
         if let streamID {
-            MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: normalized)
+            MirageRenderStreamStore.shared.setDisplayTargetFPS(for: streamID, displayFPS: normalized)
+        }
+    }
+
+    func setCadenceTarget(_ target: MirageStreamCadenceTarget) {
+        maxRenderFPS = target.sourceFPS
+        if let streamID {
+            MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
         }
     }
 
@@ -79,7 +86,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         if newStreamID == streamID {
             registerFrameListener(for: newStreamID)
             if let newStreamID {
-                MirageRenderStreamStore.shared.setTargetFPS(for: newStreamID, targetFPS: maxRenderFPS)
+                MirageRenderStreamStore.shared.setDisplayTargetFPS(for: newStreamID, displayFPS: maxRenderFPS)
             }
             return
         }
@@ -87,7 +94,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         streamID = newStreamID
         registerFrameListener(for: newStreamID)
         if let newStreamID {
-            MirageRenderStreamStore.shared.setTargetFPS(for: newStreamID, targetFPS: maxRenderFPS)
+            MirageRenderStreamStore.shared.setDisplayTargetFPS(for: newStreamID, displayFPS: maxRenderFPS)
         }
         resetPresentationState()
     }

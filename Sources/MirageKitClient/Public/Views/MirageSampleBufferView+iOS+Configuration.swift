@@ -157,6 +157,7 @@ extension MirageSampleBufferView {
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(override)
         maxRenderFPS = clamped
         presenter.setTargetFPS(clamped)
+        presentationScheduler.setTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
         onRefreshRateOverrideChange?(clamped)
     }
@@ -166,6 +167,7 @@ extension MirageSampleBufferView {
         let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : max(20, clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
+        presentationScheduler.setTargetFPS(localFPS)
         updatePresentationDisplayLinkFrameRate()
 
         guard changed else { return }

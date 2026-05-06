@@ -344,10 +344,12 @@ extension MirageClientService {
                 window: resolvedWindow
             )
 
-            let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
-            let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
-            refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
-            updateObservedFrameRate(started.frameRate, for: streamID)
+            refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(started.frameRate)
+            await applyStreamCadenceTarget(
+                started.frameRate,
+                for: streamID,
+                reason: "window stream started"
+            )
 
             let dimensionToken = started.dimensionToken
             let hasController = controllersByStream[streamID] != nil
@@ -424,7 +426,8 @@ extension MirageClientService {
                     streamID,
                     beginPostResizeTransition: shouldBeginPostResizeTransition,
                     mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    targetFrameRate: started.frameRate
                 )
             }
             self.addActiveStreamID(streamID)
@@ -503,9 +506,15 @@ extension MirageClientService {
         if let metrics = try? message.decode(StreamMetricsMessage.self) {
             updateObservedFrameRate(metrics.targetFrameRate, for: metrics.streamID)
             if let controller = controllersByStream[metrics.streamID] {
+                let latencyMode = renderLatencyModeByStream[metrics.streamID]
                 Task {
                     await controller.updateHostMetrics(metrics)
-                    await controller.updateDecodeSubmissionLimit(targetFrameRate: metrics.targetFrameRate)
+                    await controller.updateCadenceTarget(
+                        sourceFPS: metrics.targetFrameRate,
+                        displayFPS: metrics.targetFrameRate,
+                        latencyMode: latencyMode,
+                        reason: "host metrics"
+                    )
                 }
             }
             metricsStore.updateHostMetrics(

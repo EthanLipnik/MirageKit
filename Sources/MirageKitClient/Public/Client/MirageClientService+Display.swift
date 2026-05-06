@@ -292,6 +292,43 @@ extension MirageClientService {
         observedFrameRateByStream[streamID] = clamped
     }
 
+    func resolvedStreamCadenceFrameRate(for streamID: StreamID, fallback: Int? = nil) -> Int {
+        if let fallback {
+            return MirageRenderModePolicy.normalizedTargetFPS(fallback)
+        }
+        if let observed = observedFrameRateByStream[streamID], observed > 0 {
+            return MirageRenderModePolicy.normalizedTargetFPS(observed)
+        }
+        if let override = refreshRateOverridesByStream[streamID], override > 0 {
+            return MirageRenderModePolicy.normalizedTargetFPS(override)
+        }
+        return getScreenMaxRefreshRate()
+    }
+
+    func applyStreamCadenceTarget(
+        _ frameRate: Int,
+        for streamID: StreamID,
+        reason: String
+    )
+    async {
+        let targetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(frameRate)
+        updateObservedFrameRate(targetFrameRate, for: streamID)
+        let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+        let target = MirageStreamCadenceTarget(
+            sourceFPS: targetFrameRate,
+            displayFPS: targetFrameRate,
+            latencyMode: latencyMode
+        )
+        MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
+        guard let controller = controllersByStream[streamID] else { return }
+        await controller.updateCadenceTarget(
+            sourceFPS: targetFrameRate,
+            displayFPS: targetFrameRate,
+            latencyMode: latencyMode,
+            reason: reason
+        )
+    }
+
     /// Send display size change (points) to host when the client view bounds change.
     public func sendDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }

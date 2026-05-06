@@ -220,8 +220,9 @@ actor StreamPacketSender {
     nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
     nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
-    nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 2.0
-    nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.050
+    nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 4.0
+    nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.100
+    nonisolated static let keyframeDependencyDropSuppressionSeconds: CFAbsoluteTime = 0.200
     nonisolated static let maxQueuedWorkItems: Int = 8
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
@@ -246,6 +247,7 @@ actor StreamPacketSender {
     private nonisolated(unsafe) var dropNonKeyframesUntilKeyframe: Bool = false
     private nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     private nonisolated(unsafe) var latestKeyframeGeneration: UInt32 = 0
+    private nonisolated(unsafe) var dependencyDropSuppressionDeadline: CFAbsoluteTime = 0
     private nonisolated(unsafe) var queuedStalePacketDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedNonKeyframeHoldDropCount: UInt64 = 0
@@ -325,11 +327,7 @@ actor StreamPacketSender {
 
         let overrideRate = max(0, pacingOverride?.rateBps ?? 0)
         let effectiveRateBps = if isKeyframeBurst {
-            if targetRateBps > 0, overrideRate > 0 {
-                min(targetRateBps, overrideRate)
-            } else {
-                max(targetRateBps, overrideRate)
-            }
+            max(targetRateBps, overrideRate)
         } else {
             max(targetRateBps, overrideRate)
         }
@@ -397,6 +395,7 @@ actor StreamPacketSender {
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
+            dependencyDropSuppressionDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -421,6 +420,7 @@ actor StreamPacketSender {
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
+            dependencyDropSuppressionDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -442,6 +442,7 @@ actor StreamPacketSender {
         generation &+= 1
         queueLock.withLock {
             resetKeyframeTrackingLocked()
+            dependencyDropSuppressionDeadline = 0
         }
         MirageLogger.stream("Packet send generation bumped to \(generation) (\(reason))")
     }
@@ -453,6 +454,7 @@ actor StreamPacketSender {
             queuedBytes = 0
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
+            dependencyDropSuppressionDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -598,6 +600,7 @@ actor StreamPacketSender {
         }
 
         if item.isKeyframe {
+            extendDependencyDropSuppressionLocked(now: now)
             if latestKeyframeGeneration != item.generation || item.frameNumber >= latestKeyframeFrameNumber {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
@@ -673,6 +676,7 @@ actor StreamPacketSender {
 
         if item.isKeyframe {
             queueLock.withLock {
+                extendDependencyDropSuppressionLocked(now: CFAbsoluteTimeGetCurrent())
                 if latestKeyframeGeneration == item.generation, latestKeyframeFrameNumber == item.frameNumber {
                     resetKeyframeTrackingLocked()
                 }
@@ -1217,12 +1221,27 @@ actor StreamPacketSender {
         reason: DependencyFrameDropReason
     ) {
         guard !item.isKeyframe else { return }
+        if shouldSuppressDependencyDropLocked(now: CFAbsoluteTimeGetCurrent()) {
+            resetKeyframeTrackingLocked()
+            return
+        }
         let wasAlreadyHolding = dropNonKeyframesUntilKeyframe && latestKeyframeGeneration == item.generation
         dropNonKeyframesUntilKeyframe = true
         latestKeyframeGeneration = item.generation
         latestKeyframeFrameNumber = max(latestKeyframeFrameNumber, item.frameNumber)
         guard !wasAlreadyHolding else { return }
         onDependencyFrameDropped?(item.streamID, item.frameNumber, reason)
+    }
+
+    private nonisolated func extendDependencyDropSuppressionLocked(now: CFAbsoluteTime) {
+        dependencyDropSuppressionDeadline = max(
+            dependencyDropSuppressionDeadline,
+            now + Self.keyframeDependencyDropSuppressionSeconds
+        )
+    }
+
+    private nonisolated func shouldSuppressDependencyDropLocked(now: CFAbsoluteTime) -> Bool {
+        now < dependencyDropSuppressionDeadline
     }
 
     private nonisolated func fecPayloadBudgetBytes(for item: WorkItem) -> Int {
@@ -1360,10 +1379,7 @@ actor StreamPacketSender {
             )
             guard sleepMs > 0 else { break }
             if let sendDeadline, beforeSleep + (Double(sleepMs) / 1_000.0) >= sendDeadline {
-                return PacketPacingResult(
-                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs, count: sleepCount),
-                    didMissDeadline: true
-                )
+                break
             }
 
             try? await Task.sleep(for: .milliseconds(Int64(sleepMs)))

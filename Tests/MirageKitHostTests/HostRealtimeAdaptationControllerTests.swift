@@ -173,8 +173,8 @@ struct HostRealtimeAdaptationControllerTests {
         #expect(action == .reduceFrameRate(60, reason: "jitter"))
     }
 
-    @Test("Controller holds when app owns automatic bitrate adaptation")
-    func holdsWhenAppOwnsAutomaticBitrateAdaptation() {
+    @Test("Controller allows quality relief when app owns automatic bitrate adaptation")
+    func allowsQualityReliefWhenAppOwnsAutomaticBitrateAdaptation() {
         var controller = HostRealtimeAdaptationController()
         var action: HostRealtimeAdaptationAction = .hold
 
@@ -183,6 +183,27 @@ struct HostRealtimeAdaptationControllerTests {
                 input: transportStressedInput(
                     currentBitrate: 100_000_000,
                     appOwnedBitrateAdaptation: true
+                ),
+                now: Double(index) * 0.5
+            )
+        }
+
+        #expect(action == .reduceQuality(0.76, reason: "jitter"))
+        #expect(controller.sustainedBudgetFailureCount == 10)
+        #expect(controller.feedbackSampleCount == 10)
+    }
+
+    @Test("Controller holds when receiver feedback target is stale")
+    func holdsWhenReceiverFeedbackTargetIsStale() {
+        var controller = HostRealtimeAdaptationController()
+        var action: HostRealtimeAdaptationAction = .hold
+
+        for index in 0..<10 {
+            action = controller.decide(
+                input: transportStressedInput(
+                    currentBitrate: 100_000_000,
+                    currentFrameRate: 30,
+                    feedbackTargetFrameRate: 60
                 ),
                 now: Double(index) * 0.5
             )
@@ -200,7 +221,8 @@ struct HostRealtimeAdaptationControllerTests {
         colorDepth: MirageStreamColorDepth = .standard,
         streamScale: Double = 1.0,
         currentFrameRate: Int = 120,
-        appOwnedBitrateAdaptation: Bool = false
+        appOwnedBitrateAdaptation: Bool = false,
+        feedbackTargetFrameRate: Int? = nil
     ) -> HostRealtimeAdaptationInput {
         feedbackInput(
             currentBitrate: currentBitrate,
@@ -211,7 +233,8 @@ struct HostRealtimeAdaptationControllerTests {
             currentFrameRate: currentFrameRate,
             jitterP95Ms: 40,
             jitterP99Ms: 50,
-            appOwnedBitrateAdaptation: appOwnedBitrateAdaptation
+            appOwnedBitrateAdaptation: appOwnedBitrateAdaptation,
+            feedbackTargetFrameRate: feedbackTargetFrameRate
         )
     }
 
@@ -233,14 +256,15 @@ struct HostRealtimeAdaptationControllerTests {
         rendererAcceptedFPS: Double = 118,
         rendererPresentedFPS: Double = 118,
         recoveryState: MirageMediaFeedbackRecoveryState = .idle,
-        appOwnedBitrateAdaptation: Bool = false
+        appOwnedBitrateAdaptation: Bool = false,
+        feedbackTargetFrameRate: Int? = nil
     ) -> HostRealtimeAdaptationInput {
         HostRealtimeAdaptationInput(
             feedback: ReceiverMediaFeedbackMessage(
                 streamID: 1,
                 sequence: 1,
                 sentAtUptime: 1,
-                targetFPS: currentFrameRate,
+                targetFPS: feedbackTargetFrameRate ?? currentFrameRate,
                 ackRanges: [],
                 lostFrameCount: lostFrameCount,
                 discardedPacketCount: discardedPacketCount,

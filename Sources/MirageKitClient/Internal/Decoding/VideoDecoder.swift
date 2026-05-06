@@ -424,6 +424,7 @@ final class FrameReassembler: @unchecked Sendable {
     let startupKeyframeTimeout: TimeInterval = 5.0
     let pendingKeyframePromotionDelay: TimeInterval = 0.15
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
+    let pendingKeyframeProgressPreservationThreshold: Double = 0.75
     let pFrameTimeoutFrameIntervalBudget: Double = 18.0
     let pFrameTimeoutMinimum: TimeInterval = 0.12
     let pFrameTimeoutMaximum: TimeInterval = 0.60

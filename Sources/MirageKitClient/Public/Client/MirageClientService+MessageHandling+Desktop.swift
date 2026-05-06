@@ -89,12 +89,18 @@ extension MirageClientService {
         } else {
             sessionStore.clearPostResizeTransition(for: streamID)
         }
+        await applyStreamCadenceTarget(
+            started.frameRate,
+            for: streamID,
+            reason: "desktop resize commit"
+        )
         await prepareControllerForDesktopResize(
             streamID,
             codec: started.codec,
             streamDimensions: (width: started.width, height: started.height),
             mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
-            dimensionToken: started.dimensionToken
+            dimensionToken: started.dimensionToken,
+            targetFrameRate: started.frameRate
         )
         desktopResizeCoordinator.finishTransition()
         if !started.allowsClientResize {
@@ -241,7 +247,6 @@ extension MirageClientService {
                 desktopResizeCoordinator.clearAllState()
                 sessionStore.clearPostResizeTransition(for: streamID)
             }
-            updateObservedFrameRate(started.frameRate, for: streamID)
             activeStreamCodecs[streamID] = started.codec
             if let dimensionToken {
                 desktopDimensionTokenByStream[streamID] = dimensionToken
@@ -253,9 +258,12 @@ extension MirageClientService {
                 to: streamID,
                 preferredLatencyMode: pendingStreamSetupLatencyMode ?? pendingDesktopRequestedLatencyMode
             )
-            let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
-            let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
-            refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
+            await applyStreamCadenceTarget(
+                started.frameRate,
+                for: streamID,
+                reason: "desktop stream started"
+            )
+            refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(started.frameRate)
             configureDecoderColorDepthBaseline(
                 for: streamID,
                 colorDepth: pendingDesktopRequestedColorDepth
@@ -281,7 +289,8 @@ extension MirageClientService {
                     codec: started.codec,
                     streamDimensions: (width: started.width, height: started.height),
                     mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    targetFrameRate: started.frameRate
                 )
             }
             self.addActiveStreamID(streamID)

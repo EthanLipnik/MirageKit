@@ -258,8 +258,6 @@ actor StreamContext {
     let keyframeQueueSettleFactor: Double = 0.4
     let startupTransportProtectionHold: CFAbsoluteTime = 5.0
     let startupKeyframeFECBlockSize: Int = 4
-    let startupKeyframePacerRateCapBps: Int = 120_000_000
-    let startupKeyframeBurstBytes: Int = 64 * 1024
     var lastKeyframeRequestTime: CFAbsoluteTime = 0
     var keyframeSendDeadline: CFAbsoluteTime = 0
 

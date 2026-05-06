@@ -53,7 +53,6 @@ package struct RealtimeMediaSession: Sendable, Equatable {
 
     package mutating func recordFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
         latestFeedback = feedback
-        targetFrameRate = feedback.targetFPS
         recoveryState = feedback.recoveryState
         diagnosticsRevision &+= 1
     }

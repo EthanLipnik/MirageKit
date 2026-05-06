@@ -243,7 +243,7 @@ actor StreamController {
     static let freezeRecoveryEscalationThreshold: Int = 2
 
     /// Maximum number of compressed frames buffered ahead of decode.
-    static let maxQueuedFrames: Int = 48
+    static let maxQueuedFrames: Int = 15
     /// Poll interval while waiting for the first presented frame after startup/reset/resize.
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
@@ -406,6 +406,7 @@ actor StreamController {
     var lastHardRecoveryStartTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
+    var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
     var decodeSubmissionBaselineLimit: Int = 2
     var decodeSubmissionStressStreak: Int = 0
@@ -1234,11 +1235,12 @@ actor StreamController {
                 endFrame: reassemblerMetrics.lastCompletedFrame
             )]
             : []
+        let sourceTargetFPS = max(1, streamCadenceTarget.sourceFPS)
         let feedback = ReceiverMediaFeedbackMessage(
             streamID: streamID,
             sequence: mediaFeedbackSequence,
             sentAtUptime: now,
-            targetFPS: max(1, renderTelemetry.targetFPS),
+            targetFPS: sourceTargetFPS,
             ackRanges: ackRanges,
             lostFrameCount: reassemblerMetrics.droppedFrames + frameSnapshot.queueDroppedFrames,
             discardedPacketCount: reassemblerMetrics.discardedPackets,

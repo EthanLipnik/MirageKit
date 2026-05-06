@@ -709,6 +709,14 @@ extension MirageClientService {
         if let clampedScale {
             resolutionScale = clampedScale
         }
+        if let clampedFrameRate {
+            refreshRateOverridesByStream[streamID] = clampedFrameRate
+            await applyStreamCadenceTarget(
+                clampedFrameRate,
+                for: streamID,
+                reason: "encoder settings change"
+            )
+        }
     }
 
     // MARK: - Adaptive Fallback

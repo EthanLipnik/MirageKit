@@ -25,7 +25,8 @@ extension StreamContext {
                 colorDepth: encoderConfig.colorDepth,
                 streamScale: streamScale,
                 currentFrameRate: currentFrameRate,
-                appOwnedBitrateAdaptation: bitrateAdaptationCeiling != nil
+                appOwnedBitrateAdaptation: bitrateAdaptationCeiling != nil,
+                encodedPixelSize: currentEncodedSize
             ),
             now: now
         )

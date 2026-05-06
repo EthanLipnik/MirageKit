@@ -130,7 +130,9 @@ extension StreamController {
                 reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
                 decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),
                 usingHardwareDecoder: await decoder.currentHardwareDecoderStatus(),
-                targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? decodeSchedulerTargetFPS),
+                targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS),
+                sourceTargetFrameRate: max(1, streamCadenceTarget.sourceFPS),
+                displayTargetFrameRate: max(1, streamCadenceTarget.displayFPS),
                 hostMetrics: latestHostMetricsMessage
             )
         )
@@ -702,13 +704,10 @@ extension StreamController {
             clearQueuedFramesForRecovery()
             startFreezeMonitorIfNeeded()
             if memoryBudgetRecoveryTask != nil {
-                cancelMemoryBudgetRecoveryTask()
                 MirageLogger.client(
                     "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                        "memory-budget recovery churn, requesting keyframe"
+                        "memory-budget recovery already settling"
                 )
-                await startKeyframeRecoveryLoopIfNeeded()
-                await requestKeyframeRecovery(reason: .memoryBudget)
                 return
             }
             scheduleMemoryBudgetRecoveryIfNeeded()
@@ -719,9 +718,17 @@ extension StreamController {
         }
 
         if reason == .timeout, reassembler.isAwaitingKeyframe() {
+            guard !hasPresentedFirstFrame else {
+                startFreezeMonitorIfNeeded()
+                MirageLogger.client(
+                    "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
+                        "reassembler is awaiting keyframe after presentation progress, waiting for freeze recovery"
+                )
+                return
+            }
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                    "reassembler is awaiting keyframe, requesting bounded recovery"
+                    "reassembler is awaiting keyframe before first presentation, requesting bounded recovery"
             )
             await startKeyframeRecoveryLoopIfNeeded()
             await requestKeyframeRecovery(reason: .frameLoss)

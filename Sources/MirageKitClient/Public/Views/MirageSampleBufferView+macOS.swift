@@ -215,6 +215,7 @@ public class MirageSampleBufferView: NSView {
         guard window != nil else { return }
         guard streamID != nil else { return }
         let localFPS = localPresentationFPS()
+        presentationScheduler.setTargetFPS(localFPS)
         if let presentationDisplayClock {
             presentationDisplayClock.updateTargetFPS(localFPS)
         } else {
@@ -236,7 +237,9 @@ public class MirageSampleBufferView: NSView {
     }
 
     private func updatePresentationDisplayClockFrameRate() {
-        presentationDisplayClock?.updateTargetFPS(localPresentationFPS())
+        let localFPS = localPresentationFPS()
+        presentationScheduler.setTargetFPS(localFPS)
+        presentationDisplayClock?.updateTargetFPS(localFPS)
     }
 
     private func armDisplayLayerReadinessRetry() {
@@ -327,6 +330,7 @@ public class MirageSampleBufferView: NSView {
         )
         maxRenderFPS = target
         presenter.setTargetFPS(target)
+        presentationScheduler.setTargetFPS(localPresentationFPS(hostFPS: target))
         applyDisplayRefreshRateLock(target)
         updatePresentationDisplayClockFrameRate()
         onRefreshRateOverrideChange?(target)
@@ -338,6 +342,7 @@ public class MirageSampleBufferView: NSView {
         let localFPS = localPresentationFPS(hostFPS: clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
+        presentationScheduler.setTargetFPS(localFPS)
 
         guard changed else { return }
         MirageLogger.renderer(

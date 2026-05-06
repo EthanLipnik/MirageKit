@@ -17,8 +17,8 @@ private final class PendingFrameState: @unchecked Sendable {
 @MainActor
 @Suite("Render Presentation Scheduler")
 struct RenderPresentationSchedulerTests {
-    @Test("Active live frame arrival waits for display clock")
-    func activeLiveFrameArrivalWaitsForDisplayClock() {
+    @Test("Active live frame arrival coalesces until display clock starts")
+    func activeLiveFrameArrivalCoalescesUntilDisplayClockStarts() {
         let streamID: StreamID = 901
         var submitCount = 0
         var scheduledCallbacks: [@MainActor () -> Void] = []
@@ -42,15 +42,19 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleFrameAvailable(referenceTime: 3)
 
         #expect(submitCount == 0)
-        #expect(scheduledCallbacks.isEmpty)
+        #expect(scheduledCallbacks.count == 1)
 
         scheduler.setDisplayClockActive(true)
+        let callback = scheduledCallbacks.removeFirst()
+        callback()
+        #expect(submitCount == 0)
+
         scheduler.handleDisplayTick(referenceTime: 4)
         #expect(submitCount == 1)
     }
 
-    @Test("Active live display ticks are the only active submission path")
-    func activeLiveDisplayTicksAreOnlyActiveSubmissionPath() {
+    @Test("Immediate active live submission can seed presentation before display clock starts")
+    func immediateActiveLiveSubmissionCanSeedPresentationBeforeDisplayClockStarts() {
         let streamID: StreamID = 902
         var submitCount = 0
         let pendingState = PendingFrameState()
@@ -72,21 +76,23 @@ struct RenderPresentationSchedulerTests {
         scheduler.requestImmediateSubmission(referenceTime: 2)
         scheduler.requestReadinessRetry(referenceTime: 3)
 
-        #expect(submitCount == 0)
+        #expect(submitCount == 1)
 
         scheduler.setDisplayClockActive(true)
         scheduler.handleDisplayTick(referenceTime: 4)
 
-        #expect(submitCount == 1)
+        #expect(submitCount == 2)
     }
 
-    @Test("Active live display clock waits for ticks instead of arrival passes")
-    func activeLiveDisplayClockWaitsForTicksInsteadOfArrivalPasses() {
+    @Test("Active live display clock suppresses arrival fallback after a fresh tick")
+    func activeLiveDisplayClockSuppressesArrivalFallbackAfterFreshTick() {
         let streamID: StreamID = 906
         var submitReferences: [CFTimeInterval] = []
         var scheduledCallbacks: [@MainActor () -> Void] = []
+        var wallTime: CFTimeInterval = 10
 
         let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
             enqueueCoalescedPass: { action in
                 scheduledCallbacks.append(action)
             },
@@ -98,21 +104,57 @@ struct RenderPresentationSchedulerTests {
         )
         scheduler.setStreamID(streamID)
         scheduler.setPresentationTier(.activeLive)
+        scheduler.setTargetFPS(120)
         scheduler.setDisplayClockActive(true)
 
+        scheduler.handleDisplayTick(referenceTime: 1)
+        wallTime += 0.004
         scheduler.handleFrameAvailable(referenceTime: 1)
         scheduler.handleFrameAvailable(referenceTime: 2)
 
         #expect(scheduledCallbacks.isEmpty)
-        #expect(submitReferences.isEmpty)
+        #expect(submitReferences == [1])
 
         scheduler.handleDisplayTick(referenceTime: 3)
 
-        #expect(submitReferences == [3])
+        #expect(submitReferences == [1, 3])
     }
 
-    @Test("Immediate submission waits for display tick while display clock is active")
-    func immediateSubmissionWaitsForDisplayTickWhileDisplayClockIsActive() {
+    @Test("Active live frame arrival falls back when display ticks underfire")
+    func activeLiveFrameArrivalFallsBackWhenDisplayTicksUnderfire() {
+        let streamID: StreamID = 908
+        var submitReferences: [CFTimeInterval] = []
+        var scheduledCallbacks: [@MainActor () -> Void] = []
+        var wallTime: CFTimeInterval = 20
+
+        let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { referenceTime in
+                submitReferences.append(referenceTime)
+                return .submitted
+            },
+            hasPendingFrame: { true }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setTargetFPS(120)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleDisplayTick(referenceTime: 1)
+        wallTime += 0.020
+        scheduler.handleFrameAvailable(referenceTime: 2)
+
+        #expect(scheduledCallbacks.count == 1)
+        let callback = scheduledCallbacks.removeFirst()
+        callback()
+        #expect(submitReferences == [1, 2])
+    }
+
+    @Test("Immediate submission seeds presentation before first display tick")
+    func immediateSubmissionSeedsPresentationBeforeFirstDisplayTick() {
         let streamID: StreamID = 907
         var submitReferences: [CFTimeInterval] = []
 
@@ -128,10 +170,10 @@ struct RenderPresentationSchedulerTests {
         scheduler.setDisplayClockActive(true)
 
         scheduler.requestImmediateSubmission(referenceTime: 1)
-        #expect(submitReferences.isEmpty)
+        #expect(submitReferences == [1])
 
         scheduler.handleDisplayTick(referenceTime: 2)
-        #expect(submitReferences == [2])
+        #expect(submitReferences == [1, 2])
     }
 
     @Test("Passive snapshot frame arrival submits immediately")

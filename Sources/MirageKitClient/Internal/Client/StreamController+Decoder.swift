@@ -120,11 +120,39 @@ extension StreamController {
         reassembler
     }
 
-    func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
-        let resolvedTargetFPS = max(1, min(120, targetFrameRate))
-        let resolvedBaseline = VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
-        let targetUnchanged = resolvedTargetFPS == decodeSchedulerTargetFPS
+    func updateCadenceTarget(
+        sourceFPS: Int,
+        displayFPS: Int? = nil,
+        latencyMode: MirageStreamLatencyMode? = nil,
+        reason: String = "cadence target update"
+    ) async {
+        let resolvedSourceFPS: Int
+        let resolvedDisplayFPS: Int
+        if presentationTier == .passiveSnapshot {
+            resolvedSourceFPS = 1
+            resolvedDisplayFPS = 1
+        } else {
+            resolvedSourceFPS = MirageRenderModePolicy.normalizedTargetFPS(sourceFPS)
+            resolvedDisplayFPS = MirageRenderModePolicy.normalizedTargetFPS(displayFPS ?? resolvedSourceFPS)
+        }
+        let resolvedLatencyMode = latencyMode ?? streamCadenceTarget.latencyMode
+        let target = MirageStreamCadenceTarget(
+            sourceFPS: resolvedSourceFPS,
+            displayFPS: resolvedDisplayFPS,
+            latencyMode: resolvedLatencyMode
+        )
+        let resolvedBaseline = presentationTier == .passiveSnapshot
+            ? 1
+            : VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: target.sourceFPS)
+        let targetUnchanged = target == streamCadenceTarget
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
+
+        streamCadenceTarget = target
+        decodeSchedulerTargetFPS = target.sourceFPS
+        realtimeMediaSession.updateTargetFrameRate(target.sourceFPS)
+        reassembler.setTargetFrameRate(target.sourceFPS)
+        MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
+
         if targetUnchanged, baselineUnchanged {
             if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
                 currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
@@ -132,24 +160,28 @@ extension StreamController {
             if await decoder.currentDecodeSubmissionLimit() != currentDecodeSubmissionLimit {
                 await decoder.setDecodeSubmissionLimit(
                     limit: currentDecodeSubmissionLimit,
-                    reason: "target refresh sync"
+                    reason: reason
                 )
             }
             return
         }
 
-        decodeSchedulerTargetFPS = resolvedTargetFPS
-        realtimeMediaSession.updateTargetFrameRate(resolvedTargetFPS)
         decodeSubmissionBaselineLimit = resolvedBaseline
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
         lastSourceBoundDiagnosticSignature = nil
-        if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
-            currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
-        }
+        currentDecodeSubmissionLimit = max(1, min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit))
         await decoder.setDecodeSubmissionLimit(
             limit: currentDecodeSubmissionLimit,
+            reason: reason
+        )
+    }
+
+    func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
+        await updateCadenceTarget(
+            sourceFPS: targetFrameRate,
+            displayFPS: targetFrameRate,
             reason: "target refresh update"
         )
     }
@@ -159,26 +191,19 @@ extension StreamController {
         presentationTier = tier
         await GlobalDecodeBudgetController.shared.updateTier(streamID: streamID, tier: tier)
 
-        let requestedTargetFPS = targetFPS ?? (tier == .activeLive ? 60 : 1)
+        let requestedTargetFPS = targetFPS ?? streamCadenceTarget.sourceFPS
         let resolvedTargetFPS = switch tier {
         case .activeLive:
             max(20, min(120, requestedTargetFPS))
         case .passiveSnapshot:
             1
         }
-        decodeSchedulerTargetFPS = resolvedTargetFPS
-        realtimeMediaSession.updateTargetFrameRate(resolvedTargetFPS)
-        if tier == .passiveSnapshot {
-            decodeSubmissionBaselineLimit = 1
-        } else {
-            decodeSubmissionBaselineLimit = VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
-        }
-        decodeSubmissionStressStreak = 0
-        decodeSubmissionHealthyStreak = 0
-        lastDecodeSubmissionConstraintWasSourceBound = nil
-        lastSourceBoundDiagnosticSignature = nil
-        currentDecodeSubmissionLimit = max(1, decodeSubmissionBaselineLimit)
-        await decoder.setDecodeSubmissionLimit(limit: currentDecodeSubmissionLimit, reason: "presentation tier update")
+        await updateCadenceTarget(
+            sourceFPS: resolvedTargetFPS,
+            displayFPS: resolvedTargetFPS,
+            latencyMode: streamCadenceTarget.latencyMode,
+            reason: "presentation tier update"
+        )
 
         switch tier {
         case .activeLive:

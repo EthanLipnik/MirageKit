@@ -11,6 +11,7 @@
 import CoreMedia
 import CoreVideo
 import Foundation
+import MirageKit
 import Testing
 
 #if os(macOS)
@@ -21,6 +22,7 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 301
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
         let first = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
@@ -62,9 +64,9 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 3)
-        #expect(secondFrame?.sequence == 4)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(firstFrame?.sequence == 4)
+        #expect(secondFrame?.sequence == 5)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
     @Test("Submission snapshot does not regress on older sequence marks")
@@ -96,6 +98,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
         MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
         for index in 0 ..< 3 {
             _ = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
@@ -120,14 +123,45 @@ struct RenderFrameQueueSPSCTests {
         #expect(telemetry.presentedFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
-        #expect(telemetry.pendingFrameCount == 3)
-        #expect(telemetry.overwrittenPendingFrames == 0)
+        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.overwrittenPendingFrames == 1)
         #expect(telemetry.displayLayerNotReadyCount == 1)
         #expect(telemetry.targetFPS == 60)
 
         let secondSnapshot = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(secondSnapshot.overwrittenPendingFrames == 0)
         #expect(secondSnapshot.displayLayerNotReadyCount == 0)
+    }
+
+    @Test("Render telemetry separates source and display cadence targets")
+    func renderTelemetrySeparatesSourceAndDisplayCadenceTargets() {
+        let streamID: StreamID = 309
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 30,
+                displayFPS: 120,
+                latencyMode: .lowestLatency
+            )
+        )
+        for index in 0 ..< 30 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
+                for: streamID
+            )
+        }
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.sourceTargetFPS == 30)
+        #expect(telemetry.displayTargetFPS == 120)
+        #expect(telemetry.targetFPS == 30)
+        #expect(telemetry.decodeHealthy)
     }
 
     @Test("Per-stream pending frames stay isolated")
@@ -140,6 +174,8 @@ struct RenderFrameQueueSPSCTests {
             MirageRenderStreamStore.shared.clear(for: streamA)
             MirageRenderStreamStore.shared.clear(for: streamB)
         }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamA, latencyMode: .smoothest)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamB, latencyMode: .smoothest)
 
         _ = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
@@ -191,7 +227,7 @@ struct RenderFrameQueueSPSCTests {
         let clearedCount = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
 
-        #expect(clearedCount == 3)
+        #expect(clearedCount == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
         #expect(snapshot.sequence == 2)
     }

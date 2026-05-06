@@ -218,7 +218,7 @@ struct KeyframeRecoveryPolicyTests {
         await context.enableStartupTransportProtection(now: 10.0)
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 4)
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: 10.0) == 0)
-        #expect(context.startupKeyframePacingOverride(now: 10.0) == StreamPacketSender.PacingOverride(
+        #expect(StreamContext.keyframePacingOverride() == StreamPacketSender.PacingOverride(
             rateBps: 120_000_000,
             burstBytes: 64 * 1024
         ))
@@ -227,10 +227,10 @@ struct KeyframeRecoveryPolicyTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 0)
     }
 
-    @Test("Startup packet pacing caps keyframe burst budget while leaving steady state unchanged")
+    @Test("Keyframe packet pacing override raises send rate while capping burst budget")
     func startupPacketPacingCapsKeyframeBurstBudget() {
         let startupParameters = StreamPacketSender.packetPacingParameters(
-            targetRateBps: 600_000_000,
+            targetRateBps: 76_000_000,
             packetBytes: 1_500,
             isKeyframeBurst: true,
             totalFragments: 1_200,
@@ -240,7 +240,7 @@ struct KeyframeRecoveryPolicyTests {
             )
         )
         let steadyStateParameters = StreamPacketSender.packetPacingParameters(
-            targetRateBps: 600_000_000,
+            targetRateBps: 76_000_000,
             packetBytes: 1_500,
             isKeyframeBurst: true,
             totalFragments: 1_200,
@@ -250,8 +250,9 @@ struct KeyframeRecoveryPolicyTests {
         #expect(startupParameters != nil)
         #expect(steadyStateParameters != nil)
         #expect(Int(startupParameters?.burstBytes ?? 0) == 64 * 1024)
-        #expect((startupParameters?.bytesPerSecond ?? 0) < (steadyStateParameters?.bytesPerSecond ?? 0))
-        #expect((startupParameters?.burstBytes ?? 0) < (steadyStateParameters?.burstBytes ?? 0))
+        #expect((startupParameters?.bytesPerSecond ?? 0) > (steadyStateParameters?.bytesPerSecond ?? 0))
+        #expect((startupParameters?.burstBytes ?? 0) <
+            (startupParameters?.bytesPerSecond ?? 0) / 1_000.0 * StreamPacketSender.packetPacerBurstWindowMs)
     }
 
     private func makeContext(

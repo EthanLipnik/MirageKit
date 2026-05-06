@@ -229,6 +229,11 @@ extension MirageClientService {
                 to: mediaStreamID,
                 preferredLatencyMode: pendingStreamSetupLatencyMode ?? pendingAppRequestedLatencyMode
             )
+            await applyStreamCadenceTarget(
+                update.frameRate,
+                for: mediaStreamID,
+                reason: "app atlas media update"
+            )
 
             if shouldSetupController {
                 streamStartupBaseTimes[mediaStreamID] = CFAbsoluteTimeGetCurrent()
@@ -241,7 +246,8 @@ extension MirageClientService {
                     streamDimensions: (width: update.width, height: update.height),
                     mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                     dimensionToken: update.dimensionToken,
-                    forwardsResizeEvents: false
+                    forwardsResizeEvents: false,
+                    targetFrameRate: update.frameRate
                 )
             } else if let dimensionToken = update.dimensionToken,
                       let controller = controllersByStream[mediaStreamID] {

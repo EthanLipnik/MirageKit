@@ -47,6 +47,8 @@ struct ClientStreamingAnomalySample: Sendable {
     let decoderOutputPixelFormat: String?
     let usingHardwareDecoder: Bool?
     let targetFrameRate: Int
+    let sourceTargetFrameRate: Int
+    let displayTargetFrameRate: Int
     let hostMetrics: StreamMetricsMessage?
 
     init(
@@ -88,6 +90,8 @@ struct ClientStreamingAnomalySample: Sendable {
         decoderOutputPixelFormat: String?,
         usingHardwareDecoder: Bool?,
         targetFrameRate: Int,
+        sourceTargetFrameRate: Int? = nil,
+        displayTargetFrameRate: Int? = nil,
         hostMetrics: StreamMetricsMessage?
     ) {
         self.streamID = streamID
@@ -128,6 +132,8 @@ struct ClientStreamingAnomalySample: Sendable {
         self.decoderOutputPixelFormat = decoderOutputPixelFormat
         self.usingHardwareDecoder = usingHardwareDecoder
         self.targetFrameRate = targetFrameRate
+        self.sourceTargetFrameRate = sourceTargetFrameRate ?? targetFrameRate
+        self.displayTargetFrameRate = displayTargetFrameRate ?? targetFrameRate
         self.hostMetrics = hostMetrics
     }
 
@@ -275,7 +281,7 @@ func clientStreamingAnomalyDiagnostic(
         "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
         "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
-        "presented=\(formattedFPS(sample.presentedFPS))fps " +
+        "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
@@ -285,7 +291,8 @@ func clientStreamingAnomalyDiagnostic(
         "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
         "layerBackpressure=\(sample.displayLayerNotReadyCount) " +
         "decodeHealthy=\(sample.decodeHealthy) limit=\(sample.decodeSubmissionLimit) " +
-        "tier=\(sample.presentationTier.rawValue) target=\(sample.targetFrameRate) " +
+        "tier=\(sample.presentationTier.rawValue) sourceTarget=\(sample.sourceTargetFrameRate) " +
+        "displayTarget=\(sample.displayTargetFrameRate) target=\(sample.targetFrameRate) " +
         "decoderFormat=\(decoderFormat) hardwareDecoder=\(hardwareDecoderText) " +
         "hostEncoded=\(hostEncodedText)fps hostCapture=\(hostCaptureText)fps " +
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +

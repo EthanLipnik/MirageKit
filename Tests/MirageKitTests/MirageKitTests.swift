@@ -94,6 +94,38 @@ struct MirageKitTests {
         #expect(decoded == feedback)
     }
 
+    @Test("Realtime media session keeps target frame rate host owned")
+    func realtimeMediaSessionKeepsTargetFrameRateHostOwned() {
+        var session = RealtimeMediaSession(streamID: 42, targetFrameRate: 30)
+        let feedback = ReceiverMediaFeedbackMessage(
+            streamID: 42,
+            sequence: 1,
+            sentAtUptime: 10,
+            targetFPS: 60,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 1,
+            jitterP99Ms: 2,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 30,
+            receivedFPS: 30,
+            rendererAcceptedFPS: 30,
+            rendererPresentedFPS: 30,
+            recoveryState: .idle
+        )
+
+        session.recordFeedback(feedback)
+
+        #expect(session.targetFrameRate == 30)
+        #expect(session.latestFeedback?.targetFPS == 60)
+    }
+
     @Test("Keyframe recovery ack serializes on control channel")
     func keyframeRecoveryAckSerialization() throws {
         let ack = KeyframeRecoveryAckMessage(

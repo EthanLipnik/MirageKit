@@ -130,13 +130,18 @@ public extension MirageClientService {
         mediaMaxPacketSize: Int? = nil,
         dimensionToken: UInt16? = nil,
         forwardsResizeEvents: Bool = true,
-        resizeEventStreamID: StreamID? = nil
+        resizeEventStreamID: StreamID? = nil,
+        targetFrameRate: Int? = nil
     )
     async {
         let resolvedResizeEventStreamID = forwardsResizeEvents ? (resizeEventStreamID ?? streamID) : nil
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
         let payloadSize = miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
+        let resolvedTargetFrameRate = resolvedStreamCadenceFrameRate(
+            for: streamID,
+            fallback: targetFrameRate
+        )
 
         if let existingController = controllersByStream[streamID] {
             let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
@@ -155,7 +160,8 @@ public extension MirageClientService {
                     mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                     dimensionToken: dimensionToken,
                     forwardsResizeEvents: forwardsResizeEvents,
-                    resizeEventStreamID: resolvedResizeEventStreamID
+                    resizeEventStreamID: resolvedResizeEventStreamID,
+                    targetFrameRate: resolvedTargetFrameRate
                 )
             }
 
@@ -175,7 +181,13 @@ public extension MirageClientService {
                 await existingController.beginPostResizeTransition()
             }
             let tier = sessionStore.presentationTier(for: streamID)
-            await existingController.updatePresentationTier(tier)
+            await existingController.updateCadenceTarget(
+                sourceFPS: resolvedTargetFrameRate,
+                displayFPS: resolvedTargetFrameRate,
+                latencyMode: renderLatencyModeByStream[streamID],
+                reason: "controller reset"
+            )
+            await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
             decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
@@ -300,7 +312,12 @@ public extension MirageClientService {
             }
         )
 
-        await controller.updateDecodeSubmissionLimit(targetFrameRate: getScreenMaxRefreshRate())
+        await controller.updateCadenceTarget(
+            sourceFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedTargetFrameRate,
+            latencyMode: renderLatencyModeByStream[streamID],
+            reason: "controller setup"
+        )
         if let kind = controlPathSnapshot?.kind {
             await controller.setTransportPathKind(kind)
         }
@@ -308,7 +325,10 @@ public extension MirageClientService {
             await controller.beginPostResizeTransition()
         }
         await controller.start()
-        await controller.updatePresentationTier(sessionStore.presentationTier(for: streamID))
+        await controller.updatePresentationTier(
+            sessionStore.presentationTier(for: streamID),
+            targetFPS: resolvedTargetFrameRate
+        )
         await updateReassemblerSnapshot()
 
         MirageLogger
@@ -323,11 +343,16 @@ public extension MirageClientService {
         codec: MirageVideoCodec,
         streamDimensions: (width: Int, height: Int)?,
         mediaMaxPacketSize: Int?,
-        dimensionToken: UInt16?
+        dimensionToken: UInt16?,
+        targetFrameRate: Int? = nil
     )
     async {
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
         let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+        let resolvedTargetFrameRate = resolvedStreamCadenceFrameRate(
+            for: streamID,
+            fallback: targetFrameRate
+        )
         guard previousMediaMaxPacketSize == acceptedMediaMaxPacketSize else {
             if let existingController = controllersByStream[streamID] {
                 await existingController.stop()
@@ -343,7 +368,8 @@ public extension MirageClientService {
                 codec: codec,
                 streamDimensions: streamDimensions,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
-                dimensionToken: dimensionToken
+                dimensionToken: dimensionToken,
+                targetFrameRate: resolvedTargetFrameRate
             )
         }
 
@@ -354,7 +380,8 @@ public extension MirageClientService {
                 codec: codec,
                 streamDimensions: streamDimensions,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
-                dimensionToken: dimensionToken
+                dimensionToken: dimensionToken,
+                targetFrameRate: resolvedTargetFrameRate
             )
         }
 
@@ -370,7 +397,16 @@ public extension MirageClientService {
             streamDimensions: streamDimensions
         )
         await existingController.beginPostResizeTransition()
-        await existingController.updatePresentationTier(sessionStore.presentationTier(for: streamID))
+        await existingController.updateCadenceTarget(
+            sourceFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedTargetFrameRate,
+            latencyMode: renderLatencyModeByStream[streamID],
+            reason: "desktop resize"
+        )
+        await existingController.updatePresentationTier(
+            sessionStore.presentationTier(for: streamID),
+            targetFPS: resolvedTargetFrameRate
+        )
         decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
         mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
         MirageLogger.client(
@@ -700,12 +736,19 @@ public extension MirageClientService {
 
     func applyStreamPresentationTier(_ tier: StreamPresentationTier, to streamID: StreamID) async {
         guard let controller = controllersByStream[streamID] else { return }
-        await controller.updatePresentationTier(tier)
+        let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
+        await controller.updatePresentationTier(tier, targetFPS: targetFrameRate)
     }
 
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
+            await controller.updateCadenceTarget(
+                sourceFPS: policy.targetFPS,
+                displayFPS: policy.targetFPS,
+                latencyMode: renderLatencyModeByStream[policy.streamID],
+                reason: "host stream policy"
+            )
             await controller.applyHostRuntimePolicy(policy)
         }
         let policyText = policies.map { policy in

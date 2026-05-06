@@ -21,6 +21,29 @@ struct HostRealtimeAdaptationInput: Sendable, Equatable {
     let streamScale: CGFloat
     let currentFrameRate: Int
     let appOwnedBitrateAdaptation: Bool
+    let encodedPixelSize: CGSize
+
+    init(
+        feedback: ReceiverMediaFeedbackMessage,
+        currentBitrate: Int?,
+        activeQuality: Float,
+        qualityFloor: Float,
+        colorDepth: MirageStreamColorDepth,
+        streamScale: CGFloat,
+        currentFrameRate: Int,
+        appOwnedBitrateAdaptation: Bool,
+        encodedPixelSize: CGSize = .zero
+    ) {
+        self.feedback = feedback
+        self.currentBitrate = currentBitrate
+        self.activeQuality = activeQuality
+        self.qualityFloor = qualityFloor
+        self.colorDepth = colorDepth
+        self.streamScale = streamScale
+        self.currentFrameRate = currentFrameRate
+        self.appOwnedBitrateAdaptation = appOwnedBitrateAdaptation
+        self.encodedPixelSize = encodedPixelSize
+    }
 }
 
 enum HostRealtimeAdaptationAction: Sendable, Equatable {
@@ -49,7 +72,7 @@ struct HostRealtimeAdaptationController: Sendable, Equatable {
         input: HostRealtimeAdaptationInput,
         now: CFAbsoluteTime
     ) -> HostRealtimeAdaptationAction {
-        guard !input.appOwnedBitrateAdaptation else {
+        guard feedbackTargetMatchesCurrentFrameRate(input: input) else {
             sustainedBudgetFailureCount = 0
             stableCount = 0
             feedbackSampleCount = 0
@@ -125,12 +148,25 @@ struct HostRealtimeAdaptationController: Sendable, Equatable {
         input: HostRealtimeAdaptationInput,
         reason: String
     ) -> HostRealtimeAdaptationAction? {
+        guard !input.appOwnedBitrateAdaptation else { return nil }
         guard let currentBitrate = input.currentBitrate, currentBitrate > 0 else { return nil }
-        let minimumBitrate = input.currentFrameRate >= 120 ? 25_000_000 : 12_000_000
+        let minimumBitrate = cadenceTarget(input: input).minimumAdaptiveBitrateBps
         guard currentBitrate > minimumBitrate else { return nil }
         let nextBitrate = max(minimumBitrate, Int(Double(currentBitrate) * 0.88))
         guard nextBitrate < currentBitrate else { return nil }
         return .reduceBitrate(nextBitrate, reason: reason)
+    }
+
+    private func feedbackTargetMatchesCurrentFrameRate(input: HostRealtimeAdaptationInput) -> Bool {
+        input.feedback.targetFPS == max(1, input.currentFrameRate)
+    }
+
+    private func cadenceTarget(input: HostRealtimeAdaptationInput) -> MirageStreamCadenceTarget {
+        MirageStreamCadenceTarget(
+            sourceFPS: input.currentFrameRate,
+            displayFPS: input.currentFrameRate,
+            encodedPixelSize: input.encodedPixelSize
+        )
     }
 
     private func pressureAssessment(input: HostRealtimeAdaptationInput) -> (
@@ -139,14 +175,16 @@ struct HostRealtimeAdaptationController: Sendable, Equatable {
         reason: String
     ) {
         let feedback = input.feedback
-        let targetFPS = Double(max(1, feedback.targetFPS))
+        let cadenceTarget = cadenceTarget(input: input)
+        let targetFPS = Double(max(1, cadenceTarget.sourceFPS))
         let acceptedRatio = feedback.rendererAcceptedFPS / targetFPS
         let decodedRatio = feedback.decodedFPS / targetFPS
-        let frameBudgetMs = 1000.0 / targetFPS
+        let frameBudgetMs = cadenceTarget.sourceFrameBudgetMs
         let lostFramesAdvanced = feedback.lostFrameCount > lastLostFrameCount
         let discardedPacketsAdvanced = feedback.discardedPacketCount > lastDiscardedPacketCount
-        let reassemblyBacklogStressed = feedback.reassemblyBacklogFrames >= max(6, Int(targetFPS / 10.0)) ||
-            feedback.reassemblyBacklogBytes >= 24 * 1024 * 1024
+        let reassemblyBacklogStressed =
+            feedback.reassemblyBacklogFrames >= cadenceTarget.reassemblyBacklogStressFrames ||
+            feedback.reassemblyBacklogBytes >= cadenceTarget.reassemblyBacklogStressBytes
         let jitterStressed = feedback.jitterP95Ms > frameBudgetMs * 2.5 ||
             feedback.jitterP99Ms > frameBudgetMs * 4.0
         let receiverBehind = acceptedRatio < 0.88 || decodedRatio < 0.88

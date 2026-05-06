@@ -120,31 +120,24 @@ extension StreamContext {
         reason: StreamPacketSender.DependencyFrameDropReason
     ) async {
         guard droppedStreamID == streamID, isRunning else { return }
-        suppressEncodedNonKeyframesUntilKeyframe = true
-        let clearedFrames = frameInbox.clear()
-        if clearedFrames > 0 {
-            droppedFrameCount += UInt64(clearedFrames)
-        }
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
         let label = "Packet sender dependency drop"
         let queued = queueKeyframe(
             reason: label,
-            checkInFlight: false,
-            requiresFlush: true,
+            checkInFlight: true,
+            requiresFlush: false,
             requiresReset: false,
             urgent: true
         )
         guard queued else {
-            MirageLogger.stream("\(label) skipped after frame \(frameNumber) (\(reason.rawValue))")
+            MirageLogger.stream("\(label) coalesced after frame \(frameNumber) (\(reason.rawValue))")
             return
         }
 
-        noteLossEvent(reason: label, enablePFrameFEC: true)
+        noteLossEvent(reason: label, enablePFrameFEC: false)
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream(
-            "Scheduled recovery keyframe after packet sender dropped frame \(frameNumber) (\(reason.rawValue))"
+            "Scheduled coalesced keyframe after packet sender dropped frame \(frameNumber) (\(reason.rawValue))"
         )
     }
 
@@ -315,11 +308,10 @@ extension StreamContext {
         return isPFrameFECActive(now: now) ? 16 : 0
     }
 
-    nonisolated func startupKeyframePacingOverride(now: CFAbsoluteTime) -> StreamPacketSender.PacingOverride? {
-        guard isStartupTransportProtectionActive(now: now) else { return nil }
-        return StreamPacketSender.PacingOverride(
-            rateBps: startupKeyframePacerRateCapBps,
-            burstBytes: startupKeyframeBurstBytes
+    nonisolated static func keyframePacingOverride() -> StreamPacketSender.PacingOverride {
+        StreamPacketSender.PacingOverride(
+            rateBps: 120_000_000,
+            burstBytes: 64 * 1024
         )
     }
 

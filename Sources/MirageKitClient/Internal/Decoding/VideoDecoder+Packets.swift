@@ -807,7 +807,7 @@ extension FrameReassembler {
     }
 
     private func bestPendingKeyframeNumberLocked() -> UInt32? {
-        pendingFrames
+        let mostProgressed = pendingFrames
             .filter { $0.value.isKeyframe }
             .max { lhs, rhs in
                 let lhsProgress = keyframeProgressRatioLocked(lhs.value)
@@ -815,6 +815,29 @@ extension FrameReassembler {
                 if lhsProgress != rhsProgress {
                     return lhsProgress < rhsProgress
                 }
+                if lhs.value.lastProgressAt != rhs.value.lastProgressAt {
+                    return lhs.value.lastProgressAt < rhs.value.lastProgressAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            }?
+            .key
+        if let mostProgressed,
+           let frame = pendingFrames[mostProgressed],
+           keyframeProgressRatioLocked(frame) >= pendingKeyframeProgressPreservationThreshold {
+            return mostProgressed
+        }
+        if let newest = newestPendingKeyframeNumberLocked(),
+           let newestFrame = pendingFrames[newest],
+           newestFrame.retainedMemoryBytes <= memoryBudget.maxPendingBytes {
+            return newest
+        }
+        return mostProgressed
+    }
+
+    private func newestPendingKeyframeNumberLocked() -> UInt32? {
+        pendingFrames
+            .filter { $0.value.isKeyframe }
+            .max { lhs, rhs in
                 if lhs.value.lastProgressAt != rhs.value.lastProgressAt {
                     return lhs.value.lastProgressAt < rhs.value.lastProgressAt
                 }

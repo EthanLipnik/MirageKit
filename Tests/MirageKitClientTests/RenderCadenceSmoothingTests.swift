@@ -34,13 +34,13 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 3)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 4)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 3)
-        #expect(telemetry.overwrittenPendingFrames == 2)
-        #expect(telemetry.playoutDelayFrames == 2)
+        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.overwrittenPendingFrames == 3)
+        #expect(telemetry.playoutDelayFrames == 1)
     }
 
     @Test("Lowest latency display tick takes the newest decoded frame")
@@ -66,7 +66,8 @@ struct RenderCadenceSmoothingTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 0)
-        #expect(telemetry.lateFrameDrops == 2)
+        #expect(telemetry.overwrittenPendingFrames == 2)
+        #expect(telemetry.lateFrameDrops == 0)
     }
 
     @Test("Repeated submission marks do not create unique forward progress")

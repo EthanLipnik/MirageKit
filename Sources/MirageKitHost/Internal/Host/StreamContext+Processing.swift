@@ -1222,7 +1222,13 @@ extension StreamContext {
 
         if lastInFlightAdjustmentTime > 0, now - lastInFlightAdjustmentTime < inFlightAdjustmentCooldown { return }
 
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+        let cadenceTarget = MirageStreamCadenceTarget(
+            sourceFPS: currentFrameRate,
+            displayFPS: currentFrameRate,
+            latencyMode: latencyMode,
+            encodedPixelSize: currentEncodedSize
+        )
+        let frameBudgetMs = cadenceTarget.sourceFrameBudgetMs
         var desired = maxInFlightFrames
 
         let smoothnessFirstMode = latencyMode == .smoothest
@@ -1272,7 +1278,11 @@ extension StreamContext {
         let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
         let packetPacerAverageSleepMs = packetTelemetry?.packetPacerSleepAverageMs ?? 0
         let transportDropCount = packetTelemetry?.stalePacketDrops ?? 0
-        let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation && latencyMode == .lowestLatency
+        let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation
+        let sendStartStressMs = max(1.0, frameBudgetMs * (adaptiveTransportRelief ? 0.08 : 0.12))
+        let sendStartSevereMs = max(4.0, frameBudgetMs * (adaptiveTransportRelief ? 0.30 : 0.36))
+        let sendCompletionStressMs = max(8.0, frameBudgetMs * (adaptiveTransportRelief ? 0.55 : 0.72))
+        let sendCompletionSevereMs = max(16.0, frameBudgetMs * (adaptiveTransportRelief ? 1.05 : 1.45))
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: queueBytes,
@@ -1285,11 +1295,11 @@ extension StreamContext {
                 packetPacerStressThresholdMs: packetPacerStressThresholdMs,
                 packetPacerSevereThresholdMs: packetPacerHighPressureThresholdMs,
                 sendStartDelayAverageMs: sendStartDelayAverageMs,
-                sendStartDelayStressThresholdMs: adaptiveTransportRelief ? 1.0 : 2.0,
-                sendStartDelaySevereThresholdMs: adaptiveTransportRelief ? 4.0 : 6.0,
+                sendStartDelayStressThresholdMs: sendStartStressMs,
+                sendStartDelaySevereThresholdMs: sendStartSevereMs,
                 sendCompletionAverageMs: sendCompletionAverageMs,
-                sendCompletionStressThresholdMs: adaptiveTransportRelief ? 8.0 : 12.0,
-                sendCompletionSevereThresholdMs: adaptiveTransportRelief ? 16.0 : 24.0,
+                sendCompletionStressThresholdMs: sendCompletionStressMs,
+                sendCompletionSevereThresholdMs: sendCompletionSevereMs,
                 transportDropCount: transportDropCount,
                 transportDropSevereCount: transportDropHighPressureThreshold
             )
@@ -1297,7 +1307,7 @@ extension StreamContext {
         let packetWithinRaiseBudget = packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
             : true
-        let allowEncodeDrivenQualityRelief = !usesAppOwnedBitrateAdaptation
+        let allowEncodeDrivenQualityRelief = true
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = qualityDropThreshold
         let baseDropStep = qualityDropStep

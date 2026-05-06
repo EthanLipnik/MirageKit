@@ -432,6 +432,72 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Expired P-frame behind queued keyframe stays local")
+    func expiredPFrameBehindQueuedKeyframeStaysLocal() async throws {
+        let submittedPackets = Locked<[SubmittedPacket]>([])
+        let dependencyDrops = Locked<[DependencyDrop]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(SubmittedPacket(frameNumber: header.frameNumber, sequenceNumber: header.sequenceNumber))
+                }
+                onComplete(nil)
+            },
+            onDependencyFrameDropped: { streamID, frameNumber, reason in
+                dependencyDrops.withLock {
+                    $0.append(DependencyDrop(streamID: streamID, frameNumber: frameNumber, reason: reason))
+                }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 1024),
+                streamID: 48,
+                frameNumber: 500,
+                sequenceNumberStart: 5_000,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 48,
+                frameNumber: 501,
+                sequenceNumberStart: 5_100,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+            )
+        )
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 48,
+                frameNumber: 502,
+                sequenceNumberStart: 5_200,
+                generation: generation
+            )
+        )
+
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 3)
+        let telemetry = await sender.telemetrySnapshot()
+        #expect(telemetry.stalePacketDrops == 1)
+        #expect(telemetry.nonKeyframeHoldDrops == 0)
+        #expect(dependencyDrops.read { $0.isEmpty })
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [500, 500, 502])
+
+        await sender.stop()
+    }
+
     @Test("Infinite non-keyframe deadline preserves dependency frame")
     func infiniteNonKeyframeDeadlinePreservesDependencyFrame() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])

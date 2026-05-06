@@ -120,7 +120,7 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.label == "presentation-bound")
         #expect(diagnostic.message.contains("submitAttempt=120.0fps"))
         #expect(diagnostic.message.contains("layerAccepted=72.0fps"))
-        #expect(diagnostic.message.contains("presented=72.0fps"))
+        #expect(diagnostic.message.contains("presentationAlias=72.0fps"))
         #expect(diagnostic.message.contains("layerBackpressure=3"))
         #expect(diagnostic.message.contains("overwritten=4"))
     }

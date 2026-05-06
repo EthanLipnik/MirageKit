@@ -131,13 +131,19 @@ extension MirageClientService {
                 to: streamID,
                 preferredLatencyMode: pendingStreamSetupLatencyMode
             )
+            await applyStreamCadenceTarget(
+                started.frameRate,
+                for: streamID,
+                reason: "custom stream started"
+            )
 
             await setupControllerForStream(
                 streamID,
                 codec: started.codec,
                 streamDimensions: (width: started.width, height: started.height),
                 mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
-                dimensionToken: started.dimensionToken
+                dimensionToken: started.dimensionToken,
+                targetFrameRate: started.frameRate
             )
             addActiveStreamID(streamID)
 
