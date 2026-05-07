@@ -14,18 +14,22 @@ import VideoToolbox
 import MirageKit
 
 extension DecodeErrorTracker {
-    func recordError() {
+    func recordError(isKeyframe: Bool) {
         lock.lock()
         defer { lock.unlock() }
 
         consecutiveErrors += 1
         totalErrors += 1
         recoverySuccessCount = 0
+        if isKeyframe, thresholdFired || sessionRecreationAttempted || recoveryTrackingArmed {
+            recoveryRequiresKeyframeDecode = true
+        }
         let now = CFAbsoluteTimeGetCurrent()
 
         // Initial threshold fire
         if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
             thresholdFired = true
+            recoveryRequiresKeyframeDecode = true
             let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
             guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {
                 let remainingMs = Int(((thresholdDispatchCooldown - timeSinceLastThreshold) * 1000).rounded(.up))
@@ -52,6 +56,7 @@ extension DecodeErrorTracker {
                 lastThresholdTime = now
                 consecutiveErrors = 0 // Reset counter for next retry cycle
                 recoverySuccessCount = 0
+                recoveryRequiresKeyframeDecode = true
                 lock.unlock()
                 MirageLogger
                     .decoder("Keyframe retry - errors persisted for \(String(format: "%.1f", timeSinceLastRequest))s")
@@ -61,13 +66,24 @@ extension DecodeErrorTracker {
         }
     }
 
-    func recordSuccess() {
+    func recordSuccess(isKeyframe: Bool) {
         lock.lock()
 
         let wasInRecoveryState = thresholdFired ||
             consecutiveErrors > 0 ||
             sessionRecreationAttempted ||
             recoveryTrackingArmed
+        if recoveryRequiresKeyframeDecode {
+            guard isKeyframe else {
+                recoverySuccessCount = 0
+                lock.unlock()
+                return
+            }
+            recoveryRequiresKeyframeDecode = false
+            nonKeyframesSkippedForRecovery = 0
+            MirageLogger.decoder("Recovery keyframe decoded - resuming P-frame decode admission")
+        }
+
         if thresholdFired || sessionRecreationAttempted || recoveryTrackingArmed {
             recoverySuccessCount += 1
             if recoverySuccessCount < recoverySuccessThreshold {
@@ -91,6 +107,8 @@ extension DecodeErrorTracker {
         thresholdFired = false
         sessionRecreationAttempted = false
         recoveryTrackingArmed = false
+        recoveryRequiresKeyframeDecode = false
+        nonKeyframesSkippedForRecovery = 0
         recoverySuccessCount = 0
 
         lock.unlock()
@@ -105,6 +123,7 @@ extension DecodeErrorTracker {
         thresholdFired = true // Mark as already fired to prevent duplicate immediate requests
         lastThresholdTime = CFAbsoluteTimeGetCurrent()
         recoverySuccessCount = 0
+        recoveryRequiresKeyframeDecode = true
         lock.unlock()
 
         MirageLogger.decoder("Requesting keyframe due to dimension change")
@@ -140,6 +159,7 @@ extension DecodeErrorTracker {
         lock.lock()
         defer { lock.unlock() }
         recoveryTrackingArmed = true
+        recoveryRequiresKeyframeDecode = true
         recoverySuccessCount = 0
         MirageLogger.decoder("Decode recovery tracking armed")
     }
@@ -151,21 +171,38 @@ extension DecodeErrorTracker {
         thresholdFired = false
         sessionRecreationAttempted = false
         recoveryTrackingArmed = false
+        recoveryRequiresKeyframeDecode = true
         lastSessionRecreationTime = 0
         recoverySuccessCount = 0
         MirageLogger.decoder("Error tracking cleared for dimension change")
     }
 
-    func clearForSessionReset() {
+    func clearForSessionReset(requireKeyframeDecode: Bool = true) {
         lock.lock()
         defer { lock.unlock() }
         consecutiveErrors = 0
         thresholdFired = false
         sessionRecreationAttempted = false
         recoveryTrackingArmed = false
+        recoveryRequiresKeyframeDecode = requireKeyframeDecode
+        nonKeyframesSkippedForRecovery = 0
         lastSessionRecreationTime = 0
         recoverySuccessCount = 0
         MirageLogger.decoder("Error tracking cleared for session reset")
+    }
+
+    func shouldDecodeFrame(isKeyframe: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard recoveryRequiresKeyframeDecode, !isKeyframe else { return true }
+        nonKeyframesSkippedForRecovery += 1
+        if nonKeyframesSkippedForRecovery == 1 || nonKeyframesSkippedForRecovery.isMultiple(of: 120) {
+            MirageLogger.decoder(
+                "Skipping non-keyframe decode while waiting for recovery keyframe " +
+                    "(skipped=\(nonKeyframesSkippedForRecovery))"
+            )
+        }
+        return false
     }
 
     func totalErrorsSnapshot() -> UInt64 {

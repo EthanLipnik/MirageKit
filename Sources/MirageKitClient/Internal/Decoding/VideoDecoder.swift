@@ -46,6 +46,8 @@ actor VideoDecoder {
 
     /// Thread-safe error tracker for decode callbacks
     var errorTracker: DecodeErrorTracker?
+    /// Thread-safe rate limiter for non-fatal VideoToolbox callback diagnostics.
+    let callbackFailureLogLimiter = DecodeCallbackFailureLogLimiter()
     /// Consecutive decode errors allowed before requesting recovery.
     let maxConsecutiveErrors = 5
     /// Thread-safe decode performance tracker (updated from decode callback)
@@ -225,6 +227,7 @@ final class DecodeInfo: @unchecked Sendable {
     let errorTracker: DecodeErrorTracker?
     let decodeStartTime: CFAbsoluteTime
     let performanceTracker: DecodePerformanceTracker?
+    let callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?
     let sessionGeneration: UInt64
     let colorDepth: MirageStreamColorDepth
     let onCompletion: (@Sendable () -> Void)?
@@ -238,6 +241,7 @@ final class DecodeInfo: @unchecked Sendable {
         errorTracker: DecodeErrorTracker?,
         decodeStartTime: CFAbsoluteTime,
         performanceTracker: DecodePerformanceTracker?,
+        callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?,
         sessionGeneration: UInt64,
         colorDepth: MirageStreamColorDepth,
         onCompletion: (@Sendable () -> Void)?,
@@ -250,6 +254,7 @@ final class DecodeInfo: @unchecked Sendable {
         self.errorTracker = errorTracker
         self.decodeStartTime = decodeStartTime
         self.performanceTracker = performanceTracker
+        self.callbackFailureLogLimiter = callbackFailureLogLimiter
         self.sessionGeneration = sessionGeneration
         self.colorDepth = colorDepth
         self.onCompletion = onCompletion
@@ -269,6 +274,8 @@ final class DecodeErrorTracker: @unchecked Sendable {
     var thresholdFired = false
     var lastThresholdTime: CFAbsoluteTime = 0
     var totalErrors: UInt64 = 0
+    var recoveryRequiresKeyframeDecode = false
+    var nonKeyframesSkippedForRecovery: UInt64 = 0
 
     /// Minimum time between keyframe requests (seconds)
     /// Keeps retries aligned with keyframe assembly timeouts

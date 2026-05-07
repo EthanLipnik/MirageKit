@@ -36,6 +36,7 @@ extension VideoDecoder {
         cachedFormatDescription = nil
 
         invalidateMemoryPool()
+        callbackFailureLogLimiter.reset()
         resetDecodeSubmissionSlots()
     }
 
@@ -56,6 +57,7 @@ extension VideoDecoder {
 
         // Reset error tracking for a clean recovery episode.
         errorTracker?.clearForSessionReset()
+        callbackFailureLogLimiter.reset()
 
         flushMemoryPool()
         resetDecodeSubmissionSlots()
@@ -80,6 +82,10 @@ extension VideoDecoder {
                 errorTracker?.requestKeyframeForDimensionChange()
             }
             // Silently discard P-frame - no error logging, no decode attempt
+            return
+        }
+
+        guard errorTracker?.shouldDecodeFrame(isKeyframe: isKeyframe) ?? true else {
             return
         }
 
@@ -122,7 +128,7 @@ extension VideoDecoder {
                     frameData = trimmed
                 } else {
                     if shouldLog {
-                        errorTracker?.recordError()
+                        errorTracker?.recordError(isKeyframe: isKeyframe)
                     }
                     return
                 }
@@ -226,6 +232,7 @@ extension VideoDecoder {
             errorTracker: errorTracker,
             decodeStartTime: CFAbsoluteTimeGetCurrent(),
             performanceTracker: performanceTracker,
+            callbackFailureLogLimiter: callbackFailureLogLimiter,
             sessionGeneration: sessionGeneration,
             colorDepth: preferredOutputColorDepth,
             onCompletion: { [weak self] in
@@ -264,9 +271,16 @@ extension VideoDecoder {
                 let errorName = Self.callbackFailureName(for: status)
                 let decodeError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
                 if Self.shouldSuppressNonFatalCallbackFailure(status: status) {
-                    MirageLogger.decoder(
-                        "Decode callback failed (\(errorName)); suppressing non-fatal report while recovery is in progress"
-                    )
+                    let decision = info.callbackFailureLogLimiter?.record(status: status) ??
+                        DecodeCallbackFailureLogLimiter.Decision(shouldLog: true, suppressedCount: 0)
+                    if decision.shouldLog {
+                        let suffix = decision.suppressedCount > 0 ?
+                            "; suppressed \(decision.suppressedCount) similar callback failure(s)" :
+                            ""
+                        MirageLogger.decoder(
+                            "Decode callback failed (\(errorName)); suppressing non-fatal report while recovery is in progress\(suffix)"
+                        )
+                    }
                 } else {
                     MirageLogger.error(.decoder, error: decodeError, message: "Decode callback failed (\(errorName))")
                 }
@@ -278,13 +292,13 @@ extension VideoDecoder {
                         )
                     }
                 }
-                info.errorTracker?.recordError()
+                info.errorTracker?.recordError(isKeyframe: info.isKeyframe)
                 info.onCompletion?()
                 return
             }
             guard let pixelBuffer = imageBuffer else {
                 MirageLogger.error(.decoder, "Decode callback: no image buffer")
-                info.errorTracker?.recordError()
+                info.errorTracker?.recordError(isKeyframe: info.isKeyframe)
                 info.onCompletion?()
                 return
             }
@@ -292,7 +306,7 @@ extension VideoDecoder {
             MirageSignpost.emitEvent("DecodeOutput")
 
             // Successful decode - reset error counter
-            info.errorTracker?.recordSuccess()
+            info.errorTracker?.recordSuccess(isKeyframe: info.isKeyframe)
             let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000
             info.performanceTracker?.record(durationMs: decodeDurationMs)
             let outputPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)

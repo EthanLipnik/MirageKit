@@ -219,6 +219,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         snapshot: MirageClientMetricsSnapshot?,
         resizeCriticalSectionActive: Bool,
         minimumTargetFrameRate: Int = 30,
+        maximumTargetFrameRate: Int = 60,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Action {
         guard !resizeCriticalSectionActive else {
@@ -248,7 +249,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                   let targetTier = Self.targetTier(
                       currentTier: currentTier,
                       pipelinePixelRate: observedPixelRate,
-                      minimumTargetFrameRate: minimumTargetFrameRate
+                      minimumTargetFrameRate: minimumTargetFrameRate,
+                      maximumTargetFrameRate: maximumTargetFrameRate
                   ) else {
                 return .none
             }
@@ -264,7 +266,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             promotionSampleCount += 1
             guard promotionSampleCount >= Self.requiredPromotionSamples,
                   cooldownElapsed(now: now),
-                  let targetTier = Self.nextHigherTier(after: currentTier) else {
+                  let targetTier = Self.nextHigherTier(
+                      after: currentTier,
+                      maximumTargetFrameRate: maximumTargetFrameRate
+                  ) else {
                 return .none
             }
             promotionSampleCount = 0
@@ -289,7 +294,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         guard let targetTier = Self.targetTier(
             currentTier: currentTier,
             pipelinePixelRate: hostPipelinePixelRate,
-            minimumTargetFrameRate: minimumTargetFrameRate
+            minimumTargetFrameRate: minimumTargetFrameRate,
+            maximumTargetFrameRate: maximumTargetFrameRate
         ) else {
             return .none
         }
@@ -308,12 +314,27 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     private static func targetTier(
         currentTier: MirageAutomaticDesktopWorkloadTier,
         pipelinePixelRate: Double,
-        minimumTargetFrameRate: Int
+        minimumTargetFrameRate: Int,
+        maximumTargetFrameRate: Int
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
         let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
+        let normalizedMaximumTargetFrameRate = max(
+            normalizedMinimumTargetFrameRate,
+            MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
+        )
+        if let sameResolutionFrameRateTier = sameResolutionFrameRateRecoveryTier(
+            currentTier: currentTier,
+            observedPixelRate: pipelinePixelRate,
+            minimumTargetFrameRate: normalizedMinimumTargetFrameRate,
+            maximumTargetFrameRate: normalizedMaximumTargetFrameRate
+        ) {
+            return sameResolutionFrameRateTier
+        }
+
         let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
-            $0.targetFrameRate >= normalizedMinimumTargetFrameRate
+            $0.targetFrameRate >= normalizedMinimumTargetFrameRate &&
+                $0.targetFrameRate <= normalizedMaximumTargetFrameRate
         }
         let sameFrameRateTier = tiers.first { tier in
             tier.targetFrameRate == currentTier.targetFrameRate &&
@@ -329,12 +350,63 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return eligibleTier
     }
 
-    private static func nextHigherTier(after currentTier: MirageAutomaticDesktopWorkloadTier) -> MirageAutomaticDesktopWorkloadTier? {
-        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers
+    private static func sameResolutionFrameRateRecoveryTier(
+        currentTier: MirageAutomaticDesktopWorkloadTier,
+        observedPixelRate: Double,
+        minimumTargetFrameRate: Int,
+        maximumTargetFrameRate: Int
+    ) -> MirageAutomaticDesktopWorkloadTier? {
+        guard currentTier.targetFrameRate > 60 else { return nil }
+        let candidateFrameRates = [90, 60, 30, 20].filter {
+            $0 >= minimumTargetFrameRate &&
+                $0 <= maximumTargetFrameRate &&
+                $0 < currentTier.targetFrameRate
+        }
+        for frameRate in candidateFrameRates {
+            let tier = MirageAutomaticDesktopWorkloadTier(
+                encodedPixelSize: currentTier.encodedPixelSize,
+                targetFrameRate: frameRate
+            )
+            if tier.pixelRate <= observedPixelRate {
+                return tier
+            }
+        }
+        return nil
+    }
+
+    private static func nextHigherTier(
+        after currentTier: MirageAutomaticDesktopWorkloadTier,
+        maximumTargetFrameRate: Int
+    ) -> MirageAutomaticDesktopWorkloadTier? {
+        let normalizedMaximumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
+        if let sameResolutionTier = sameResolutionFrameRatePromotionTier(
+            currentTier: currentTier,
+            maximumTargetFrameRate: normalizedMaximumTargetFrameRate
+        ) {
+            return sameResolutionTier
+        }
+
+        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
+            $0.targetFrameRate <= normalizedMaximumTargetFrameRate
+        }
         guard let currentIndex = tiers.firstIndex(where: { $0 == currentTier }),
               currentIndex > tiers.startIndex else {
             return nil
         }
         return tiers[tiers.index(before: currentIndex)]
+    }
+
+    private static func sameResolutionFrameRatePromotionTier(
+        currentTier: MirageAutomaticDesktopWorkloadTier,
+        maximumTargetFrameRate: Int
+    ) -> MirageAutomaticDesktopWorkloadTier? {
+        let candidateFrameRates = [20, 30, 60, 90, 120].filter {
+            $0 > currentTier.targetFrameRate && $0 <= maximumTargetFrameRate
+        }
+        guard let frameRate = candidateFrameRates.first else { return nil }
+        return MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: currentTier.encodedPixelSize,
+            targetFrameRate: frameRate
+        )
     }
 }
