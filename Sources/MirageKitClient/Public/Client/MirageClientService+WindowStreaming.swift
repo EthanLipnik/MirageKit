@@ -265,6 +265,12 @@ public extension MirageClientService {
                     frameIntervalP99Ms: metrics.frameIntervalP99Ms,
                     decodeHealthy: metrics.decodeHealthy
                 )
+                metricsStore.updateClientTimingDiagnostics(
+                    streamID: capturedStreamID,
+                    coalescedBeforeSubmitCount: metrics.coalescedBeforeSubmitCount,
+                    duplicateRemoteTimestampCount: metrics.duplicateRemoteTimestampCount,
+                    correctedStreamTimestampCount: metrics.correctedStreamTimestampCount
+                )
                 metricsStore.updateClientDecoderTelemetry(
                     streamID: capturedStreamID,
                     outputPixelFormat: metrics.decoderOutputPixelFormat,

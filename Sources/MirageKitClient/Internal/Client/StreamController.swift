@@ -139,6 +139,8 @@ actor StreamController {
     /// Frame data for ordered decode queue
     struct FrameData: Sendable {
         let data: Data
+        let frameNumber: UInt32
+        let remotePresentationTime: CMTime
         let presentationTime: CMTime
         let isKeyframe: Bool
         let contentRect: CGRect
@@ -162,6 +164,9 @@ actor StreamController {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let lateFrameDrops: UInt64
+        let coalescedBeforeSubmitCount: UInt64
+        let duplicateRemoteTimestampCount: UInt64
+        let correctedStreamTimestampCount: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
         let missedVSyncCount: UInt64
@@ -188,6 +193,7 @@ actor StreamController {
     /// The stream this controller manages
     let streamID: StreamID
     nonisolated let diagnosticsBuffer = MirageStreamingDiagnosticsBuffer()
+    nonisolated let decodeFrameTimingCache = DecodeFrameTimingCache()
 
     /// HEVC decoder for this stream
     let decoder: VideoDecoder
@@ -407,6 +413,7 @@ actor StreamController {
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
     var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
+    var streamCadenceClock = MirageStreamCadenceClock(targetFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
     var decodeSubmissionBaselineLimit: Int = 2
     var decodeSubmissionStressStreak: Int = 0
@@ -624,8 +631,7 @@ actor StreamController {
         await decoder.setDimensionChangeHandler { [weak self] in
             guard let self else { return }
             Task {
-                self.reassembler.reset()
-                MirageLogger.client("Reassembler reset due to dimension change for stream \(capturedStreamID)")
+                await self.resetReassemblerForDimensionChange(streamID: capturedStreamID)
             }
         }
 
@@ -633,6 +639,7 @@ actor StreamController {
         let metricsTracker = metricsTracker
         await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
             let decodeTime = CFAbsoluteTimeGetCurrent()
+            let timingEntry = self?.decodeFrameTimingCache.remove(streamPresentationTime: presentationTime)
             let handledByUpscaler = false
             if !handledByUpscaler {
                 _ = MirageRenderStreamStore.shared.enqueue(
@@ -640,6 +647,7 @@ actor StreamController {
                     contentRect: contentRect,
                     decodeTime: decodeTime,
                     presentationTime: presentationTime,
+                    remotePresentationTime: timingEntry?.remotePresentationTime ?? .invalid,
                     for: capturedStreamID
                 )
             }
@@ -725,9 +733,8 @@ actor StreamController {
         let diagnosticsBuffer = diagnosticsBuffer
         let enqueueOrderAllocator = enqueueOrderAllocator
         let reassemblerStreamID = streamID
-        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
-            -> Void = { [weak self] _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
-                let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
+        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void)
+            -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, contentRect, releaseBuffer in
                 let receivedRecord = metricsTracker.recordReceivedFrame()
                 diagnosticsBuffer.recordFrameArrivalGap(
                     streamID: reassemblerStreamID,
@@ -737,21 +744,18 @@ actor StreamController {
                 )
                 let enqueueOrder = enqueueOrderAllocator.allocate()
 
-                let frame = FrameData(
-                    data: frameData,
-                    presentationTime: presentationTime,
-                    isKeyframe: isKeyframe,
-                    contentRect: contentRect,
-                    releaseBuffer: releaseBuffer
-                )
-
                 Task {
                     guard let self else {
                         releaseBuffer()
                         return
                     }
-                    await self.enqueueFrame(
-                        frame,
+                    await self.enqueueReassembledFrame(
+                        data: frameData,
+                        frameNumber: frameNumber,
+                        remoteTimestamp: timestamp,
+                        isKeyframe: isKeyframe,
+                        contentRect: contentRect,
+                        releaseBuffer: releaseBuffer,
                         enqueueOrder: enqueueOrder,
                         pipelineGeneration: activePipelineGeneration
                     )
@@ -764,6 +768,12 @@ actor StreamController {
                 await self.handleFrameLossSignal(reason: reason)
             }
         }
+    }
+
+    private func resetReassemblerForDimensionChange(streamID capturedStreamID: StreamID) {
+        reassembler.reset()
+        streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
+        MirageLogger.client("Reassembler reset due to dimension change for stream \(capturedStreamID)")
     }
 
     func stopFrameProcessingPipeline() {
@@ -970,6 +980,54 @@ actor StreamController {
         return now - lastLogTime >= decodeErrorLogInterval
     }
 
+    private func enqueueReassembledFrame(
+        data: Data,
+        frameNumber: UInt32,
+        remoteTimestamp: UInt64,
+        isKeyframe: Bool,
+        contentRect: CGRect,
+        releaseBuffer: @escaping @Sendable () -> Void,
+        enqueueOrder: UInt64,
+        pipelineGeneration: UInt64
+    )
+    async {
+        guard pipelineGeneration == framePipelineGeneration else {
+            releaseBuffer()
+            return
+        }
+
+        let remotePresentationTime = CMTime(value: CMTimeValue(remoteTimestamp), timescale: 1_000_000_000)
+        let timing = streamCadenceClock.timing(
+            frameNumber: frameNumber,
+            remotePresentationTime: remotePresentationTime,
+            isKeyframe: isKeyframe
+        )
+        MirageRenderStreamStore.shared.recordFrameTimingDiagnostics(
+            for: streamID,
+            duplicateRemoteTimestamp: timing.duplicateRemoteTimestamp,
+            correctedStreamTimestamp: timing.correctedStreamTimestamp
+        )
+        decodeFrameTimingCache.insert(
+            streamPresentationTime: timing.streamPresentationTime,
+            frameNumber: frameNumber,
+            remotePresentationTime: remotePresentationTime
+        )
+        let frame = FrameData(
+            data: data,
+            frameNumber: frameNumber,
+            remotePresentationTime: remotePresentationTime,
+            presentationTime: timing.streamPresentationTime,
+            isKeyframe: isKeyframe,
+            contentRect: contentRect,
+            releaseBuffer: releaseBuffer
+        )
+        await enqueueFrame(
+            frame,
+            enqueueOrder: enqueueOrder,
+            pipelineGeneration: pipelineGeneration
+        )
+    }
+
     private func enqueueFrame(
         _ frame: FrameData,
         enqueueOrder: UInt64,
@@ -1049,6 +1107,7 @@ actor StreamController {
         }
         let queued = queuedFrames.drain()
         let pending = Array(pendingOrderedFrames.values)
+        decodeFrameTimingCache.clear()
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0
         enqueueOrderAllocator.reset()
@@ -1298,6 +1357,9 @@ actor StreamController {
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             lateFrameDrops: renderTelemetry.lateFrameDrops,
+            coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
+            duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
+            correctedStreamTimestampCount: renderTelemetry.correctedStreamTimestampCount,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
             missedVSyncCount: renderTelemetry.missedVSyncCount,

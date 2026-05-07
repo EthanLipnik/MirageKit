@@ -817,6 +817,7 @@ extension StreamContext {
                 packetPacerMaxSleepMs: packetTelemetry?.packetPacerSleepMaxMs,
                 packetPacerFrameMaxSleepMs: packetTelemetry?.packetPacerFrameMaxSleepMs,
                 stalePacketDrops: packetTelemetry?.stalePacketDrops,
+                senderLocalDeadlineDrops: packetTelemetry?.senderLocalDeadlineDrops,
                 generationAbortDrops: packetTelemetry?.generationAbortDrops,
                 nonKeyframeHoldDrops: packetTelemetry?.nonKeyframeHoldDrops,
                 usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
@@ -1278,6 +1279,7 @@ extension StreamContext {
         let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
         let packetPacerAverageSleepMs = packetTelemetry?.packetPacerSleepAverageMs ?? 0
         let transportDropCount = packetTelemetry?.stalePacketDrops ?? 0
+        let senderLocalDeadlineDrops = packetTelemetry?.senderLocalDeadlineDrops ?? 0
         let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation
         let sendStartStressMs = max(1.0, frameBudgetMs * (adaptiveTransportRelief ? 0.08 : 0.12))
         let sendStartSevereMs = max(4.0, frameBudgetMs * (adaptiveTransportRelief ? 0.30 : 0.36))
@@ -1304,9 +1306,15 @@ extension StreamContext {
                 transportDropSevereCount: transportDropHighPressureThreshold
             )
         )
-        let packetWithinRaiseBudget = packetUtilization > 0
+        let senderDelayOverrun = sendStartDelayAverageMs > sendStartStressMs ||
+            sendCompletionAverageMs > sendCompletionStressMs ||
+            packetPacerAverageSleepMs > packetPacerStressThresholdMs
+        if transportDropCount > 0 || senderLocalDeadlineDrops > 0 || senderDelayOverrun {
+            qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
+        }
+        let packetWithinRaiseBudget = (packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
-            : true
+            : true) && now >= qualityRaiseSuppressionUntil
         let allowEncodeDrivenQualityRelief = true
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = qualityDropThreshold
@@ -1345,6 +1353,7 @@ extension StreamContext {
 
         case .drop(let reason):
             guard activeQuality < previousQuality else { return }
+            qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))

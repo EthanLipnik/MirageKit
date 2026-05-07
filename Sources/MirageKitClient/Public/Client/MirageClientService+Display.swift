@@ -567,6 +567,12 @@ extension MirageClientService {
     }
 
     func updateStreamRefreshRateOverride(streamID: StreamID, maxRefreshRate: Int) {
+        guard controllersByStream[streamID] != nil else {
+            MirageLogger.client(
+                "Ignoring stale refresh rate override for inactive stream \(streamID): \(maxRefreshRate)Hz"
+            )
+            return
+        }
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(maxRefreshRate)
         let existing = refreshRateOverridesByStream[streamID]
         guard existing != clamped else { return }

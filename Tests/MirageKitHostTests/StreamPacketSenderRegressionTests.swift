@@ -15,6 +15,57 @@ import Testing
 
 @Suite("Stream Packet Sender Regression")
 struct StreamPacketSenderRegressionTests {
+    @Test("Sender-local stale P-frames do not immediately enter dependency loss")
+    func senderLocalStalePFramesDoNotImmediatelyEnterDependencyLoss() async {
+        let dependencyDrops = Locked<[DependencyDrop]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _, onComplete in onComplete(nil) },
+            onDependencyFrameDropped: { streamID, frameNumber, reason in
+                dependencyDrops.withLock {
+                    $0.append(DependencyDrop(streamID: streamID, frameNumber: frameNumber, reason: reason))
+                }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        let expiredDeadline = CFAbsoluteTimeGetCurrent() - 1
+        for frameNumber in 1 ... 2 {
+            sender.enqueue(
+                makeWorkItem(
+                    payload: makePayload(byteCount: 128),
+                    streamID: 40,
+                    frameNumber: UInt32(frameNumber),
+                    sequenceNumberStart: UInt32(frameNumber * 10),
+                    generation: generation,
+                    sendDeadline: expiredDeadline
+                )
+            )
+        }
+
+        #expect(dependencyDrops.read { $0.isEmpty })
+        let localSnapshot = await sender.telemetrySnapshot()
+        #expect(localSnapshot.senderLocalDeadlineDrops == 2)
+        #expect(localSnapshot.stalePacketDrops == 2)
+
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 40,
+                frameNumber: 3,
+                sequenceNumberStart: 30,
+                generation: generation,
+                sendDeadline: expiredDeadline
+            )
+        )
+
+        let drops = dependencyDrops.read { $0 }
+        #expect(drops.count == 1)
+        #expect(drops.first?.reason == .expiredBeforeEnqueue)
+        await sender.stop()
+    }
+
     @Test("Keyframe submission clears non-keyframe hold before send completion")
     func keyframeSubmissionClearsHoldBeforeCompletion() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])
@@ -336,8 +387,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Expired dependency frame holds P-frames until a recovery keyframe")
-    func expiredDependencyFrameHoldsPFramesUntilRecoveryKeyframe() async throws {
+    @Test("Repeated expired dependency frames hold P-frames until a recovery keyframe")
+    func repeatedExpiredDependencyFramesHoldPFramesUntilRecoveryKeyframe() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])
         let dependencyDrops = Locked<[DependencyDrop]>([])
         let sender = StreamPacketSender(
@@ -362,30 +413,32 @@ struct StreamPacketSenderRegressionTests {
 
         await sender.start()
         let generation = sender.currentGenerationSnapshot()
-        sender.enqueue(
-            makeWorkItem(
-                payload: makePayload(byteCount: 128),
-                streamID: 46,
-                frameNumber: 401,
-                sequenceNumberStart: 4_010,
-                generation: generation,
-                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+        for frameNumber in 401 ... 403 {
+            sender.enqueue(
+                makeWorkItem(
+                    payload: makePayload(byteCount: 128),
+                    streamID: 46,
+                    frameNumber: UInt32(frameNumber),
+                    sequenceNumberStart: UInt32(frameNumber * 10),
+                    generation: generation,
+                    sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+                )
             )
-        )
+        }
 
         _ = try await waitForTelemetry(
             sender,
             timeoutSeconds: 2.0
         ) { snapshot in
-            snapshot.stalePacketDrops == 1
+            snapshot.stalePacketDrops == 3
         }
 
         sender.enqueue(
             makeWorkItem(
                 payload: makePayload(byteCount: 128),
                 streamID: 46,
-                frameNumber: 402,
-                sequenceNumberStart: 4_020,
+                frameNumber: 404,
+                sequenceNumberStart: 4_040,
                 generation: generation
             )
         )
@@ -400,7 +453,7 @@ struct StreamPacketSenderRegressionTests {
         let drops = dependencyDrops.read { $0 }
         #expect(drops.count == 1)
         #expect(drops.first?.streamID == 46)
-        #expect(drops.first?.frameNumber == 401)
+        #expect(drops.first?.frameNumber == 403)
         #expect(drops.first?.reason == .expiredBeforeEnqueue)
         #expect(submittedPackets.read { $0.isEmpty })
 
@@ -408,8 +461,8 @@ struct StreamPacketSenderRegressionTests {
             makeWorkItem(
                 payload: makePayload(byteCount: 128),
                 streamID: 46,
-                frameNumber: 403,
-                sequenceNumberStart: 4_030,
+                frameNumber: 405,
+                sequenceNumberStart: 4_050,
                 generation: generation,
                 isKeyframe: true
             )
@@ -420,14 +473,14 @@ struct StreamPacketSenderRegressionTests {
             makeWorkItem(
                 payload: makePayload(byteCount: 128),
                 streamID: 46,
-                frameNumber: 404,
-                sequenceNumberStart: 4_040,
+                frameNumber: 406,
+                sequenceNumberStart: 4_060,
                 generation: generation
             )
         )
         try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
 
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [403, 404])
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [405, 406])
 
         await sender.stop()
     }

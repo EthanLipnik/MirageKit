@@ -171,8 +171,9 @@ extension MirageSampleBufferView {
         updatePresentationDisplayLinkFrameRate()
 
         guard changed else { return }
+        let streamLabel = streamID.map { "\($0)" } ?? "none"
         MirageLogger.renderer(
-            "Applied iOS render refresh lock: host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
+            "Applied iOS render refresh lock: stream=\(streamLabel) host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
         )
     }
 

@@ -19,4 +19,5 @@ struct MirageRenderFrame: @unchecked Sendable {
     let sequence: UInt64
     let decodeTime: CFAbsoluteTime
     let presentationTime: CMTime
+    let remotePresentationTime: CMTime
 }

@@ -86,6 +86,7 @@ extension StreamController {
         receivedFPS: Double
     ) async {
         guard MirageLogger.isEnabled(.client) else { return }
+        guard !shouldSuppressStartupAnomalyDiagnostic() else { return }
 
         let renderTelemetry = latestRenderTelemetrySnapshot ??
             MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
@@ -110,6 +111,9 @@ extension StreamController {
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
                 lateFrameDrops: renderTelemetry.lateFrameDrops,
+                coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
+                duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
+                correctedStreamTimestampCount: renderTelemetry.correctedStreamTimestampCount,
                 displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
                 repeatedFrameCount: renderTelemetry.repeatedFrameCount,
                 missedVSyncCount: renderTelemetry.missedVSyncCount,
@@ -147,6 +151,19 @@ extension StreamController {
         lastStreamingAnomalyDiagnosticSignature = signature
         lastStreamingAnomalyDiagnosticTime = now
         MirageLogger.client(diagnostic.message)
+    }
+
+    func shouldSuppressStartupAnomalyDiagnostic() -> Bool {
+        guard presentationTier == .activeLive else { return false }
+        guard hasPresentedFirstFrame else { return true }
+        guard latestHostMetricsMessage == nil else { return false }
+        let firstPresentationTime = lastPresentedProgressTime
+        guard firstPresentationTime > 0 else { return true }
+        let sampleWindow = max(
+            0.50,
+            Self.frameIntervalSeconds(targetFPS: streamCadenceTarget.sourceFPS) * 12.0
+        )
+        return currentTime() - firstPresentationTime < sampleWindow
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {

@@ -121,6 +121,10 @@ extension StreamContext {
     ) async {
         guard droppedStreamID == streamID, isRunning else { return }
         let label = "Packet sender dependency drop"
+        qualityRaiseSuppressionUntil = max(
+            qualityRaiseSuppressionUntil,
+            CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
+        )
         let queued = queueKeyframe(
             reason: label,
             checkInFlight: true,

@@ -40,6 +40,7 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 2)
         #expect(telemetry.overwrittenPendingFrames == 3)
+        #expect(telemetry.coalescedBeforeSubmitCount == 3)
         #expect(telemetry.playoutDelayFrames == 1)
     }
 

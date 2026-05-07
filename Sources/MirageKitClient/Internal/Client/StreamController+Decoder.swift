@@ -56,6 +56,7 @@ extension StreamController {
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()
+        streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
         metricsTracker.reset()
         hasDecodedFirstFrame = false
         hasPresentedFirstFrame = false
@@ -97,6 +98,7 @@ extension StreamController {
         await decoder.setCodec(codec, streamDimensions: streamDimensions)
         await decoder.resetForNewSession()
         reassembler.reset()
+        streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
         clearQueuedFramesForRecovery()
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastDecodedFrameTime = 0
@@ -148,6 +150,7 @@ extension StreamController {
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
 
         streamCadenceTarget = target
+        streamCadenceClock.updateTargetFPS(target.sourceFPS)
         decodeSchedulerTargetFPS = target.sourceFPS
         realtimeMediaSession.updateTargetFrameRate(target.sourceFPS)
         reassembler.setTargetFrameRate(target.sourceFPS)

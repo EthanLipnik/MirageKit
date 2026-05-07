@@ -264,6 +264,7 @@ struct FreshnessBurstPolicyTests {
             packetPacerFrameMaxSleepMs: 0,
             packetPacerSleepCount: 0,
             stalePacketDrops: 0,
+            senderLocalDeadlineDrops: 0,
             generationAbortDrops: 0,
             nonKeyframeHoldDrops: 0
         )

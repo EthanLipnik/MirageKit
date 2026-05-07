@@ -23,6 +23,7 @@ extension FrameReassembler {
         StreamID,
         Data,
         Bool,
+        UInt32,
         UInt64,
         CGRect,
         @escaping @Sendable () -> Void
@@ -31,6 +32,20 @@ extension FrameReassembler {
         lock.lock()
         onFrameComplete = handler
         lock.unlock()
+    }
+
+    func setFrameHandler(_ handler: @escaping @Sendable (
+        StreamID,
+        Data,
+        Bool,
+        UInt64,
+        CGRect,
+        @escaping @Sendable () -> Void
+    )
+        -> Void) {
+        setFrameHandler { streamID, data, isKeyframe, _, timestamp, contentRect, release in
+            handler(streamID, data, isKeyframe, timestamp, contentRect, release)
+        }
     }
 
     func setFrameLossHandler(_ handler: @escaping @Sendable (StreamID, FrameLossReason) -> Void) {
@@ -60,7 +75,7 @@ extension FrameReassembler {
 
     func processPacket(_ data: Data, header: FrameHeader) {
         var completedFrames: [CompletedFrame] = []
-        var completionHandler: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
+        var completionHandler: (@Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void)?
         var shouldSignalFrameLoss = false
         var frameLossReason: FrameLossReason?
@@ -314,6 +329,7 @@ extension FrameReassembler {
                     streamID,
                     completedFrame.data,
                     completedFrame.isKeyframe,
+                    completedFrame.frameNumber,
                     completedFrame.timestamp,
                     completedFrame.contentRect,
                     completedFrame.releaseBuffer
@@ -325,6 +341,7 @@ extension FrameReassembler {
     private struct CompletedFrame {
         let data: Data
         let isKeyframe: Bool
+        let frameNumber: UInt32
         let timestamp: UInt64
         let contentRect: CGRect
         let releaseBuffer: @Sendable () -> Void
@@ -461,6 +478,7 @@ extension FrameReassembler {
                 frame: CompletedFrame(
                     data: output,
                     isKeyframe: frame.isKeyframe,
+                    frameNumber: frameNumber,
                     timestamp: frame.timestamp,
                     contentRect: frame.contentRect,
                     releaseBuffer: releaseBuffer

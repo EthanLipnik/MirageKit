@@ -26,6 +26,9 @@ struct ClientStreamingAnomalySample: Sendable {
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
     let lateFrameDrops: UInt64
+    let coalescedBeforeSubmitCount: UInt64
+    let duplicateRemoteTimestampCount: UInt64
+    let correctedStreamTimestampCount: UInt64
     let displayLayerNotReadyCount: UInt64
     let repeatedFrameCount: UInt64
     let missedVSyncCount: UInt64
@@ -69,6 +72,9 @@ struct ClientStreamingAnomalySample: Sendable {
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
         lateFrameDrops: UInt64 = 0,
+        coalescedBeforeSubmitCount: UInt64 = 0,
+        duplicateRemoteTimestampCount: UInt64 = 0,
+        correctedStreamTimestampCount: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
         missedVSyncCount: UInt64 = 0,
@@ -111,6 +117,9 @@ struct ClientStreamingAnomalySample: Sendable {
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
         self.lateFrameDrops = lateFrameDrops
+        self.coalescedBeforeSubmitCount = coalescedBeforeSubmitCount
+        self.duplicateRemoteTimestampCount = duplicateRemoteTimestampCount
+        self.correctedStreamTimestampCount = correctedStreamTimestampCount
         self.displayLayerNotReadyCount = displayLayerNotReadyCount
         self.repeatedFrameCount = repeatedFrameCount
         self.missedVSyncCount = missedVSyncCount
@@ -205,6 +214,9 @@ struct ClientStreamingAnomalySample: Sendable {
             clientUsingHardwareDecoder: usingHardwareDecoder,
             hasHostMetrics: hostMetrics != nil
         )
+        snapshot.clientCoalescedBeforeSubmitCount = coalescedBeforeSubmitCount
+        snapshot.clientDuplicateRemoteTimestampCount = duplicateRemoteTimestampCount
+        snapshot.clientCorrectedStreamTimestampCount = correctedStreamTimestampCount
         snapshot.hostCaptureIngressAverageMs = hostMetrics?.captureIngressAverageMs
         snapshot.hostCaptureIngressMaxMs = hostMetrics?.captureIngressMaxMs
         snapshot.hostPreEncodeWaitAverageMs = hostMetrics?.preEncodeWaitAverageMs
@@ -225,6 +237,7 @@ struct ClientStreamingAnomalySample: Sendable {
         snapshot.hostPacketPacerMaxSleepMs = hostMetrics?.packetPacerMaxSleepMs
         snapshot.hostPacketPacerFrameMaxSleepMs = hostMetrics?.packetPacerFrameMaxSleepMs
         snapshot.hostStalePacketDrops = hostMetrics?.stalePacketDrops
+        snapshot.hostSenderLocalDeadlineDrops = hostMetrics?.senderLocalDeadlineDrops
         snapshot.hostGenerationAbortDrops = hostMetrics?.generationAbortDrops
         snapshot.hostNonKeyframeHoldDrops = hostMetrics?.nonKeyframeHoldDrops
         snapshot.applyHostCaptureCadence(hostMetrics?.captureCadence)
@@ -288,6 +301,8 @@ func clientStreamingAnomalyDiagnostic(
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
         "overwritten=\(sample.overwrittenPendingFrames) lateDrops=\(sample.lateFrameDrops) " +
+        "coalesced=\(sample.coalescedBeforeSubmitCount) duplicateCapturePTS=\(sample.duplicateRemoteTimestampCount) " +
+        "correctedStreamPTS=\(sample.correctedStreamTimestampCount) " +
         "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
         "layerBackpressure=\(sample.displayLayerNotReadyCount) " +
         "decodeHealthy=\(sample.decodeHealthy) limit=\(sample.decodeSubmissionLimit) " +
@@ -307,7 +322,7 @@ func clientStreamingAnomalyDiagnostic(
         "pacer=\(formattedMs(sample.hostMetrics?.packetPacerAverageSleepMs))ms " +
         "pacerTotal=\(sample.hostMetrics?.packetPacerTotalSleepMs.map(String.init) ?? "--")ms " +
         "pacerFrameMax=\(sample.hostMetrics?.packetPacerFrameMaxSleepMs.map(String.init) ?? "--")ms " +
-        "transportDrops=\(hostTransportDrops) " +
+        "transportDrops=\(hostTransportDrops) senderLocalDeadlineDrops=\(sample.hostMetrics?.senderLocalDeadlineDrops.map(String.init) ?? "--") " +
         "presentationStalls=\(sample.presentationStallCount) " +
         "worstPresentationGap=\(formattedMs(sample.worstPresentationGapMs))ms " +
         "frameP95=\(formattedMs(sample.frameIntervalP95Ms))ms frameP99=\(formattedMs(sample.frameIntervalP99Ms))ms"

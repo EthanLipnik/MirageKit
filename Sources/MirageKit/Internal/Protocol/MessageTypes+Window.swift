@@ -409,6 +409,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let packetPacerMaxSleepMs: Int?
     package let packetPacerFrameMaxSleepMs: Int?
     package let stalePacketDrops: UInt64?
+    package let senderLocalDeadlineDrops: UInt64?
     package let generationAbortDrops: UInt64?
     package let nonKeyframeHoldDrops: UInt64?
     package let usingHardwareEncoder: Bool?
@@ -466,6 +467,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         packetPacerMaxSleepMs: Int? = nil,
         packetPacerFrameMaxSleepMs: Int? = nil,
         stalePacketDrops: UInt64? = nil,
+        senderLocalDeadlineDrops: UInt64? = nil,
         generationAbortDrops: UInt64? = nil,
         nonKeyframeHoldDrops: UInt64? = nil,
         usingHardwareEncoder: Bool? = nil,
@@ -522,6 +524,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.packetPacerMaxSleepMs = packetPacerMaxSleepMs
         self.packetPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
         self.stalePacketDrops = stalePacketDrops
+        self.senderLocalDeadlineDrops = senderLocalDeadlineDrops
         self.generationAbortDrops = generationAbortDrops
         self.nonKeyframeHoldDrops = nonKeyframeHoldDrops
         self.usingHardwareEncoder = usingHardwareEncoder

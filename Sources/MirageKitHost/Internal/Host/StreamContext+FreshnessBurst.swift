@@ -94,6 +94,7 @@ extension StreamContext {
 
         softFreshnessDrainActive = true
         softFreshnessDrainDeadline = now + max(0.12, min(0.35, frameBudgetMs * 3.0 / 1000.0))
+        qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
         softFreshnessDrainCount &+= 1
         latencyBurstDrainsNewestFrames = true
         scheduleProcessingIfNeeded()

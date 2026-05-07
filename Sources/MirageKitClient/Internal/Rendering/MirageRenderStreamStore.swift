@@ -40,6 +40,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let lateFrameDrops: UInt64
+        let coalescedBeforeSubmitCount: UInt64
+        let duplicateRemoteTimestampCount: UInt64
+        let correctedStreamTimestampCount: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
         let missedVSyncCount: UInt64
@@ -105,6 +108,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
         var lateFrameDropsSinceLastSnapshot: UInt64 = 0
+        var coalescedFramesSinceLastSnapshot: UInt64 = 0
+        var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
+        var correctedStreamTimestampsSinceLastSnapshot: UInt64 = 0
         var displayLayerNotReadyCountSinceLastSnapshot: UInt64 = 0
         var repeatedFrameCountSinceLastSnapshot: UInt64 = 0
         var missedVSyncCountSinceLastSnapshot: UInt64 = 0
@@ -126,6 +132,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         contentRect: CGRect,
         decodeTime: CFAbsoluteTime,
         presentationTime: CMTime,
+        remotePresentationTime: CMTime = .invalid,
         for streamID: StreamID
     ) -> EnqueueResult {
         let state = streamState(for: streamID)
@@ -139,7 +146,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             contentRect: contentRect,
             sequence: state.nextSequence,
             decodeTime: decodeTime,
-            presentationTime: presentationTime
+            presentationTime: presentationTime,
+            remotePresentationTime: remotePresentationTime
         )
         let overwrittenPendingFrames = appendPendingFrameLocked(frame, state: state)
         let now = CFAbsoluteTimeGetCurrent()
@@ -176,6 +184,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
         if droppedLateFrames > 0 {
             state.lateFrameDropsSinceLastSnapshot &+= UInt64(droppedLateFrames)
+            state.coalescedFramesSinceLastSnapshot &+= UInt64(droppedLateFrames)
         }
 
         return state.pendingFrames.removeFirst()
@@ -203,9 +212,27 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
         if droppedLateFrames > 0 {
             state.lateFrameDropsSinceLastSnapshot &+= UInt64(droppedLateFrames)
+            state.coalescedFramesSinceLastSnapshot &+= UInt64(droppedLateFrames)
         }
 
         return state.pendingFrames.first
+    }
+
+    func recordFrameTimingDiagnostics(
+        for streamID: StreamID,
+        duplicateRemoteTimestamp: Bool,
+        correctedStreamTimestamp: Bool
+    ) {
+        guard duplicateRemoteTimestamp || correctedStreamTimestamp else { return }
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        if duplicateRemoteTimestamp {
+            state.duplicateRemoteTimestampsSinceLastSnapshot &+= 1
+        }
+        if correctedStreamTimestamp {
+            state.correctedStreamTimestampsSinceLastSnapshot &+= 1
+        }
+        state.lock.unlock()
     }
 
     func hasFrameForPresentation(for streamID: StreamID, after submittedSequence: UInt64) -> Bool {
@@ -389,6 +416,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
                 lateFrameDrops: 0,
+                coalescedBeforeSubmitCount: 0,
+                duplicateRemoteTimestampCount: 0,
+                correctedStreamTimestampCount: 0,
                 displayLayerNotReadyCount: 0,
                 repeatedFrameCount: 0,
                 missedVSyncCount: 0,
@@ -445,6 +475,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
+        let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
+        let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
+        let correctedStreamTimestampCount = state.correctedStreamTimestampsSinceLastSnapshot
         let displayLayerNotReadyCount = state.displayLayerNotReadyCountSinceLastSnapshot
         let repeatedFrameCount = state.repeatedFrameCountSinceLastSnapshot
         let missedVSyncCount = state.missedVSyncCountSinceLastSnapshot
@@ -461,6 +494,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let playoutDelayFrames = state.playoutDelayFrames
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
+        state.coalescedFramesSinceLastSnapshot = 0
+        state.duplicateRemoteTimestampsSinceLastSnapshot = 0
+        state.correctedStreamTimestampsSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
         state.repeatedFrameCountSinceLastSnapshot = 0
         state.missedVSyncCountSinceLastSnapshot = 0
@@ -486,6 +522,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             pendingFrameAgeMs: pendingFrameAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             lateFrameDrops: lateFrameDrops,
+            coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
+            duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,
+            correctedStreamTimestampCount: correctedStreamTimestampCount,
             displayLayerNotReadyCount: displayLayerNotReadyCount,
             repeatedFrameCount: repeatedFrameCount,
             missedVSyncCount: missedVSyncCount,
@@ -638,6 +677,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.displayTickIntervalSampleStartIndex = 0
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
+        state.coalescedFramesSinceLastSnapshot = 0
+        state.duplicateRemoteTimestampsSinceLastSnapshot = 0
+        state.correctedStreamTimestampsSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
         state.repeatedFrameCountSinceLastSnapshot = 0
         state.missedVSyncCountSinceLastSnapshot = 0
@@ -708,6 +750,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
         if overwrittenPendingFrames > 0 {
             state.overwrittenPendingFramesSinceLastSnapshot &+= UInt64(overwrittenPendingFrames)
+            state.coalescedFramesSinceLastSnapshot &+= UInt64(overwrittenPendingFrames)
         }
         return overwrittenPendingFrames
     }
@@ -720,6 +763,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
         if overwrittenPendingFrames > 0 {
             state.overwrittenPendingFramesSinceLastSnapshot &+= UInt64(overwrittenPendingFrames)
+            state.coalescedFramesSinceLastSnapshot &+= UInt64(overwrittenPendingFrames)
         }
     }
 

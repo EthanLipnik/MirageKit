@@ -188,7 +188,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayerNotReadyStartTime = 0
         MirageRenderStreamStore.shared.markSubmitted(
             sequence: frame.sequence,
-            remotePresentationTime: frame.presentationTime,
+            remotePresentationTime: frame.remotePresentationTime.isValid ? frame.remotePresentationTime : frame.presentationTime,
             mappedPresentationTime: mappedPresentationTime,
             for: streamID
         )

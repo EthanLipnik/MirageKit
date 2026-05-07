@@ -98,10 +98,11 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Delay-only bursts do not trigger backoff or block probing")
-    func delayOnlyBurstsDoNotTriggerBackoffOrBlockProbing() {
+    @Test("Delay-only bursts do not trigger backoff but delay probing")
+    func delayOnlyBurstsDoNotTriggerBackoffButDelayProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = delayOnlyBurstSnapshot()
+        let cleanSnapshot = healthySnapshot(activeQuality: 0.62)
 
         let firstAction = controller.advance(
             snapshots: [snapshot],
@@ -115,9 +116,23 @@ struct ReceiverHealthControllerTests {
             ceilingBps: 300_000_000,
             now: 2
         )
+        let firstCleanAction = controller.advance(
+            snapshots: [cleanSnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 6
+        )
+        let secondCleanAction = controller.advance(
+            snapshots: [cleanSnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 8
+        )
 
         #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
+        #expect(secondAction == .none)
+        #expect(firstCleanAction == .none)
+        #expect(secondCleanAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -920,6 +935,7 @@ struct ReceiverHealthControllerTests {
         snapshot.hostSendCompletionAverageMs = 0
         snapshot.hostPacketPacerAverageSleepMs = 0
         snapshot.hostStalePacketDrops = 0
+        snapshot.hostSenderLocalDeadlineDrops = 0
         snapshot.hostGenerationAbortDrops = 0
         snapshot.hostNonKeyframeHoldDrops = 0
         snapshot.hostCaptureIngressFPS = 60

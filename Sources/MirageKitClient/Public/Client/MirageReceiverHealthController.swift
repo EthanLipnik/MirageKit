@@ -62,6 +62,7 @@ public struct MirageReceiverHealthController: Sendable {
     private static let fastStartProbeIncreaseMaximumStepBps = 32_000_000
     private static let successfulProbeCooldownSeconds: CFAbsoluteTime = 8
     private static let failedProbeCooldownSeconds: CFAbsoluteTime = 12
+    private static let postSpikeProbeCooldownSeconds: CFAbsoluteTime = 3
     private static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
     private static let fastStartFailedProbeCooldownSeconds: CFAbsoluteTime = 6
     private static let fastStartDurationSeconds: CFAbsoluteTime = 12
@@ -216,6 +217,9 @@ public struct MirageReceiverHealthController: Sendable {
         let sample = Self.sample(
             from: snapshot
         )
+        if sample.suppressesProbePromotion {
+            nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.postSpikeProbeCooldownSeconds)
+        }
 
         if sample.hasTransportPressure && allowsBackoff {
             healthySampleCount = 0
@@ -349,6 +353,7 @@ public struct MirageReceiverHealthController: Sendable {
         let hasTransportPressure: Bool
         let isHealthy: Bool
         let allowsProbePromotion: Bool
+        let suppressesProbePromotion: Bool
     }
 
     private struct PendingPromotion: Sendable, Equatable {
@@ -546,6 +551,7 @@ public struct MirageReceiverHealthController: Sendable {
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
         let transportDropCount = snapshot.hostStalePacketDrops ?? 0
+        let senderLocalDeadlineDropCount = snapshot.hostSenderLocalDeadlineDrops ?? 0
         let assessedTransportDropCount = transportDropCount >= Self.transportDropStressCount
             ? transportDropCount
             : 0
@@ -591,6 +597,12 @@ public struct MirageReceiverHealthController: Sendable {
                 snapshot.clientDisplayTickIntervalP99Ms == 0 ||
                     snapshot.clientDisplayTickIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
             )
+        let senderDelayOverrun = sendStartDelayAverageMs > Self.sendStartDelayStressMs ||
+            sendCompletionAverageMs > Self.sendCompletionStressMs ||
+            packetPacerAverageSleepMs > Self.packetPacerStressMs
+        let suppressesProbePromotion = transportDropCount > 0 ||
+            senderLocalDeadlineDropCount > 0 ||
+            senderDelayOverrun
         return Sample(
             hasSevereTransportPressure: severeTransportPressure,
             hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
@@ -598,10 +610,12 @@ public struct MirageReceiverHealthController: Sendable {
             allowsProbePromotion: snapshot.hasHostMetrics &&
                 targetFPS > 0 &&
                 snapshot.decodeHealthy &&
+                !suppressesProbePromotion &&
                 smoothEnoughForPromotion &&
                 snapshot.bottleneckKind != .hostCadenceLimited &&
                 snapshot.bottleneckKind != .decodeBound &&
-                snapshot.bottleneckKind != .presentationBound
+                snapshot.bottleneckKind != .presentationBound,
+            suppressesProbePromotion: suppressesProbePromotion
         )
     }
 

@@ -574,6 +574,7 @@ extension MirageClientService {
                 packetPacerMaxSleepMs: metrics.packetPacerMaxSleepMs,
                 packetPacerFrameMaxSleepMs: metrics.packetPacerFrameMaxSleepMs,
                 stalePacketDrops: metrics.stalePacketDrops,
+                senderLocalDeadlineDrops: metrics.senderLocalDeadlineDrops,
                 generationAbortDrops: metrics.generationAbortDrops,
                 nonKeyframeHoldDrops: metrics.nonKeyframeHoldDrops
             )

@@ -441,8 +441,8 @@ final class FrameReassembler: @unchecked Sendable {
     /// Disabled until the stream provides an explicit token contract.
     var dimensionTokenValidationEnabled: Bool = false
 
-    /// Frame completion callback: (streamID, frameData, isKeyframe, timestamp, contentRect, release)
-    var onFrameComplete: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void)?
+    /// Frame completion callback: (streamID, frameData, isKeyframe, frameNumber, timestamp, contentRect, release)
+    var onFrameComplete: (@Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void)?
 
     // MARK: - Diagnostic counters
 

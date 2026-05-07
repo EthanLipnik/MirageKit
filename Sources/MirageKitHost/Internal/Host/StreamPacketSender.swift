@@ -181,6 +181,7 @@ actor StreamPacketSender {
         let packetPacerFrameMaxSleepMs: Int
         let packetPacerSleepCount: UInt64
         let stalePacketDrops: UInt64
+        let senderLocalDeadlineDrops: UInt64
         let generationAbortDrops: UInt64
         let nonKeyframeHoldDrops: UInt64
     }
@@ -223,6 +224,8 @@ actor StreamPacketSender {
     nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 4.0
     nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.100
     nonisolated static let keyframeDependencyDropSuppressionSeconds: CFAbsoluteTime = 0.200
+    nonisolated static let senderLocalDeadlineDropEscalationWindowSeconds: CFAbsoluteTime = 0.500
+    nonisolated static let senderLocalDeadlineDropEscalationCount: Int = 3
     nonisolated static let maxQueuedWorkItems: Int = 8
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
@@ -248,7 +251,10 @@ actor StreamPacketSender {
     private nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     private nonisolated(unsafe) var latestKeyframeGeneration: UInt32 = 0
     private nonisolated(unsafe) var dependencyDropSuppressionDeadline: CFAbsoluteTime = 0
+    private nonisolated(unsafe) var localDeadlineDropStreak: Int = 0
+    private nonisolated(unsafe) var localDeadlineDropWindowDeadline: CFAbsoluteTime = 0
     private nonisolated(unsafe) var queuedStalePacketDropCount: UInt64 = 0
+    private nonisolated(unsafe) var queuedSenderLocalDeadlineDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedNonKeyframeHoldDropCount: UInt64 = 0
     private let queueLock = NSLock()
@@ -396,6 +402,8 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
+            localDeadlineDropStreak = 0
+            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -421,6 +429,8 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
+            localDeadlineDropStreak = 0
+            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -443,6 +453,8 @@ actor StreamPacketSender {
         queueLock.withLock {
             resetKeyframeTrackingLocked()
             dependencyDropSuppressionDeadline = 0
+            localDeadlineDropStreak = 0
+            localDeadlineDropWindowDeadline = 0
         }
         MirageLogger.stream("Packet send generation bumped to \(generation) (\(reason))")
     }
@@ -455,6 +467,8 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
+            localDeadlineDropStreak = 0
+            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -484,6 +498,7 @@ actor StreamPacketSender {
             (
                 queuedBytes: self.queuedBytes,
                 staleDrops: queuedStalePacketDropCount,
+                senderLocalDeadlineDrops: queuedSenderLocalDeadlineDropCount,
                 generationDrops: queuedGenerationAbortDropCount,
                 nonKeyframeHoldDrops: queuedNonKeyframeHoldDropCount
             )
@@ -524,6 +539,7 @@ actor StreamPacketSender {
             packetPacerFrameMaxSleepMs: pacerFrameSleepMaxMs,
             packetPacerSleepCount: UInt64(pacerSleepPacketCount),
             stalePacketDrops: stalePacketDropCount + queueSnapshot.staleDrops,
+            senderLocalDeadlineDrops: queueSnapshot.senderLocalDeadlineDrops,
             generationAbortDrops: generationAbortDropCount + queueSnapshot.generationDrops,
             nonKeyframeHoldDrops: nonKeyframeHoldDropCount + queueSnapshot.nonKeyframeHoldDrops
         )
@@ -595,7 +611,7 @@ actor StreamPacketSender {
 
         if isExpiredNonKeyframe(item, now: now) {
             queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(item, reason: .expiredBeforeEnqueue)
+            markDependencyFrameDroppedLocked(item, reason: .expiredBeforeEnqueue, clientVisible: false)
             return .dropped
         }
 
@@ -656,7 +672,7 @@ actor StreamPacketSender {
         if isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             stalePacketDropCount &+= 1
             queueLock.withLock {
-                markDependencyFrameDroppedLocked(item, reason: .expiredBeforeSend)
+                markDependencyFrameDroppedLocked(item, reason: .expiredBeforeSend, clientVisible: false)
             }
             reduceQueuedBytes(accountedBytes)
             return
@@ -700,6 +716,7 @@ actor StreamPacketSender {
         let totalFragments = dataFragmentCount + parityFragmentCount
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
         var didRecordSendStart = false
+        var submittedFragmentCount = 0
         let transportCompletionTracker = TransportCompletionTracker(
             onFinish: { [item, fragmentStartTime, totalFragments] didDrop, error, completedAt in
                 Task {
@@ -802,7 +819,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -818,7 +836,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -826,7 +845,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -885,6 +905,7 @@ actor StreamPacketSender {
                 }
 
                 transportCompletionTracker.registerSubmission()
+                submittedFragmentCount += 1
                 sendPacket(packet) { error in
                     packetBuffer.release()
                     self.reduceQueuedBytes(accountedPayloadBytes)
@@ -981,7 +1002,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -997,7 +1019,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -1005,7 +1028,8 @@ actor StreamPacketSender {
                     dropStaleNonKeyframeDuringFragmentation(
                         item: item,
                         remainingQueuedBytes: remainingQueuedBytes,
-                        transportCompletionTracker: transportCompletionTracker
+                        transportCompletionTracker: transportCompletionTracker,
+                        fragmentsSubmitted: submittedFragmentCount
                     )
                     return
                 }
@@ -1042,6 +1066,7 @@ actor StreamPacketSender {
                     didRecordSendStart = true
                 }
                 transportCompletionTracker.registerSubmission()
+                submittedFragmentCount += 1
                 sendPacket(packet) { error in
                     packetBuffer.release()
                     self.reduceQueuedBytes(accountedPayloadBytes)
@@ -1076,6 +1101,12 @@ actor StreamPacketSender {
 
         if item.isKeyframe {
             if error == nil, !didDrop {
+                queueLock.withLock {
+                    extendDependencyDropSuppressionLocked(
+                        now: completedAt,
+                        duration: 1.0 / Double(max(1, item.targetFrameRate))
+                    )
+                }
                 let fragmentDurationMs = (completedAt - startedAt) * 1000
                 let roundedDuration = (fragmentDurationMs * 100).rounded() / 100
                 let bytesKB = Double(item.encodedData.count) / 1024.0
@@ -1118,11 +1149,16 @@ actor StreamPacketSender {
     private func dropStaleNonKeyframeDuringFragmentation(
         item: WorkItem,
         remainingQueuedBytes: Int,
-        transportCompletionTracker: TransportCompletionTracker
+        transportCompletionTracker: TransportCompletionTracker,
+        fragmentsSubmitted: Int
     ) {
         stalePacketDropCount &+= 1
         queueLock.withLock {
-            markDependencyFrameDroppedLocked(item, reason: .expiredDuringSend)
+            markDependencyFrameDroppedLocked(
+                item,
+                reason: .expiredDuringSend,
+                clientVisible: fragmentsSubmitted > 0
+            )
         }
         transportCompletionTracker.recordDrop()
         transportCompletionTracker.close()
@@ -1148,7 +1184,11 @@ actor StreamPacketSender {
             if isExpiredNonKeyframe(queuedItem.item, now: now) {
                 queuedBytes = max(0, queuedBytes - queuedItem.accountedBytes)
                 queuedStalePacketDropCount &+= 1
-                markDependencyFrameDroppedLocked(queuedItem.item, reason: .expiredQueuedFrame)
+                markDependencyFrameDroppedLocked(
+                    queuedItem.item,
+                    reason: .expiredQueuedFrame,
+                    clientVisible: false
+                )
             } else {
                 retainedItems.append(queuedItem)
             }
@@ -1212,16 +1252,22 @@ actor StreamPacketSender {
             let evictedItem = queuedWorkItems.remove(at: evictionIndex)
             queuedBytes = max(0, queuedBytes - evictedItem.accountedBytes)
             queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(evictedItem.item, reason: .queueEviction)
+            markDependencyFrameDroppedLocked(evictedItem.item, reason: .queueEviction, clientVisible: false)
         }
     }
 
     private nonisolated func markDependencyFrameDroppedLocked(
         _ item: WorkItem,
-        reason: DependencyFrameDropReason
+        reason: DependencyFrameDropReason,
+        clientVisible: Bool
     ) {
         guard !item.isKeyframe else { return }
-        if shouldSuppressDependencyDropLocked(now: CFAbsoluteTimeGetCurrent()) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if !clientVisible {
+            queuedSenderLocalDeadlineDropCount &+= 1
+            guard shouldEscalateSenderLocalDeadlineDropLocked(now: now) else { return }
+        }
+        if shouldSuppressDependencyDropLocked(now: now) {
             resetKeyframeTrackingLocked()
             return
         }
@@ -1233,15 +1279,31 @@ actor StreamPacketSender {
         onDependencyFrameDropped?(item.streamID, item.frameNumber, reason)
     }
 
-    private nonisolated func extendDependencyDropSuppressionLocked(now: CFAbsoluteTime) {
+    private nonisolated func extendDependencyDropSuppressionLocked(
+        now: CFAbsoluteTime,
+        duration: CFAbsoluteTime = keyframeDependencyDropSuppressionSeconds
+    ) {
         dependencyDropSuppressionDeadline = max(
             dependencyDropSuppressionDeadline,
-            now + Self.keyframeDependencyDropSuppressionSeconds
+            now + duration
         )
     }
 
     private nonisolated func shouldSuppressDependencyDropLocked(now: CFAbsoluteTime) -> Bool {
         now < dependencyDropSuppressionDeadline
+    }
+
+    private nonisolated func shouldEscalateSenderLocalDeadlineDropLocked(now: CFAbsoluteTime) -> Bool {
+        if now >= localDeadlineDropWindowDeadline {
+            localDeadlineDropStreak = 0
+            localDeadlineDropWindowDeadline = now + Self.senderLocalDeadlineDropEscalationWindowSeconds
+        }
+
+        localDeadlineDropStreak += 1
+        guard localDeadlineDropStreak >= Self.senderLocalDeadlineDropEscalationCount else { return false }
+        localDeadlineDropStreak = 0
+        localDeadlineDropWindowDeadline = now + Self.senderLocalDeadlineDropEscalationWindowSeconds
+        return true
     }
 
     private nonisolated func fecPayloadBudgetBytes(for item: WorkItem) -> Int {
@@ -1480,6 +1542,7 @@ actor StreamPacketSender {
         nonKeyframeHoldDropCount = 0
         queueLock.withLock {
             queuedStalePacketDropCount = 0
+            queuedSenderLocalDeadlineDropCount = 0
             queuedGenerationAbortDropCount = 0
             queuedNonKeyframeHoldDropCount = 0
         }

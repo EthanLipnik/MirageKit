@@ -25,6 +25,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientPendingFrameAgeMs: Double
     public var clientOverwrittenPendingFrames: UInt64
     public var clientLateFrameDrops: UInt64
+    package var clientCoalescedBeforeSubmitCount: UInt64
+    package var clientDuplicateRemoteTimestampCount: UInt64
+    package var clientCorrectedStreamTimestampCount: UInt64
     public var clientDisplayLayerNotReadyCount: UInt64
     public var clientRepeatedFrameCount: UInt64
     public var clientMissedVSyncCount: UInt64
@@ -125,6 +128,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostPacketPacerMaxSleepMs: Int? = nil
     package var hostPacketPacerFrameMaxSleepMs: Int? = nil
     package var hostStalePacketDrops: UInt64? = nil
+    package var hostSenderLocalDeadlineDrops: UInt64? = nil
     package var hostGenerationAbortDrops: UInt64? = nil
     package var hostNonKeyframeHoldDrops: UInt64? = nil
     public var hasHostMetrics: Bool
@@ -223,6 +227,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientLateFrameDrops = clientLateFrameDrops
+        self.clientCoalescedBeforeSubmitCount = 0
+        self.clientDuplicateRemoteTimestampCount = 0
+        self.clientCorrectedStreamTimestampCount = 0
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
         self.clientMissedVSyncCount = clientMissedVSyncCount
@@ -484,6 +491,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         packetPacerMaxSleepMs: Int?,
         packetPacerFrameMaxSleepMs: Int?,
         stalePacketDrops: UInt64?,
+        senderLocalDeadlineDrops: UInt64?,
         generationAbortDrops: UInt64?,
         nonKeyframeHoldDrops: UInt64?
     ) {
@@ -510,6 +518,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostPacketPacerMaxSleepMs = packetPacerMaxSleepMs
         snapshot.hostPacketPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
         snapshot.hostStalePacketDrops = stalePacketDrops
+        snapshot.hostSenderLocalDeadlineDrops = senderLocalDeadlineDrops
         snapshot.hostGenerationAbortDrops = generationAbortDrops
         snapshot.hostNonKeyframeHoldDrops = nonKeyframeHoldDrops
         metricsByStream[streamID] = snapshot
@@ -525,6 +534,21 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
         snapshot.clientDecoderOutputPixelFormat = outputPixelFormat
         snapshot.clientUsingHardwareDecoder = usingHardwareDecoder
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+    }
+
+    package func updateClientTimingDiagnostics(
+        streamID: StreamID,
+        coalescedBeforeSubmitCount: UInt64,
+        duplicateRemoteTimestampCount: UInt64,
+        correctedStreamTimestampCount: UInt64
+    ) {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.clientCoalescedBeforeSubmitCount = coalescedBeforeSubmitCount
+        snapshot.clientDuplicateRemoteTimestampCount = duplicateRemoteTimestampCount
+        snapshot.clientCorrectedStreamTimestampCount = correctedStreamTimestampCount
         metricsByStream[streamID] = snapshot
         lock.unlock()
     }
