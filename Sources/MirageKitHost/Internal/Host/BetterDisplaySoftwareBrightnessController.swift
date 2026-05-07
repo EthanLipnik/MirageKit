@@ -18,12 +18,14 @@ actor BetterDisplaySoftwareBrightnessController {
     typealias CommandRunner = @Sendable (_ executablePath: String, _ arguments: [String]) async throws -> CommandResult
     typealias ExecutableAvailability = @Sendable (_ executablePath: String) -> Bool
 
-    private static let defaultExecutablePath = "/Applications/BetterDisplay.app/Contents/MacOS/BetterDisplay"
+    static let defaultExecutablePath = "/Applications/BetterDisplay.app/Contents/MacOS/BetterDisplay"
 
     private let executablePath: String
     private let isExecutableAvailable: ExecutableAvailability
     private let commandRunner: CommandRunner
-    private var snapshots: [CGDirectDisplayID: Double] = [:]
+
+    private static let restoredBrightness = 1.0
+    private static let staleDimmedBrightnessThreshold = 0.01
 
     init(
         executablePath: String = BetterDisplaySoftwareBrightnessController.defaultExecutablePath,
@@ -37,56 +39,19 @@ actor BetterDisplaySoftwareBrightnessController {
         self.commandRunner = commandRunner
     }
 
-    func updateTarget(displayIDs: Set<CGDirectDisplayID>, dimmed: Bool) async {
-        guard isExecutableAvailable(executablePath) else {
-            snapshots.removeAll()
-            return
-        }
-
-        let removedDisplayIDs = Set(snapshots.keys).subtracting(displayIDs)
-        for displayID in removedDisplayIDs {
-            await restoreAndRemove(displayID: displayID)
-        }
-
-        for displayID in displayIDs where snapshots[displayID] == nil {
-            guard let brightness = await readSoftwareBrightness(displayID: displayID) else { continue }
-            snapshots[displayID] = brightness
-        }
-
-        if dimmed {
-            await dimKnownDisplays()
-        } else {
-            await restoreKnownDisplays()
-        }
+    nonisolated static func isDefaultExecutableAvailable() -> Bool {
+        FileManager.default.isExecutableFile(atPath: defaultExecutablePath)
     }
 
-    func dimKnownDisplays() async {
+    func restoreStaleDimmedDisplays(displayIDs: Set<CGDirectDisplayID>) async {
         guard isExecutableAvailable(executablePath) else { return }
-        for displayID in snapshots.keys {
-            await setSoftwareBrightness(0, displayID: displayID)
+        for displayID in displayIDs.sorted() {
+            guard let brightness = await readSoftwareBrightness(displayID: displayID),
+                  Self.shouldRestoreStaleDimmedBrightness(brightness) else {
+                continue
+            }
+            await setSoftwareBrightness(Self.restoredBrightness, displayID: displayID)
         }
-    }
-
-    func restoreKnownDisplays() async {
-        guard isExecutableAvailable(executablePath) else {
-            snapshots.removeAll()
-            return
-        }
-
-        for (displayID, brightness) in snapshots {
-            await setSoftwareBrightness(brightness, displayID: displayID)
-        }
-    }
-
-    func restoreAll() async {
-        await restoreKnownDisplays()
-        snapshots.removeAll()
-    }
-
-    private func restoreAndRemove(displayID: CGDirectDisplayID) async {
-        guard let brightness = snapshots[displayID] else { return }
-        await setSoftwareBrightness(brightness, displayID: displayID)
-        snapshots.removeValue(forKey: displayID)
     }
 
     private func readSoftwareBrightness(displayID: CGDirectDisplayID) async -> Double? {
@@ -128,6 +93,10 @@ actor BetterDisplaySoftwareBrightnessController {
         }
 
         return nil
+    }
+
+    static func shouldRestoreStaleDimmedBrightness(_ brightness: Double) -> Bool {
+        brightness <= staleDimmedBrightnessThreshold
     }
 
     private static func formatBrightness(_ brightness: Double) -> String {

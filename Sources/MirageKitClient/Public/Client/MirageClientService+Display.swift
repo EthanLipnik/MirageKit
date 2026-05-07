@@ -264,6 +264,13 @@ extension MirageClientService {
 
     /// Get the selected target refresh rate requested by the client.
     public func getScreenMaxRefreshRate() -> Int {
+        Self.runtimeWorkloadSafetyCappedFrameRate(
+            preferredScreenMaxRefreshRate(),
+            cap: runtimeWorkloadSafetyFrameRateCap
+        )
+    }
+
+    func preferredScreenMaxRefreshRate() -> Int {
         Self.resolvedRequestedRefreshRate(
             override: maxRefreshRateOverride,
             preferredMaximumRefreshRate: MirageRenderPreferences.preferredMaximumRefreshRate()
@@ -294,13 +301,22 @@ extension MirageClientService {
 
     func resolvedStreamCadenceFrameRate(for streamID: StreamID, fallback: Int? = nil) -> Int {
         if let fallback {
-            return MirageRenderModePolicy.normalizedTargetFPS(fallback)
+            return Self.runtimeWorkloadSafetyCappedFrameRate(
+                fallback,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
         }
         if let observed = observedFrameRateByStream[streamID], observed > 0 {
-            return MirageRenderModePolicy.normalizedTargetFPS(observed)
+            return Self.runtimeWorkloadSafetyCappedFrameRate(
+                observed,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
         }
         if let override = refreshRateOverridesByStream[streamID], override > 0 {
-            return MirageRenderModePolicy.normalizedTargetFPS(override)
+            return Self.runtimeWorkloadSafetyCappedFrameRate(
+                override,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
         }
         return getScreenMaxRefreshRate()
     }
@@ -311,7 +327,10 @@ extension MirageClientService {
         reason: String
     )
     async {
-        let targetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(frameRate)
+        let targetFrameRate = Self.runtimeWorkloadSafetyCappedFrameRate(
+            frameRate,
+            cap: runtimeWorkloadSafetyFrameRateCap
+        )
         updateObservedFrameRate(targetFrameRate, for: streamID)
         let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
         let target = MirageStreamCadenceTarget(
@@ -367,16 +386,20 @@ extension MirageClientService {
             return false
         }
 
+        let effectiveTarget = Self.runtimeWorkloadSafetyCappedTier(
+            target,
+            cap: runtimeWorkloadSafetyFrameRateCap
+        )
         let snapshot = metricsStore.snapshot(for: streamID)
         let currentFrameRate = snapshot?.hostTargetFrameRate ?? 0
-        let needsFrameRateChange = currentFrameRate > 0 && currentFrameRate != target.targetFrameRate
+        let needsFrameRateChange = currentFrameRate > 0 && currentFrameRate != effectiveTarget.targetFrameRate
         let currentEncodedSize = CGSize(
             width: snapshot?.hostEncodedWidth ?? 0,
             height: snapshot?.hostEncodedHeight ?? 0
         )
         let needsResize = !Self.approximatelyEqualEncodedSize(
             currentEncodedSize,
-            target.encodedPixelSize
+            effectiveTarget.encodedPixelSize
         )
         let allowsAutomaticResolutionResize = Self.allowsAutomaticDesktopResolutionResize(
             mode: desktopStreamMode,
@@ -392,7 +415,7 @@ extension MirageClientService {
             if needsResize && !allowsAutomaticResolutionResize {
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
-                        "target \(target.logLabel) requires resize but mode does not allow automatic resize"
+                        "target \(effectiveTarget.logLabel) requires resize but mode does not allow automatic resize"
                 )
             }
             return false
@@ -401,20 +424,20 @@ extension MirageClientService {
         if decision.shouldChangeFrameRate {
             try await sendStreamEncoderSettingsChange(
                 streamID: streamID,
-                targetFrameRate: target.targetFrameRate
+                targetFrameRate: effectiveTarget.targetFrameRate
             )
-            refreshRateOverridesByStream[streamID] = target.targetFrameRate
+            refreshRateOverridesByStream[streamID] = effectiveTarget.targetFrameRate
             refreshRateMismatchCounts.removeValue(forKey: streamID)
             refreshRateFallbackTargets.removeValue(forKey: streamID)
         }
 
         if decision.shouldResize {
             let logicalResolution = automaticDesktopLogicalResolution(
-                forEncodedPixelSize: target.encodedPixelSize
+                forEncodedPixelSize: effectiveTarget.encodedPixelSize
             )
             let resizeTarget = desktopResizeTarget(
                 for: logicalResolution,
-                maxDrawableSize: target.encodedPixelSize
+                maxDrawableSize: effectiveTarget.encodedPixelSize
             )
             queueDesktopResize(
                 streamID: streamID,
@@ -426,7 +449,7 @@ extension MirageClientService {
         }
 
         MirageLogger.client(
-            "Requested automatic desktop workload reconfiguration for stream \(streamID): \(target.logLabel)"
+            "Requested automatic desktop workload reconfiguration for stream \(streamID): \(effectiveTarget.logLabel)"
         )
         return true
     }
@@ -557,7 +580,10 @@ extension MirageClientService {
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(maxRefreshRate)
+        let clamped = Self.runtimeWorkloadSafetyCappedFrameRate(
+            maxRefreshRate,
+            cap: runtimeWorkloadSafetyFrameRateCap
+        )
         let request = StreamRefreshRateChangeMessage(
             streamID: streamID,
             maxRefreshRate: clamped,
@@ -574,7 +600,10 @@ extension MirageClientService {
             )
             return
         }
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(maxRefreshRate)
+        let clamped = Self.runtimeWorkloadSafetyCappedFrameRate(
+            maxRefreshRate,
+            cap: runtimeWorkloadSafetyFrameRateCap
+        )
         let existing = refreshRateOverridesByStream[streamID]
         guard existing != clamped else { return }
         refreshRateOverridesByStream[streamID] = clamped
@@ -591,6 +620,7 @@ extension MirageClientService {
         observedFrameRateByStream.removeValue(forKey: streamID)
         refreshRateMismatchCounts.removeValue(forKey: streamID)
         refreshRateFallbackTargets.removeValue(forKey: streamID)
+        clearRuntimeWorkloadSafetyState(for: streamID)
     }
 
     #if os(iOS) || os(visionOS)

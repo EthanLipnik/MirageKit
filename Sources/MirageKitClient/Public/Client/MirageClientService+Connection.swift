@@ -455,12 +455,15 @@ extension MirageClientService {
         retiredDesktopSessionIDs.removeAll()
         pendingApplicationActivationRecoveryStreamIDs.removeAll()
         desktopStreamRequestStartTime = 0
+        lastDesktopStreamStartRequest = nil
+        desktopStreamRestartAttempts = 0
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
         controlPathSnapshot = nil
         resetControlPathHistory()
         activeJitterHoldMs = 0
+        resetRuntimeWorkloadSafetyState()
         decoderCompatibilityCurrentColorDepthByStream.removeAll()
         decoderCompatibilityBaselineColorDepthByStream.removeAll()
         decoderCompatibilityFallbackLastAppliedTime.removeAll()

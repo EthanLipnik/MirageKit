@@ -654,6 +654,79 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Hard recovery ignores stale first-frame presentation until sequence advances")
+    func hardRecoveryIgnoresStaleFirstFramePresentationUntilSequenceAdvances() async {
+        let streamID: StreamID = 152
+        let clock = ManualTimeProvider(start: 7_000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.markFirstFramePresented()
+        #expect(await controller.hasPresentedFirstFrame)
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "test-hard-recovery"
+        )
+
+        let staleProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        #expect(!staleProgress)
+        #expect(await controller.lastPresentedProgressTime == 0)
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        let recoveredProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        #expect(recoveredProgress)
+        #expect(await controller.lastPresentedProgressTime > 0)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Freeze monitor pauses while hard recovery waits for recovered frame")
+    func freezeMonitorPausesWhileHardRecoveryWaitsForRecoveredFrame() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 153
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.updatePresentationTier(.activeLive)
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        await controller.markFirstFramePresented()
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "test-hard-recovery"
+        )
+        try await waitUntil("initial hard-recovery keyframe request") {
+            keyframeCounter.value == 1
+        }
+
+        await controller.forcePresentationStallForTesting()
+        try await Task.sleep(for: .milliseconds(700))
+
+        #expect(keyframeCounter.value == 1)
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
     @Test("Startup hard recovery budget escalates to terminal failure")
     func startupHardRecoveryBudgetEscalatesToTerminalFailure() async throws {
         let clock = ManualTimeProvider(start: 4_000)

@@ -13,119 +13,88 @@ import Testing
 @Suite("BetterDisplay software brightness controller")
 struct BetterDisplaySoftwareBrightnessControllerTests {
     @Test
-    func snapshotsAndDimsTargetDisplays() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [101: "0.42\n"])
+    func restoresStaleZeroSoftwareBrightness() async {
+        let runner = BetterDisplayCommandRecorder(getValues: [101: "0.0\n"])
         let controller = BetterDisplaySoftwareBrightnessController(
             executablePath: "/tmp/BetterDisplay",
             isExecutableAvailable: { _ in true },
             commandRunner: runner.run
         )
 
-        await controller.updateTarget(displayIDs: [101], dimmed: true)
+        await controller.restoreStaleDimmedDisplays(displayIDs: [101])
 
         let commands = await runner.commands
         #expect(commands == [
             ["get", "-displayID=101", "-softwareBrightness"],
-            ["set", "-displayID=101", "-softwareBrightness=0.000000"],
+            ["set", "-displayID=101", "-softwareBrightness=1.000000"],
         ])
     }
 
     @Test
-    func restoresSnapshotsOnDeactivate() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [101: "softwareBrightness: 75%"])
+    func restoresOnlyStaleDimmedTargetDisplays() async {
+        let runner = BetterDisplayCommandRecorder(getValues: [
+            101: "0.0",
+            202: "softwareBrightness: 75%",
+        ])
         let controller = BetterDisplaySoftwareBrightnessController(
             executablePath: "/tmp/BetterDisplay",
             isExecutableAvailable: { _ in true },
             commandRunner: runner.run
         )
 
-        await controller.updateTarget(displayIDs: [101], dimmed: true)
-        await controller.restoreAll()
+        await controller.restoreStaleDimmedDisplays(displayIDs: [202, 101])
 
         let commands = await runner.commands
         #expect(commands == [
             ["get", "-displayID=101", "-softwareBrightness"],
-            ["set", "-displayID=101", "-softwareBrightness=0.000000"],
-            ["set", "-displayID=101", "-softwareBrightness=0.750000"],
+            ["set", "-displayID=101", "-softwareBrightness=1.000000"],
+            ["get", "-displayID=202", "-softwareBrightness"],
         ])
-    }
-
-    @Test
-    func restoresDisplaysRemovedFromTarget() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [
-            101: "0.4",
-            202: "0.8",
-        ])
-        let controller = BetterDisplaySoftwareBrightnessController(
-            executablePath: "/tmp/BetterDisplay",
-            isExecutableAvailable: { _ in true },
-            commandRunner: runner.run
-        )
-
-        await controller.updateTarget(displayIDs: [101, 202], dimmed: true)
-        await controller.updateTarget(displayIDs: [202], dimmed: true)
-
-        let commands = await runner.commands
-        #expect(commands.contains(["set", "-displayID=101", "-softwareBrightness=0.400000"]))
-    }
-
-    @Test
-    func skipsMissingOrInvalidBetterDisplayValues() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [
-            101: "not available",
-            202: "0.8",
-        ])
-        let controller = BetterDisplaySoftwareBrightnessController(
-            executablePath: "/tmp/BetterDisplay",
-            isExecutableAvailable: { _ in true },
-            commandRunner: runner.run
-        )
-
-        await controller.updateTarget(displayIDs: [101, 202], dimmed: true)
-
-        let commands = await runner.commands
-        #expect(commands.contains(["get", "-displayID=101", "-softwareBrightness"]))
-        #expect(!commands.contains(["set", "-displayID=101", "-softwareBrightness=0.000000"]))
-        #expect(commands.contains(["set", "-displayID=202", "-softwareBrightness=0.000000"]))
     }
 
     @Test
     func silentlySkipsWhenExecutableIsUnavailable() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [101: "0.5"])
+        let runner = BetterDisplayCommandRecorder(getValues: [101: "0.0"])
         let controller = BetterDisplaySoftwareBrightnessController(
             executablePath: "/tmp/BetterDisplay",
             isExecutableAvailable: { _ in false },
             commandRunner: runner.run
         )
 
-        await controller.updateTarget(displayIDs: [101], dimmed: true)
-        await controller.restoreAll()
+        await controller.restoreStaleDimmedDisplays(displayIDs: [101])
 
         #expect(await runner.commands.isEmpty)
     }
 
     @Test
-    func revealRestoreKeepsSnapshotsForRedim() async {
-        let runner = BetterDisplayCommandRecorder(getValues: [101: "0.5"])
+    func skipsMissingOrInvalidBetterDisplayValues() async {
+        let runner = BetterDisplayCommandRecorder(getValues: [
+            101: "not available",
+            202: "0.0",
+        ])
         let controller = BetterDisplaySoftwareBrightnessController(
             executablePath: "/tmp/BetterDisplay",
             isExecutableAvailable: { _ in true },
             commandRunner: runner.run
         )
 
-        await controller.updateTarget(displayIDs: [101], dimmed: true)
-        await controller.restoreKnownDisplays()
-        await controller.dimKnownDisplays()
+        await controller.restoreStaleDimmedDisplays(displayIDs: [101, 202])
 
         let commands = await runner.commands
         #expect(commands == [
             ["get", "-displayID=101", "-softwareBrightness"],
-            ["set", "-displayID=101", "-softwareBrightness=0.000000"],
-            ["set", "-displayID=101", "-softwareBrightness=0.500000"],
-            ["set", "-displayID=101", "-softwareBrightness=0.000000"],
+            ["get", "-displayID=202", "-softwareBrightness"],
+            ["set", "-displayID=202", "-softwareBrightness=1.000000"],
         ])
     }
 
+    @Test
+    func staleBrightnessThresholdAllowsNearZeroOnly() {
+        #expect(BetterDisplaySoftwareBrightnessController.shouldRestoreStaleDimmedBrightness(0))
+        #expect(BetterDisplaySoftwareBrightnessController.shouldRestoreStaleDimmedBrightness(0.01))
+        #expect(!BetterDisplaySoftwareBrightnessController.shouldRestoreStaleDimmedBrightness(0.011))
+        #expect(!BetterDisplaySoftwareBrightnessController.shouldRestoreStaleDimmedBrightness(0.5))
+    }
 }
 
 private actor BetterDisplayCommandRecorder {

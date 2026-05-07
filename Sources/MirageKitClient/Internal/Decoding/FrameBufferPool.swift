@@ -116,6 +116,16 @@ final class FrameBufferPool: @unchecked Sendable {
         return bytes
     }
 
+    @discardableResult
+    func purgeRetainedBuffers() -> Int {
+        lock.lock()
+        let bytes = retainedBytes
+        buffersByCapacity.removeAll(keepingCapacity: false)
+        retainedBytes = 0
+        lock.unlock()
+        return bytes
+    }
+
     fileprivate func reclaim(_ buffer: Buffer) {
         guard buffer.capacity <= maxRetainedBufferCapacity else { return }
 

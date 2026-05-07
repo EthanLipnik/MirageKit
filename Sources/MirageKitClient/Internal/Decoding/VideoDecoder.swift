@@ -405,6 +405,7 @@ final class FrameReassembler: @unchecked Sendable {
     struct MemoryTrimResult: Sendable, Equatable {
         let evictedFrames: Int
         let releasedPendingBytes: Int
+        let purgedRetainedBytes: Int
         let awaitingKeyframe: Bool
     }
 

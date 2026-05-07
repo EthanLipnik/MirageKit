@@ -269,6 +269,58 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Accepted desktop startup preserves requested geometry before first frame metrics")
+    func acceptedDesktopStartupPreservesRequestedGeometryBeforeFirstFrameMetrics() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 28
+        let desktopSessionID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1366, height: 1024),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2048,
+            encoderMaxHeight: 1536
+        )
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2732,
+            height: 2048,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            presentationWidth: 1366,
+            presentationHeight: 1024
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: startupTarget,
+            hasPresentedFrame: false,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
     @Test("Desktop start for a stopped session is ignored")
     func desktopStartForStoppedSessionIsIgnored() async throws {
         let service = MirageClientService()

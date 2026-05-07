@@ -147,6 +147,7 @@ final class HostLightsOutController {
 
         target = newTarget
         let displayIDs = resolveDisplayIDs(for: newTarget)
+        // TODO: Re-enable BetterDisplay software-brightness recovery after the Lights Out behavior is validated.
         updateOverlays(for: displayIDs, emergencyShortcut: emergencyShortcut)
         ensureScreenChangeObserver()
         return true

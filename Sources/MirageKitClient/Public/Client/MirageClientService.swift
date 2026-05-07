@@ -645,6 +645,11 @@ public final class MirageClientService {
     var stallEvents: UInt64 = 0
     var activeJitterHoldMs: Int = 0
     var emergencyReceiverFallbackLastAppliedTimeByStream: [StreamID: CFAbsoluteTime] = [:]
+    var runtimeWorkloadSafetyFrameRateCap: Int?
+    var runtimeWorkloadSafetyLastFallbackReason: String?
+    var runtimeWorkloadSafetyMemoryPressureCount: Int = 0
+    var runtimeWorkloadSafetyLastMemoryPressureTime: CFAbsoluteTime?
+    var runtimeWorkloadSafetyStallTimesByStream: [StreamID: [CFAbsoluteTime]] = [:]
     var lastAwdlTelemetryLogTime: CFAbsoluteTime = 0
     var registrationRefreshTask: Task<Void, Never>?
     let registrationRefreshIntervalMs: UInt64 = 750
@@ -704,6 +709,9 @@ public final class MirageClientService {
     let recoveryKeyframeRetryInterval: Duration = .seconds(1)
     let recoveryKeyframeRetryLimit: Int = 2
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
+    var lastDesktopStreamStartRequest: StartDesktopStreamMessage?
+    var desktopStreamRestartAttempts: Int = 0
+    let desktopStreamRestartLimit: Int = 1
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
     @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .seconds(3)
@@ -764,19 +772,7 @@ public final class MirageClientService {
     }
 
     public func handleMemoryPressure() async {
-        let streamIDs = activeInteractiveStreamIDs
-        var trimmedStreamCount = 0
-
-        for streamID in streamIDs {
-            guard let controller = controllersByStream[streamID] else { continue }
-            if await controller.handleMemoryPressure() {
-                trimmedStreamCount += 1
-            }
-        }
-
-        MirageLogger.client(
-            "Handled client memory pressure: activeStreams=\(streamIDs.count), trimmedStreams=\(trimmedStreamCount)"
-        )
+        await handleRuntimeWorkloadSafetyMemoryPressure()
     }
 
     var startupRegistrationRetryTasks: [StreamID: Task<Void, Never>] = [:]
@@ -998,6 +994,11 @@ public final class MirageClientService {
             "client.desktopStreamActive": .bool(desktopStreamID != nil),
             "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
             "client.maxRefreshRateOverride": maxRefreshRateOverride.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.memoryPressureCount": .int(runtimeWorkloadSafetyMemoryPressureCount),
+            "client.memoryPressureLastAgeSeconds": runtimeWorkloadSafetyLastMemoryPressureTime
+                .map { LoomDiagnosticsValue.double(max(0, CFAbsoluteTimeGetCurrent() - $0)) } ?? .null,
+            "client.runtimeWorkloadFrameRateCap": runtimeWorkloadSafetyFrameRateCap.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.runtimeWorkloadFallbackReason": runtimeWorkloadSafetyLastFallbackReason.map(LoomDiagnosticsValue.string) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
             "client.primaryStreamID": diagnosticsPrimaryStreamID().map { .int(Int($0)) } ?? .null,
             "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,

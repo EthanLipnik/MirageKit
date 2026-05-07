@@ -66,5 +66,26 @@ struct FrameBufferPoolTests {
         #expect(pool.retainedByteCount() == 0)
         reusedBuffer.release()
     }
+
+    @Test("Purge drops retained buffers and byte metrics")
+    func purgeDropsRetainedBuffersAndByteMetrics() {
+        let pool = FrameBufferPool(
+            maxBuffersPerCapacity: 4,
+            maxRetainedBufferCapacity: 32,
+            maxRetainedBytes: 128
+        )
+
+        let firstBuffer = pool.acquire(capacity: 16)
+        let secondBuffer = pool.acquire(capacity: 32)
+        firstBuffer.release()
+        secondBuffer.release()
+
+        #expect(pool.retainedByteCount() == 48)
+
+        let purgedBytes = pool.purgeRetainedBuffers()
+
+        #expect(purgedBytes == 48)
+        #expect(pool.retainedByteCount() == 0)
+    }
 }
 #endif

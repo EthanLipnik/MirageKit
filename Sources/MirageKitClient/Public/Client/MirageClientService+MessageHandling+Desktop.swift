@@ -221,10 +221,10 @@ extension MirageClientService {
                     desktopPresentationGenerationBySessionID.removeValue(forKey: previousDesktopSessionID)
                 }
                 if let previousStreamID {
-                    clearDesktopResizeState(streamID: previousStreamID)
+                    clearDesktopResizeState(streamID: previousStreamID, preserveLastSentTarget: true)
                     desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
                 } else {
-                    desktopResizeCoordinator.clearAllState()
+                    desktopResizeCoordinator.clearAllState(preserveLastSentTarget: true)
                 }
                 cancelDesktopStreamStopTimeout()
             }

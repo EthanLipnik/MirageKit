@@ -75,6 +75,7 @@ extension StreamController {
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
         if presentationTier == .activeLive {
@@ -104,6 +105,7 @@ extension StreamController {
         lastDecodedFrameTime = 0
         lastPresentedProgressTime = 0
         lastPresentedSequenceObserved = 0
+        presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
     }
@@ -317,13 +319,13 @@ extension StreamController {
         await requestKeyframeRecovery(reason: .manualRecovery)
     }
 
-    func applyHostRuntimePolicy(_ policy: MirageStreamPolicy) async {
+    func applyHostRuntimePolicy(_ policy: MirageStreamPolicy, targetFPS: Int? = nil) async {
         let tier: StreamPresentationTier = switch policy.tier {
         case .activeLive:
             .activeLive
         case .passiveSnapshot:
             .passiveSnapshot
         }
-        await updatePresentationTier(tier, targetFPS: policy.targetFPS)
+        await updatePresentationTier(tier, targetFPS: targetFPS ?? policy.targetFPS)
     }
 }

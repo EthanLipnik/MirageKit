@@ -247,6 +247,7 @@ extension StreamController {
         if snapshot.sequence > lastPresentedSequenceObserved {
             lastPresentedSequenceObserved = snapshot.sequence
             lastPresentedProgressTime = snapshot.submittedTime > 0 ? snapshot.submittedTime : referenceNow
+            presentationProgressRequiresSequenceAdvance = false
             return true
         }
 
@@ -254,10 +255,11 @@ extension StreamController {
             if snapshot.submittedTime > 0 {
                 lastPresentedSequenceObserved = max(lastPresentedSequenceObserved, snapshot.sequence)
                 lastPresentedProgressTime = snapshot.submittedTime
+                presentationProgressRequiresSequenceAdvance = false
                 return true
             }
 
-            if hasPresentedFirstFrame {
+            if hasPresentedFirstFrame, !presentationProgressRequiresSequenceAdvance {
                 lastPresentedProgressTime = referenceNow
                 return true
             }
@@ -347,6 +349,7 @@ extension StreamController {
             MirageLogger.client(
                 "Presentation progress resumed for stream \(streamID); ending hard recovery"
             )
+            presentationProgressRequiresSequenceAdvance = false
             await stopKeyframeRecoveryLoop()
             await setClientRecoveryStatus(.idle)
         case .tierPromotionProbe:
@@ -451,6 +454,7 @@ extension StreamController {
         if !hasPresentedFirstFrame {
             hasPresentedFirstFrame = true
         }
+        presentationProgressRequiresSequenceAdvance = false
         if !hasDecodedFirstFrame {
             hasDecodedFirstFrame = true
         }
@@ -1202,6 +1206,8 @@ extension StreamController {
         // (because no P-frames are decoded → no decode errors generated).
         guard hasPresentedFirstFrame,
               presentationTier == .activeLive else { return }
+        guard clientRecoveryStatus != .hardRecovery,
+              !awaitingFirstPresentedFrame else { return }
         let now = currentTime()
         syncPresentationProgressFromFrameStore(now: now)
         guard lastPresentedProgressTime > 0,

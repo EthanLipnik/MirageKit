@@ -199,11 +199,13 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     }
 
     private static let requiredPipelinePressureSamples = 8
+    private static let requiredPresentationCollapseSamples = 3
     private static let requiredPromotionSamples = 6
     private static let reconfigurationCooldownSeconds: CFAbsoluteTime = 20
     private static let observedPixelRateSafetyFactor = 0.85
 
     private var pipelinePressureSampleCount = 0
+    private var presentationCollapseSampleCount = 0
     private var promotionSampleCount = 0
     private var lastReconfigurationAt: CFAbsoluteTime?
 
@@ -211,6 +213,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
 
     public mutating func reset() {
         pipelinePressureSampleCount = 0
+        presentationCollapseSampleCount = 0
         promotionSampleCount = 0
         lastReconfigurationAt = nil
     }
@@ -224,6 +227,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     ) -> Action {
         guard !resizeCriticalSectionActive else {
             pipelinePressureSampleCount = 0
+            presentationCollapseSampleCount = 0
             return .none
         }
 
@@ -231,6 +235,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         guard health.transportIsClean,
               let currentTier = health.currentTier else {
             pipelinePressureSampleCount = 0
+            presentationCollapseSampleCount = 0
             promotionSampleCount = 0
             return .none
         }
@@ -238,13 +243,22 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         if health.isClientPipelineBound {
             guard let observedPixelRate = health.observedPixelRate else {
                 pipelinePressureSampleCount = 0
+                presentationCollapseSampleCount = 0
                 promotionSampleCount = 0
                 return .none
             }
 
             promotionSampleCount = 0
+            if Self.isSevereClientPresentationCollapse(snapshot: snapshot, currentTier: currentTier) {
+                presentationCollapseSampleCount += 1
+            } else {
+                presentationCollapseSampleCount = 0
+            }
             pipelinePressureSampleCount += 1
-            guard pipelinePressureSampleCount >= Self.requiredPipelinePressureSamples,
+            let requiredSamples = presentationCollapseSampleCount >= Self.requiredPresentationCollapseSamples
+                ? Self.requiredPresentationCollapseSamples
+                : Self.requiredPipelinePressureSamples
+            guard pipelinePressureSampleCount >= requiredSamples,
                   cooldownElapsed(now: now),
                   let targetTier = Self.targetTier(
                       currentTier: currentTier,
@@ -256,13 +270,18 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             }
 
             pipelinePressureSampleCount = 0
+            presentationCollapseSampleCount = 0
             lastReconfigurationAt = now
-            let reason = "\(health.bottleneckKind.rawValue), client presented \(Int(observedPixelRate)) px/s"
+            let reasonPrefix = requiredSamples == Self.requiredPresentationCollapseSamples
+                ? "client presentation collapse"
+                : health.bottleneckKind.rawValue
+            let reason = "\(reasonPrefix), client presented \(Int(observedPixelRate)) px/s"
             return .reconfigure(target: targetTier, reason: reason)
         }
 
         if !health.isPipelineBound {
             pipelinePressureSampleCount = 0
+            presentationCollapseSampleCount = 0
             promotionSampleCount += 1
             guard promotionSampleCount >= Self.requiredPromotionSamples,
                   cooldownElapsed(now: now),
@@ -279,11 +298,13 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
 
         guard let hostPipelinePixelRate = health.hostPipelinePixelRate else {
             pipelinePressureSampleCount = 0
+            presentationCollapseSampleCount = 0
             promotionSampleCount = 0
             return .none
         }
 
         promotionSampleCount = 0
+        presentationCollapseSampleCount = 0
         pipelinePressureSampleCount += 1
         guard pipelinePressureSampleCount >= Self.requiredPipelinePressureSamples else {
             return .none
@@ -301,6 +322,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         }
 
         pipelinePressureSampleCount = 0
+        presentationCollapseSampleCount = 0
         lastReconfigurationAt = now
         let reason = "\(health.bottleneckKind.rawValue), host pipeline \(Int(hostPipelinePixelRate)) px/s"
         return .reconfigure(target: targetTier, reason: reason)
@@ -372,6 +394,47 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             }
         }
         return nil
+    }
+
+    private static func isSevereClientPresentationCollapse(
+        snapshot: MirageClientMetricsSnapshot?,
+        currentTier: MirageAutomaticDesktopWorkloadTier
+    )
+    -> Bool {
+        guard let snapshot else { return false }
+        guard currentTier.targetFrameRate >= 90 else { return false }
+        guard snapshot.bottleneckKind == .presentationBound ||
+            snapshot.bottleneckKind == .decodeBound ||
+            snapshot.bottleneckKind == .mixed else {
+            return false
+        }
+
+        let targetFPS = Double(max(1, currentTier.targetFrameRate))
+        let hostCadence = minPositive(
+            snapshot.hostCaptureFPS,
+            snapshot.hostEncodeAttemptFPS,
+            snapshot.hostEncodedFPS
+        ) ?? 0
+        let clientCadence = minPositive(
+            snapshot.submittedFPS,
+            snapshot.uniqueSubmittedFPS,
+            snapshot.clientPresentedFPS > 0 ? snapshot.clientPresentedFPS : nil,
+            snapshot.clientLayerAcceptedFPS > 0 ? snapshot.clientLayerAcceptedFPS : nil
+        ) ?? 0
+        guard hostCadence >= targetFPS * 0.85 else { return false }
+        guard snapshot.decodedFPS >= targetFPS * 0.60 else { return false }
+        guard clientCadence > 0, clientCadence <= targetFPS * 0.72 else { return false }
+
+        let frameBudgetMs = 1_000.0 / targetFPS
+        return snapshot.clientPendingFrameAgeMs >= max(28.0, frameBudgetMs * 3.0) ||
+            snapshot.clientOverwrittenPendingFrames >= 3 ||
+            snapshot.clientDisplayLayerNotReadyCount >= 2 ||
+            snapshot.clientFrameIntervalP99Ms >= max(36.0, frameBudgetMs * 4.0) ||
+            snapshot.clientWorstPresentationGapMs >= max(120.0, frameBudgetMs * 10.0)
+    }
+
+    private static func minPositive(_ values: Double?...) -> Double? {
+        values.compactMap { $0 }.filter { $0 > 0 }.min()
     }
 
     private static func nextHigherTier(

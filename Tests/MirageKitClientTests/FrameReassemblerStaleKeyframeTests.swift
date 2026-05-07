@@ -915,10 +915,12 @@ struct FrameReassemblerStaleKeyframeTests {
         let trimResult = reassembler.trimForMemoryPressure()
         let metrics = reassembler.snapshotMetrics()
         #expect(trimResult.evictedFrames == 2)
+        #expect(trimResult.releasedPendingBytes == 24)
+        #expect(trimResult.purgedRetainedBytes == 24)
         #expect(trimResult.awaitingKeyframe == true)
         #expect(metrics.pendingFrameCount == 0)
         #expect(metrics.pendingFrameBytes == 0)
-        #expect(metrics.frameBufferPoolRetainedBytes == 24)
+        #expect(metrics.frameBufferPoolRetainedBytes == 0)
         #expect(reassembler.isAwaitingKeyframe() == true)
     }
 

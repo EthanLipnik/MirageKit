@@ -46,6 +46,103 @@ struct DesktopStopFailureSuppressionTests {
         #expect(service.pendingLocalDesktopStopStreamID == nil)
         #expect(service.pendingLocalDesktopStopSessionID == nil)
     }
+
+    @MainActor
+    @Test("Terminal startup desktop restart preserves request contract")
+    func terminalStartupDesktopRestartPreservesRequestContract() {
+        let service = MirageClientService(deviceName: "Test Device")
+        let originalRequestID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let restartRequestID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        var request = StartDesktopStreamMessage(
+            startupRequestID: originalRequestID,
+            scaleFactor: 2,
+            displayWidth: 2732,
+            displayHeight: 2048,
+            targetFrameRate: 120,
+            streamScale: 1,
+            audioConfiguration: MirageAudioConfiguration(enabled: true),
+            dataPort: 7341,
+            useHostResolution: false,
+            mediaMaxPacketSize: 1180
+        )
+        request.keyFrameInterval = 240
+        request.captureQueueDepth = 8
+        request.colorDepth = .ultra
+        request.mode = .secondary
+        request.cursorPresentation = .simulatedCursor
+        request.enteredBitrate = 180_000_000
+        request.bitrate = 170_000_000
+        request.latencyMode = .lowestLatency
+        request.allowRuntimeQualityAdjustment = true
+        request.lowLatencyHighResolutionCompressionBoost = true
+        request.disableResolutionCap = true
+        request.bitrateAdaptationCeiling = 220_000_000
+        request.encoderMaxWidth = 3840
+        request.encoderMaxHeight = 2160
+        request.upscalingMode = .spatial
+        request.codec = .hevc
+
+        let restarted = service.makeDesktopStreamRestartRequest(
+            from: request,
+            startupRequestID: restartRequestID
+        )
+
+        #expect(restarted.startupRequestID == restartRequestID)
+        #expect(restarted.startupRequestID != request.startupRequestID)
+        #expect(restarted.scaleFactor == request.scaleFactor)
+        #expect(restarted.displayWidth == request.displayWidth)
+        #expect(restarted.displayHeight == request.displayHeight)
+        #expect(restarted.targetFrameRate == request.targetFrameRate)
+        #expect(restarted.streamScale == request.streamScale)
+        #expect(restarted.audioConfiguration == request.audioConfiguration)
+        #expect(restarted.dataPort == request.dataPort)
+        #expect(restarted.useHostResolution == request.useHostResolution)
+        #expect(restarted.mediaMaxPacketSize == request.mediaMaxPacketSize)
+        #expect(restarted.keyFrameInterval == request.keyFrameInterval)
+        #expect(restarted.captureQueueDepth == request.captureQueueDepth)
+        #expect(restarted.colorDepth == request.colorDepth)
+        #expect(restarted.mode == request.mode)
+        #expect(restarted.cursorPresentation == request.cursorPresentation)
+        #expect(restarted.enteredBitrate == request.enteredBitrate)
+        #expect(restarted.bitrate == request.bitrate)
+        #expect(restarted.latencyMode == request.latencyMode)
+        #expect(restarted.allowRuntimeQualityAdjustment == request.allowRuntimeQualityAdjustment)
+        #expect(restarted.lowLatencyHighResolutionCompressionBoost == request.lowLatencyHighResolutionCompressionBoost)
+        #expect(restarted.disableResolutionCap == request.disableResolutionCap)
+        #expect(restarted.bitrateAdaptationCeiling == request.bitrateAdaptationCeiling)
+        #expect(restarted.encoderMaxWidth == request.encoderMaxWidth)
+        #expect(restarted.encoderMaxHeight == request.encoderMaxHeight)
+        #expect(restarted.upscalingMode == request.upscalingMode)
+        #expect(restarted.codec == request.codec)
+    }
+
+    @MainActor
+    @Test("Terminal startup desktop restart is bounded to one attempt")
+    func terminalStartupDesktopRestartIsBoundedToOneAttempt() {
+        let service = MirageClientService(deviceName: "Test Device")
+        let streamID: StreamID = 56
+        let request = StartDesktopStreamMessage(
+            startupRequestID: UUID(),
+            scaleFactor: 2,
+            displayWidth: 2732,
+            displayHeight: 2048,
+            targetFrameRate: 120,
+            streamScale: 1,
+            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            dataPort: nil,
+            useHostResolution: false,
+            mediaMaxPacketSize: 1180
+        )
+
+        service.desktopStreamID = streamID
+        service.lastDesktopStreamStartRequest = request
+        service.desktopStreamRestartAttempts = 0
+
+        #expect(service.hasDesktopStreamRestartBudget(streamID: streamID))
+        service.desktopStreamRestartAttempts = service.desktopStreamRestartLimit
+        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID))
+        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID + 1))
+    }
 }
 
 private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {

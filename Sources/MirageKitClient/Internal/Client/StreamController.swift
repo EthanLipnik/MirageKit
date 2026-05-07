@@ -342,6 +342,8 @@ actor StreamController {
     var hasDecodedFirstFrame = false
     /// Whether we've presented at least one frame.
     var hasPresentedFirstFrame = false
+    /// True while hard recovery must wait for a new render-store submission sequence.
+    var presentationProgressRequiresSequenceAdvance = false
     /// True while post-resize recovery remains active.
     var awaitingFirstFrameAfterResize = false
     /// True while post-resize decode admission should still drop non-keyframes.
@@ -1124,21 +1126,28 @@ actor StreamController {
     }
 
     @discardableResult
-    func handleMemoryPressure() async -> Bool {
+    func handleMemoryPressure(resetDecoder: Bool = false) async -> Bool {
         let queuedFramesTrimmed = clearQueuedFramesForRecovery()
         let reassemblerTrim = reassembler.trimForMemoryPressure()
         let renderFramesTrimmed = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
-        await decoder.flushMemoryPool()
+        if resetDecoder {
+            await decoder.resetForNewSession()
+        } else {
+            await decoder.flushMemoryPool()
+        }
 
         let didTrim = queuedFramesTrimmed > 0 ||
             reassemblerTrim.evictedFrames > 0 ||
-            renderFramesTrimmed > 0
+            reassemblerTrim.purgedRetainedBytes > 0 ||
+            renderFramesTrimmed > 0 ||
+            resetDecoder
         guard didTrim else { return false }
 
         MirageLogger.client(
             "Memory pressure trimmed stream \(streamID): queuedFrames=\(queuedFramesTrimmed), " +
                 "reassemblerFrames=\(reassemblerTrim.evictedFrames), renderFrames=\(renderFramesTrimmed), " +
-                "reassemblerBytes=\(reassemblerTrim.releasedPendingBytes)"
+                "reassemblerBytes=\(reassemblerTrim.releasedPendingBytes), " +
+                "purgedRetainedBytes=\(reassemblerTrim.purgedRetainedBytes), resetDecoder=\(resetDecoder)"
         )
 
         if isRunning, !isStopping {

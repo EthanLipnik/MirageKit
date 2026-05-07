@@ -201,6 +201,67 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.targetFrameRate == 60)
     }
 
+    @Test("Severe ProMotion presentation collapse downshifts after three samples")
+    func severeProMotionPresentationCollapseDownshiftsAfterThreeSamples() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 120,
+            cadenceFPS: 118
+        )
+        snapshot.submittedFPS = 62
+        snapshot.uniqueSubmittedFPS = 62
+        snapshot.clientPresentedFPS = 62
+        snapshot.clientLayerAcceptedFPS = 62
+        snapshot.clientOverwrittenPendingFrames = 5
+        snapshot.clientDisplayLayerNotReadyCount = 3
+        snapshot.clientPendingFrameAgeMs = 48
+
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<3 {
+            action = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: 60,
+                maximumTargetFrameRate: 120,
+                now: CFAbsoluteTime(sample)
+            )
+        }
+
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected fast workload reconfiguration")
+            return
+        }
+        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
+        #expect(target.targetFrameRate == 60)
+        #expect(reason.contains("client presentation collapse"))
+    }
+
+    @Test("Source-bound 70fps ProMotion samples do not fast downshift")
+    func sourceBound70FPSProMotionSamplesDoNotFastDownshift() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        let snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 120,
+            cadenceFPS: 70
+        )
+
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<3 {
+            action = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: 60,
+                maximumTargetFrameRate: 120,
+                now: CFAbsoluteTime(sample)
+            )
+        }
+
+        #expect(action == .none)
+    }
+
     @Test("ProMotion severe presentation collapse reduces resolution when 60fps cannot fit")
     func proMotionSeverePresentationCollapseReducesResolutionWhen60FPSCannotFit() {
         var controller = MirageAutomaticDesktopWorkloadController()

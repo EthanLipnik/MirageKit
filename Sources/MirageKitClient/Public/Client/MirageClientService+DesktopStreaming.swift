@@ -136,6 +136,8 @@ public extension MirageClientService {
         pendingDesktopRequestedColorDepth = request.colorDepth
         pendingDesktopRequestedLatencyMode = request.latencyMode ?? .lowestLatency
         pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
+        desktopStreamRestartAttempts = 0
+        lastDesktopStreamStartRequest = request
 
         let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
         let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
@@ -242,6 +244,116 @@ public extension MirageClientService {
         MirageLogger.client(
             "Requested stop desktop stream: stream=\(streamID), session=\(desktopSessionID.uuidString)"
         )
+    }
+
+    internal func hasDesktopStreamRestartBudget(streamID: StreamID) -> Bool {
+        desktopStreamID == streamID &&
+            lastDesktopStreamStartRequest != nil &&
+            desktopStreamRestartAttempts < desktopStreamRestartLimit
+    }
+
+    internal func canRestartDesktopStreamAfterTerminalStartupFailure(streamID: StreamID) -> Bool {
+        guard case .connected = connectionState,
+              controlChannel != nil,
+              hasDesktopStreamRestartBudget(streamID: streamID) else {
+            return false
+        }
+        return true
+    }
+
+    package func makeDesktopStreamRestartRequest(
+        from request: StartDesktopStreamMessage,
+        startupRequestID: UUID = UUID()
+    ) -> StartDesktopStreamMessage {
+        var restarted = StartDesktopStreamMessage(
+            startupRequestID: startupRequestID,
+            scaleFactor: request.scaleFactor,
+            displayWidth: request.displayWidth,
+            displayHeight: request.displayHeight,
+            targetFrameRate: request.targetFrameRate,
+            streamScale: request.streamScale,
+            audioConfiguration: request.audioConfiguration,
+            dataPort: request.dataPort,
+            useHostResolution: request.useHostResolution,
+            mediaMaxPacketSize: request.mediaMaxPacketSize
+        )
+        restarted.keyFrameInterval = request.keyFrameInterval
+        restarted.captureQueueDepth = request.captureQueueDepth
+        restarted.colorDepth = request.colorDepth
+        restarted.mode = request.mode
+        restarted.cursorPresentation = request.cursorPresentation
+        restarted.enteredBitrate = request.enteredBitrate
+        restarted.bitrate = request.bitrate
+        restarted.latencyMode = request.latencyMode
+        restarted.allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
+        restarted.lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost
+        restarted.disableResolutionCap = request.disableResolutionCap
+        restarted.bitrateAdaptationCeiling = request.bitrateAdaptationCeiling
+        restarted.encoderMaxWidth = request.encoderMaxWidth
+        restarted.encoderMaxHeight = request.encoderMaxHeight
+        restarted.upscalingMode = request.upscalingMode
+        restarted.codec = request.codec
+        return restarted
+    }
+
+    internal func restartDesktopStreamAfterTerminalStartupFailure(
+        _ failure: StreamController.TerminalStartupFailure,
+        failedStreamID: StreamID
+    ) async -> Bool {
+        guard canRestartDesktopStreamAfterTerminalStartupFailure(streamID: failedStreamID),
+              let previousRequest = lastDesktopStreamStartRequest else {
+            return false
+        }
+
+        let failedDesktopSessionID = desktopSessionID
+        let restartRequest = makeDesktopStreamRestartRequest(from: previousRequest)
+        desktopStreamRestartAttempts += 1
+        MirageLogger.client(
+            "Restarting desktop stream in-session after terminal startup failure: " +
+                "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
+                "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString)"
+        )
+
+        if let failedDesktopSessionID {
+            let stopRequest = StopDesktopStreamMessage(
+                streamID: failedStreamID,
+                desktopSessionID: failedDesktopSessionID
+            )
+            _ = sendControlMessageBestEffort(.stopDesktopStream, content: stopRequest)
+        }
+
+        await forceStopDesktopStreamLocally(
+            streamID: failedStreamID,
+            desktopSessionID: failedDesktopSessionID,
+            notifyStopReason: nil
+        )
+
+        guard case .connected = connectionState else { return false }
+
+        lastDesktopStreamStartRequest = restartRequest
+        pendingStreamSetupRequestID = restartRequest.startupRequestID
+        pendingStreamSetupKind = .desktop
+        pendingStreamSetupAppSessionID = nil
+        pendingStreamSetupLatencyMode = restartRequest.latencyMode ?? .lowestLatency
+        pendingDesktopRequestedColorDepth = restartRequest.colorDepth
+        pendingDesktopRequestedLatencyMode = restartRequest.latencyMode ?? .lowestLatency
+        desktopStreamMode = restartRequest.mode ?? .unified
+        desktopCursorPresentation = restartRequest.cursorPresentation
+        desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        do {
+            try await sendControlMessage(.startDesktopStream, content: restartRequest)
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
+            scheduleDesktopStreamStartTimeout()
+            MirageLogger.client(
+                "Desktop restart: request sent after terminal startup failure for stream \(failedStreamID)"
+            )
+            return true
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Desktop restart failed after terminal startup failure: ")
+            clearPendingDesktopStreamStartState()
+            return false
+        }
     }
 
     /// Cancel any in-progress stream setup on the host.

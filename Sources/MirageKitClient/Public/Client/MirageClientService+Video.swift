@@ -685,7 +685,12 @@ extension MirageClientService {
         guard colorDepth != nil || bitrate != nil || streamScale != nil || targetFrameRate != nil else { return }
 
         let clampedScale = streamScale.map(clampStreamScale)
-        let clampedFrameRate = targetFrameRate.map { MirageRenderModePolicy.normalizedTargetFPS($0) }
+        let clampedFrameRate = targetFrameRate.map {
+            Self.runtimeWorkloadSafetyCappedFrameRate(
+                $0,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
+        }
         let request = StreamEncoderSettingsChangeMessage(
             streamID: streamID,
             colorDepth: colorDepth,

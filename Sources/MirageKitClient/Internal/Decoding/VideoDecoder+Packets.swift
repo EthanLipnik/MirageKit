@@ -949,17 +949,19 @@ extension FrameReassembler {
             droppedFrameCount += UInt64(evictedFrames)
             beginAwaitingKeyframe()
         }
+        let purgedRetainedBytes = bufferPool.purgeRetainedBuffers()
         let result = MemoryTrimResult(
             evictedFrames: evictedFrames,
             releasedPendingBytes: releasedPendingBytes,
+            purgedRetainedBytes: purgedRetainedBytes,
             awaitingKeyframe: awaitingKeyframe
         )
         lock.unlock()
 
-        if evictedFrames > 0 {
+        if evictedFrames > 0 || purgedRetainedBytes > 0 {
             MirageLogger.client(
                 "Memory pressure trimmed \(evictedFrames) reassembler frame(s) for stream \(streamID); " +
-                    "releasedPendingBytes=\(releasedPendingBytes)"
+                    "releasedPendingBytes=\(releasedPendingBytes), purgedRetainedBytes=\(purgedRetainedBytes)"
             )
         }
 
@@ -982,6 +984,7 @@ extension FrameReassembler {
         let result = MemoryTrimResult(
             evictedFrames: evictedFrames,
             releasedPendingBytes: releasedPendingBytes,
+            purgedRetainedBytes: 0,
             awaitingKeyframe: awaitingKeyframe
         )
         lock.unlock()

@@ -51,13 +51,11 @@ struct DesktopResizeCoordinatorTests {
     }
 
     private func eventually(
-        timeout: Duration = .seconds(1),
+        attempts: Int = 100,
         interval: Duration = .milliseconds(10),
         _ condition: () -> Bool
     ) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while clock.now < deadline {
+        for _ in 0 ..< max(1, attempts) {
             if condition() {
                 return true
             }

@@ -300,6 +300,7 @@ public extension MirageClientService {
                 guard let self else { return }
                 self.stallEvents &+= 1
                 self.inputEventSender.activateTemporaryPointerCoalescing(for: capturedStreamID, duration: 1.2)
+                self.handleRuntimeWorkloadSafetyStallEvent(streamID: capturedStreamID)
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
             onRecoveryStatusChanged: { [weak self] status in
@@ -525,6 +526,10 @@ public extension MirageClientService {
                 return
             }
 
+            if await restartDesktopStreamAfterTerminalStartupFailure(failure, failedStreamID: streamID) {
+                return
+            }
+
             if let desktopSessionID {
                 let request = StopDesktopStreamMessage(
                     streamID: streamID,
@@ -658,7 +663,7 @@ public extension MirageClientService {
         await refreshSharedClipboardBridgeState()
     }
 
-    private func forceStopDesktopStreamLocally(
+    func forceStopDesktopStreamLocally(
         streamID: StreamID,
         desktopSessionID expectedDesktopSessionID: UUID? = nil,
         notifyStopReason: DesktopStreamStopReason? = nil
@@ -746,17 +751,25 @@ public extension MirageClientService {
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
+            let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
+                policy.targetFPS,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
             await controller.updateCadenceTarget(
-                sourceFPS: policy.targetFPS,
-                displayFPS: policy.targetFPS,
+                sourceFPS: targetFPS,
+                displayFPS: targetFPS,
                 latencyMode: renderLatencyModeByStream[policy.streamID],
                 reason: "host stream policy"
             )
-            await controller.applyHostRuntimePolicy(policy)
+            await controller.applyHostRuntimePolicy(policy, targetFPS: targetFPS)
         }
         let policyText = policies.map { policy in
             let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
-            return "\(policy.streamID)=\(policy.tier.rawValue):\(policy.targetFPS)fps@\(bitrate)"
+            let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
+                policy.targetFPS,
+                cap: runtimeWorkloadSafetyFrameRateCap
+            )
+            return "\(policy.streamID)=\(policy.tier.rawValue):\(targetFPS)fps@\(bitrate)"
         }.joined(separator: ", ")
         MirageLogger.client("Applied host stream policy update epoch=\(epoch): [\(policyText)]")
     }

@@ -184,20 +184,20 @@ struct KeyframeRecoveryPolicyTests {
         #expect(abs(baseline - pressured) < 0.0001)
     }
 
-    @Test("Recovery keyframe requests do not enable loss-mode FEC")
-    func recoveryRequestsDoNotEnableLossModeFEC() async throws {
+    @Test("Recovery keyframe requests enter protected loss-mode FEC")
+    func recoveryRequestsEnterProtectedLossModeFEC() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
         let softTime = CFAbsoluteTimeGetCurrent()
-        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: softTime) == 0)
-        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: softTime) == 0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: softTime) == 8)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: softTime) == 16)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
         let secondSoftTime = CFAbsoluteTimeGetCurrent()
-        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: secondSoftTime) == 0)
-        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: secondSoftTime) == 0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: secondSoftTime) == 8)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: secondSoftTime) == 16)
     }
 
     @Test("Startup transport protection strengthens keyframe FEC")

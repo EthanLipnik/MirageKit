@@ -127,6 +127,7 @@ extension StreamController {
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        presentationProgressRequiresSequenceAdvance = shouldAwaitNextPresentedFrame
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
