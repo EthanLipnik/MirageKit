@@ -6,100 +6,96 @@
 //
 
 #if os(macOS)
+import Carbon.HIToolbox
+import MirageKit
 @testable import MirageKitHost
 import Testing
 
 @Suite("Host Lights Out policy")
 struct HostLightsOutPolicyTests {
-    @Test("Input Monitoring is required for active Lights Out workloads")
-    func inputMonitoringIsRequiredForActiveWorkloads() {
-        #expect(!MirageHostService.shouldEnableLightsOut(
-            hasAppStreams: true,
-            hasDesktopStream: false,
-            hasPendingAppStreamStart: false,
-            hasPendingDesktopStreamStart: false,
-            lightsOutEnabled: true,
-            inputMonitoringGranted: false
-        ))
-
+    @Test("Input Monitoring is not required for active Lights Out workloads")
+    func inputMonitoringIsNotRequiredForActiveWorkloads() {
         #expect(MirageHostService.shouldEnableLightsOut(
             hasAppStreams: true,
             hasDesktopStream: false,
             hasPendingAppStreamStart: false,
             hasPendingDesktopStreamStart: false,
-            lightsOutEnabled: true,
-            inputMonitoringGranted: true
+            lightsOutEnabled: true
         ))
     }
 
-    @Test("Existing enabled preference stays inactive without Input Monitoring")
-    func existingEnabledPreferenceStaysInactiveWithoutInputMonitoring() {
-        #expect(!MirageHostService.shouldEnableLightsOut(
-            hasAppStreams: false,
-            hasDesktopStream: true,
-            hasPendingAppStreamStart: false,
-            hasPendingDesktopStreamStart: false,
-            lightsOutEnabled: true,
-            inputMonitoringGranted: false
-        ))
-    }
-
-    @Test("Unified desktop workloads still activate when Input Monitoring is granted")
-    func unifiedDesktopWorkloadsActivateWhenInputMonitoringIsGranted() {
+    @Test("Unified desktop workloads activate when Lights Out is enabled")
+    func unifiedDesktopWorkloadsActivateWhenLightsOutIsEnabled() {
         #expect(MirageHostService.shouldEnableLightsOut(
             hasAppStreams: false,
             hasDesktopStream: true,
             hasPendingAppStreamStart: false,
             hasPendingDesktopStreamStart: false,
-            lightsOutEnabled: true,
-            inputMonitoringGranted: true
+            lightsOutEnabled: true
+        ))
+    }
+
+    @Test("Disabled preference keeps Lights Out inactive")
+    func disabledPreferenceKeepsLightsOutInactive() {
+        #expect(!MirageHostService.shouldEnableLightsOut(
+            hasAppStreams: true,
+            hasDesktopStream: false,
+            hasPendingAppStreamStart: false,
+            hasPendingDesktopStreamStart: false,
+            lightsOutEnabled: false
         ))
     }
 }
 
-@Suite("Host Lights Out Escape hold")
-struct HostLightsOutEscapeHoldTests {
-    @Test("Event-tap holds trigger threshold once")
-    func eventTapHoldsTriggerThresholdOnce() {
-        let state = HostLightsOutController.EscapeHoldState()
+@Suite("Host Lights Out shortcut")
+struct HostLightsOutShortcutTests {
+    @Test("Default shortcut matches client exit default")
+    func defaultShortcutMatchesClientExitDefault() {
+        let shortcut = MirageHostLightsOutShortcut.defaultEmergencyShortcut
 
-        state.begin(source: .eventTap)
-
-        #expect(state.checkThreshold(nanoseconds: 0))
-        #expect(!state.checkThreshold(nanoseconds: 0))
+        #expect(shortcut.keyCode == 0x35)
+        #expect(shortcut.modifiers == [.control, .option])
+        #expect(shortcut.displayString == "⌃⌥⎋")
     }
 
-    @Test("Key-up style reset cancels an event-tap hold")
-    func resetCancelsEventTapHold() {
-        let state = HostLightsOutController.EscapeHoldState()
+    @Test("Shortcut validation requires a modifier")
+    func shortcutValidationRequiresModifier() {
+        let shortcut = MirageClientShortcutBinding(keyCode: 0x35, modifiers: [])
 
-        state.begin(source: .eventTap)
-        state.reset()
-
-        #expect(!state.isTracking)
-        #expect(state.source == nil)
+        #expect(MirageHostLightsOutShortcut.validationError(for: shortcut) == .modifierRequired)
     }
 
-    @Test("Physical polling fallback can own and clear a hold")
-    func physicalPollingFallbackCanOwnAndClearHold() {
-        let state = HostLightsOutController.EscapeHoldState()
+    @Test("Shortcut validation rejects modifier-only keys")
+    func shortcutValidationRejectsModifierOnlyKeys() {
+        let shortcut = MirageClientShortcutBinding(keyCode: 0x3B, modifiers: [.control])
 
-        state.begin(source: .physicalPoll)
-
-        #expect(state.source == .physicalPoll)
-        #expect(state.reset(ifSource: .physicalPoll))
-        #expect(!state.isTracking)
+        #expect(MirageHostLightsOutShortcut.validationError(for: shortcut) == .nonModifierKeyRequired)
     }
 
-    @Test("Physical polling does not cancel event-tap-owned holds")
-    func physicalPollingDoesNotCancelEventTapOwnedHold() {
-        let state = HostLightsOutController.EscapeHoldState()
+    @Test("Carbon modifier mapping uses shortcut modifiers only")
+    func carbonModifierMappingUsesShortcutModifiersOnly() {
+        let modifiers = HostLightsOutHotKeyRegistrar.carbonModifiers(
+            for: [.control, .option, .capsLock, .function]
+        )
 
-        state.begin(source: .eventTap)
+        #expect(modifiers == UInt32(controlKey | optionKey))
+    }
 
-        #expect(!state.reset(ifSource: .physicalPoll))
-        #expect(state.isTracking)
-        #expect(state.source == .eventTap)
+    @Test("Registration request uses configured shortcut")
+    func registrationRequestUsesConfiguredShortcut() {
+        let shortcut = MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
+        let request = HostLightsOutHotKeyRegistrar.registrationRequest(for: shortcut)
+
+        #expect(request.keyCode == 0x0C)
+        #expect(request.modifiers == UInt32(cmdKey | shiftKey))
+    }
+
+    @Test("Overlay message shows configured shortcut")
+    func overlayMessageShowsConfiguredShortcut() {
+        let shortcut = MirageClientShortcutBinding(keyCode: 0x0C, modifiers: [.command, .shift])
+        let message = HostLightsOutController.overlayMessage(for: shortcut)
+
+        #expect(message == "Streaming with Mirage\nPress ⇧⌘Q to Force Stop Streams")
     }
 }
 #endif

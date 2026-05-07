@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/5/26.
 //
-//  Blackout overlays and input blocking for Lights Out mode.
+//  Blackout overlays and shortcut recovery for Lights Out mode.
 //
 
 import AppKit
@@ -68,7 +68,7 @@ final class HostLightsOutController {
             label.font = .systemFont(ofSize: 28, weight: .semibold)
             label.maximumNumberOfLines = 2
             label.lineBreakMode = .byWordWrapping
-            label.isHidden = true
+            label.isHidden = false
 
             view.addSubview(label)
             NSLayoutConstraint.activate([
@@ -90,10 +90,6 @@ final class HostLightsOutController {
             }
         }
 
-        func setMessageVisible(_ visible: Bool) {
-            messageLabel.isHidden = !visible
-        }
-
         func setMessage(_ message: String) {
             messageLabel.stringValue = message
         }
@@ -104,102 +100,15 @@ final class HostLightsOutController {
         }
     }
 
-    private struct DisplayGammaSnapshot {
-        let red: [CGGammaValue]
-        let green: [CGGammaValue]
-        let blue: [CGGammaValue]
-        let sampleCount: UInt32
-    }
-
-    enum EscapeHoldSource: Sendable, Equatable {
-        case eventTap
-        case physicalPoll
-    }
-
-    final class EscapeHoldState: @unchecked Sendable {
-        private let lock = NSLock()
-        private var holdStart: UInt64 = 0
-        private var triggered = false
-        private var holdSource: EscapeHoldSource?
-
-        func begin(source: EscapeHoldSource) {
-            lock.withLock {
-                holdStart = mach_absolute_time()
-                triggered = false
-                holdSource = source
-            }
-        }
-
-        func reset() {
-            lock.withLock {
-                holdStart = 0
-                triggered = false
-                holdSource = nil
-            }
-        }
-
-        @discardableResult
-        func reset(ifSource source: EscapeHoldSource) -> Bool {
-            lock.withLock {
-                guard holdSource == source else { return false }
-                holdStart = 0
-                triggered = false
-                holdSource = nil
-                return true
-            }
-        }
-
-        /// Returns `true` the first time the hold duration is exceeded.
-        func checkThreshold(nanoseconds: UInt64) -> Bool {
-            lock.withLock {
-                guard holdStart != 0, !triggered else { return false }
-                var info = mach_timebase_info_data_t()
-                mach_timebase_info(&info)
-                let elapsed = (mach_absolute_time() - holdStart) * UInt64(info.numer) / UInt64(info.denom)
-                if elapsed >= nanoseconds {
-                    triggered = true
-                    return true
-                }
-                return false
-            }
-        }
-
-        var isHolding: Bool {
-            lock.withLock { holdStart != 0 && !triggered }
-        }
-
-        var isTracking: Bool {
-            lock.withLock { holdStart != 0 }
-        }
-
-        var source: EscapeHoldSource? {
-            lock.withLock { holdSource }
-        }
-    }
-
     private var target: Target?
     private var overlays: [CGDirectDisplayID: Overlay] = [:]
-    private var eventTap: CFMachPort?
-    private var eventTapSource: CFRunLoopSource?
-    private var messageHideTask: Task<Void, Never>?
-    private var escapeHoldCheckTask: Task<Void, Never>?
-    private var escapeKeyPollTask: Task<Void, Never>?
     private var screenChangeObserver: Any?
-    private var brightnessSnapshot: [CGDirectDisplayID: DisplayGammaSnapshot] = [:]
-    private let betterDisplayBrightnessController = BetterDisplaySoftwareBrightnessController()
-    private let revealClock = ContinuousClock()
-    private var revealUntil: ContinuousClock.Instant?
+    private let hotKeyRegistrar: any HostLightsOutHotKeyRegistering
 
     private let messageTitleText = "Streaming with Mirage"
-    private let forceStopMessageText = "Hold Escape to Force Stop Streams"
-    private let messageDuration: Duration = .seconds(5)
-    private let escapeHoldDuration: UInt64 = 5_000_000_000 // 5 seconds in nanoseconds
-    private let dimmedGammaScale: CGGammaValue = 0.05
 
     var onOverlayWindowsChanged: (@MainActor () -> Void)?
-    private nonisolated let escapeHoldState = EscapeHoldState()
     var onEmergencyShortcut: (@MainActor () async -> Void)?
-    var onScreenshotShortcut: (@MainActor () async -> Void)?
 
     var isActive: Bool { target != nil }
 
@@ -207,66 +116,69 @@ final class HostLightsOutController {
         overlays.values.map { CGWindowID($0.window.windowNumber) }
     }
 
-    func updateTarget(_ newTarget: Target?) {
+    init(hotKeyRegistrar: any HostLightsOutHotKeyRegistering = HostLightsOutHotKeyRegistrar()) {
+        self.hotKeyRegistrar = hotKeyRegistrar
+        self.hotKeyRegistrar.onTrigger = { [weak self] in
+            self?.handleEmergencyShortcut()
+        }
+    }
+
+    @discardableResult
+    func updateTarget(
+        _ newTarget: Target?,
+        emergencyShortcut: MirageClientShortcutBinding
+    ) -> Bool {
         guard let newTarget else {
             deactivate()
-            return
+            return true
+        }
+
+        guard MirageHostLightsOutShortcut.validationError(for: emergencyShortcut) == nil else {
+            MirageLogger.host("Lights Out skipped: invalid emergency shortcut \(emergencyShortcut.displayString)")
+            deactivate()
+            return false
+        }
+
+        guard hotKeyRegistrar.register(shortcut: emergencyShortcut) else {
+            MirageLogger.host("Lights Out skipped: failed to register emergency shortcut \(emergencyShortcut.displayString)")
+            deactivate()
+            return false
         }
 
         target = newTarget
         let displayIDs = resolveDisplayIDs(for: newTarget)
-        updateOverlays(for: displayIDs)
-        updateBrightnessSnapshot(for: displayIDs)
-        updateBetterDisplayBrightnessTarget(for: displayIDs)
-        applyRevealState()
-        ensureEventTapActive()
-        ensureEscapeKeyPolling()
+        updateOverlays(for: displayIDs, emergencyShortcut: emergencyShortcut)
         ensureScreenChangeObserver()
+        return true
     }
 
     func deactivate() {
         target = nil
-        messageHideTask?.cancel()
-        messageHideTask = nil
-        escapeHoldCheckTask?.cancel()
-        escapeHoldCheckTask = nil
-        escapeKeyPollTask?.cancel()
-        escapeKeyPollTask = nil
-        escapeHoldState.reset()
-        revealUntil = nil
-        restoreBrightness(restoresBetterDisplay: false)
-        Task {
-            await betterDisplayBrightnessController.restoreAll()
-        }
-        removeEventTap()
+        hotKeyRegistrar.unregister()
         removeScreenChangeObserver()
         for overlay in overlays.values {
             overlay.close()
         }
         overlays.removeAll()
-        brightnessSnapshot.removeAll()
         onOverlayWindowsChanged?()
     }
 
-    func handleLocalInteraction(triggerMessage: Bool) {
+    private func handleEmergencyShortcut() {
         guard isActive else { return }
-        let now = revealClock.now
-        let wasRevealed = revealUntil != nil && now < (revealUntil ?? now)
-        if triggerMessage {
-            showMessage()
+        MirageLogger.host("Lights Out: emergency shortcut triggered")
+        Task { @MainActor [weak self] in
+            await self?.onEmergencyShortcut?()
         }
-        revealUntil = now + messageDuration
-        if !wasRevealed {
-            restoreBrightness()
-        }
-        scheduleReDim()
     }
 
     // MARK: - Overlay Management
 
-    private func updateOverlays(for displayIDs: Set<CGDirectDisplayID>) {
+    private func updateOverlays(
+        for displayIDs: Set<CGDirectDisplayID>,
+        emergencyShortcut: MirageClientShortcutBinding
+    ) {
         let previousWindowIDs = Set(overlayWindowIDs)
-        let message = overlayMessage()
+        let message = Self.overlayMessage(for: emergencyShortcut, title: messageTitleText)
         let removed = overlays.keys.filter { !displayIDs.contains($0) }
         for displayID in removed {
             overlays[displayID]?.close()
@@ -291,44 +203,11 @@ final class HostLightsOutController {
         }
     }
 
-    private func showMessage() {
-        let message = overlayMessage()
-        for overlay in overlays.values {
-            overlay.setMessage(message)
-            overlay.setMessageVisible(true)
-        }
-    }
-
-    private func overlayMessage() -> String {
-        "\(messageTitleText)\n\(forceStopMessageText)"
-    }
-
-    private func hideMessage() {
-        for overlay in overlays.values {
-            overlay.setMessageVisible(false)
-        }
-    }
-
-    private func scheduleReDim() {
-        messageHideTask?.cancel()
-        guard let revealUntil else { return }
-        messageHideTask = Task { [weak self] in
-            guard let self else { return }
-            let deadline = revealUntil
-            if deadline > self.revealClock.now {
-                do {
-                    try await Task.sleep(until: deadline, clock: self.revealClock)
-                } catch {
-                    return
-                }
-            }
-            if Task.isCancelled { return }
-            if self.revealUntil == deadline {
-                self.revealUntil = nil
-                self.hideMessage()
-                self.dimDisplays()
-            }
-        }
+    nonisolated static func overlayMessage(
+        for emergencyShortcut: MirageClientShortcutBinding,
+        title: String = "Streaming with Mirage"
+    ) -> String {
+        "\(title)\nPress \(emergencyShortcut.displayString) to Force Stop Streams"
     }
 
     private func resolveDisplayIDs(for target: Target) -> Set<CGDirectDisplayID> {
@@ -350,317 +229,6 @@ final class HostLightsOutController {
 
         let physicalDisplays = displays.filter { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
         return Set(physicalDisplays)
-    }
-
-    // MARK: - Brightness
-
-    private func updateBrightnessSnapshot(for displayIDs: Set<CGDirectDisplayID>) {
-        let removed = brightnessSnapshot.keys.filter { !displayIDs.contains($0) }
-        for displayID in removed {
-            if let snapshot = brightnessSnapshot[displayID] {
-                applyGamma(snapshot, scale: 1.0, displayID: displayID)
-            }
-            brightnessSnapshot.removeValue(forKey: displayID)
-        }
-
-        for displayID in displayIDs where brightnessSnapshot[displayID] == nil {
-            if let snapshot = captureGammaSnapshot(for: displayID) {
-                brightnessSnapshot[displayID] = snapshot
-            }
-        }
-    }
-
-    private func updateBetterDisplayBrightnessTarget(for displayIDs: Set<CGDirectDisplayID>) {
-        let shouldDim = revealUntil == nil || revealClock.now >= (revealUntil ?? revealClock.now)
-        Task {
-            await betterDisplayBrightnessController.updateTarget(displayIDs: displayIDs, dimmed: shouldDim)
-        }
-    }
-
-    private func dimDisplays() {
-        for (displayID, snapshot) in brightnessSnapshot {
-            applyGamma(snapshot, scale: dimmedGammaScale, displayID: displayID)
-        }
-        Task {
-            await betterDisplayBrightnessController.dimKnownDisplays()
-        }
-    }
-
-    private func restoreBrightness(restoresBetterDisplay: Bool = true) {
-        for (displayID, snapshot) in brightnessSnapshot {
-            applyGamma(snapshot, scale: 1.0, displayID: displayID)
-        }
-        guard restoresBetterDisplay else { return }
-        Task {
-            await betterDisplayBrightnessController.restoreKnownDisplays()
-        }
-    }
-
-    private func applyRevealState() {
-        if let revealUntil, revealClock.now < revealUntil {
-            showMessage()
-            restoreBrightness()
-        } else {
-            hideMessage()
-            dimDisplays()
-        }
-    }
-
-    private func captureGammaSnapshot(for displayID: CGDirectDisplayID) -> DisplayGammaSnapshot? {
-        let maxSamples: Int = 256
-        var red = [CGGammaValue](repeating: 0, count: maxSamples)
-        var green = [CGGammaValue](repeating: 0, count: maxSamples)
-        var blue = [CGGammaValue](repeating: 0, count: maxSamples)
-        var sampleCount: UInt32 = 0
-        let result = CGGetDisplayTransferByTable(
-            displayID,
-            UInt32(maxSamples),
-            &red,
-            &green,
-            &blue,
-            &sampleCount
-        )
-        guard result == .success, sampleCount > 0 else { return nil }
-        let count = Int(sampleCount)
-        return DisplayGammaSnapshot(
-            red: Array(red.prefix(count)),
-            green: Array(green.prefix(count)),
-            blue: Array(blue.prefix(count)),
-            sampleCount: sampleCount
-        )
-    }
-
-    private func applyGamma(_ snapshot: DisplayGammaSnapshot, scale: CGGammaValue, displayID: CGDirectDisplayID) {
-        let clampedScale = max(0, min(1, scale))
-        let red = snapshot.red.map { min(1, max(0, $0 * clampedScale)) }
-        let green = snapshot.green.map { min(1, max(0, $0 * clampedScale)) }
-        let blue = snapshot.blue.map { min(1, max(0, $0 * clampedScale)) }
-
-        red.withUnsafeBufferPointer { redPtr in
-            green.withUnsafeBufferPointer { greenPtr in
-                blue.withUnsafeBufferPointer { bluePtr in
-                    guard let redBase = redPtr.baseAddress,
-                          let greenBase = greenPtr.baseAddress,
-                          let blueBase = bluePtr.baseAddress else {
-                        return
-                    }
-                    let result = CGSetDisplayTransferByTable(
-                        displayID,
-                        snapshot.sampleCount,
-                        redBase,
-                        greenBase,
-                        blueBase
-                    )
-                    if result != .success {
-                        MirageLogger.host("Lights Out: failed to apply display gamma (\(displayID), error \(result.rawValue))")
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Event Tap
-
-    private func ensureEventTapActive() {
-        guard eventTap == nil else { return }
-
-        let mask = Self.eventMask()
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            let controller = Unmanaged<HostLightsOutController>.fromOpaque(refcon).takeUnretainedValue()
-            return controller.handleEventTap(type: type, event: event)
-        }
-
-        let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        )
-
-        guard let tap else {
-            MirageLogger.error(.host, "Lights Out: failed to create event tap")
-            return
-        }
-
-        eventTap = tap
-        eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        if let eventTapSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: tap, enable: true)
-        MirageLogger.host("Lights Out: event tap enabled")
-    }
-
-    private func removeEventTap() {
-        guard let tap = eventTap else { return }
-        CGEvent.tapEnable(tap: tap, enable: false)
-        if let eventTapSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
-        }
-        eventTapSource = nil
-        eventTap = nil
-        MirageLogger.host("Lights Out: event tap disabled")
-    }
-
-    private nonisolated func handleEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let tap = self.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
-        if MirageInjectedEventTag.isInjected(event) {
-            return Unmanaged.passUnretained(event)
-        }
-
-        if type == .keyDown, shouldTriggerScreenshotShortcut(event: event) {
-            Task { @MainActor [weak self] in
-                await self?.onScreenshotShortcut?()
-            }
-            return Unmanaged.passUnretained(event)
-        }
-
-        if type == .keyDown {
-            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            if Self.shouldBeginEscapeHold(keyCode: keyCode, isTracking: escapeHoldState.isTracking) {
-                escapeHoldState.begin(source: .eventTap)
-                Task { @MainActor [weak self] in
-                    self?.startEscapeHoldCheck()
-                }
-            }
-        }
-
-        if type == .keyUp {
-            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-            if keyCode == 0x35 {
-                escapeHoldState.reset()
-            }
-        }
-
-        if Self.shouldTriggerMessage(for: type) {
-            Task { @MainActor [weak self] in
-                self?.handleLocalInteraction(triggerMessage: true)
-            }
-        }
-
-        return nil
-    }
-
-    nonisolated static func shouldBeginEscapeHold(keyCode: UInt16, isTracking: Bool) -> Bool {
-        keyCode == 0x35 && !isTracking
-    }
-
-    // MARK: - Physical Escape Fallback
-
-    private func ensureEscapeKeyPolling() {
-        guard escapeKeyPollTask == nil else { return }
-
-        escapeKeyPollTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                self.updatePhysicalEscapeHold(isPressed: Self.isPhysicalEscapeKeyPressed())
-                do {
-                    try await Task.sleep(for: .milliseconds(100))
-                } catch {
-                    return
-                }
-            }
-        }
-    }
-
-    private func updatePhysicalEscapeHold(isPressed: Bool) {
-        if isPressed {
-            guard Self.shouldBeginEscapeHold(keyCode: 0x35, isTracking: escapeHoldState.isTracking) else {
-                return
-            }
-            escapeHoldState.begin(source: .physicalPoll)
-            startEscapeHoldCheck()
-        } else {
-            escapeHoldState.reset(ifSource: .physicalPoll)
-        }
-    }
-
-    nonisolated static func isPhysicalEscapeKeyPressed() -> Bool {
-        CGEventSource.keyState(.hidSystemState, key: 0x35)
-    }
-
-    private static func eventMask() -> CGEventMask {
-        let types: [CGEventType] = [
-            .leftMouseDown,
-            .leftMouseUp,
-            .rightMouseDown,
-            .rightMouseUp,
-            .otherMouseDown,
-            .otherMouseUp,
-            .leftMouseDragged,
-            .rightMouseDragged,
-            .otherMouseDragged,
-            .mouseMoved,
-            .scrollWheel,
-            .keyDown,
-            .keyUp,
-            .flagsChanged,
-        ]
-
-        return types.reduce(CGEventMask(0)) { mask, type in
-            mask | CGEventMask(1 << type.rawValue)
-        }
-    }
-
-    private nonisolated static func shouldTriggerMessage(for type: CGEventType) -> Bool {
-        switch type {
-        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown, .keyUp, .flagsChanged:
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func startEscapeHoldCheck() {
-        escapeHoldCheckTask?.cancel()
-        handleLocalInteraction(triggerMessage: true)
-        escapeHoldCheckTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled, self.escapeHoldState.isHolding {
-                if self.escapeHoldState.checkThreshold(nanoseconds: self.escapeHoldDuration) {
-                    MirageLogger.host("Lights Out: hold-Escape emergency recovery triggered")
-                    self.handleLocalInteraction(triggerMessage: true)
-                    await self.onEmergencyShortcut?()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
-    }
-
-    private nonisolated func shouldTriggerScreenshotShortcut(event: CGEvent) -> Bool {
-        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        if isRepeat { return false }
-
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifierFlags = MirageModifierFlags(
-            nsEventFlags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
-        )
-        return Self.isScreenshotShortcut(keyCode: keyCode, modifiers: modifierFlags)
-    }
-
-    nonisolated static func isScreenshotShortcut(
-        keyCode: UInt16,
-        modifiers: MirageModifierFlags
-    ) -> Bool {
-        let screenshotKeyCodes: Set<UInt16> = [0x14, 0x15, 0x17] // 3, 4, 5
-        guard screenshotKeyCodes.contains(keyCode) else { return false }
-
-        let required: MirageModifierFlags = [.command, .shift]
-        guard modifiers.isSuperset(of: required) else { return false }
-
-        let allowed: MirageModifierFlags = [.command, .shift, .control, .option, .capsLock]
-        return modifiers.subtracting(allowed).isEmpty
     }
 
     // MARK: - Screen Change Handling
@@ -686,11 +254,12 @@ final class HostLightsOutController {
     }
 
     private func handleScreenChange() {
-        guard let target else { return }
+        guard let target,
+              let emergencyShortcut = hotKeyRegistrar.registeredShortcut else {
+            return
+        }
         let displayIDs = resolveDisplayIDs(for: target)
-        updateOverlays(for: displayIDs)
-        updateBrightnessSnapshot(for: displayIDs)
-        applyRevealState()
+        updateOverlays(for: displayIDs, emergencyShortcut: emergencyShortcut)
     }
 }
 #endif

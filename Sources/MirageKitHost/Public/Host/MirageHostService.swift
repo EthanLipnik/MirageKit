@@ -498,23 +498,30 @@ public final class MirageHostService {
         }
     }
 
+    /// Host-side shortcut that force stops streams and locks the Mac while Lights Out is active.
+    public var lightsOutEmergencyShortcut: MirageClientShortcutBinding =
+        MirageHostLightsOutShortcut.defaultEmergencyShortcut {
+        didSet {
+            guard oldValue != lightsOutEmergencyShortcut else { return }
+            Task { @MainActor [weak self] in
+                await self?.updateLightsOutState()
+            }
+        }
+    }
+
     /// Whether to lock the host when all active streaming has stopped.
     public var lockHostWhenStreamingStops: Bool = false
 
     /// Optional override for host lock behavior (defaults to CGSession if nil).
     public var lockHostHandler: (@MainActor () -> Void)?
 
-    /// Called when the Lights Out hold-Escape emergency recovery is triggered.
+    /// Called when the Lights Out emergency shortcut is triggered.
     @ObservationIgnored public var onLightsOutEmergencyShortcut: (@MainActor () async -> Void)? {
         didSet {
             lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
         }
     }
 
-    /// Whether Lights Out is temporarily suspended for an active screenshot session.
-    var lightsOutScreenshotSuspended: Bool = false
-    /// Task that waits for the screenshot session to finish before restoring Lights Out.
-    var lightsOutScreenshotSuspendTask: Task<Void, Never>?
     /// Number of app/window stream start requests currently in setup before stream activation.
     var pendingAppStreamStartCount: Int = 0
     /// Number of desktop stream start requests currently in setup before stream activation.
@@ -641,9 +648,6 @@ public final class MirageHostService {
             }
         }
         lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
-        lightsOutController.onScreenshotShortcut = { [weak self] in
-            await self?.handleLightsOutScreenshotShortcut()
-        }
         if lightsOutDisabledByEnvironment {
             MirageLogger.host("Lights Out disabled by environment (\(Self.lightsOutDisableEnvironmentKey)=1)")
         }

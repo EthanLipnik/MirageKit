@@ -79,8 +79,27 @@ func aspectFitPixelSize(contentSize: CGSize, containerSize: CGSize) -> CGSize {
 }
 
 private let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
+private let desktopLowestLatencyFixedQualityBitrateCapBps = 150_000_000
 
 extension MirageHostService {
+
+    nonisolated static func resolvedDesktopEncoderBitrate(
+        requestedBitrate: Int?,
+        latencyMode: MirageStreamLatencyMode,
+        allowRuntimeQualityAdjustment: Bool?
+    ) -> Int? {
+        guard let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: requestedBitrate
+        ) else {
+            return nil
+        }
+        guard latencyMode == .lowestLatency,
+              allowRuntimeQualityAdjustment == false,
+              normalizedBitrate > desktopLowestLatencyFixedQualityBitrateCapBps else {
+            return normalizedBitrate
+        }
+        return desktopLowestLatencyFixedQualityBitrateCapBps
+    }
 
     /// Start streaming the desktop (unified or secondary display mode)
     /// This stops any active app/window streams for mutual exclusivity
@@ -249,10 +268,23 @@ extension MirageHostService {
             config.codec = codec
         }
 
-        if let normalized = MirageBitrateQualityMapper.normalizedTargetBitrate(
-            bitrate: config.bitrate
-        ) {
-            config.bitrate = normalized
+        let requestedBitrate = config.bitrate
+        config.bitrate = Self.resolvedDesktopEncoderBitrate(
+            requestedBitrate: requestedBitrate,
+            latencyMode: latencyMode,
+            allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment
+        )
+        if let requestedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate),
+           let resolvedBitrate = config.bitrate,
+           resolvedBitrate < requestedBitrate {
+            let requestedMbps = (Double(requestedBitrate) / 1_000_000.0)
+                .formatted(.number.precision(.fractionLength(1)))
+            let resolvedMbps = (Double(resolvedBitrate) / 1_000_000.0)
+                .formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.host(
+                "Desktop stream bitrate capped for fixed lowest-latency quality: " +
+                    "\(requestedMbps) Mbps -> \(resolvedMbps) Mbps"
+            )
         }
 
         // Switch to BGRA pixel format when client requests MetalFX upscaling.
