@@ -113,7 +113,6 @@ actor StreamContext {
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var captureCadenceRecoveryPolicy = HostCaptureCadenceRecoveryPolicy()
     var realtimeMediaSession: RealtimeMediaSession
-    var realtimeAdaptationController = HostRealtimeAdaptationController()
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
@@ -122,11 +121,11 @@ actor StreamContext {
     let compressionQualityCeiling: Float = 0.94
     let qualityFloorFactor: Float = 0.6
     let keyframeFloorFactor: Float = 0.6
-    let bitrateCappedQualityFloorFactor: Float = 0.38
-    let bitrateCappedKeyframeFloorFactor: Float = 0.28
+    let bitrateCappedQualityFloorFactor: Float = 0.80
+    let bitrateCappedKeyframeFloorFactor: Float = 0.80
     let uncappedQualityFloorMinimum: Float = 0.10
-    let bitrateCappedQualityFloorMinimum: Float = 0.05
-    let bitrateCappedKeyframeFloorMinimum: Float = 0.04
+    let bitrateCappedQualityFloorMinimum: Float = 0.12
+    let bitrateCappedKeyframeFloorMinimum: Float = 0.12
     var pendingKeyframeReason: String?
     var pendingKeyframeDeadline: CFAbsoluteTime = 0
     var isKeyframeEncoding: Bool = false
@@ -134,8 +133,6 @@ actor StreamContext {
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
     nonisolated(unsafe) var suppressEncodedNonKeyframesUntilKeyframe = false
-    var idleRecoveryFrameAdmissionPending = false
-    var idleRecoveryFrameQueued = false
     var lastQualityAdjustmentTime: CFAbsoluteTime = 0
     var qualityRaiseSuppressionUntil: CFAbsoluteTime = 0
     let qualityRaisePostSpikeCooldown: CFAbsoluteTime = 3.0
@@ -145,14 +142,7 @@ actor StreamContext {
     let qualityDropThreshold: Int = 3
     let qualityRaiseThreshold: Int = 8
     let qualityDropStep: Float = 0.02
-    let qualityDropStepHighPressure: Float = 0.05
     let qualityRaiseStep: Float = 0.02
-    let packetBudgetDropUtilizationThreshold: Double = 1.05
-    let packetBudgetHighPressureUtilizationThreshold: Double = 1.20
-    let packetBudgetRaiseUtilizationThreshold: Double = 0.95
-    let packetPacerStressThresholdMs: Double = 0.75
-    let packetPacerHighPressureThresholdMs: Double = 2.0
-    let transportDropHighPressureThreshold: UInt64 = 12
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     let latencyBurstCaptureQueueDepth = 2
@@ -269,13 +259,8 @@ actor StreamContext {
     var lastKeyframeTime: CFAbsoluteTime = 0
     let recoveryOnlyKeyframes = true
 
-    /// Two-tier recovery tracking.
-    let softRecoveryWindow: CFAbsoluteTime = 4.0
-    let hardRecoveryThreshold: Int = 3
-    var recoveryWindowStart: CFAbsoluteTime = 0
-    var recoveryRequestCount: Int = 0
+    /// Recovery request tracking.
     var softRecoveryCount: UInt64 = 0
-    var hardRecoveryCount: UInt64 = 0
     let captureStarvationRestartThreshold: CFAbsoluteTime = 0.75
     let captureStarvationRestartCooldown: CFAbsoluteTime = 1.0
     let captureStarvationRestartDebounce: CFAbsoluteTime = 0.08

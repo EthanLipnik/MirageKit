@@ -152,7 +152,13 @@ public enum MirageBootstrapNetworkDetector {
     }
 
     public static func isValidWakeMACAddress(_ macAddress: String) -> Bool {
-        normalizedMACAddress(macAddress).count == 12
+        let separators = CharacterSet(charactersIn: ":-.")
+        let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+            .union(separators)
+        guard macAddress.unicodeScalars.allSatisfy({ allowedCharacters.contains($0) }) else {
+            return false
+        }
+        return normalizedMACAddress(macAddress).count == 12
     }
 
     private static func wakeInterface(

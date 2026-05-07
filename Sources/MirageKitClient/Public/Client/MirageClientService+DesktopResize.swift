@@ -11,9 +11,6 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    private static let desktopResizeSendDebounce: Duration = .milliseconds(120)
-    private static let postResizeTransitionTimeout: Duration = .seconds(2)
-
     func desktopResizeTarget(
         for logicalResolution: CGSize,
         maxDrawableSize: CGSize?
@@ -55,7 +52,8 @@ extension MirageClientService {
         streamID: StreamID,
         target: DesktopResizeCoordinator.RequestGeometry?,
         hasPresentedFrame: Bool,
-        useHostResolution: Bool
+        useHostResolution: Bool,
+        dispatchPolicy: DesktopResizeCoordinator.DispatchPolicy = .settledWindowMetrics
     ) {
         let coordinator = desktopResizeCoordinator
         guard pendingLocalDesktopStopStreamID != streamID else {
@@ -67,7 +65,9 @@ extension MirageClientService {
         if useHostResolution || target == nil {
             coordinator.cancelPendingTasks()
             coordinator.latestRequestedTarget = nil
+            coordinator.latestRequestedDispatchPolicy = nil
             coordinator.queuedTarget = nil
+            coordinator.queuedDispatchPolicy = nil
             coordinator.lastSentTarget = nil
             coordinator.activeTransition = nil
             coordinator.clearLocalPresentationState()
@@ -75,14 +75,18 @@ extension MirageClientService {
         }
 
         guard let target else { return }
-        coordinator.latestRequestedTarget = target
         guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.displayResolutionTask?.cancel()
+            coordinator.displayResolutionTask = nil
+            coordinator.clearQueuedResizeRequest()
             return
         }
         guard coordinator.resizeLifecycleState == .active else {
-            coordinator.queueLatestTarget(target)
+            coordinator.queueLatestTarget(
+                target,
+                dispatchPolicy: dispatchPolicy,
+                activatePresentationMask: false
+            )
             coordinator.cancelPendingResizeDispatch()
             MirageLogger.client(
                 "Desktop resize queued while lifecycle is suspended for stream \(streamID)"
@@ -91,7 +95,8 @@ extension MirageClientService {
         }
 
         if sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
-            coordinator.queueLatestTarget(target)
+            coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
+            scheduleDesktopResizePresentationMaskTimeout(streamID: streamID)
             MirageLogger.client(
                 "Desktop resize queued while waiting for post-resize frame for stream \(streamID)"
             )
@@ -100,7 +105,8 @@ extension MirageClientService {
 
         if let session = sessionStore.sessionByStreamID(streamID),
            session.clientRecoveryStatus != .idle {
-            coordinator.queueLatestTarget(target)
+            coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
+            scheduleDesktopResizePresentationMaskTimeout(streamID: streamID)
             MirageLogger.client(
                 "Desktop resize queued during client recovery for stream \(streamID), status=\(session.clientRecoveryStatus)"
             )
@@ -112,7 +118,8 @@ extension MirageClientService {
                activeTransition.target.isEffectivelySameStreamGeometry(as: target) {
                 return
             }
-            coordinator.queueLatestTarget(target)
+            coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
+            scheduleDesktopResizePresentationMaskTimeout(streamID: streamID)
             MirageLogger.client(
                 "Desktop resize queued behind active transition for stream \(streamID)"
             )
@@ -120,21 +127,60 @@ extension MirageClientService {
         }
 
         guard hasPresentedFrame else {
-            coordinator.queueLatestTarget(target)
+            coordinator.queueLatestTarget(
+                target,
+                dispatchPolicy: .startup,
+                activatePresentationMask: false
+            )
             coordinator.cancelPendingResizeDispatch()
             coordinator.clearLocalPresentationState()
             return
         }
 
-        coordinator.queuedTarget = target
+        if coordinator.queuedTarget?.isEffectivelySameStreamGeometry(as: target) == true,
+           coordinator.queuedDispatchPolicy == dispatchPolicy {
+            return
+        }
+
+        coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
+        scheduleDesktopResizePresentationMaskTimeout(streamID: streamID)
+        scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
+    }
+
+    func scheduleQueuedDesktopResizeIfNeeded(streamID: StreamID) {
+        let coordinator = desktopResizeCoordinator
+        guard coordinator.queuedTarget != nil else { return }
+        let dispatchPolicy = coordinator.queuedDispatchPolicy ?? .settledWindowMetrics
+        scheduleDesktopResizeDispatch(streamID: streamID, dispatchPolicy: dispatchPolicy)
+    }
+
+    private func scheduleDesktopResizeDispatch(
+        streamID: StreamID,
+        dispatchPolicy: DesktopResizeCoordinator.DispatchPolicy
+    ) {
+        let coordinator = desktopResizeCoordinator
         coordinator.displayResolutionTask?.cancel()
         coordinator.displayResolutionTask = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(for: Self.desktopResizeSendDebounce)
+                if let delay = self?.desktopResizeDispatchDelay(for: dispatchPolicy) {
+                    try await Task.sleep(for: delay)
+                }
             } catch {
                 return
             }
             await self?.dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
+        }
+    }
+
+    private func desktopResizeDispatchDelay(
+        for dispatchPolicy: DesktopResizeCoordinator.DispatchPolicy
+    )
+    -> Duration? {
+        switch dispatchPolicy {
+        case .startup, .immediate:
+            nil
+        case .settledWindowMetrics:
+            desktopResizeWindowSettlingDelay
         }
     }
 
@@ -154,21 +200,28 @@ extension MirageClientService {
             )
             return
         }
-        guard !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
-        guard coordinator.activeTransition == nil else { return }
-        if let session = sessionStore.sessionByStreamID(streamID),
-           session.clientRecoveryStatus != .idle {
+        guard !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else {
+            scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
             return
         }
-        guard let target = coordinator.queuedTarget ?? coordinator.latestRequestedTarget else { return }
+        guard coordinator.activeTransition == nil else {
+            scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
+            return
+        }
+        if let session = sessionStore.sessionByStreamID(streamID),
+           session.clientRecoveryStatus != .idle {
+            scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
+            return
+        }
+        guard let target = coordinator.queuedTarget else { return }
         guard target.logicalResolution.width > 0, target.logicalResolution.height > 0 else { return }
         guard coordinator.lastSentTarget?.isEffectivelySameStreamGeometry(as: target) != true else {
-            coordinator.queuedTarget = nil
-            coordinator.clearLocalPresentationState()
+            coordinator.clearQueuedResizeRequest()
             return
         }
 
         let transitionID = UUID()
+        let dispatchPolicy = coordinator.queuedDispatchPolicy ?? .settledWindowMetrics
         coordinator.beginTransition(
             streamID: streamID,
             transitionID: transitionID,
@@ -188,7 +241,11 @@ extension MirageClientService {
             if coordinator.activeTransition?.transitionID == transitionID {
                 coordinator.activeTransition = nil
             }
-            coordinator.queuedTarget = target
+            coordinator.queueLatestTarget(
+                target,
+                dispatchPolicy: dispatchPolicy,
+                activatePresentationMask: false
+            )
             coordinator.clearLocalPresentationState()
             MirageLogger.error(
                 .client,
@@ -200,7 +257,7 @@ extension MirageClientService {
 
     func handleDesktopPresentationReady(streamID: StreamID) {
         Task { @MainActor [weak self] in
-            await self?.dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
+            self?.scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
         }
     }
 
@@ -216,7 +273,6 @@ extension MirageClientService {
 
     func handlePostResizeFrameDecoded(streamID: StreamID) {
         guard sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
-        finishPostResizeTransitionWait(streamID: streamID, reason: "decoded-frame")
     }
 
     func handleStreamFirstFramePresented(streamID: StreamID) {
@@ -235,7 +291,7 @@ extension MirageClientService {
         postResizeTransitionTimeoutTasks[streamID]?.cancel()
         postResizeTransitionTimeoutTasks[streamID] = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(for: Self.postResizeTransitionTimeout)
+                try await Task.sleep(for: self?.desktopPostResizeTransitionTimeout ?? .seconds(10))
             } catch {
                 return
             }
@@ -263,6 +319,23 @@ extension MirageClientService {
         }
     }
 
+    private func scheduleDesktopResizePresentationMaskTimeout(streamID: StreamID) {
+        let coordinator = desktopResizeCoordinator
+        coordinator.presentationMaskTimeoutTask?.cancel()
+        coordinator.presentationMaskTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: self?.desktopPostResizeTransitionTimeout ?? .seconds(10))
+            } catch {
+                return
+            }
+            guard let self, self.desktopStreamID == streamID else { return }
+            self.desktopResizeCoordinator.clearLocalPresentationState()
+            MirageLogger.client(
+                "Clearing local desktop resize mask for stream \(streamID) after client-side timeout"
+            )
+        }
+    }
+
     func clearDesktopResizeState(
         streamID: StreamID,
         clearPostResizeState: Bool = true,
@@ -286,7 +359,9 @@ extension MirageClientService {
         coordinator.displayResolutionTask?.cancel()
         coordinator.displayResolutionTask = nil
         coordinator.latestRequestedTarget = nil
+        coordinator.latestRequestedDispatchPolicy = nil
         coordinator.queuedTarget = nil
+        coordinator.queuedDispatchPolicy = nil
         if coordinator.activeTransition == nil {
             coordinator.clearLocalPresentationState()
         }

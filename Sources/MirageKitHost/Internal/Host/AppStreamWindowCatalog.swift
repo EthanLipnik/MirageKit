@@ -28,6 +28,8 @@ struct AppStreamWindowCandidate: Sendable {
     let parentWindowID: WindowID?
     let isFocused: Bool
     let isMain: Bool
+    let isModal: Bool
+    let windowListOrder: Int
 
     init(
         bundleIdentifier: String,
@@ -37,7 +39,9 @@ struct AppStreamWindowCandidate: Sendable {
         subrole: String?,
         parentWindowID: WindowID?,
         isFocused: Bool = false,
-        isMain: Bool = false
+        isMain: Bool = false,
+        isModal: Bool = false,
+        windowListOrder: Int = Int.max
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.window = window
@@ -47,10 +51,12 @@ struct AppStreamWindowCandidate: Sendable {
         self.parentWindowID = parentWindowID
         self.isFocused = isFocused
         self.isMain = isMain
+        self.isModal = isModal
+        self.windowListOrder = windowListOrder
     }
 
     var logMetadata: String {
-        "classification=\(classification.rawValue), focused=\(isFocused), main=\(isMain), role=\(role ?? "nil"), subrole=\(subrole ?? "nil"), parent=\(parentWindowID.map(String.init) ?? "nil")"
+        "classification=\(classification.rawValue), focused=\(isFocused), main=\(isMain), modal=\(isModal), role=\(role ?? "nil"), subrole=\(subrole ?? "nil"), parent=\(parentWindowID.map(String.init) ?? "nil")"
     }
 }
 
@@ -72,7 +78,11 @@ enum AppStreamWindowCatalog {
         let parentWindowID: WindowID?
         let isFocused: Bool
         let isMain: Bool
+        let isModal: Bool
     }
+
+    static let minimumAuxiliaryWindowSize = CGSize(width: 24, height: 24)
+    static let minimumVisibleAlpha: CGFloat = 0.05
 
     static func catalog(
         for bundleIdentifiers: [String],
@@ -90,9 +100,6 @@ enum AppStreamWindowCatalog {
         var accessibilityByProcessID: [pid_t: [WindowID: AccessibilityClassification]] = [:]
 
         for window in content.windows {
-            guard window.windowLayer == 0 else { continue }
-            guard window.frame.width >= minimumWindowSize.width,
-                  window.frame.height >= minimumWindowSize.height else { continue }
             guard let app = window.owningApplication else { continue }
 
             guard let matchedBundleID = matchedBundleIdentifier(
@@ -131,8 +138,19 @@ enum AppStreamWindowCatalog {
                 subrole: accessibility?.subrole,
                 parentWindowID: accessibility?.parentWindowID,
                 isFocused: accessibility?.isFocused ?? false,
-                isMain: accessibility?.isMain ?? false
+                isMain: accessibility?.isMain ?? false,
+                isModal: accessibility?.isModal ?? false
             )
+            let metadata = windowMetadata[CGWindowID(window.windowID)]
+            guard catalogEligibility(
+                classification: classification,
+                frame: window.frame,
+                windowLayer: Int(window.windowLayer),
+                screenCaptureIsOnScreen: window.isOnScreen,
+                metadata: metadata,
+                hasMatchingScreenCaptureWindow: true,
+                minimumWindowSize: minimumWindowSize
+            ) else { continue }
 
             let candidate = AppStreamWindowCandidate(
                 bundleIdentifier: matchedBundleID,
@@ -142,7 +160,9 @@ enum AppStreamWindowCatalog {
                 subrole: accessibility?.subrole,
                 parentWindowID: accessibility?.parentWindowID,
                 isFocused: accessibility?.isFocused ?? false,
-                isMain: accessibility?.isMain ?? false
+                isMain: accessibility?.isMain ?? false,
+                isModal: accessibility?.isModal ?? false,
+                windowListOrder: metadata?.orderIndex ?? Int.max
             )
 
             candidatesByBundleID[matchedBundleID, default: []].append(candidate)
@@ -162,8 +182,10 @@ enum AppStreamWindowCatalog {
     static func preferredOrder(lhs: AppStreamWindowCandidate, rhs: AppStreamWindowCandidate) -> Bool {
         if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
         if lhs.isMain != rhs.isMain { return lhs.isMain }
+        if lhs.isModal != rhs.isModal { return lhs.isModal }
         if lhs.window.isOnScreen != rhs.window.isOnScreen { return lhs.window.isOnScreen }
         if lhs.window.windowLayer != rhs.window.windowLayer { return lhs.window.windowLayer < rhs.window.windowLayer }
+        if lhs.windowListOrder != rhs.windowListOrder { return lhs.windowListOrder < rhs.windowListOrder }
 
         let lhsArea = lhs.window.frame.width * lhs.window.frame.height
         let rhsArea = rhs.window.frame.width * rhs.window.frame.height
@@ -182,18 +204,22 @@ enum AppStreamWindowCatalog {
         }
 
         let bestEffortCandidates = sortedCandidates.filter {
-            $0.parentWindowID == nil && ($0.window.isOnScreen || $0.isFocused || $0.isMain)
+            $0.classification == .primary &&
+                $0.parentWindowID == nil &&
+                ($0.window.isOnScreen || $0.isFocused || $0.isMain)
         }
         if !bestEffortCandidates.isEmpty {
             return StartupCandidateSelection(candidates: bestEffortCandidates, usedFallback: true)
         }
 
-        let detachedCandidates = sortedCandidates.filter { $0.parentWindowID == nil }
+        let detachedCandidates = sortedCandidates.filter {
+            $0.classification == .primary && $0.parentWindowID == nil
+        }
         if !detachedCandidates.isEmpty {
             return StartupCandidateSelection(candidates: detachedCandidates, usedFallback: true)
         }
 
-        return StartupCandidateSelection(candidates: sortedCandidates, usedFallback: !sortedCandidates.isEmpty)
+        return StartupCandidateSelection(candidates: [], usedFallback: false)
     }
 
     static func capturedWindowCluster(
@@ -243,44 +269,83 @@ enum AppStreamWindowCatalog {
         subrole: String?,
         parentWindowID: WindowID?,
         isFocused: Bool = false,
-        isMain: Bool = false
+        isMain: Bool = false,
+        isModal: Bool = false
     ) -> AppStreamWindowClassification {
         if parentWindowID != nil { return .auxiliary }
 
         let roleLower = role?.lowercased() ?? ""
         let subroleLower = subrole?.lowercased() ?? ""
-        let isTopLevelUtilityLikeWindow = isFocused || isMain
+        let hasActiveAuxiliaryState = isFocused || isMain || isModal
 
         if roleLower.contains("sheet") ||
             roleLower.contains("dialog") ||
             roleLower.contains("popover") ||
-            roleLower.contains("drawer") {
+            roleLower.contains("drawer") ||
+            roleLower.contains("system") ||
+            roleLower.contains("floating") ||
+            roleLower.contains("panel") {
             return .auxiliary
-        }
-
-        if roleLower.contains("floating") {
-            return isTopLevelUtilityLikeWindow ? .primary : .auxiliary
         }
 
         if subroleLower.contains("dialog") ||
             subroleLower.contains("popover") ||
             subroleLower.contains("drawer") ||
-            subroleLower.contains("system") {
+            subroleLower.contains("system") ||
+            subroleLower.contains("floating") ||
+            subroleLower.contains("utility") ||
+            subroleLower.contains("panel") {
             return .auxiliary
         }
 
-        if subroleLower.contains("floating") ||
-            subroleLower.contains("utility") ||
-            subroleLower.contains("panel") {
-            return isTopLevelUtilityLikeWindow ? .primary : .auxiliary
+        if (roleLower.contains("unknown") || subroleLower.contains("unknown")) && hasActiveAuxiliaryState {
+            return .auxiliary
         }
 
         return .primary
     }
 
+    static func catalogEligibility(
+        classification: AppStreamWindowClassification,
+        frame: CGRect,
+        windowLayer: Int,
+        screenCaptureIsOnScreen: Bool,
+        metadata: WindowListMetadata?,
+        hasMatchingScreenCaptureWindow: Bool,
+        minimumWindowSize: CGSize = CGSize(width: 160, height: 120)
+    ) -> Bool {
+        guard hasMatchingScreenCaptureWindow,
+              isFiniteNonEmptyFrame(frame) else {
+            return false
+        }
+
+        switch classification {
+        case .primary:
+            return windowLayer == 0 &&
+                frame.width >= minimumWindowSize.width &&
+                frame.height >= minimumWindowSize.height
+        case .auxiliary:
+            let visible = screenCaptureIsOnScreen || (metadata?.isOnScreen ?? false)
+            let alpha = metadata?.alpha ?? 1
+            return visible &&
+                alpha > minimumVisibleAlpha &&
+                frame.width >= minimumAuxiliaryWindowSize.width &&
+                frame.height >= minimumAuxiliaryWindowSize.height
+        }
+    }
+
+    static func isFiniteNonEmptyFrame(_ frame: CGRect) -> Bool {
+        frame.origin.x.isFinite &&
+            frame.origin.y.isFinite &&
+            frame.width.isFinite &&
+            frame.height.isFinite &&
+            frame.width > 0 &&
+            frame.height > 0
+    }
+
     private static func collapseTabGroups(
         _ candidates: [AppStreamWindowCandidate],
-        metadata: [CGWindowID: (alpha: CGFloat, isOnScreen: Bool)]
+        metadata: [CGWindowID: WindowListMetadata]
     ) -> [AppStreamWindowCandidate] {
         let candidatesByProcessID = Dictionary(grouping: candidates) { candidate in
             candidate.window.application?.id ?? 0
@@ -374,6 +439,7 @@ enum AppStreamWindowCatalog {
             let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: axWindow)
             let isFocused = boolAttribute(kAXFocusedAttribute as CFString, from: axWindow) ?? false
             let isMain = boolAttribute(kAXMainAttribute as CFString, from: axWindow) ?? false
+            let isModal = boolAttribute("AXModal" as CFString, from: axWindow) ?? false
 
             var parentWindowID: WindowID?
             var parentRef: CFTypeRef?
@@ -395,7 +461,8 @@ enum AppStreamWindowCatalog {
                 subrole: subrole,
                 parentWindowID: parentWindowID,
                 isFocused: isFocused,
-                isMain: isMain
+                isMain: isMain,
+                isModal: isModal
             )
         }
 

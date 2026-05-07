@@ -42,11 +42,95 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         #expect(decision == .forwardKey)
     }
 
-    @Test("Option forward keys stay on UIKit path for layout text")
-    func optionForwardKeysStayOnUIKitPathForLayoutText() {
+    @Test("Option letter keys stay on UIKit path while Option+Space forwards")
+    func optionLetterKeysStayOnUIKitPathWhileOptionSpaceForwards() {
         #expect(!InputCapturingView.shouldClaimGCForwardKey(modifiers: [.option]))
         #expect(InputCapturingView.shouldClaimGCForwardKey(modifiers: [.command]))
         #expect(InputCapturingView.shouldClaimGCForwardKey(modifiers: [.control]))
+        #expect(!InputCapturingView.shouldClaimGCForwardKey(
+            macKeyCode: 0x00,
+            modifiers: [.option]
+        ))
+        #expect(InputCapturingView.shouldClaimGCForwardKey(
+            macKeyCode: 0x31,
+            modifiers: [.option]
+        ))
+    }
+
+    @Test("GC keyboard first responder recovery is limited to command-style key down")
+    func gcKeyboardFirstResponderRecoveryIsLimitedToCommandStyleKeyDown() {
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCShortcutModifiers(
+            modifiers: [.command]
+        ))
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCShortcutModifiers(
+            modifiers: [.control]
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCShortcutModifiers(
+            modifiers: [.shift]
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCShortcutModifiers(
+            modifiers: [.option]
+        ))
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCForwardKey(
+            isPressed: true,
+            modifiers: [.command]
+        ))
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCForwardKey(
+            isPressed: true,
+            modifiers: [.control]
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCForwardKey(
+            isPressed: true,
+            modifiers: [.option]
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCForwardKey(
+            isPressed: false,
+            modifiers: [.command]
+        ))
+    }
+
+    @Test("GC keyboard first responder recovery allows registered Option shortcuts and Option+Space")
+    func gcKeyboardFirstResponderRecoveryAllowsRegisteredOptionShortcutsAndOptionSpace() {
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCKey(
+            isPressed: true,
+            macKeyCode: 0x31,
+            modifiers: [.option],
+            hasAction: false,
+            hasClientShortcut: true,
+            hasPassthroughShortcut: false
+        ))
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCKey(
+            isPressed: true,
+            macKeyCode: 0x31,
+            modifiers: [.option],
+            hasAction: true,
+            hasClientShortcut: false,
+            hasPassthroughShortcut: false
+        ))
+        #expect(InputCapturingView.shouldRecoverFirstResponderForGCKey(
+            isPressed: true,
+            macKeyCode: 0x31,
+            modifiers: [.option],
+            hasAction: false,
+            hasClientShortcut: false,
+            hasPassthroughShortcut: false
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCKey(
+            isPressed: false,
+            macKeyCode: 0x31,
+            modifiers: [.option],
+            hasAction: false,
+            hasClientShortcut: true,
+            hasPassthroughShortcut: false
+        ))
+        #expect(!InputCapturingView.shouldRecoverFirstResponderForGCKey(
+            isPressed: true,
+            macKeyCode: 0x00,
+            modifiers: [.option],
+            hasAction: false,
+            hasClientShortcut: false,
+            hasPassthroughShortcut: false
+        ))
     }
 
     @Test("Unmodified GC keyboard character keys stay on UIKit responder path")

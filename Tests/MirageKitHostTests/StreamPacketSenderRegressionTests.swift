@@ -15,8 +15,8 @@ import Testing
 
 @Suite("Stream Packet Sender Regression")
 struct StreamPacketSenderRegressionTests {
-    @Test("Sender-local stale P-frames do not immediately enter dependency loss")
-    func senderLocalStalePFramesDoNotImmediatelyEnterDependencyLoss() async {
+    @Test("Sender-local stale P-frames do not enter dependency loss")
+    func senderLocalStalePFramesDoNotEnterDependencyLoss() async {
         let dependencyDrops = Locked<[DependencyDrop]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
@@ -44,11 +44,6 @@ struct StreamPacketSenderRegressionTests {
             )
         }
 
-        #expect(dependencyDrops.read { $0.isEmpty })
-        let localSnapshot = await sender.telemetrySnapshot()
-        #expect(localSnapshot.senderLocalDeadlineDrops == 2)
-        #expect(localSnapshot.stalePacketDrops == 2)
-
         sender.enqueue(
             makeWorkItem(
                 payload: makePayload(byteCount: 128),
@@ -60,9 +55,10 @@ struct StreamPacketSenderRegressionTests {
             )
         )
 
-        let drops = dependencyDrops.read { $0 }
-        #expect(drops.count == 1)
-        #expect(drops.first?.reason == .expiredBeforeEnqueue)
+        #expect(dependencyDrops.read { $0.isEmpty })
+        let localSnapshot = await sender.telemetrySnapshot()
+        #expect(localSnapshot.senderLocalDeadlineDrops == 3)
+        #expect(localSnapshot.stalePacketDrops == 3)
         await sender.stop()
     }
 
@@ -387,8 +383,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Repeated expired dependency frames hold P-frames until a recovery keyframe")
-    func repeatedExpiredDependencyFramesHoldPFramesUntilRecoveryKeyframe() async throws {
+    @Test("Repeated local expired dependency frames stay local")
+    func repeatedLocalExpiredDependencyFramesStayLocal() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])
         let dependencyDrops = Locked<[DependencyDrop]>([])
         let sender = StreamPacketSender(
@@ -430,7 +426,8 @@ struct StreamPacketSenderRegressionTests {
             sender,
             timeoutSeconds: 2.0
         ) { snapshot in
-            snapshot.stalePacketDrops == 3
+            snapshot.stalePacketDrops == 3 &&
+                snapshot.senderLocalDeadlineDrops == 3
         }
 
         sender.enqueue(
@@ -442,20 +439,10 @@ struct StreamPacketSenderRegressionTests {
                 generation: generation
             )
         )
-
-        _ = try await waitForTelemetry(
-            sender,
-            timeoutSeconds: 2.0
-        ) { snapshot in
-            snapshot.nonKeyframeHoldDrops == 1
-        }
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
 
         let drops = dependencyDrops.read { $0 }
-        #expect(drops.count == 1)
-        #expect(drops.first?.streamID == 46)
-        #expect(drops.first?.frameNumber == 403)
-        #expect(drops.first?.reason == .expiredBeforeEnqueue)
-        #expect(submittedPackets.read { $0.isEmpty })
+        #expect(drops.isEmpty)
 
         sender.enqueue(
             makeWorkItem(
@@ -467,7 +454,7 @@ struct StreamPacketSenderRegressionTests {
                 isKeyframe: true
             )
         )
-        try await waitForSubmissionCount(submittedPackets, expectedCount: 1)
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
 
         sender.enqueue(
             makeWorkItem(
@@ -478,9 +465,9 @@ struct StreamPacketSenderRegressionTests {
                 generation: generation
             )
         )
-        try await waitForSubmissionCount(submittedPackets, expectedCount: 2)
+        try await waitForSubmissionCount(submittedPackets, expectedCount: 3)
 
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [405, 406])
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [404, 405, 406])
 
         await sender.stop()
     }

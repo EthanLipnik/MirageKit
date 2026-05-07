@@ -420,7 +420,8 @@ extension MirageClientService {
                 streamID: streamID,
                 target: resizeTarget,
                 hasPresentedFrame: session.hasPresentedFrame,
-                useHostResolution: false
+                useHostResolution: false,
+                dispatchPolicy: .immediate
             )
         }
 

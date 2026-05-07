@@ -35,4 +35,26 @@ struct MirageInterceptedShortcutPolicyTests {
         #expect(keyUp.charactersIgnoringModifiers == "b")
         #expect(keyUp.modifiers == [.command])
     }
+
+    @Test("UIKit action names resolve to intercepted command shortcuts")
+    func uiKitActionNamesResolveToInterceptedCommandShortcuts() throws {
+        let cases: [(actionName: String, input: String, modifiers: MirageModifierFlags)] = [
+            ("find:", "f", [.command]),
+            ("findAndReplace:", "f", [.command, .shift]),
+            ("findNext:", "g", [.command]),
+            ("findPrevious:", "g", [.command, .shift]),
+            ("selectAll:", "a", [.command]),
+            ("print:", "p", [.command]),
+            ("printContent:", "p", [.command]),
+        ]
+
+        for testCase in cases {
+            let shortcut = try #require(
+                MirageInterceptedShortcutPolicy.shortcut(actionName: testCase.actionName)
+            )
+
+            #expect(shortcut.input == testCase.input)
+            #expect(shortcut.modifiers == testCase.modifiers)
+        }
+    }
 }

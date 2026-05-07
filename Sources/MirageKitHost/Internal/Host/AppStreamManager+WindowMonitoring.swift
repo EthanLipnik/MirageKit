@@ -85,8 +85,8 @@ extension AppStreamManager {
                             logger.info(
                                 "Detected auxiliary window: \(candidate.window.displayName) for \(bundleID) (\(windowID), \(candidate.logMetadata))"
                             )
-                            await onAuxiliaryWindowDetected?(bundleID, candidate)
                         }
+                        await onAuxiliaryWindowDetected?(bundleID, candidate)
                         continue
                     case .primary:
                         break

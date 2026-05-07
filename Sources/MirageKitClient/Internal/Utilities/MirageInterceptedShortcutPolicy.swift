@@ -90,6 +90,13 @@ enum MirageInterceptedShortcutPolicy {
         "toggleBoldface:": commandBShortcut,
         "toggleItalics:": commandIShortcut,
         "toggleUnderline:": commandUShortcut,
+        "find:": commandFShortcut,
+        "findAndReplace:": commandShiftFShortcut,
+        "findNext:": commandGShortcut,
+        "findPrevious:": commandShiftGShortcut,
+        "selectAll:": commandAShortcut,
+        "print:": commandPShortcut,
+        "printContent:": commandPShortcut,
     ]
 
     static let shortcuts: [MirageInterceptedShortcut] = [

@@ -44,10 +44,26 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
     private struct CopyRegion {
         var sourceOriginX: UInt32
         var sourceOriginY: UInt32
+        var sourceWidth: UInt32
+        var sourceHeight: UInt32
         var destinationOriginX: UInt32
         var destinationOriginY: UInt32
         var width: UInt32
         var height: UInt32
+        var destinationWidth: UInt32
+        var destinationHeight: UInt32
+    }
+
+    struct OverlayFrame {
+        let frame: CapturedFrame
+        let sourceRect: CGRect
+        let destinationRect: CGRect
+    }
+
+    private struct FrameCopyOperation {
+        let frame: CapturedFrame
+        let sourceRect: CGRect
+        let destinationRect: CGRect
     }
 
     private let device: MTLDevice
@@ -82,8 +98,49 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         framesByWindowID: [WindowID: CapturedFrame],
         layout: AppAtlasLayout.Result
     ) throws -> CVPixelBuffer {
-        let width = max(2, Int(layout.canvasSize.width))
-        let height = max(2, Int(layout.canvasSize.height))
+        let copyOperations = layout.placements.compactMap { placement -> FrameCopyOperation? in
+            guard let frame = framesByWindowID[placement.windowID] else { return nil }
+            return FrameCopyOperation(
+                frame: frame,
+                sourceRect: placement.sourceRect,
+                destinationRect: placement.destinationRect
+            )
+        }
+        return try compose(copyOperations: copyOperations, outputSize: layout.canvasSize)
+    }
+
+    func compose(
+        baseFrame: CapturedFrame,
+        overlays: [OverlayFrame],
+        outputSize: CGSize
+    ) throws -> CVPixelBuffer {
+        let baseSourceRect = CGRect(
+            x: 0,
+            y: 0,
+            width: CVPixelBufferGetWidth(baseFrame.pixelBuffer),
+            height: CVPixelBufferGetHeight(baseFrame.pixelBuffer)
+        )
+        let baseDestinationRect = CGRect(origin: .zero, size: outputSize)
+        let copyOperations = [FrameCopyOperation(
+            frame: baseFrame,
+            sourceRect: baseSourceRect,
+            destinationRect: baseDestinationRect
+        )] + overlays.map { overlay in
+            FrameCopyOperation(
+                frame: overlay.frame,
+                sourceRect: overlay.sourceRect,
+                destinationRect: overlay.destinationRect
+            )
+        }
+        return try compose(copyOperations: copyOperations, outputSize: outputSize)
+    }
+
+    private func compose(
+        copyOperations: [FrameCopyOperation],
+        outputSize: CGSize
+    ) throws -> CVPixelBuffer {
+        let width = max(2, Int(outputSize.width.rounded(.up)))
+        let height = max(2, Int(outputSize.height.rounded(.up)))
         let outputBuffer = try makeOutputBuffer(width: width, height: height)
         clear(outputBuffer)
 
@@ -98,8 +155,8 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
             throw AppAtlasFrameCompositorError.commandBufferUnavailable
         }
 
-        for placement in layout.placements {
-            guard let frame = framesByWindowID[placement.windowID] else { continue }
+        for operation in copyOperations {
+            let frame = operation.frame
             let pixelFormat = CVPixelBufferGetPixelFormatType(frame.pixelBuffer)
             guard pixelFormat == kCVPixelFormatType_32BGRA else {
                 throw AppAtlasFrameCompositorError.unsupportedPixelFormat(pixelFormat)
@@ -107,24 +164,36 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
 
             let sourceWidth = CVPixelBufferGetWidth(frame.pixelBuffer)
             let sourceHeight = CVPixelBufferGetHeight(frame.pixelBuffer)
-            let sourceRect = placement.sourceRect.integral
+            let sourceRect = operation.sourceRect.integral
             let sourceOriginX = max(0, Int(sourceRect.minX))
             let sourceOriginY = max(0, Int(sourceRect.minY))
-            let destinationOriginX = max(0, Int(placement.destinationRect.minX))
-            let destinationOriginY = max(0, Int(placement.destinationRect.minY))
-            let copyWidth = [
-                Int(placement.destinationRect.width),
+            let sourceCopyWidth = [
                 Int(sourceRect.width),
                 max(0, sourceWidth - sourceOriginX),
+            ].min() ?? 0
+            let sourceCopyHeight = [
+                Int(sourceRect.height),
+                max(0, sourceHeight - sourceOriginY),
+            ].min() ?? 0
+            let destinationRect = operation.destinationRect.integral
+            let destinationOriginX = max(0, Int(destinationRect.minX))
+            let destinationOriginY = max(0, Int(destinationRect.minY))
+            let destinationWidth = max(0, Int(destinationRect.width))
+            let destinationHeight = max(0, Int(destinationRect.height))
+            let copyWidth = [
+                destinationWidth,
                 max(0, width - destinationOriginX),
             ].min() ?? 0
             let copyHeight = [
-                Int(placement.destinationRect.height),
-                Int(sourceRect.height),
-                max(0, sourceHeight - sourceOriginY),
+                destinationHeight,
                 max(0, height - destinationOriginY),
             ].min() ?? 0
-            guard copyWidth > 0, copyHeight > 0 else { continue }
+            guard sourceCopyWidth > 0,
+                  sourceCopyHeight > 0,
+                  destinationWidth > 0,
+                  destinationHeight > 0,
+                  copyWidth > 0,
+                  copyHeight > 0 else { continue }
 
             let sourceTexture = try makeTexture(
                 pixelBuffer: frame.pixelBuffer,
@@ -135,10 +204,14 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
             var region = CopyRegion(
                 sourceOriginX: UInt32(sourceOriginX),
                 sourceOriginY: UInt32(sourceOriginY),
+                sourceWidth: UInt32(sourceCopyWidth),
+                sourceHeight: UInt32(sourceCopyHeight),
                 destinationOriginX: UInt32(destinationOriginX),
                 destinationOriginY: UInt32(destinationOriginY),
                 width: UInt32(copyWidth),
-                height: UInt32(copyHeight)
+                height: UInt32(copyHeight),
+                destinationWidth: UInt32(destinationWidth),
+                destinationHeight: UInt32(destinationHeight)
             )
 
             guard let encoder = commandBuffer.makeComputeCommandEncoder() else {
@@ -236,10 +309,14 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         struct CopyRegion {
             uint sourceOriginX;
             uint sourceOriginY;
+            uint sourceWidth;
+            uint sourceHeight;
             uint destinationOriginX;
             uint destinationOriginY;
             uint width;
             uint height;
+            uint destinationWidth;
+            uint destinationHeight;
         };
 
         kernel void copyAppAtlasRegion(
@@ -252,9 +329,18 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
                 return;
             }
 
+            const uint sourceOffsetX = min(
+                region.sourceWidth - 1,
+                uint((float(gid.x) * float(region.sourceWidth)) / float(region.destinationWidth))
+            );
+            const uint sourceOffsetY = min(
+                region.sourceHeight - 1,
+                uint((float(gid.y) * float(region.sourceHeight)) / float(region.destinationHeight))
+            );
+
             const uint2 sourceCoordinate(
-                region.sourceOriginX + gid.x,
-                region.sourceOriginY + gid.y
+                region.sourceOriginX + sourceOffsetX,
+                region.sourceOriginY + sourceOffsetY
             );
             const uint2 destinationCoordinate(
                 region.destinationOriginX + gid.x,

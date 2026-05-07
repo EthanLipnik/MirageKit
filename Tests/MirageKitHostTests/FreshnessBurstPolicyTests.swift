@@ -35,19 +35,22 @@ struct FreshnessBurstPolicyTests {
 
         #expect(burst.isActive)
         #expect(burst.latencyBurstActive)
-        #expect(burst.captureQueueDepthOverride == 2)
+        #expect(burst.captureQueueDepthOverride == nil)
         #expect(burst.newestFrameDrainEnabled)
         #expect(burst.entryCount == 1)
-        #expect(burst.queueResetCount == 1)
-        #expect(burst.recoveryKeyframeCount == 1)
+        #expect(burst.queueResetCount == 0)
+        #expect(burst.recoveryKeyframeCount == 0)
+        #expect(await context.pendingKeyframeReason == nil)
+        #expect(context.lossModeDeadline == 0)
+        #expect(context.lossModePFrameFECDeadline == 0)
         #expect(settings.bitrate == baselineSettings.bitrate)
         #expect(settings.requestedTargetBitrate == baselineSettings.requestedTargetBitrate)
         #expect(abs(burst.qualityCeiling - baselineBurst.qualityCeiling) < 0.0001)
         #expect(abs(burst.activeQuality - baselineBurst.activeQuality) < 0.0001)
     }
 
-    @Test("Recovery keyframe requests coalesce while freshness burst is active")
-    func recoveryKeyframesCoalesceDuringFreshnessBurst() async {
+    @Test("Explicit recovery keyframes are not swallowed while freshness burst is active")
+    func explicitRecoveryKeyframesAreNotSwallowedDuringFreshnessBurst() async {
         let context = makeContext(
             bitrate: 120_000_000,
             captureQueueDepth: 8
@@ -59,21 +62,18 @@ struct FreshnessBurstPolicyTests {
             reason: "unit test coalesce"
         )
 
-        let pendingKeyframeReason = await context.pendingKeyframeReason
         let softRecoveries = await context.softRecoveryCount
-        let hardRecoveries = await context.hardRecoveryCount
 
         await context.requestKeyframe()
 
         let burst = await context.freshnessBurstSnapshot()
-        #expect(await context.pendingKeyframeReason == pendingKeyframeReason)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
         #expect(await context.pendingKeyframeUrgent)
-        #expect(await context.softRecoveryCount == softRecoveries)
-        #expect(await context.hardRecoveryCount == hardRecoveries)
+        #expect(await context.softRecoveryCount == softRecoveries + 1)
         #expect(burst.entryCount == 1)
-        #expect(burst.queueResetCount == 1)
-        #expect(burst.recoveryKeyframeCount == 1)
-        #expect(burst.coalescedRecoveryKeyframeCount == 1)
+        #expect(burst.queueResetCount == 0)
+        #expect(burst.recoveryKeyframeCount == 0)
+        #expect(burst.coalescedRecoveryKeyframeCount == 0)
     }
 
     @Test("Freshness burst exit restores capture queue depth and newest-drain policy")
@@ -152,7 +152,8 @@ struct FreshnessBurstPolicyTests {
         let burst = await context.freshnessBurstSnapshot()
         #expect(burst.isActive)
         #expect(burst.entryCount == 1)
-        #expect(burst.recoveryKeyframeCount == 1)
+        #expect(burst.recoveryKeyframeCount == 0)
+        #expect(await context.pendingKeyframeReason == nil)
     }
 
     @Test("Modest non-keyframe sender delay does not enter freshness burst")

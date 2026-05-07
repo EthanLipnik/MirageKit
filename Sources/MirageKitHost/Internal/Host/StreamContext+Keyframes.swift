@@ -77,8 +77,6 @@ extension StreamContext {
             pendingKeyframeRequiresFlush = true
         }
         if requiresFlush { pendingKeyframeRequiresFlush = true }
-        idleRecoveryFrameAdmissionPending = true
-        idleRecoveryFrameQueued = false
         return true
     }
 
@@ -183,6 +181,28 @@ extension StreamContext {
         MirageLogger.stream("Scheduled coalesced recovery keyframe (\(reason))")
     }
 
+    func scheduleCoalescedStartupKeyframe(
+        reason: String,
+        resetFrameNumber: Bool = false
+    ) async {
+        let queued = queueKeyframe(
+            reason: reason,
+            checkInFlight: true,
+            urgent: true
+        )
+        guard queued else {
+            MirageLogger.stream("\(reason) skipped (startup keyframe already pending or in flight)")
+            return
+        }
+
+        if resetFrameNumber {
+            await encoder?.resetFrameNumber()
+        }
+        markKeyframeRequestIssued()
+        scheduleProcessingIfNeeded()
+        MirageLogger.stream("Scheduled coalesced startup keyframe (\(reason))")
+    }
+
     func shouldEmitPendingKeyframe(queueBytes: Int) -> Bool {
         guard pendingKeyframeReason != nil else { return false }
         let now = CFAbsoluteTimeGetCurrent()
@@ -262,8 +282,6 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
-        idleRecoveryFrameAdmissionPending = false
-        idleRecoveryFrameQueued = false
         if dynamicFrameFlags.contains(.discontinuity) { dynamicFrameFlags.remove(.discontinuity) }
     }
 
@@ -317,13 +335,6 @@ extension StreamContext {
             rateBps: 120_000_000,
             burstBytes: 64 * 1024
         )
-    }
-
-    private func resetRecoveryWindowIfNeeded(now: CFAbsoluteTime) {
-        if recoveryWindowStart == 0 || now - recoveryWindowStart > softRecoveryWindow {
-            recoveryWindowStart = now
-            recoveryRequestCount = 0
-        }
     }
 
     nonisolated static func shouldScheduleCaptureRestartForRecovery(
@@ -385,11 +396,7 @@ extension StreamContext {
     @discardableResult
     func requestKeyframe() async -> KeyframeRecoveryAckMessage {
         let now = CFAbsoluteTimeGetCurrent()
-        resetRecoveryWindowIfNeeded(now: now)
-
-        let nextCount = recoveryRequestCount + 1
-        let useHardRecovery = nextCount >= hardRecoveryThreshold
-        let reason = useHardRecovery ? "Keyframe request (hard)" : "Keyframe request (soft)"
+        let reason = "Keyframe request"
 
         if coalesceKeyframeRecoveryForFreshnessBurst(reason: reason) {
             return keyframeRecoveryAck(accepted: true, reason: "\(reason):freshness-burst")
@@ -398,30 +405,22 @@ extension StreamContext {
         let queued = queueKeyframe(
             reason: reason,
             checkInFlight: true,
-            requiresFlush: useHardRecovery,
-            requiresReset: useHardRecovery,
-            advanceEpochOnReset: useHardRecovery,
+            requiresFlush: false,
+            requiresReset: false,
+            advanceEpochOnReset: false,
             urgent: true
         )
         guard queued else {
             return keyframeRecoveryAck(accepted: false, reason: "\(reason):throttled")
         }
 
-        recoveryRequestCount = nextCount
-        if useHardRecovery {
-            hardRecoveryCount += 1
-            noteLossEvent(reason: reason, enablePFrameFEC: true)
-        } else {
-            softRecoveryCount += 1
-            noteLossEvent(reason: reason, enablePFrameFEC: false)
-        }
+        softRecoveryCount += 1
         await scheduleCaptureRestartForKeyframeRecoveryIfNeeded(now: now, reason: reason)
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger
             .stream(
-                "Recovery request=\(recoveryRequestCount) window=\(Int(softRecoveryWindow))s " +
-                    "soft=\(softRecoveryCount) hard=\(hardRecoveryCount)"
+                "Recovery keyframe requests=\(softRecoveryCount)"
             )
         return keyframeRecoveryAck(accepted: true, reason: reason)
     }
@@ -458,46 +457,7 @@ extension StreamContext {
     func keyframeQuality(for queueBytes: Int) -> Float {
         let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
         guard runtimeQualityAdjustmentEnabled else { return base }
-        var adjusted = base
-
-        if let bpp = bitrateBitsPerPixelPerFrame() {
-            let constrainedStartBPP = 0.085
-            let constrainedEndBPP = 0.030
-            if bpp < constrainedStartBPP {
-                let range = max(0.0001, constrainedStartBPP - constrainedEndBPP)
-                let pressure = max(0.0, min(1.0, (constrainedStartBPP - bpp) / range))
-                let bitrateDrop = Float(0.02 + pressure * 0.10)
-                adjusted -= bitrateDrop
-            }
-        }
-
-        if queueBytes > queuePressureBytes {
-            let range = max(1, maxQueuedBytes - queuePressureBytes)
-            let pressure = max(0.0, min(1.0, Double(queueBytes - queuePressureBytes) / Double(range)))
-            let queueDrop = Float(0.03 + pressure * 0.08)
-            adjusted -= queueDrop
-        }
-
-        let floored = max(keyframeQualityFloor, adjusted)
-        return min(base, floored)
-    }
-
-    private func bitrateBitsPerPixelPerFrame() -> Double? {
-        guard let targetBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
-            bitrate: encoderConfig.bitrate
-        ) else {
-            return nil
-        }
-        let referenceSize = currentEncodedSize == .zero ? currentCaptureSize : currentEncodedSize
-        let width = max(2, Int(referenceSize.width.rounded()))
-        let height = max(2, Int(referenceSize.height.rounded()))
-        guard referenceSize.width > 0, referenceSize.height > 0 else { return nil }
-        return MirageBitrateQualityMapper.bitsPerPixelPerFrame(
-            targetBitrateBps: targetBitrate,
-            width: width,
-            height: height,
-            frameRate: currentFrameRate
-        )
+        return max(keyframeQualityFloor, base)
     }
 }
 #endif

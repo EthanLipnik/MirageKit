@@ -150,5 +150,14 @@ struct HostCursorPositionUpdatePolicyTests {
 
         #expect(downPoint == requestedPoint)
     }
+
+    @Test("Deferred input validator can drop stale admitted events")
+    func deferredInputValidatorDropsInactiveEvents() {
+        let controller = MirageHostInputController()
+
+        #expect(controller.shouldProcessDeferredInput(nil))
+        #expect(controller.shouldProcessDeferredInput { true })
+        #expect(!controller.shouldProcessDeferredInput { false })
+    }
 }
 #endif

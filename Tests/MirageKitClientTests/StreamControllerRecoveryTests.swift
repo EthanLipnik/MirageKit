@@ -206,8 +206,7 @@ struct StreamControllerRecoveryTests {
             onFrameDecoded: nil,
             onFirstFramePresented: {
                 firstFrameCounter.increment()
-            },
-            onAdaptiveFallbackNeeded: nil
+            }
         )
 
         await controller.markFirstFramePresented()
@@ -290,39 +289,6 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Overload signal triggers adaptive fallback after queue drops and recovery requests")
-    func overloadTriggersAdaptiveFallback() async throws {
-        let keyframeCounter = LockedCounter()
-        let fallbackCounter = LockedCounter()
-        let controller = StreamController(streamID: 1, maxPayloadSize: 1200)
-
-        await controller.setCallbacks(
-            onKeyframeNeeded: {
-                keyframeCounter.increment()
-            },
-            onResizeEvent: nil,
-            onResizeStateChanged: nil,
-            onFrameDecoded: nil,
-            onFirstFramePresented: nil,
-            onAdaptiveFallbackNeeded: {
-                fallbackCounter.increment()
-            }
-        )
-
-        for _ in 0 ..< 12 {
-            await controller.recordQueueDrop()
-        }
-        await controller.requestKeyframeRecovery(reason: .manualRecovery)
-        try await Task.sleep(for: .milliseconds(550))
-        await controller.requestKeyframeRecovery(reason: .manualRecovery)
-        try await Task.sleep(for: .milliseconds(100))
-
-        #expect(keyframeCounter.value == 2)
-        #expect(fallbackCounter.value == 1)
-
-        await controller.stop()
-    }
-
     @Test("Backpressure threshold does not request keyframe recovery")
     func backpressureDoesNotRequestKeyframes() async throws {
         let keyframeCounter = LockedCounter()
@@ -356,34 +322,6 @@ struct StreamControllerRecoveryTests {
         await controller.maybeLogDecodeBackpressure(queueDepth: 6)
         try await Task.sleep(for: .milliseconds(150))
         #expect(keyframeCounter.value == 0)
-
-        await controller.stop()
-    }
-
-    @Test("Decode threshold storms trigger adaptive fallback without queue-drop threshold")
-    func decodeThresholdStormTriggersAdaptiveFallback() async throws {
-        let fallbackCounter = LockedCounter()
-        let controller = StreamController(streamID: 3, maxPayloadSize: 1200)
-
-        await controller.setCallbacks(
-            onKeyframeNeeded: nil,
-            onResizeEvent: nil,
-            onResizeStateChanged: nil,
-            onFrameDecoded: nil,
-            onFirstFramePresented: nil,
-            onAdaptiveFallbackNeeded: {
-                fallbackCounter.increment()
-            }
-        )
-
-        await controller.recordDecodeThresholdEvent()
-        try await Task.sleep(for: .milliseconds(50))
-        await controller.recordDecodeThresholdEvent()
-        try await waitUntil("decode threshold fallback trigger", timeout: .seconds(5)) {
-            fallbackCounter.value == 1
-        }
-
-        #expect(fallbackCounter.value == 1)
 
         await controller.stop()
     }
@@ -972,8 +910,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFramePresented: nil,
-            onAdaptiveFallbackNeeded: nil
+            onFirstFramePresented: nil
         )
 
         let pixelBuffer = makePixelBuffer()

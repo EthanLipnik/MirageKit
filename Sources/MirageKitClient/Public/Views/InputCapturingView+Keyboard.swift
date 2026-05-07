@@ -48,6 +48,44 @@ extension InputCapturingView {
         modifiers.contains(.command) || modifiers.contains(.control)
     }
 
+    nonisolated static func shouldClaimGCForwardKey(
+        macKeyCode: UInt16,
+        modifiers: MirageModifierFlags
+    ) -> Bool {
+        if shouldClaimGCForwardKey(modifiers: modifiers) {
+            return true
+        }
+        return modifiers.contains(.option) && macKeyCode == 0x31
+    }
+
+    nonisolated static func shouldRecoverFirstResponderForGCShortcutModifiers(
+        modifiers: MirageModifierFlags
+    ) -> Bool {
+        shouldClaimGCForwardKey(modifiers: modifiers)
+    }
+
+    nonisolated static func shouldRecoverFirstResponderForGCForwardKey(
+        isPressed: Bool,
+        modifiers: MirageModifierFlags
+    ) -> Bool {
+        isPressed && shouldRecoverFirstResponderForGCShortcutModifiers(modifiers: modifiers)
+    }
+
+    nonisolated static func shouldRecoverFirstResponderForGCKey(
+        isPressed: Bool,
+        macKeyCode: UInt16,
+        modifiers: MirageModifierFlags,
+        hasAction: Bool,
+        hasClientShortcut: Bool,
+        hasPassthroughShortcut: Bool
+    ) -> Bool {
+        guard isPressed else { return false }
+        if hasAction || hasClientShortcut || hasPassthroughShortcut {
+            return true
+        }
+        return shouldClaimGCForwardKey(macKeyCode: macKeyCode, modifiers: modifiers)
+    }
+
     private func gcKeyboardKeyEvent(
         hidUsage: UIKeyboardHIDUsage,
         modifiers: MirageModifierFlags
@@ -127,13 +165,49 @@ extension InputCapturingView {
             }
 
         case .forwardKey:
-            guard Self.shouldClaimGCForwardKey(modifiers: eventModifiers) else {
+            guard Self.shouldClaimGCForwardKey(macKeyCode: macKeyCode, modifiers: eventModifiers) else {
                 return
             }
             gcClaimedKeyCodes.insert(keyCode)
             hideCursorForTypingUntilPointerMovement()
             onInputEvent?(.keyDown(gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: eventModifiers)))
         }
+    }
+
+    func recoverFirstResponderForGCKeyIfNeeded(keyCode: GCKeyCode, isPressed: Bool) -> Bool {
+        guard !isFirstResponder else { return true }
+        guard window?.windowScene?.activationState == .foregroundActive else { return false }
+        guard refreshModifierStateFromHardware() else { return false }
+        guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return false }
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let eventModifiers = keyboardModifiers
+        guard Self.shouldRecoverFirstResponderForGCKey(
+            isPressed: isPressed,
+            macKeyCode: macKeyCode,
+            modifiers: eventModifiers,
+            hasAction: matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) != nil,
+            hasClientShortcut: clientShortcut(keyCode: macKeyCode, modifiers: eventModifiers) != nil,
+            hasPassthroughShortcut: MirageInterceptedShortcutPolicy.shortcut(
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            ) != nil
+        ) else {
+            return false
+        }
+        guard responderRecoveryTarget() == .captureView else { return false }
+        return attemptResponderRecovery(for: .captureView)
+    }
+
+    func recoverFirstResponderForGCShortcutModifierIfNeeded() -> Bool {
+        guard !isFirstResponder else { return true }
+        guard window?.windowScene?.activationState == .foregroundActive else { return false }
+        guard Self.shouldRecoverFirstResponderForGCShortcutModifiers(
+            modifiers: keyboardModifiers
+        ) else {
+            return false
+        }
+        guard responderRecoveryTarget() == .captureView else { return false }
+        return attemptResponderRecovery(for: .captureView)
     }
     #endif
 
@@ -887,6 +961,15 @@ extension InputCapturingView {
         updateModifierRefreshTimer()
     }
 
+    private func performResponderShortcutAction(_ action: Selector) {
+        guard let shortcut = editActionShortcut(for: action) else { return }
+        if let clientShortcut = clientShortcut(for: shortcut) {
+            performClientShortcut(clientShortcut, source: .responderAction)
+            return
+        }
+        performPassthroughShortcut(shortcut, source: .responderAction)
+    }
+
     /// Override keyCommands to claim iPadOS system shortcuts that would otherwise be
     /// handled locally instead of reaching the remote host.
     override public var keyCommands: [UIKeyCommand]? {
@@ -991,50 +1074,49 @@ extension InputCapturingView {
     }
 
     override public func toggleBoldface(_: Any?) {
-        guard let shortcut = editActionShortcut(for: #selector(toggleBoldface(_:))) else { return }
-        if let clientShortcut = clientShortcut(for: shortcut) {
-            performClientShortcut(clientShortcut, source: .responderAction)
-            return
-        }
-        performPassthroughShortcut(shortcut, source: .responderAction)
+        performResponderShortcutAction(#selector(toggleBoldface(_:)))
     }
 
     @objc
     public func undo(_: Any?) {
-        guard let shortcut = editActionShortcut(for: #selector(undo(_:))) else { return }
-        if let clientShortcut = clientShortcut(for: shortcut) {
-            performClientShortcut(clientShortcut, source: .responderAction)
-            return
-        }
-        performPassthroughShortcut(shortcut, source: .responderAction)
+        performResponderShortcutAction(#selector(undo(_:)))
     }
 
     @objc
     public func redo(_: Any?) {
-        guard let shortcut = editActionShortcut(for: #selector(redo(_:))) else { return }
-        if let clientShortcut = clientShortcut(for: shortcut) {
-            performClientShortcut(clientShortcut, source: .responderAction)
-            return
-        }
-        performPassthroughShortcut(shortcut, source: .responderAction)
+        performResponderShortcutAction(#selector(redo(_:)))
     }
 
     override public func toggleItalics(_: Any?) {
-        guard let shortcut = editActionShortcut(for: #selector(toggleItalics(_:))) else { return }
-        if let clientShortcut = clientShortcut(for: shortcut) {
-            performClientShortcut(clientShortcut, source: .responderAction)
-            return
-        }
-        performPassthroughShortcut(shortcut, source: .responderAction)
+        performResponderShortcutAction(#selector(toggleItalics(_:)))
     }
 
     override public func toggleUnderline(_: Any?) {
-        guard let shortcut = editActionShortcut(for: #selector(toggleUnderline(_:))) else { return }
-        if let clientShortcut = clientShortcut(for: shortcut) {
-            performClientShortcut(clientShortcut, source: .responderAction)
-            return
-        }
-        performPassthroughShortcut(shortcut, source: .responderAction)
+        performResponderShortcutAction(#selector(toggleUnderline(_:)))
+    }
+
+    override public func find(_: Any?) {
+        performResponderShortcutAction(#selector(find(_:)))
+    }
+
+    override public func findAndReplace(_: Any?) {
+        performResponderShortcutAction(#selector(findAndReplace(_:)))
+    }
+
+    override public func findNext(_: Any?) {
+        performResponderShortcutAction(#selector(findNext(_:)))
+    }
+
+    override public func findPrevious(_: Any?) {
+        performResponderShortcutAction(#selector(findPrevious(_:)))
+    }
+
+    override public func selectAll(_: Any?) {
+        performResponderShortcutAction(#selector(selectAll(_:)))
+    }
+
+    override public func printContent(_: Any?) {
+        performResponderShortcutAction(#selector(printContent(_:)))
     }
 
     /// Convert a character to macOS virtual key code

@@ -111,29 +111,12 @@ extension StreamContext {
             return
         }
         if frame.info.isIdleFrame {
-            Task(priority: .userInitiated) { await self.enqueueIdleRecoveryFrameIfNeeded(frame) }
+            Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
             return
         }
         Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
         if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
-        }
-    }
-
-    func enqueueIdleRecoveryFrameIfNeeded(_ frame: CapturedFrame) {
-        recordCaptureIngress(frame)
-        guard shouldEncodeFrames,
-              idleRecoveryFrameAdmissionPending,
-              !idleRecoveryFrameQueued,
-              pendingKeyframeReason != nil else {
-            return
-        }
-
-        idleRecoveryFrameQueued = true
-        if frameInbox.enqueue(frame) {
-            Task(priority: .userInitiated) { await self.processPendingFrames() }
-        } else {
-            idleRecoveryFrameQueued = false
         }
     }
 
@@ -196,8 +179,6 @@ extension StreamContext {
         suppressEncodedNonKeyframesUntilKeyframe = false
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
-        idleRecoveryFrameAdmissionPending = false
-        idleRecoveryFrameQueued = false
         lastCaptureStarvationRestartTime = 0
         backpressureActive = false
         backpressureActiveSnapshot = false
@@ -422,17 +403,9 @@ extension StreamContext {
 
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
-                let admitsRecoveryIdleFrame = forceKeyframe && idleRecoveryFrameQueued
-                if !admitsRecoveryIdleFrame {
-                    if idleRecoveryFrameQueued { idleRecoveryFrameQueued = false }
-                    idleSkippedCount += 1
-                    await logStreamStatsIfNeeded()
-                    continue
-                }
-                idleRecoveryFrameQueued = false
-                idleRecoveryFrameAdmissionPending = false
-                syntheticFrameCount += 1
-                syntheticIntervalCount += 1
+                idleSkippedCount += 1
+                await logStreamStatsIfNeeded()
+                continue
             }
 
             setContentRect(resolvedOutgoingContentRect(for: frame))
@@ -1252,10 +1225,6 @@ extension StreamContext {
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
     }
 
-    private var usesAppOwnedBitrateAdaptation: Bool {
-        bitrateAdaptationCeiling != nil
-    }
-
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
         guard runtimeQualityAdjustmentEnabled else { return }
@@ -1272,54 +1241,10 @@ extension StreamContext {
 
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
-        let packetBudget = await packetSender?.packetBudgetSnapshot(now: now)
-        let packetTelemetry = await packetSender?.telemetrySnapshot()
-        let packetUtilization = packetBudget?.utilization ?? 0
-        let sendStartDelayAverageMs = packetTelemetry?.sendStartDelayAverageMs ?? 0
-        let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
-        let packetPacerAverageSleepMs = packetTelemetry?.packetPacerSleepAverageMs ?? 0
-        let transportDropCount = packetTelemetry?.stalePacketDrops ?? 0
-        let senderLocalDeadlineDrops = packetTelemetry?.senderLocalDeadlineDrops ?? 0
-        let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation
-        let sendStartStressMs = max(1.0, frameBudgetMs * (adaptiveTransportRelief ? 0.08 : 0.12))
-        let sendStartSevereMs = max(4.0, frameBudgetMs * (adaptiveTransportRelief ? 0.30 : 0.36))
-        let sendCompletionStressMs = max(8.0, frameBudgetMs * (adaptiveTransportRelief ? 0.55 : 0.72))
-        let sendCompletionSevereMs = max(16.0, frameBudgetMs * (adaptiveTransportRelief ? 1.05 : 1.45))
-        let transportAssessment = MirageTransportPressure.assess(
-            sample: MirageTransportPressureSample(
-                queueBytes: queueBytes,
-                queueStressBytes: queuePressureBytes + 1,
-                queueSevereBytes: maxQueuedBytes + 1,
-                packetBudgetUtilization: packetBudget?.utilization,
-                packetBudgetStressThreshold: packetBudgetDropUtilizationThreshold,
-                packetBudgetSevereThreshold: packetBudgetHighPressureUtilizationThreshold,
-                packetPacerAverageSleepMs: packetPacerAverageSleepMs,
-                packetPacerStressThresholdMs: packetPacerStressThresholdMs,
-                packetPacerSevereThresholdMs: packetPacerHighPressureThresholdMs,
-                sendStartDelayAverageMs: sendStartDelayAverageMs,
-                sendStartDelayStressThresholdMs: sendStartStressMs,
-                sendStartDelaySevereThresholdMs: sendStartSevereMs,
-                sendCompletionAverageMs: sendCompletionAverageMs,
-                sendCompletionStressThresholdMs: sendCompletionStressMs,
-                sendCompletionSevereThresholdMs: sendCompletionSevereMs,
-                transportDropCount: transportDropCount,
-                transportDropSevereCount: transportDropHighPressureThreshold
-            )
-        )
-        let senderDelayOverrun = sendStartDelayAverageMs > sendStartStressMs ||
-            sendCompletionAverageMs > sendCompletionStressMs ||
-            packetPacerAverageSleepMs > packetPacerStressThresholdMs
-        if transportDropCount > 0 || senderLocalDeadlineDrops > 0 || senderDelayOverrun {
-            qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
-        }
-        let packetWithinRaiseBudget = (packetUtilization > 0
-            ? packetUtilization < packetBudgetRaiseUtilizationThreshold
-            : true) && now >= qualityRaiseSuppressionUntil
+        let allowsRaise = now >= qualityRaiseSuppressionUntil
         let allowEncodeDrivenQualityRelief = true
-        let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = qualityDropThreshold
         let baseDropStep = qualityDropStep
-        let baseHighPressureDropStep = qualityDropStepHighPressure
 
         let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
             state: MirageRuntimeQualityAdjustmentState(
@@ -1330,15 +1255,11 @@ extension StreamContext {
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
             encodeOverBudget: encodeOverBudget,
-            packetWithinRaiseBudget: packetWithinRaiseBudget,
-            transportAssessment: transportAssessment,
+            allowsRaise: allowsRaise,
             allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
-            bitrateConstrained: bitrateConstrained,
-            adaptiveTransportRelief: adaptiveTransportRelief,
             qualityDropThreshold: baseDropThreshold,
             qualityRaiseThreshold: qualityRaiseThreshold,
             qualityDropStep: baseDropStep,
-            qualityDropStepHighPressure: baseHighPressureDropStep,
             qualityRaiseStep: qualityRaiseStep
         )
 
@@ -1358,13 +1279,8 @@ extension StreamContext {
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
             let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            let packetUtilizationText: String = if let packetBudget {
-                packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
-            } else {
-                "n/a"
-            }
             MirageLogger.metrics(
-                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, packetUtil \(packetUtilizationText)x, reason=\(reason))"
+                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, reason=\(reason))"
             )
 
         case .raise:
@@ -1373,13 +1289,8 @@ extension StreamContext {
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
             let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            let packetUtilizationText: String = if let packetBudget {
-                packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
-            } else {
-                "n/a"
-            }
             MirageLogger.metrics(
-                "Quality up to \(qualityText) (encode \(avgText)ms, packetUtil \(packetUtilizationText)x)"
+                "Quality up to \(qualityText) (encode \(avgText)ms)"
             )
         }
     }

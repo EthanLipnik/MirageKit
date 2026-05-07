@@ -593,16 +593,14 @@ extension StreamContext {
             logStartupEvent("UDP registration confirmed")
         }
         enableStartupTransportProtection(now: now)
-        noteLossEvent(reason: "UDP registration warmup", enablePFrameFEC: true)
 
         // Configure the encoder for a keyframe BEFORE allowing frames through.
         // The await calls below suspend this actor, which would let queued
         // processPendingFrames() tasks interleave and encode a P-frame before
         // the encoder has frameNumber == 0 / forceNextKeyframe set.
-        await scheduleCoalescedRecoveryKeyframe(
+        await scheduleCoalescedStartupKeyframe(
             reason: "Startup registration confirmed",
-            resetFrameNumber: true,
-            noteLoss: true
+            resetFrameNumber: true
         )
 
         let releaseDisposition = startupFrameReleaseDisposition(

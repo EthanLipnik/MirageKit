@@ -122,6 +122,16 @@ struct MirageBootstrapNetworkDetectorTests {
         #expect(snapshot.wakeOnLANBroadcasts == ["192.168.1.255"])
     }
 
+    @Test("Wake MAC validation accepts normal formats and rejects extra text")
+    func wakeMACValidation() {
+        #expect(MirageBootstrapNetworkDetector.isValidWakeMACAddress("AA:BB:CC:DD:EE:FF"))
+        #expect(MirageBootstrapNetworkDetector.isValidWakeMACAddress("AA-BB-CC-DD-EE-FF"))
+        #expect(MirageBootstrapNetworkDetector.isValidWakeMACAddress("aabb.ccdd.eeff"))
+        #expect(MirageBootstrapNetworkDetector.isValidWakeMACAddress("AABBCCDDEEFF"))
+        #expect(!MirageBootstrapNetworkDetector.isValidWakeMACAddress("Wake MAC AA:BB:CC:DD:EE:FF"))
+        #expect(!MirageBootstrapNetworkDetector.isValidWakeMACAddress("AA:BB:CC:DD:EE:FG"))
+    }
+
     private func interface(
         name: String,
         mac: String,

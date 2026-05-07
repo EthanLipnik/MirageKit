@@ -34,5 +34,83 @@ extension AppAtlasMediaCoordinator {
         }
         return clamped
     }
+
+    nonisolated static func auxiliaryOverlayDestinationRect(
+        parentFrame: CGRect,
+        parentSourceRect: CGRect,
+        auxiliaryFrame: CGRect
+    ) -> CGRect {
+        let parentBounds = parentSourceRect.standardized.integral
+        guard isFiniteNonEmptyRect(parentFrame),
+              isFiniteNonEmptyRect(parentBounds),
+              isFiniteNonEmptyRect(auxiliaryFrame) else {
+            return .zero
+        }
+
+        let scaleX = parentBounds.width / parentFrame.width
+        let scaleY = parentBounds.height / parentFrame.height
+        guard scaleX.isFinite,
+              scaleY.isFinite,
+              scaleX > 0,
+              scaleY > 0 else {
+            return .zero
+        }
+
+        let proposedRect = CGRect(
+            x: parentBounds.minX + ((auxiliaryFrame.minX - parentFrame.minX) * scaleX),
+            y: parentBounds.minY + ((auxiliaryFrame.minY - parentFrame.minY) * scaleY),
+            width: auxiliaryFrame.width * scaleX,
+            height: auxiliaryFrame.height * scaleY
+        ).integral
+        return clampedOverlayRect(proposedRect, inside: parentBounds)
+    }
+
+    nonisolated static func normalizedOverlayInputRect(
+        destinationRect: CGRect,
+        parentSourceRect: CGRect
+    ) -> CGRect {
+        let parentBounds = parentSourceRect.standardized.integral
+        let destination = destinationRect.standardized
+        guard isFiniteNonEmptyRect(parentBounds),
+              isFiniteNonEmptyRect(destination) else {
+            return .zero
+        }
+        return CGRect(
+            x: (destination.minX - parentBounds.minX) / parentBounds.width,
+            y: (destination.minY - parentBounds.minY) / parentBounds.height,
+            width: destination.width / parentBounds.width,
+            height: destination.height / parentBounds.height
+        )
+    }
+
+    nonisolated static func isFiniteNonEmptyRect(_ rect: CGRect) -> Bool {
+        rect.origin.x.isFinite &&
+            rect.origin.y.isFinite &&
+            rect.width.isFinite &&
+            rect.height.isFinite &&
+            rect.width > 0 &&
+            rect.height > 0
+    }
+
+    private nonisolated static func clampedOverlayRect(_ rect: CGRect, inside bounds: CGRect) -> CGRect {
+        guard isFiniteNonEmptyRect(rect),
+              isFiniteNonEmptyRect(bounds) else {
+            return .zero
+        }
+
+        var size = rect.size
+        if size.width > bounds.width || size.height > bounds.height {
+            let scale = min(bounds.width / size.width, bounds.height / size.height)
+            size = CGSize(
+                width: max(1, (size.width * scale).rounded(.down)),
+                height: max(1, (size.height * scale).rounded(.down))
+            )
+        }
+
+        var origin = rect.origin
+        origin.x = min(max(origin.x, bounds.minX), bounds.maxX - size.width)
+        origin.y = min(max(origin.y, bounds.minY), bounds.maxY - size.height)
+        return CGRect(origin: origin, size: size).integral
+    }
 }
 #endif

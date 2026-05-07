@@ -56,6 +56,106 @@ struct AppStreamWindowCatalogTests {
         #expect(cluster?.sourceRect == CGRect(x: 40, y: 60, width: 940, height: 700))
     }
 
+    @Test("Small visible alerts are eligible as auxiliaries below primary size")
+    func smallVisibleAlertsAreEligibleAsAuxiliariesBelowPrimarySize() {
+        let classification = AppStreamWindowCatalog.classifyWindow(
+            role: "AXWindow",
+            subrole: "AXDialog",
+            parentWindowID: nil
+        )
+
+        #expect(classification == .auxiliary)
+        #expect(AppStreamWindowCatalog.catalogEligibility(
+            classification: classification,
+            frame: CGRect(x: 20, y: 20, width: 96, height: 72),
+            windowLayer: 8,
+            screenCaptureIsOnScreen: true,
+            metadata: WindowListMetadata(alpha: 1, isOnScreen: true, orderIndex: 0),
+            hasMatchingScreenCaptureWindow: true
+        ))
+        #expect(!AppStreamWindowCatalog.catalogEligibility(
+            classification: .primary,
+            frame: CGRect(x: 20, y: 20, width: 96, height: 72),
+            windowLayer: 0,
+            screenCaptureIsOnScreen: true,
+            metadata: WindowListMetadata(alpha: 1, isOnScreen: true, orderIndex: 0),
+            hasMatchingScreenCaptureWindow: true
+        ))
+    }
+
+    @Test("Auxiliary cataloging rejects invisible transparent and unmatched windows")
+    func auxiliaryCatalogingRejectsInvisibleTransparentAndUnmatchedWindows() {
+        let frame = CGRect(x: 0, y: 0, width: 80, height: 48)
+
+        #expect(!AppStreamWindowCatalog.catalogEligibility(
+            classification: .auxiliary,
+            frame: frame,
+            windowLayer: 12,
+            screenCaptureIsOnScreen: false,
+            metadata: WindowListMetadata(alpha: 1, isOnScreen: false, orderIndex: 0),
+            hasMatchingScreenCaptureWindow: true
+        ))
+        #expect(!AppStreamWindowCatalog.catalogEligibility(
+            classification: .auxiliary,
+            frame: frame,
+            windowLayer: 12,
+            screenCaptureIsOnScreen: true,
+            metadata: WindowListMetadata(alpha: 0.02, isOnScreen: true, orderIndex: 0),
+            hasMatchingScreenCaptureWindow: true
+        ))
+        #expect(!AppStreamWindowCatalog.catalogEligibility(
+            classification: .auxiliary,
+            frame: frame,
+            windowLayer: 12,
+            screenCaptureIsOnScreen: true,
+            metadata: WindowListMetadata(alpha: 1, isOnScreen: true, orderIndex: 0),
+            hasMatchingScreenCaptureWindow: false
+        ))
+    }
+
+    @Test("AX sheets panels and active unknowns classify as auxiliary")
+    func axSheetsPanelsAndActiveUnknownsClassifyAsAuxiliary() {
+        #expect(AppStreamWindowCatalog.classifyWindow(
+            role: "AXSheet",
+            subrole: nil,
+            parentWindowID: 100
+        ) == .auxiliary)
+        #expect(AppStreamWindowCatalog.classifyWindow(
+            role: "AXPanel",
+            subrole: "AXFloatingWindow",
+            parentWindowID: nil
+        ) == .auxiliary)
+        #expect(AppStreamWindowCatalog.classifyWindow(
+            role: "AXUnknown",
+            subrole: nil,
+            parentWindowID: nil,
+            isModal: true
+        ) == .auxiliary)
+    }
+
+    @Test("Startup selection does not allocate slots to auxiliary-only candidates")
+    func startupSelectionDoesNotAllocateSlotsToAuxiliaryOnlyCandidates() {
+        let auxiliary = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(
+                id: 201,
+                frame: CGRect(x: 40, y: 40, width: 80, height: 48)
+            ),
+            classification: .auxiliary,
+            role: "AXDialog",
+            subrole: "AXSystemDialog",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: true,
+            isModal: true
+        )
+
+        let selection = AppStreamWindowCatalog.startupCandidateSelection(from: [auxiliary])
+
+        #expect(selection.candidates.isEmpty)
+        #expect(!selection.usedFallback)
+    }
+
     private func makeCandidate(
         windowID: WindowID,
         frame: CGRect

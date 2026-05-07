@@ -63,8 +63,17 @@ extension MirageHostInputController {
     ///   - event: The input event received from the client.
     ///   - bounds: Bounds of the virtual display or mirrored desktop.
     public func handleDesktopInputEvent(_ event: MirageInputEvent, bounds: CGRect) {
+        handleDesktopInputEvent(event, bounds: bounds, deferredInjectionValidator: nil)
+    }
+
+    func handleDesktopInputEvent(
+        _ event: MirageInputEvent,
+        bounds: CGRect,
+        deferredInjectionValidator: (@Sendable () -> Bool)?
+    ) {
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
+            guard shouldProcessDeferredInput(deferredInjectionValidator) else { return }
 
             switch event {
             case let .mouseDown(e):

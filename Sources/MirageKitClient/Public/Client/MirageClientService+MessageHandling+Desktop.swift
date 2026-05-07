@@ -80,7 +80,7 @@ extension MirageClientService {
             postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
             sessionStore.clearPostResizeTransition(for: streamID)
             desktopResizeCoordinator.finishTransition()
-            await dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
+            scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
             return true
         }
 

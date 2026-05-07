@@ -12,6 +12,12 @@ import MirageKit
 #if os(macOS)
 import AppKit
 
+struct WindowListMetadata: Sendable {
+    let alpha: CGFloat
+    let isOnScreen: Bool
+    let orderIndex: Int
+}
+
 /// Fetches the current window frame from CGWindowList for a specific window ID
 func currentWindowFrame(for windowID: WindowID) -> CGRect? {
     if let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
@@ -38,15 +44,19 @@ func currentWindowFrame(for windowID: WindowID) -> CGRect? {
 }
 
 /// Fetches extended window metadata from CGWindowList for visibility filtering
-func fetchWindowMetadata() -> [CGWindowID: (alpha: CGFloat, isOnScreen: Bool)] {
+func fetchWindowMetadata() -> [CGWindowID: WindowListMetadata] {
     guard let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return [:] }
 
-    var metadata: [CGWindowID: (alpha: CGFloat, isOnScreen: Bool)] = [:]
-    for info in windowList {
+    var metadata: [CGWindowID: WindowListMetadata] = [:]
+    for (orderIndex, info) in windowList.enumerated() {
         guard let windowID = info[kCGWindowNumber as String] as? Int else { continue }
         let alpha = (info[kCGWindowAlpha as String] as? CGFloat) ?? 1.0
         let isOnScreen = (info[kCGWindowIsOnscreen as String] as? Bool) ?? false
-        metadata[CGWindowID(windowID)] = (alpha, isOnScreen)
+        metadata[CGWindowID(windowID)] = WindowListMetadata(
+            alpha: alpha,
+            isOnScreen: isOnScreen,
+            orderIndex: orderIndex
+        )
     }
     return metadata
 }
@@ -63,7 +73,7 @@ func framesAreNearlyIdentical(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 5) 
 /// Native macOS tabs share the exact same frame since only one tab is visible at a time
 func detectAndCollapseTabGroups(
     _ windows: [MirageWindow],
-    metadata: [CGWindowID: (alpha: CGFloat, isOnScreen: Bool)]
+    metadata: [CGWindowID: WindowListMetadata]
 )
 -> [MirageWindow] {
     // Group windows by application

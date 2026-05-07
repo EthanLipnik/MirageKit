@@ -27,41 +27,10 @@ extension StreamContext {
         if !latencyBurstActive {
             latencyBurstActive = true
             latencyBurstDrainsNewestFrames = true
-            preLatencyBurstCaptureQueueDepthOverride = encoderConfig.captureQueueDepth
-            latencyBurstCaptureQueueDepthOverride = latencyBurstCaptureQueueDepth
-
-            do {
-                try await updateLatencyBurstCaptureQueueDepthOverride(
-                    latencyBurstCaptureQueueDepth,
-                    reason: reason
-                )
-            } catch {
-                MirageLogger.error(
-                    .stream,
-                    error: error,
-                    message: "Failed to apply latency burst capture queue override: "
-                )
-            }
         }
 
-        await packetSender?.resetQueue(reason: "\(reason) queue reset")
-        clearBackpressureState(log: false)
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
-
-        if queueKeyframe(
-            reason: "Latency burst recovery keyframe",
-            checkInFlight: false,
-            urgent: true
-        ) {
-            noteLossEvent(reason: "latency burst", enablePFrameFEC: true)
-            markKeyframeRequestIssued()
-            scheduleProcessingIfNeeded()
-        }
-
-        let queueDepthText = latencyBurstCaptureQueueDepthOverride.map(String.init) ?? "default"
         MirageLogger.metrics(
-            "Latency burst entered for stream \(streamID): reason=\(reason), queueDepth=\(queueDepthText), bufferedClears=\(clearedBacklog)"
+            "Latency burst entered for stream \(streamID): reason=\(reason), queueDepth=unchanged, bufferedClears=\(clearedBacklog)"
         )
     }
 
@@ -72,17 +41,19 @@ extension StreamContext {
         latencyBurstDrainsNewestFrames = false
 
         let restoredQueueDepth = preLatencyBurstCaptureQueueDepthOverride
-        do {
-            try await updateLatencyBurstCaptureQueueDepthOverride(
-                restoredQueueDepth,
-                reason: "\(reason) restore"
-            )
-        } catch {
-            MirageLogger.error(
-                .stream,
-                error: error,
-                message: "Failed to restore latency burst capture queue override: "
-            )
+        if latencyBurstCaptureQueueDepthOverride != nil || restoredQueueDepth != nil {
+            do {
+                try await updateLatencyBurstCaptureQueueDepthOverride(
+                    restoredQueueDepth,
+                    reason: "\(reason) restore"
+                )
+            } catch {
+                MirageLogger.error(
+                    .stream,
+                    error: error,
+                    message: "Failed to restore latency burst capture queue override: "
+                )
+            }
         }
 
         preLatencyBurstCaptureQueueDepthOverride = nil

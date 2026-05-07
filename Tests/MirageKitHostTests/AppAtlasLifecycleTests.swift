@@ -36,6 +36,27 @@ struct AppAtlasLifecycleTests {
         #expect(sessions.map(\.id) == [11, 12])
     }
 
+    @Test("Auxiliary parent association prefers overlap then nearest center")
+    func auxiliaryParentAssociationPrefersOverlapThenNearestCenter() {
+        let streamID = MirageHostService.bestAuxiliaryParentStream(
+            auxiliaryFrame: CGRect(x: 460, y: 120, width: 120, height: 80),
+            visibleParents: [
+                (streamID: 21, frame: CGRect(x: 0, y: 0, width: 400, height: 400)),
+                (streamID: 22, frame: CGRect(x: 500, y: 0, width: 400, height: 400)),
+            ]
+        )
+        let nearestStreamID = MirageHostService.bestAuxiliaryParentStream(
+            auxiliaryFrame: CGRect(x: 420, y: 120, width: 40, height: 80),
+            visibleParents: [
+                (streamID: 31, frame: CGRect(x: 0, y: 0, width: 400, height: 400)),
+                (streamID: 32, frame: CGRect(x: 500, y: 0, width: 400, height: 400)),
+            ]
+        )
+
+        #expect(streamID == 22)
+        #expect(nearestStreamID == 31)
+    }
+
     private func makeClient(id: UUID, name: String) -> MirageConnectedClient {
         MirageConnectedClient(
             id: id,

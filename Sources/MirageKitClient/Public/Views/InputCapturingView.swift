@@ -1159,7 +1159,8 @@ public class InputCapturingView: UIView {
 
     func responderRecoveryTarget() -> InputCapturingResponderTarget {
         InputCapturingResponderRecoveryPolicy.target(
-            softwareKeyboardVisible: softwareKeyboardVisible
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            hardwareKeyboardPresent: hardwareKeyboardPresent
         )
     }
 
@@ -2776,8 +2777,9 @@ private final class HardwareKeyboardCoordinator {
 
     private func handleModifierKeyChange() {
         for view in views.allObjects {
-            guard view.window?.isKeyWindow == true, view.isFirstResponder else { continue }
+            guard view.window?.isKeyWindow == true else { continue }
             guard view.refreshModifierStateFromHardware() else { continue }
+            guard view.recoverFirstResponderForGCShortcutModifierIfNeeded() else { continue }
 
             if view.heldModifierKeys.isEmpty { view.stopModifierRefresh() } else {
                 view.startModifierRefreshIfNeeded()
@@ -2787,7 +2789,10 @@ private final class HardwareKeyboardCoordinator {
 
     private func handleNonModifierKeyChange(keyCode: GCKeyCode, isPressed: Bool) {
         for view in views.allObjects {
-            guard view.window?.isKeyWindow == true, view.isFirstResponder else { continue }
+            guard view.window?.isKeyWindow == true else { continue }
+            guard view.recoverFirstResponderForGCKeyIfNeeded(keyCode: keyCode, isPressed: isPressed) else {
+                continue
+            }
             view.handleGCKeyEvent(keyCode: keyCode, isPressed: isPressed)
         }
     }

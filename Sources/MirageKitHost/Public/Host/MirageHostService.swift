@@ -1525,6 +1525,8 @@ public final class MirageHostService {
     struct VirtualDisplaySetupGuardState {
         let token: UUID
         let periodicTask: Task<Void, Never>
+        /// Cursor point captured before display mirroring mutates display bounds.
+        let cursorAnchorPoint: CGPoint?
     }
 
     func resolvedPrimaryPhysicalDisplayVisibleBounds() -> CGRect? {
@@ -1546,18 +1548,52 @@ public final class MirageHostService {
         return visibleBounds
     }
 
-    func centerCursorOnPrimaryPhysicalDisplay(reason: String) {
-        guard let visibleBounds = resolvedPrimaryPhysicalDisplayVisibleBounds() else { return }
-        let point = CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
-        CGWarpMouseCursorPosition(point)
-        MirageLogger.host(
-            "Virtual display setup cursor centered reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
-        )
+    nonisolated static func resolvedVirtualDisplaySetupCursorPoint(
+        cursorAnchorPoint: CGPoint?,
+        visibleBounds: CGRect?
+    )
+    -> CGPoint? {
+        if let cursorAnchorPoint { return cursorAnchorPoint }
+        guard let visibleBounds,
+              visibleBounds.width > 0,
+              visibleBounds.height > 0 else {
+            return nil
+        }
+        return CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
     }
 
-    func performVirtualDisplaySetupWakeAndCenter(reason: String) {
+    @discardableResult
+    func centerCursorOnPrimaryPhysicalDisplay(
+        reason: String,
+        cursorAnchorPoint: CGPoint? = nil
+    )
+    -> CGPoint? {
+        let visibleBounds = cursorAnchorPoint == nil ? resolvedPrimaryPhysicalDisplayVisibleBounds() : nil
+        guard let point = Self.resolvedVirtualDisplaySetupCursorPoint(
+            cursorAnchorPoint: cursorAnchorPoint,
+            visibleBounds: visibleBounds
+        ) else {
+            return nil
+        }
+        let source = cursorAnchorPoint == nil ? "live" : "anchor"
+        CGWarpMouseCursorPosition(point)
+        MirageLogger.host(
+            "Virtual display setup cursor centered reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded())) source=\(source)"
+        )
+        return point
+    }
+
+    @discardableResult
+    func performVirtualDisplaySetupWakeAndCenter(
+        reason: String,
+        cursorAnchorPoint: CGPoint? = nil
+    )
+    -> CGPoint? {
         PowerAssertionManager.wakeDisplay()
-        centerCursorOnPrimaryPhysicalDisplay(reason: reason)
+        return centerCursorOnPrimaryPhysicalDisplay(
+            reason: reason,
+            cursorAnchorPoint: cursorAnchorPoint
+        )
     }
 
     func beginVirtualDisplaySetupGuard(reason: String) async -> UUID {
@@ -1566,7 +1602,7 @@ public final class MirageHostService {
         }
 
         await PowerAssertionManager.shared.enable()
-        performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):begin")
+        let cursorAnchorPoint = performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):begin")
 
         let token = UUID()
         let periodicTask = Task { @MainActor [weak self] in
@@ -1577,13 +1613,18 @@ public final class MirageHostService {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                self?.performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):keepalive")
+                guard let self else { return }
+                self.performVirtualDisplaySetupWakeAndCenter(
+                    reason: "\(reason):keepalive",
+                    cursorAnchorPoint: self.activeVirtualDisplaySetupGuard?.cursorAnchorPoint
+                )
             }
         }
 
         activeVirtualDisplaySetupGuard = VirtualDisplaySetupGuardState(
             token: token,
-            periodicTask: periodicTask
+            periodicTask: periodicTask,
+            cursorAnchorPoint: cursorAnchorPoint
         )
         MirageLogger.host("Virtual display setup guard started reason=\(reason) token=\(token.uuidString)")
         return token
@@ -1599,12 +1640,16 @@ public final class MirageHostService {
             return
         }
 
+        let cursorAnchorPoint = activeGuard.cursorAnchorPoint
         activeGuard.periodicTask.cancel()
         activeVirtualDisplaySetupGuard = nil
-        performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):settled")
+        performVirtualDisplaySetupWakeAndCenter(
+            reason: "\(reason):settled",
+            cursorAnchorPoint: cursorAnchorPoint
+        )
         MirageLogger.host("Virtual display setup guard completed reason=\(reason) token=\(token.uuidString)")
 
-        Task { @MainActor [weak self] in
+        Task { @MainActor [weak self, cursorAnchorPoint] in
             do {
                 try await Task.sleep(for: .milliseconds(250))
             } catch {
@@ -1613,7 +1658,10 @@ public final class MirageHostService {
             }
 
             if self?.activeVirtualDisplaySetupGuard == nil {
-                self?.performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):delayed")
+                self?.performVirtualDisplaySetupWakeAndCenter(
+                    reason: "\(reason):delayed",
+                    cursorAnchorPoint: cursorAnchorPoint
+                )
             }
             await PowerAssertionManager.shared.disable()
         }

@@ -80,10 +80,29 @@ actor AppAtlasMediaCoordinator {
         let streamID: StreamID
         let windowID: WindowID
         var title: String?
+        var screenFrame: CGRect
         var pointSize: CGSize
         var pixelSize: CGSize
         var sourceRect: CGRect
         var isResizable: Bool
+    }
+
+    private struct AuxiliaryOverlay: Sendable {
+        let windowID: WindowID
+        var parentStreamID: StreamID
+        var parentWindowID: WindowID
+        var window: MirageWindow
+        var isFocused: Bool
+        var isMain: Bool
+        var isModal: Bool
+        var windowLayer: Int
+        var windowListOrder: Int
+        var destinationRect: CGRect
+        var normalizedInputRect: CGRect
+
+        var receivesKeyboardFocus: Bool {
+            isFocused || isMain || isModal
+        }
     }
 
     let clientID: UUID
@@ -97,13 +116,18 @@ actor AppAtlasMediaCoordinator {
     private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
     private let onSendError: @Sendable (Error) -> Void
     private let sendMediaUpdate: @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
+    private let publishOverlayRegions: @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
 
     private var frameSink: MirageCustomStreamFrameSink?
     private var startupAttemptID: UUID?
     private var capturesByWindowID: [WindowID: AppAtlasWindowCaptureContext] = [:]
+    private var auxiliaryCapturesByWindowID: [WindowID: AppAtlasWindowCaptureContext] = [:]
     private var logicalWindowsByWindowID: [WindowID: LogicalWindow] = [:]
     private var windowIDByStreamID: [StreamID: WindowID] = [:]
     private var latestFramesByWindowID: [WindowID: CapturedFrame] = [:]
+    private var latestAuxiliaryFramesByWindowID: [WindowID: CapturedFrame] = [:]
+    private var auxiliaryOverlaysByWindowID: [WindowID: AuxiliaryOverlay] = [:]
+    private var auxiliaryWindowIDsByParentWindowID: [WindowID: Set<WindowID>] = [:]
     private var compositor: AppAtlasFrameCompositor?
     private var layoutEpoch: UInt64 = 0
     private var currentLayout: AppAtlasLayout.Result?
@@ -121,7 +145,8 @@ actor AppAtlasMediaCoordinator {
         targetFrameRate: Int,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: @escaping @Sendable (Error) -> Void,
-        sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
+        sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void,
+        publishOverlayRegions: @escaping @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void = { _, _ in }
     ) {
         self.clientID = clientID
         self.mediaStreamID = mediaStreamID
@@ -133,6 +158,7 @@ actor AppAtlasMediaCoordinator {
         self.sendPacket = sendPacket
         self.onSendError = onSendError
         self.sendMediaUpdate = sendMediaUpdate
+        self.publishOverlayRegions = publishOverlayRegions
     }
 
     var isEmpty: Bool {
@@ -216,6 +242,7 @@ actor AppAtlasMediaCoordinator {
             streamID: streamID,
             windowID: windowID,
             title: window.title,
+            screenFrame: window.frame,
             pointSize: window.frame.size,
             pixelSize: pixelSize,
             sourceRect: CGRect(origin: .zero, size: pixelSize),
@@ -255,6 +282,7 @@ actor AppAtlasMediaCoordinator {
         let oldLatestFrame = oldWindowID.flatMap { latestFramesByWindowID[$0] }
         let oldCapture = oldWindowID.flatMap { capturesByWindowID.removeValue(forKey: $0) }
         if let oldWindowID {
+            await removeAuxiliaryOverlays(parentWindowID: oldWindowID, publishEmptyForStreamID: streamID)
             logicalWindowsByWindowID.removeValue(forKey: oldWindowID)
             latestFramesByWindowID.removeValue(forKey: oldWindowID)
         }
@@ -300,6 +328,7 @@ actor AppAtlasMediaCoordinator {
 
     func removeWindow(streamID: StreamID) async {
         guard let windowID = windowIDByStreamID.removeValue(forKey: streamID) else { return }
+        await removeAuxiliaryOverlays(parentWindowID: windowID, publishEmptyForStreamID: streamID)
         logicalWindowsByWindowID.removeValue(forKey: windowID)
         latestFramesByWindowID.removeValue(forKey: windowID)
         let capture = capturesByWindowID.removeValue(forKey: windowID)
@@ -316,16 +345,28 @@ actor AppAtlasMediaCoordinator {
         compositionTask?.cancel()
         compositionTask = nil
         let captures = capturesByWindowID.values
+        let auxiliaryCaptures = auxiliaryCapturesByWindowID.values
+        let logicalStreamIDs = logicalWindowsByWindowID.values.map(\.streamID)
         capturesByWindowID.removeAll()
+        auxiliaryCapturesByWindowID.removeAll()
         logicalWindowsByWindowID.removeAll()
         windowIDByStreamID.removeAll()
         latestFramesByWindowID.removeAll()
+        latestAuxiliaryFramesByWindowID.removeAll()
+        auxiliaryOverlaysByWindowID.removeAll()
+        auxiliaryWindowIDsByParentWindowID.removeAll()
         frameSink = nil
         compositor = nil
         currentLayout = nil
         currentPublicLayout = nil
         for capture in captures {
             await capture.stop()
+        }
+        for capture in auxiliaryCaptures {
+            await capture.stop()
+        }
+        for streamID in logicalStreamIDs {
+            await publishOverlayRegions(streamID, [])
         }
         await context.stop()
     }
@@ -336,6 +377,102 @@ actor AppAtlasMediaCoordinator {
 
     func atlasRegion(windowID: WindowID) -> MirageAppAtlasRegion? {
         currentPublicLayout?.region(for: windowID)
+    }
+
+    func capturedWindowIDs(streamID: StreamID) -> [WindowID] {
+        guard let windowID = windowIDByStreamID[streamID] else { return [] }
+        let auxiliaryWindowIDs = auxiliaryWindowIDsByParentWindowID[windowID] ?? []
+        var result = [windowID]
+        for auxiliaryWindowID in auxiliaryWindowIDs.sorted() where auxiliaryWindowID != windowID {
+            result.append(auxiliaryWindowID)
+        }
+        return result
+    }
+
+    func updateAuxiliaryOverlay(
+        parentStreamID: StreamID,
+        candidate: AppStreamWindowCandidate,
+        windowWrapper: SCWindowWrapper,
+        applicationWrapper: SCApplicationWrapper,
+        displayWrapper: SCDisplayWrapper
+    ) async throws {
+        guard !isStopped else { throw CancellationError() }
+        guard let parentWindowID = windowIDByStreamID[parentStreamID],
+              logicalWindowsByWindowID[parentWindowID] != nil else {
+            throw MirageError.protocolError("App-atlas parent stream \(parentStreamID) is not bound to a logical window")
+        }
+
+        let auxiliaryWindowID = WindowID(windowWrapper.window.windowID)
+        let auxiliaryApplication = MirageApplication(
+            id: applicationWrapper.application.processID,
+            bundleIdentifier: applicationWrapper.application.bundleIdentifier,
+            name: applicationWrapper.application.applicationName
+        )
+        let auxiliaryWindow = MirageWindow(
+            id: auxiliaryWindowID,
+            title: windowWrapper.window.title ?? candidate.window.title,
+            application: auxiliaryApplication,
+            frame: currentWindowFrame(for: auxiliaryWindowID) ?? windowWrapper.window.frame,
+            isOnScreen: windowWrapper.window.isOnScreen,
+            windowLayer: Int(windowWrapper.window.windowLayer)
+        )
+
+        if auxiliaryCapturesByWindowID[auxiliaryWindowID] == nil {
+            let captureContext = AppAtlasWindowCaptureContext(windowID: auxiliaryWindowID)
+            auxiliaryCapturesByWindowID[auxiliaryWindowID] = captureContext
+            do {
+                try await captureContext.startCapture(
+                    windowWrapper: windowWrapper,
+                    applicationWrapper: applicationWrapper,
+                    displayWrapper: displayWrapper,
+                    encoderConfig: encoderConfig,
+                    latencyMode: latencyMode,
+                    capturePressureProfile: capturePressureProfile,
+                    targetFrameRate: targetFrameRate,
+                    onFrame: { [weak self] frame in
+                        Task(priority: .userInitiated) {
+                            await self?.recordAuxiliaryFrame(frame, windowID: auxiliaryWindowID)
+                        }
+                    }
+                )
+            } catch {
+                auxiliaryCapturesByWindowID.removeValue(forKey: auxiliaryWindowID)
+                await captureContext.stop()
+                throw error
+            }
+        }
+
+        if let previousOverlay = auxiliaryOverlaysByWindowID[auxiliaryWindowID],
+           previousOverlay.parentWindowID != parentWindowID {
+            auxiliaryWindowIDsByParentWindowID[previousOverlay.parentWindowID]?.remove(auxiliaryWindowID)
+            if let previousParent = logicalWindowsByWindowID[previousOverlay.parentWindowID] {
+                await publishAuxiliaryOverlayRegions(parentStreamID: previousParent.streamID, parentWindowID: previousParent.windowID)
+            }
+        }
+
+        refreshParentScreenFrame(parentWindowID: parentWindowID)
+        let overlay = makeAuxiliaryOverlay(
+            parentStreamID: parentStreamID,
+            parentWindowID: parentWindowID,
+            candidate: candidate,
+            auxiliaryWindow: auxiliaryWindow
+        )
+        auxiliaryOverlaysByWindowID[auxiliaryWindowID] = overlay
+        auxiliaryWindowIDsByParentWindowID[parentWindowID, default: []].insert(auxiliaryWindowID)
+        await publishAuxiliaryOverlayRegions(parentStreamID: parentStreamID, parentWindowID: parentWindowID)
+    }
+
+    func removeAuxiliaryOverlay(windowID: WindowID) async -> StreamID? {
+        guard let overlay = auxiliaryOverlaysByWindowID.removeValue(forKey: windowID) else { return nil }
+        auxiliaryWindowIDsByParentWindowID[overlay.parentWindowID]?.remove(windowID)
+        if auxiliaryWindowIDsByParentWindowID[overlay.parentWindowID]?.isEmpty == true {
+            auxiliaryWindowIDsByParentWindowID.removeValue(forKey: overlay.parentWindowID)
+        }
+        latestAuxiliaryFramesByWindowID.removeValue(forKey: windowID)
+        let capture = auxiliaryCapturesByWindowID.removeValue(forKey: windowID)
+        await capture?.stop()
+        await publishAuxiliaryOverlayRegions(parentStreamID: overlay.parentStreamID, parentWindowID: overlay.parentWindowID)
+        return overlay.parentStreamID
     }
 
     private func recordFrame(_ frame: CapturedFrame, windowID: WindowID) async {
@@ -353,11 +490,182 @@ actor AppAtlasMediaCoordinator {
         logicalWindow.pixelSize = pixelSize
         logicalWindow.sourceRect = sourceRect
         logicalWindowsByWindowID[windowID] = logicalWindow
+        recomputeAuxiliaryOverlayGeometry(parentWindowID: windowID)
+        await publishAuxiliaryOverlayRegions(parentStreamID: logicalWindow.streamID, parentWindowID: windowID)
         do {
             try await recomputeLayoutAndNotify(reason: "capture geometry changed")
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to update app-atlas layout after capture resize: ")
         }
+    }
+
+    private func recordAuxiliaryFrame(_ frame: CapturedFrame, windowID: WindowID) async {
+        latestAuxiliaryFramesByWindowID[windowID] = frame
+    }
+
+    private func makeAuxiliaryOverlay(
+        parentStreamID: StreamID,
+        parentWindowID: WindowID,
+        candidate: AppStreamWindowCandidate,
+        auxiliaryWindow: MirageWindow
+    ) -> AuxiliaryOverlay {
+        let parent = logicalWindowsByWindowID[parentWindowID]
+        let destinationRect = parent.map { parent in
+            Self.auxiliaryOverlayDestinationRect(
+                parentFrame: parent.screenFrame,
+                parentSourceRect: parent.sourceRect,
+                auxiliaryFrame: auxiliaryWindow.frame
+            )
+        } ?? .zero
+        let normalizedInputRect = parent.map { parent in
+            Self.normalizedOverlayInputRect(
+                destinationRect: destinationRect,
+                parentSourceRect: parent.sourceRect
+            )
+        } ?? .zero
+        return AuxiliaryOverlay(
+            windowID: auxiliaryWindow.id,
+            parentStreamID: parentStreamID,
+            parentWindowID: parentWindowID,
+            window: auxiliaryWindow,
+            isFocused: candidate.isFocused,
+            isMain: candidate.isMain,
+            isModal: candidate.isModal,
+            windowLayer: auxiliaryWindow.windowLayer,
+            windowListOrder: candidate.windowListOrder,
+            destinationRect: destinationRect,
+            normalizedInputRect: normalizedInputRect
+        )
+    }
+
+    private func refreshParentScreenFrame(parentWindowID: WindowID) {
+        guard var parent = logicalWindowsByWindowID[parentWindowID],
+              let currentFrame = currentWindowFrame(for: parentWindowID),
+              currentFrame.width > 0,
+              currentFrame.height > 0 else {
+            return
+        }
+        parent.screenFrame = currentFrame
+        parent.pointSize = currentFrame.size
+        logicalWindowsByWindowID[parentWindowID] = parent
+    }
+
+    private func recomputeAuxiliaryOverlayGeometry(parentWindowID: WindowID) {
+        guard let parent = logicalWindowsByWindowID[parentWindowID],
+              let auxiliaryWindowIDs = auxiliaryWindowIDsByParentWindowID[parentWindowID] else {
+            return
+        }
+        for auxiliaryWindowID in auxiliaryWindowIDs {
+            guard var overlay = auxiliaryOverlaysByWindowID[auxiliaryWindowID] else { continue }
+            overlay.destinationRect = Self.auxiliaryOverlayDestinationRect(
+                parentFrame: parent.screenFrame,
+                parentSourceRect: parent.sourceRect,
+                auxiliaryFrame: overlay.window.frame
+            )
+            overlay.normalizedInputRect = Self.normalizedOverlayInputRect(
+                destinationRect: overlay.destinationRect,
+                parentSourceRect: parent.sourceRect
+            )
+            auxiliaryOverlaysByWindowID[auxiliaryWindowID] = overlay
+        }
+    }
+
+    private func publishAuxiliaryOverlayRegions(parentStreamID: StreamID, parentWindowID: WindowID) async {
+        let overlays = auxiliaryOverlaysForComposition(parentWindowID: parentWindowID).reversed()
+        let overlaysArray = Array(overlays)
+        let count = overlaysArray.count
+        let regions = overlaysArray.enumerated().map { index, overlay in
+            AppStreamInputOverlayRegion(
+                window: overlay.window,
+                normalizedRect: overlay.normalizedInputRect,
+                zIndex: count - index,
+                receivesKeyboardFocus: overlay.receivesKeyboardFocus
+            )
+        }
+        await publishOverlayRegions(parentStreamID, regions)
+    }
+
+    private func removeAuxiliaryOverlays(parentWindowID: WindowID, publishEmptyForStreamID streamID: StreamID) async {
+        let auxiliaryWindowIDs = auxiliaryWindowIDsByParentWindowID.removeValue(forKey: parentWindowID) ?? []
+        var capturesToStop: [AppAtlasWindowCaptureContext] = []
+        for auxiliaryWindowID in auxiliaryWindowIDs {
+            auxiliaryOverlaysByWindowID.removeValue(forKey: auxiliaryWindowID)
+            latestAuxiliaryFramesByWindowID.removeValue(forKey: auxiliaryWindowID)
+            if let capture = auxiliaryCapturesByWindowID.removeValue(forKey: auxiliaryWindowID) {
+                capturesToStop.append(capture)
+            }
+        }
+        for capture in capturesToStop {
+            await capture.stop()
+        }
+        await publishOverlayRegions(streamID, [])
+    }
+
+    private func framesByCompositingAuxiliaryOverlays(
+        using compositor: AppAtlasFrameCompositor
+    ) throws -> [WindowID: CapturedFrame] {
+        var framesByWindowID = latestFramesByWindowID
+
+        for parentWindow in logicalWindowsByWindowID.values {
+            guard let baseFrame = latestFramesByWindowID[parentWindow.windowID] else { continue }
+            let overlayFrames = auxiliaryOverlaysForComposition(parentWindowID: parentWindow.windowID).compactMap { overlay -> AppAtlasFrameCompositor.OverlayFrame? in
+                guard let frame = latestAuxiliaryFramesByWindowID[overlay.windowID] else { return nil }
+                let sourceRect = CGRect(
+                    x: 0,
+                    y: 0,
+                    width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                    height: CVPixelBufferGetHeight(frame.pixelBuffer)
+                )
+                return AppAtlasFrameCompositor.OverlayFrame(
+                    frame: frame,
+                    sourceRect: sourceRect,
+                    destinationRect: overlay.destinationRect
+                )
+            }
+            guard !overlayFrames.isEmpty else { continue }
+
+            let compositePixelBuffer = try compositor.compose(
+                baseFrame: baseFrame,
+                overlays: overlayFrames,
+                outputSize: parentWindow.pixelSize
+            )
+            let contributingFrames = [baseFrame] + overlayFrames.map(\.frame)
+            let presentationTime = contributingFrames
+                .map(\.presentationTime)
+                .max { CMTimeCompare($0, $1) < 0 } ?? baseFrame.presentationTime
+            let captureTime = contributingFrames
+                .map(\.captureTime)
+                .max() ?? baseFrame.captureTime
+            framesByWindowID[parentWindow.windowID] = CapturedFrame(
+                pixelBuffer: compositePixelBuffer,
+                presentationTime: presentationTime,
+                duration: baseFrame.duration,
+                captureTime: captureTime,
+                info: CapturedFrameInfo(
+                    contentRect: CGRect(origin: .zero, size: parentWindow.pixelSize),
+                    dirtyPercentage: 100,
+                    isIdleFrame: false
+                )
+            )
+        }
+
+        return framesByWindowID
+    }
+
+    private func auxiliaryOverlaysForComposition(parentWindowID: WindowID) -> [AuxiliaryOverlay] {
+        let auxiliaryWindowIDs = auxiliaryWindowIDsByParentWindowID[parentWindowID] ?? []
+        return auxiliaryWindowIDs
+            .compactMap { auxiliaryOverlaysByWindowID[$0] }
+            .filter { Self.isFiniteNonEmptyRect($0.destinationRect) }
+            .sorted { lhs, rhs in
+                if lhs.windowListOrder != rhs.windowListOrder {
+                    return lhs.windowListOrder > rhs.windowListOrder
+                }
+                if lhs.windowLayer != rhs.windowLayer {
+                    return lhs.windowLayer < rhs.windowLayer
+                }
+                return lhs.windowID < rhs.windowID
+            }
     }
 
     private func recomputeLayoutAndNotify(reason: String) async throws {
@@ -492,11 +800,12 @@ actor AppAtlasMediaCoordinator {
             }
             guard let compositor else { return }
             try await context.updateAppAtlasDimensionsIfNeeded(pixelSize: layout.canvasSize)
+            let framesByWindowID = try framesByCompositingAuxiliaryOverlays(using: compositor)
             let pixelBuffer = try compositor.compose(
-                framesByWindowID: latestFramesByWindowID,
+                framesByWindowID: framesByWindowID,
                 layout: layout
             )
-            let presentationTime = latestFramesByWindowID.values
+            let presentationTime = framesByWindowID.values
                 .map(\.presentationTime)
                 .max { CMTimeCompare($0, $1) < 0 } ?? CMTime(
                     seconds: CFAbsoluteTimeGetCurrent(),

@@ -124,7 +124,6 @@ struct RecoveryReasonMappingTests {
 
         #expect(await context.pendingKeyframeReason == "Desktop resize reset")
         #expect(await context.softRecoveryCount == 0)
-        #expect(await context.hardRecoveryCount == 0)
     }
 
     private func makeContext() -> StreamContext {

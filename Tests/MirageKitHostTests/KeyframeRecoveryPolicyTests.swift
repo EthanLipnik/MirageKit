@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/5/26.
 //
-//  Host keyframe recovery, FEC, and quality cap policy coverage.
+//  Host keyframe recovery, FEC, and quality policy coverage.
 //
 
 @testable import MirageKitHost
@@ -16,29 +16,26 @@ import Testing
 #if os(macOS)
 @Suite("Keyframe Recovery Policy")
 struct KeyframeRecoveryPolicyTests {
-    @Test("First two recovery requests are soft, third request escalates hard")
-    func softSoftHardEscalation() async throws {
+    @Test("Recovery keyframe requests do not escalate into host hard resets")
+    func recoveryRequestsDoNotEscalateIntoHostHardResets() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
         #expect(await context.softRecoveryCount == 1)
-        #expect(await context.hardRecoveryCount == 0)
         #expect(await context.pendingKeyframeRequiresReset == false)
         #expect(await context.pendingKeyframeRequiresFlush == false)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
         #expect(await context.softRecoveryCount == 2)
-        #expect(await context.hardRecoveryCount == 0)
         #expect(await context.pendingKeyframeRequiresReset == false)
         #expect(await context.pendingKeyframeRequiresFlush == false)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
-        #expect(await context.softRecoveryCount == 2)
-        #expect(await context.hardRecoveryCount == 1)
-        #expect(await context.pendingKeyframeRequiresReset == true)
-        #expect(await context.pendingKeyframeRequiresFlush == true)
+        #expect(await context.softRecoveryCount == 3)
+        #expect(await context.pendingKeyframeRequiresReset == false)
+        #expect(await context.pendingKeyframeRequiresFlush == false)
     }
 
     @Test("Capture-starved recovery schedules restart when no frame has arrived")
@@ -152,8 +149,8 @@ struct KeyframeRecoveryPolicyTests {
         #expect(floor < 0.1)
     }
 
-    @Test("Bitrate-constrained keyframes compress harder when queue pressure rises")
-    func keyframePressureQualityDrop() async {
+    @Test("Recovery keyframe quality does not drop under queue pressure")
+    func keyframeQualityDoesNotDropUnderQueuePressure() async {
         let context = makeContext(
             frameRate: 120,
             bitrate: 300_000_000
@@ -165,10 +162,8 @@ struct KeyframeRecoveryPolicyTests {
         let baseline = await context.keyframeQuality(for: 0)
         let maxQueuedBytes = await context.maxQueuedBytes
         let pressured = await context.keyframeQuality(for: maxQueuedBytes)
-        let floor = await context.keyframeQualityFloor
 
-        #expect(pressured < baseline)
-        #expect(pressured >= floor)
+        #expect(abs(baseline - pressured) < 0.0001)
     }
 
     @Test("Runtime-quality-disabled streams keep keyframe quality fixed under queue pressure")
@@ -189,26 +184,20 @@ struct KeyframeRecoveryPolicyTests {
         #expect(abs(baseline - pressured) < 0.0001)
     }
 
-    @Test("Soft recovery keeps P-frame FEC off until hard recovery")
-    func softRecoveryKeepsPFrameFECOffUntilHardRecovery() async throws {
+    @Test("Recovery keyframe requests do not enable loss-mode FEC")
+    func recoveryRequestsDoNotEnableLossModeFEC() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
         let softTime = CFAbsoluteTimeGetCurrent()
-        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: softTime) == 8)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: softTime) == 0)
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: softTime) == 0)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
         let secondSoftTime = CFAbsoluteTimeGetCurrent()
-        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: secondSoftTime) == 8)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: secondSoftTime) == 0)
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: secondSoftTime) == 0)
-
-        try await Task.sleep(for: .milliseconds(1100))
-        await context.requestKeyframe()
-        let hardTime = CFAbsoluteTimeGetCurrent()
-        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: hardTime) == 8)
-        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: hardTime) == 16)
     }
 
     @Test("Startup transport protection strengthens keyframe FEC")
@@ -225,6 +214,24 @@ struct KeyframeRecoveryPolicyTests {
 
         await context.disableStartupTransportProtection()
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 0)
+    }
+
+    @Test("Startup keyframe stays separate from recovery loss mode")
+    func startupKeyframeDoesNotEnterRecoveryLossMode() async {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.enableStartupTransportProtection(now: now)
+        await context.scheduleCoalescedStartupKeyframe(
+            reason: "Startup registration confirmed",
+            resetFrameNumber: true
+        )
+
+        #expect(await context.pendingKeyframeReason == "Startup registration confirmed")
+        #expect(context.lossModeDeadline == 0)
+        #expect(context.lossModePFrameFECDeadline == 0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: now) == 4)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: now) == 0)
     }
 
     @Test("Keyframe packet pacing override raises send rate while capping burst budget")

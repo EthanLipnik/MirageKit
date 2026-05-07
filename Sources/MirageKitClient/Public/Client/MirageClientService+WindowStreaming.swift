@@ -296,9 +296,6 @@ public extension MirageClientService {
                 self?.clearStartupAttempt(for: capturedStreamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(capturedStreamID)")
             },
-            onAdaptiveFallbackNeeded: { [weak self] in
-                self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)
-            },
             onStallEvent: { [weak self] in
                 guard let self else { return }
                 self.stallEvents &+= 1

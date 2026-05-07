@@ -36,103 +36,43 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .backingOff)
     }
 
-    @Test("Host degraded flags alone do not trigger backoff")
-    func hostDegradedFlagsAloneDoNotTriggerBackoff() {
+    @Test("Delay-only sender pressure suppresses probes without backoff")
+    func delayOnlySenderPressureSuppressesProbesWithoutBackoff() {
         var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.hostCurrentBitrate = 8_000_000
-        snapshot.hostRequestedTargetBitrate = 80_000_000
+        let delayedSnapshot = delayOnlySnapshot()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
 
-        let action = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 10
-        )
-
-        #expect(action == .none)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Presentation-bound samples block promotion without transport backoff")
-    func presentationBoundSamplesBlockPromotionWithoutTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = presentationBoundButTransportHealthySnapshot()
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-
-        #expect(secondAction == .none)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Decode-bound samples block promotion without transport backoff")
-    func decodeBoundSamplesBlockPromotionWithoutTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = decodeStalledButTransportHealthySnapshot()
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-
-        #expect(secondAction == .none)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Delay-only bursts do not trigger backoff but delay probing")
-    func delayOnlyBurstsDoNotTriggerBackoffButDelayProbing() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = delayOnlyBurstSnapshot()
-        let cleanSnapshot = healthySnapshot(activeQuality: 0.62)
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
+        for time in [0.0, 2.0, 4.0] {
+            let action = controller.advance(
+                snapshots: [delayedSnapshot],
+                currentBitrateBps: 20_000_000,
+                ceilingBps: 300_000_000,
+                now: time
+            )
+            #expect(action == .none)
+        }
         let firstCleanAction = controller.advance(
-            snapshots: [cleanSnapshot],
+            snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
             now: 6
         )
-        let secondCleanAction = controller.advance(
-            snapshots: [cleanSnapshot],
+        let suppressedProbeAction = controller.advance(
+            snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8
+            now: 6.5
+        )
+        let resumedProbeAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 7.1
         )
 
-        #expect(firstAction == .none)
-        #expect(secondAction == .none)
         #expect(firstCleanAction == .none)
-        #expect(secondCleanAction == .probe(targetBitrateBps: 32_000_000))
+        #expect(suppressedProbeAction == .none)
+        #expect(resumedProbeAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -159,151 +99,131 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Recent interaction defers new probes without consuming cooldown")
-    func recentInteractionDefersNewProbesWithoutConsumingCooldown() {
+    @Test("Recent interaction defers probes while allowing severe backoff")
+    func recentInteractionDefersProbesWhileAllowingSevereBackoff() {
         var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.62)
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+        let stressedSnapshot = severeTransportSnapshot()
 
         _ = controller.advance(
-            snapshots: [snapshot],
+            snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
+            ceilingBps: 80_000_000,
             now: 0,
             allowsNewProbe: false
         )
-        let deferredAction = controller.advance(
-            snapshots: [snapshot],
+        let deferredProbe = controller.advance(
+            snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
+            ceilingBps: 80_000_000,
             now: 2,
             allowsNewProbe: false
         )
-        let idleAction = controller.advance(
-            snapshots: [snapshot],
+        let firstStressAction = controller.advance(
+            snapshots: [stressedSnapshot],
             currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 3.1,
-            allowsNewProbe: true
+            ceilingBps: 80_000_000,
+            now: 4,
+            allowsNewProbe: false
+        )
+        let secondStressAction = controller.advance(
+            snapshots: [stressedSnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 80_000_000,
+            now: 6,
+            allowsNewProbe: false
         )
 
-        #expect(deferredAction == .none)
-        #expect(idleAction == .probe(targetBitrateBps: 32_000_000))
+        #expect(deferredProbe == .none)
+        #expect(firstStressAction == .none)
+        #expect(secondStressAction == .backoff(targetBitrateBps: 17_000_000))
     }
 
-    @Test("Successful probe cooldowns climb in bounded steps")
-    func successfulProbeCooldownsClimbInBoundedSteps() {
+    @Test("Pending probe rolls back only on transport pressure")
+    func pendingProbeRollsBackOnlyOnTransportPressure() {
         var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.62)
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+        let stressedSnapshot = severeTransportSnapshot()
 
         _ = controller.advance(
-            snapshots: [snapshot],
+            snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 0
-        )
-        let firstProbe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-        controller.noteProbeSucceeded(now: 2)
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 5
-        )
-        let cooldownAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 5.5
-        )
-        let secondProbe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 6
-        )
-
-        #expect(firstProbe == .probe(targetBitrateBps: 32_000_000))
-        #expect(cooldownAction == .none)
-        #expect(secondProbe == .probe(targetBitrateBps: 44_000_000))
-    }
-
-    @Test("Probes stay bounded by the configured ceiling")
-    func probesStayBoundedByTheConfiguredCeiling() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.55)
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 90_000_000,
-            ceilingBps: 100_000_000,
             now: 0
         )
         let probe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 90_000_000,
-            ceilingBps: 100_000_000,
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
             now: 2
         )
+        let rollback = controller.advance(
+            snapshots: [stressedSnapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 4
+        )
 
-        #expect(probe == .probe(targetBitrateBps: 100_000_000))
+        #expect(probe == .probe(targetBitrateBps: 32_000_000))
+        #expect(rollback == .backoff(targetBitrateBps: 20_000_000))
+        #expect(controller.learnedPromotionCeilingBps == 28_800_000)
     }
 
-    @Test("Healthy samples can probe above the old quality stop when source headroom remains")
-    func healthySamplesProbeAboveLegacyQualityStop() {
+    @Test("Pending probe ignores decode stalls without unsafe ceiling")
+    func pendingProbeIgnoresDecodeStallsWithoutUnsafeCeiling() {
         var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.85)
-        snapshot.hostCaptureIngressFPS = 60
-        snapshot.hostCaptureFPS = 60
-        snapshot.hostEncodeAttemptFPS = 60
-        snapshot.hostEncodedFPS = 60
-        snapshot.hostFrameBudgetMs = 16.67
-        snapshot.hostAverageEncodeMs = 12
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+        let decodeStalledSnapshot = decodeStalledButTransportHealthySnapshot()
 
         _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 350_000_000,
-            ceilingBps: 500_000_000,
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
             now: 0
         )
         let probe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 350_000_000,
-            ceilingBps: 500_000_000,
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
             now: 2
         )
+        let decodeAction = controller.advance(
+            snapshots: [decodeStalledSnapshot],
+            currentBitrateBps: 32_000_000,
+            ceilingBps: 300_000_000,
+            now: 4
+        )
 
-        #expect(probe == .probe(targetBitrateBps: 382_000_000))
+        #expect(probe == .probe(targetBitrateBps: 32_000_000))
+        #expect(decodeAction == .none)
+        #expect(controller.learnedPromotionCeilingBps == nil)
+        #expect(controller.state == .stable)
     }
 
-    @Test("Encode-bound samples remain transport-clean")
-    func encodeBoundSamplesRemainTransportClean() {
+    @Test("Presentation-bound samples block promotion without transport backoff")
+    func presentationBoundSamplesBlockPromotionWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
-        let snapshot = encodeBoundButTransportHealthySnapshot()
+        let snapshot = presentationBoundButTransportHealthySnapshot()
 
         _ = controller.advance(
             snapshots: [snapshot],
-            currentBitrateBps: 220_000_000,
-            ceilingBps: 500_000_000,
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
             now: 0
         )
-        let action = controller.advance(
+        let secondAction = controller.advance(
             snapshots: [snapshot],
-            currentBitrateBps: 220_000_000,
-            ceilingBps: 500_000_000,
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 252_000_000))
+        #expect(secondAction == .none)
+        #expect(controller.state == .stable)
     }
 
-    @Test("Host-cadence-limited samples remain transport-clean but do not probe upward")
-    func hostCadenceLimitedSamplesRemainTransportCleanWithoutProbing() {
+    @Test("Host cadence limits do not block clean transport probing")
+    func hostCadenceLimitsDoNotBlockCleanTransportProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = captureBoundButTransportHealthySnapshot()
 
@@ -320,300 +240,11 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 60_000_000))
     }
 
-    @Test("Host-cadence-limited samples do not seed later promotion")
-    func hostCadenceLimitedSamplesDoNotSeedLaterPromotion() {
-        var controller = MirageReceiverHealthController()
-        let hostCadenceSnapshot = captureBoundButTransportHealthySnapshot()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-
-        _ = controller.advance(
-            snapshots: [hostCadenceSnapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 0
-        )
-        _ = controller.advance(
-            snapshots: [hostCadenceSnapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 2
-        )
-        let firstEligibleAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 3
-        )
-        let secondEligibleAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 4
-        )
-
-        #expect(firstEligibleAction == .none)
-        #expect(secondEligibleAction == .probe(targetBitrateBps: 60_000_000))
-    }
-
-    @Test("Host-cadence-limited transport pressure still backs off")
-    func hostCadenceLimitedTransportPressureStillBacksOff() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = captureBoundButTransportHealthySnapshot()
-        snapshot.hostSendCompletionAverageMs = 30
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 10
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 12
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .backoff(targetBitrateBps: 40_800_000))
-        #expect(controller.state == .backingOff)
-    }
-
-    @Test("Transient resets preserve the original fast-start window")
-    func transientResetsPreserveOriginalFastStartWindow() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.62)
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        controller.reset()
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 21
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 22
-        )
-        let thirdAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 23
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .none)
-        #expect(thirdAction == .probe(targetBitrateBps: 26_000_000))
-    }
-
-    @Test("Path resets restart fast-start probing")
-    func pathResetsRestartFastStartProbing() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.62)
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        controller.reset(preservingProbeCooldown: false, preservingSessionStart: false)
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 21
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 22
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
-    }
-
-    @Test("Severe delivery cadence collapse backs off")
-    func severeDeliveryCadenceCollapseBacksOff() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.receivedFPS = 4
-        snapshot.decodedFPS = 4
-        snapshot.submittedFPS = 4
-        snapshot.uniqueSubmittedFPS = 4
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 10
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 12
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .backoff(targetBitrateBps: 40_800_000))
-        #expect(controller.state == .backingOff)
-    }
-
-    @Test("Local generation and keyframe hold drops do not trigger transport backoff")
-    func localGenerationAndKeyframeHoldDropsDoNotTriggerTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.hostGenerationAbortDrops = 40
-        snapshot.hostNonKeyframeHoldDrops = 40
-
-        let action = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 10
-        )
-
-        #expect(action == .none)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Minor delivery drift still probes upward when transport is otherwise clean")
-    func minorDeliveryDriftStillProbesUpwardWhenTransportIsOtherwiseClean() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.70)
-        snapshot.hostEncodedFPS = 60
-        snapshot.receivedFPS = 58
-        snapshot.decodedFPS = 58
-        snapshot.submittedFPS = 58
-        snapshot.uniqueSubmittedFPS = 58
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 24_000_000,
-            ceilingBps: 136_000_000,
-            now: 0
-        )
-        let action = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 24_000_000,
-            ceilingBps: 136_000_000,
-            now: 2
-        )
-
-        #expect(action == .probe(targetBitrateBps: 36_000_000))
-    }
-
-    @Test("Step-up candidate rolls back when transport pressure appears")
-    func stepUpCandidateRollsBackWhenTransportPressureAppears() {
-        var controller = MirageReceiverHealthController()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-        let stressedSnapshot = severeTransportSnapshot()
-
-        _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let stepUp = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-        let rollback = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 3
-        )
-
-        #expect(stepUp == .probe(targetBitrateBps: 32_000_000))
-        #expect(rollback == .backoff(targetBitrateBps: 20_000_000))
-        #expect(controller.learnedPromotionCeilingBps == 27_200_000)
-    }
-
-    @Test("Step-up candidate ignores decode stalls without bitrate rollback")
-    func stepUpCandidateIgnoresDecodeStallsWithoutBitrateRollback() {
-        var controller = MirageReceiverHealthController()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-        let decodeStalledSnapshot = decodeStalledButTransportHealthySnapshot()
-
-        _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let stepUp = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-        let decodeAction = controller.advance(
-            snapshots: [decodeStalledSnapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 3
-        )
-
-        #expect(stepUp == .probe(targetBitrateBps: 32_000_000))
-        #expect(decodeAction == .none)
-        #expect(controller.learnedPromotionCeilingBps == nil)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Step-up candidate ignores presentation stalls without bitrate rollback")
-    func stepUpCandidateIgnoresPresentationStallsWithoutBitrateRollback() {
-        var controller = MirageReceiverHealthController()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-        let presentationBoundSnapshot = presentationBoundButTransportHealthySnapshot()
-
-        _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let stepUp = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-        let presentationAction = controller.advance(
-            snapshots: [presentationBoundSnapshot],
-            currentBitrateBps: 32_000_000,
-            ceilingBps: 300_000_000,
-            now: 3
-        )
-
-        #expect(stepUp == .probe(targetBitrateBps: 32_000_000))
-        #expect(presentationAction == .none)
-        #expect(controller.learnedPromotionCeilingBps == nil)
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Sustained transport drops trigger backoff even when decode metrics look healthy")
-    func sustainedTransportDropsTriggerBackoffEvenWhenDecodeLooksHealthy() {
+    @Test("Transport drops trigger backoff even when decode metrics look healthy")
+    func transportDropsTriggerBackoffEvenWhenDecodeLooksHealthy() {
         var controller = MirageReceiverHealthController()
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostStalePacketDrops = 12
@@ -639,283 +270,68 @@ struct ReceiverHealthControllerTests {
 
         #expect(firstAction == .none)
         #expect(secondAction == .none)
-        #expect(thirdAction == .backoff(targetBitrateBps: 18_400_000))
+        #expect(thirdAction == .backoff(targetBitrateBps: 18_000_000))
         #expect(controller.state == .backingOff)
     }
 
-    @Test("Sustained severe transport stress steps down slowly after cooldown")
-    func sustainedSevereTransportStressStepsDownSlowlyAfterCooldown() {
+    @Test("Severe delivery collapse backs off only when host and client are otherwise healthy")
+    func severeDeliveryCollapseRequiresVerifiableTransport() {
         var controller = MirageReceiverHealthController()
-        let snapshot = severeTransportSnapshot()
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 50_000_000,
-            now: 0
-        )
-        let firstBackoff = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 50_000_000,
-            now: 2
-        )
-        let cooldownAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 50_000_000,
-            now: 6
-        )
-        let secondBackoff = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 50_000_000,
-            now: 11
-        )
-
-        #expect(firstAction == .none)
-        #expect(firstBackoff == .backoff(targetBitrateBps: 17_000_000))
-        #expect(cooldownAction == .none)
-        #expect(secondBackoff == .backoff(targetBitrateBps: 14_450_000))
-        #expect(controller.state == .backingOff)
-    }
-
-    @Test("Recent interaction defers backoff without learning a lower ceiling")
-    func recentInteractionDefersBackoffWithoutLearningLowerCeiling() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = severeTransportSnapshot()
-
-        for time in [0.0, 2.0, 4.0] {
-            let action = controller.advance(
-                snapshots: [snapshot],
-                currentBitrateBps: 20_000_000,
-                ceilingBps: 80_000_000,
-                now: time,
-                allowsNewProbe: false,
-                allowsBackoff: false
-            )
-            #expect(action == .none)
-        }
-
-        let firstEligibleAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 6
-        )
-        let secondEligibleAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 8
-        )
-
-        #expect(firstEligibleAction == .none)
-        #expect(secondEligibleAction == .backoff(targetBitrateBps: 17_000_000))
-        #expect(controller.learnedPromotionCeilingBps == 17_000_000)
-    }
-
-    @Test("Recent interaction defers probes while allowing stress backoff")
-    func recentInteractionDefersProbesWhileAllowingStressBackoff() {
-        var controller = MirageReceiverHealthController()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-        let stressedSnapshot = severeTransportSnapshot()
+        var networkSnapshot = healthySnapshot(activeQuality: 0.62)
+        networkSnapshot.hostEncodedFPS = 60
+        networkSnapshot.receivedFPS = 8
+        networkSnapshot.decodedFPS = 8
+        networkSnapshot.submittedFPS = 8
+        networkSnapshot.uniqueSubmittedFPS = 8
 
         _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 0,
-            allowsNewProbe: false,
-            allowsBackoff: true
+            snapshots: [networkSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10
         )
-        let deferredProbe = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 2,
-            allowsNewProbe: false,
-            allowsBackoff: true
-        )
-        let firstStressAction = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 4,
-            allowsNewProbe: false,
-            allowsBackoff: true
-        )
-        let secondStressAction = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 6,
-            allowsNewProbe: false,
-            allowsBackoff: true
-        )
-
-        #expect(deferredProbe == .none)
-        #expect(firstStressAction == .none)
-        #expect(secondStressAction == .backoff(targetBitrateBps: 17_000_000))
-    }
-
-    @Test("Local recovery holds the learned ceiling after a transient severe transport backoff")
-    func localRecoveryHoldsLearnedCeilingAfterTransientSevereTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        let stressedSnapshot = severeTransportSnapshot()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-
-        let initialStressAction = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 200_000_000,
-            now: 0
-        )
-        let firstBackoff = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 200_000_000,
-            now: 2
-        )
-        let firstHealthyAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 4
-        )
-        let secondHealthyAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 6
-        )
-        let delayedRecoveryAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
+        let networkBackoff = controller.advance(
+            snapshots: [networkSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
             now: 12
         )
-        for time in stride(from: 13.0, through: 19.0, by: 1.0) {
-            _ = controller.advance(
-                snapshots: [healthySnapshot],
-                currentBitrateBps: 17_000_000,
-                ceilingBps: 200_000_000,
-                now: time
-            )
-        }
-        let heldCeilingAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 20
+
+        var decodeSnapshot = networkSnapshot
+        decodeSnapshot.decodeHealthy = false
+        var decodeController = MirageReceiverHealthController()
+        _ = decodeController.advance(
+            snapshots: [decodeSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10
+        )
+        let decodeAction = decodeController.advance(
+            snapshots: [decodeSnapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 12
         )
 
-        #expect(initialStressAction == .none)
-        #expect(firstBackoff == .backoff(targetBitrateBps: 17_000_000))
-        #expect(firstHealthyAction == .none)
-        #expect(secondHealthyAction == .none)
-        #expect(delayedRecoveryAction == .none)
-        #expect(heldCeilingAction == .none)
-        #expect(controller.diagnostics.promotionCeilingBps == 17_000_000)
-        #expect(controller.state == .stable)
+        #expect(networkBackoff == .backoff(targetBitrateBps: 40_800_000))
+        #expect(decodeAction == .none)
     }
 
-    @Test("Dynamic route recovery can reopen the learned ceiling after sustained clean telemetry")
-    func dynamicRouteRecoveryReopensLearnedCeilingAfterSustainedCleanTelemetry() {
-        var controller = MirageReceiverHealthController(promotionRecoveryMode: .dynamicRoute)
-        let stressedSnapshot = severeTransportSnapshot()
-        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
-
-        let initialStressAction = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 200_000_000,
-            now: 0
-        )
-        _ = controller.advance(
-            snapshots: [stressedSnapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 200_000_000,
-            now: 2
-        )
-        _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 4
-        )
-        _ = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 6
-        )
-        let earlyRecoveryAction = controller.advance(
-            snapshots: [healthySnapshot],
-            currentBitrateBps: 17_000_000,
-            ceilingBps: 200_000_000,
-            now: 8
-        )
-        var reopenedAction: MirageReceiverHealthController.Action = .none
-        for time in stride(from: 10.0, through: 24.0, by: 2.0) {
-            reopenedAction = controller.advance(
-                snapshots: [healthySnapshot],
-                currentBitrateBps: 17_000_000,
-                ceilingBps: 200_000_000,
-                now: time
-            )
-            if reopenedAction != .none { break }
-        }
-
-        #expect(initialStressAction == .none)
-        #expect(earlyRecoveryAction == .none)
-        #expect(reopenedAction == .probe(targetBitrateBps: 20_000_000))
-        #expect(controller.diagnostics.promotionCeilingBps == 20_000_000)
-    }
-
-    @Test("Failed probe cooldown survives controller reset")
-    func failedProbeCooldownSurvivesControllerReset() {
+    @Test("Missing host metrics hold")
+    func missingHostMetricsHold() {
         var controller = MirageReceiverHealthController()
-        let snapshot = healthySnapshot(activeQuality: 0.62)
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hasHostMetrics = false
 
-        _ = controller.advance(
+        let action = controller.advance(
             snapshots: [snapshot],
             currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 0
-        )
-        let firstProbe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 2
-        )
-        controller.noteProbeFailed(now: 2)
-        controller.reset()
-
-        _ = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 9
-        )
-        let suppressedProbe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
-            now: 9.5
-        )
-        let resumedProbe = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 300_000_000,
+            ceilingBps: 80_000_000,
             now: 10
         )
 
-        #expect(firstProbe == .probe(targetBitrateBps: 32_000_000))
-        #expect(controller.diagnostics.nextProbeAllowedAt == 10)
-        #expect(suppressedProbe == .none)
-        #expect(resumedProbe == .probe(targetBitrateBps: 30_400_000))
+        #expect(action == .none)
+        #expect(controller.state == .stable)
     }
 
     private func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {
@@ -949,12 +365,18 @@ struct ReceiverHealthControllerTests {
 
     private func severeTransportSnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.receivedFPS = 30
         snapshot.hostSendQueueBytes = 2_500_000
-        snapshot.hostSendStartDelayAverageMs = 7
-        snapshot.hostSendCompletionAverageMs = 30
+        snapshot.hostSendStartDelayAverageMs = 9
+        snapshot.hostSendCompletionAverageMs = 35
         snapshot.hostPacketPacerAverageSleepMs = 2.5
-        snapshot.hostStalePacketDrops = 12
+        snapshot.hostStalePacketDrops = 24
+        return snapshot
+    }
+
+    private func delayOnlySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostSendStartDelayAverageMs = 4.5
+        snapshot.hostSendCompletionAverageMs = 20
         return snapshot
     }
 
@@ -977,28 +399,6 @@ struct ReceiverHealthControllerTests {
         snapshot.decodedFPS = 43
         snapshot.submittedFPS = 43
         snapshot.uniqueSubmittedFPS = 43
-        return snapshot
-    }
-
-    private func encodeBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
-        var snapshot = healthySnapshot(activeQuality: 0.70)
-        snapshot.hostCaptureIngressFPS = 60
-        snapshot.hostCaptureFPS = 60
-        snapshot.hostEncodeAttemptFPS = 60
-        snapshot.hostEncodedFPS = 42
-        snapshot.hostFrameBudgetMs = 16.67
-        snapshot.hostAverageEncodeMs = 21
-        snapshot.receivedFPS = 42
-        snapshot.decodedFPS = 42
-        snapshot.submittedFPS = 42
-        snapshot.uniqueSubmittedFPS = 42
-        return snapshot
-    }
-
-    private func delayOnlyBurstSnapshot() -> MirageClientMetricsSnapshot {
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.hostSendStartDelayAverageMs = 3.5
-        snapshot.hostSendCompletionAverageMs = 14
         return snapshot
     }
 

@@ -207,8 +207,20 @@ public final class MirageHostInputController: @unchecked Sendable {
     ///   - event: The input event received from the client.
     ///   - window: The target window for the input event.
     public func handleInputEvent(_ event: MirageInputEvent, window: MirageWindow) {
+        handleInputEvent(event, window: window, deferredInjectionValidator: nil)
+    }
+
+    func handleInputEvent(
+        _ event: MirageInputEvent,
+        window: MirageWindow,
+        deferredInjectionValidator: (@Sendable () -> Bool)?
+    ) {
         if window.id == 0 {
-            handleDesktopInputEvent(event, bounds: window.frame)
+            handleDesktopInputEvent(
+                event,
+                bounds: window.frame,
+                deferredInjectionValidator: deferredInjectionValidator
+            )
             return
         }
 
@@ -226,8 +238,15 @@ public final class MirageHostInputController: @unchecked Sendable {
                 self?.handlePixelResize(window, event: event)
             }
         default:
-            handleInput(event, window: window)
+            handleInput(event, window: window, deferredInjectionValidator: deferredInjectionValidator)
         }
+    }
+
+    func shouldProcessDeferredInput(
+        _ deferredInjectionValidator: (@Sendable () -> Bool)?
+    )
+    -> Bool {
+        deferredInjectionValidator?() ?? true
     }
 }
 

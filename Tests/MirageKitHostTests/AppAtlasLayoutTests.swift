@@ -82,5 +82,23 @@ struct AppAtlasLayoutTests {
         #expect(!firstRegion.isFocused)
         #expect(focusedRegion.isFocused)
     }
+
+    @Test("Parent atlas layout stays stable for parent-local overlays")
+    func parentAtlasLayoutStaysStableForParentLocalOverlays() {
+        let parentWindow = AppAtlasLayout.Window(
+            id: 71,
+            sourceRect: CGRect(x: 0, y: 0, width: 1600, height: 1200)
+        )
+        let before = AppAtlasLayout.nativePackedLayout(windows: [parentWindow])
+        _ = AppAtlasMediaCoordinator.auxiliaryOverlayDestinationRect(
+            parentFrame: CGRect(x: 100, y: 100, width: 800, height: 600),
+            parentSourceRect: parentWindow.sourceRect,
+            auxiliaryFrame: CGRect(x: 600, y: 300, width: 180, height: 120)
+        )
+        let after = AppAtlasLayout.nativePackedLayout(windows: [parentWindow])
+
+        #expect(after == before)
+        #expect(after.placements.map(\.windowID) == [71])
+    }
 }
 #endif

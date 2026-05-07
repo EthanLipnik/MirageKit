@@ -99,5 +99,99 @@ struct MirageInterceptedShortcutResponderTests {
         #expect(keyDownEvents.isEmpty)
         #expect(keyUpEvents.isEmpty)
     }
+
+    @Test("Standard responder actions forward intercepted command shortcuts")
+    func standardResponderActionsForwardInterceptedCommandShortcuts() {
+        let view = InputCapturingView(frame: .zero)
+        var keyDownEvents: [MirageKeyEvent] = []
+        var keyUpEvents: [MirageKeyEvent] = []
+
+        view.onInputEvent = { event in
+            switch event {
+            case .keyDown(let keyEvent):
+                keyDownEvents.append(keyEvent)
+            case .keyUp(let keyEvent):
+                keyUpEvents.append(keyEvent)
+            default:
+                break
+            }
+        }
+
+        view.find(nil)
+        view.toggleBoldface(nil)
+        view.selectAll(nil)
+        view.printContent(nil)
+
+        #expect(keyDownEvents.map(\.characters) == ["f", "b", "a", "p"])
+        #expect(keyUpEvents.map(\.characters) == ["f", "b", "a", "p"])
+        #expect(keyDownEvents.map(\.modifiers) == [
+            [.command],
+            [.command],
+            [.command],
+            [.command],
+        ])
+    }
+
+    @Test("Cmd+F forwards once when both keyCommand and find action paths fire")
+    func cmdFForwardsOnceAcrossResponderEntryPoints() {
+        let view = InputCapturingView(frame: .zero)
+        var keyDownEvents: [MirageKeyEvent] = []
+        var keyUpEvents: [MirageKeyEvent] = []
+
+        view.onInputEvent = { event in
+            switch event {
+            case .keyDown(let keyEvent):
+                keyDownEvents.append(keyEvent)
+            case .keyUp(let keyEvent):
+                keyUpEvents.append(keyEvent)
+            default:
+                break
+            }
+        }
+
+        let command = UIKeyCommand(
+            action: Selector(("handlePassthroughShortcut:")),
+            input: "f",
+            modifierFlags: .command
+        )
+
+        view.handlePassthroughShortcut(command)
+        view.find(nil)
+
+        #expect(keyDownEvents.count == 1)
+        #expect(keyUpEvents.count == 1)
+        #expect(keyDownEvents.first?.characters == "f")
+        #expect(keyDownEvents.first?.modifiers == [.command])
+        #expect(keyUpEvents.first?.characters == "f")
+        #expect(keyUpEvents.first?.modifiers == [.command])
+    }
+
+    @Test("Client shortcut overrides conflicting Cmd+F responder routing")
+    func clientShortcutOverridesConflictingCmdFResponderRouting() {
+        let view = InputCapturingView(frame: .zero)
+        let shortcut = MirageClientShortcut(keyCode: 0x03, modifiers: [.command])
+        var triggeredShortcuts: [MirageClientShortcut] = []
+        var keyDownEvents: [MirageKeyEvent] = []
+        var keyUpEvents: [MirageKeyEvent] = []
+
+        view.clientShortcuts = [shortcut]
+        view.onClientShortcut = { triggeredShortcuts.append($0) }
+        view.onInputEvent = { event in
+            switch event {
+            case .keyDown(let keyEvent):
+                keyDownEvents.append(keyEvent)
+            case .keyUp(let keyEvent):
+                keyUpEvents.append(keyEvent)
+            default:
+                break
+            }
+        }
+
+        view.find(nil)
+
+        #expect(triggeredShortcuts == [shortcut])
+        #expect(keyDownEvents.isEmpty)
+        #expect(keyUpEvents.isEmpty)
+    }
 }
 #endif

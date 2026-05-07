@@ -29,6 +29,43 @@ struct DesktopResizeCoordinatorTests {
         )
     }
 
+    private func seedDesktopSession(
+        _ service: MirageClientService,
+        streamID: StreamID
+    ) {
+        service.desktopStreamID = streamID
+        service.sessionStore.createSession(
+            streamID: streamID,
+            window: MirageWindow(
+                id: WindowID(streamID),
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1366, height: 1024),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+    }
+
+    private func eventually(
+        timeout: Duration = .seconds(1),
+        interval: Duration = .milliseconds(10),
+        _ condition: () -> Bool
+    ) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while clock.now < deadline {
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(for: interval)
+        }
+        return condition()
+    }
+
     @Test("Accepts only the matching active transition")
     func acceptsOnlyMatchingActiveTransition() {
         let coordinator = DesktopResizeCoordinator()
@@ -315,6 +352,180 @@ struct DesktopResizeCoordinatorTests {
         #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
         #expect(!service.desktopResizeCoordinator.isResizing)
         #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("Window-driven desktop resize targets settle before dispatch")
+    func windowDrivenDesktopResizeTargetsSettleBeforeDispatch() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 40
+        seedDesktopSession(service, streamID: streamID)
+        service.desktopResizeWindowSettlingDelay = .milliseconds(200)
+        let firstTarget = target(logicalWidth: 1408, logicalHeight: 898)
+        let secondTarget = target(logicalWidth: 1406, logicalHeight: 968)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: firstTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: secondTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == secondTarget)
+        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .settledWindowMetrics)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.isResizing)
+        #expect(service.desktopResizeCoordinator.maskActive)
+
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        service.clearDesktopResizeState(streamID: streamID)
+    }
+
+    @Test("Returning to last sent desktop geometry clears pending mask")
+    func returningToLastSentDesktopGeometryClearsPendingMask() {
+        let service = MirageClientService()
+        let streamID: StreamID = 41
+        seedDesktopSession(service, streamID: streamID)
+        let lastSentTarget = target(logicalWidth: 1406, logicalHeight: 968)
+        let pendingTarget = target(logicalWidth: 1408, logicalHeight: 898)
+        service.desktopResizeCoordinator.lastSentTarget = lastSentTarget
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: pendingTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+        #expect(service.desktopResizeCoordinator.maskActive)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: lastSentTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.latestRequestedTarget == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+    }
+
+    @Test("Queued desktop resize after transition waits for settle delay")
+    func queuedDesktopResizeAfterTransitionWaitsForSettleDelay() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 42
+        seedDesktopSession(service, streamID: streamID)
+        service.desktopResizeWindowSettlingDelay = .milliseconds(200)
+        let activeTarget = target(logicalWidth: 1408, logicalHeight: 898)
+        let queuedTarget = target(logicalWidth: 1406, logicalHeight: 968)
+
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: UUID(),
+            target: activeTarget
+        )
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: queuedTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+        service.desktopResizeCoordinator.finishTransition()
+        service.handleDesktopPresentationReady(streamID: streamID)
+        await Task.yield()
+
+        #expect(service.desktopResizeCoordinator.displayResolutionTask != nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+
+        service.clearDesktopResizeState(streamID: streamID)
+    }
+
+    @Test("Post-resize wait clears on presentation instead of decode")
+    func postResizeWaitClearsOnPresentationInsteadOfDecode() {
+        let service = MirageClientService()
+        let streamID: StreamID = 43
+
+        service.beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
+        service.handlePostResizeFrameDecoded(streamID: streamID)
+
+        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        service.handleStreamFirstFramePresented(streamID: streamID)
+
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+    }
+
+    @Test("Post-resize wait timeout clears missing presentation signal")
+    func postResizeWaitTimeoutClearsMissingPresentationSignal() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 44
+        service.desktopPostResizeTransitionTimeout = .milliseconds(30)
+
+        service.beginPostResizeTransition(streamID: streamID)
+
+        let timeoutClearedPostResizeWait = await eventually {
+            !service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID)
+                && service.postResizeTransitionTimeoutTasks[streamID] == nil
+        }
+        #expect(timeoutClearedPostResizeWait)
+    }
+
+    @Test("Desktop resize mask timeout clears local blur state")
+    func desktopResizeMaskTimeoutClearsLocalBlurState() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 46
+        seedDesktopSession(service, streamID: streamID)
+        service.desktopResizeWindowSettlingDelay = .seconds(1)
+        service.desktopPostResizeTransitionTimeout = .milliseconds(30)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: target(logicalWidth: 1408, logicalHeight: 898),
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.maskActive)
+
+        let timeoutClearedLocalMask = await eventually {
+            !service.desktopResizeCoordinator.isResizing
+                && !service.desktopResizeCoordinator.maskActive
+        }
+        #expect(timeoutClearedLocalMask)
+        service.clearDesktopResizeState(streamID: streamID)
+    }
+
+    @Test("Automatic workload resize bypasses window settle policy")
+    func automaticWorkloadResizeBypassesWindowSettlePolicy() {
+        let service = MirageClientService()
+        let streamID: StreamID = 47
+        seedDesktopSession(service, streamID: streamID)
+        service.desktopResizeWindowSettlingDelay = .seconds(60)
+        let resizeTarget = target(logicalWidth: 1280, logicalHeight: 720)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: resizeTarget,
+            hasPresentedFrame: true,
+            useHostResolution: false,
+            dispatchPolicy: .immediate
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == resizeTarget)
+        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .immediate)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask != nil)
+        service.clearDesktopResizeState(streamID: streamID)
     }
 }
 #endif

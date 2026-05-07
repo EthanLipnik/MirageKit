@@ -47,5 +47,30 @@ struct DesktopPhysicalDisplayRecoveryTests {
         #expect(snapshot.displayID == 44)
         #expect(snapshot.bounds == expectedBounds)
     }
+
+    @Test("Setup guard cursor uses captured point after mirroring changes bounds")
+    func setupGuardCursorUsesCapturedPointAfterMirroringChangesBounds() {
+        let preMirroringPoint = CGPoint(x: 1440, y: 773)
+        let mirroredVirtualBounds = CGRect(x: 0, y: 0, width: 1376, height: 1032)
+
+        let point = MirageHostService.resolvedVirtualDisplaySetupCursorPoint(
+            cursorAnchorPoint: preMirroringPoint,
+            visibleBounds: mirroredVirtualBounds
+        )
+
+        #expect(point == preMirroringPoint)
+    }
+
+    @Test("Setup guard cursor falls back to visible bounds without a captured point")
+    func setupGuardCursorFallsBackToVisibleBoundsWithoutCapturedPoint() {
+        let visibleBounds = CGRect(x: 100, y: 50, width: 2880, height: 1546)
+
+        let point = MirageHostService.resolvedVirtualDisplaySetupCursorPoint(
+            cursorAnchorPoint: nil,
+            visibleBounds: visibleBounds
+        )
+
+        #expect(point == CGPoint(x: 1540, y: 823))
+    }
 }
 #endif

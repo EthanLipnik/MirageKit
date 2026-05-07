@@ -224,8 +224,6 @@ actor StreamPacketSender {
     nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 4.0
     nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.100
     nonisolated static let keyframeDependencyDropSuppressionSeconds: CFAbsoluteTime = 0.200
-    nonisolated static let senderLocalDeadlineDropEscalationWindowSeconds: CFAbsoluteTime = 0.500
-    nonisolated static let senderLocalDeadlineDropEscalationCount: Int = 3
     nonisolated static let maxQueuedWorkItems: Int = 8
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
@@ -251,8 +249,6 @@ actor StreamPacketSender {
     private nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     private nonisolated(unsafe) var latestKeyframeGeneration: UInt32 = 0
     private nonisolated(unsafe) var dependencyDropSuppressionDeadline: CFAbsoluteTime = 0
-    private nonisolated(unsafe) var localDeadlineDropStreak: Int = 0
-    private nonisolated(unsafe) var localDeadlineDropWindowDeadline: CFAbsoluteTime = 0
     private nonisolated(unsafe) var queuedStalePacketDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedSenderLocalDeadlineDropCount: UInt64 = 0
     private nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
@@ -402,8 +398,6 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
-            localDeadlineDropStreak = 0
-            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -429,8 +423,6 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
-            localDeadlineDropStreak = 0
-            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -453,8 +445,6 @@ actor StreamPacketSender {
         queueLock.withLock {
             resetKeyframeTrackingLocked()
             dependencyDropSuppressionDeadline = 0
-            localDeadlineDropStreak = 0
-            localDeadlineDropWindowDeadline = 0
         }
         MirageLogger.stream("Packet send generation bumped to \(generation) (\(reason))")
     }
@@ -467,8 +457,6 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
             dependencyDropSuppressionDeadline = 0
-            localDeadlineDropStreak = 0
-            localDeadlineDropWindowDeadline = 0
             resetKeyframeTrackingLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
@@ -626,8 +614,7 @@ actor StreamPacketSender {
             discardSupersededQueuedKeyframesLocked(newestFrameNumber: item.frameNumber, generation: item.generation)
         } else if dropNonKeyframesUntilKeyframe, latestKeyframeGeneration == item.generation,
                   !hasQueuedKeyframeLocked(frameNumber: latestKeyframeFrameNumber, generation: latestKeyframeGeneration) {
-            queuedNonKeyframeHoldDropCount &+= 1
-            return .dropped
+            resetKeyframeTrackingLocked()
         }
 
         queuedWorkItems.append(QueuedWorkItem(item: item, accountedBytes: accountedBytes))
@@ -1265,7 +1252,7 @@ actor StreamPacketSender {
         let now = CFAbsoluteTimeGetCurrent()
         if !clientVisible {
             queuedSenderLocalDeadlineDropCount &+= 1
-            guard shouldEscalateSenderLocalDeadlineDropLocked(now: now) else { return }
+            return
         }
         if shouldSuppressDependencyDropLocked(now: now) {
             resetKeyframeTrackingLocked()
@@ -1291,19 +1278,6 @@ actor StreamPacketSender {
 
     private nonisolated func shouldSuppressDependencyDropLocked(now: CFAbsoluteTime) -> Bool {
         now < dependencyDropSuppressionDeadline
-    }
-
-    private nonisolated func shouldEscalateSenderLocalDeadlineDropLocked(now: CFAbsoluteTime) -> Bool {
-        if now >= localDeadlineDropWindowDeadline {
-            localDeadlineDropStreak = 0
-            localDeadlineDropWindowDeadline = now + Self.senderLocalDeadlineDropEscalationWindowSeconds
-        }
-
-        localDeadlineDropStreak += 1
-        guard localDeadlineDropStreak >= Self.senderLocalDeadlineDropEscalationCount else { return false }
-        localDeadlineDropStreak = 0
-        localDeadlineDropWindowDeadline = now + Self.senderLocalDeadlineDropEscalationWindowSeconds
-        return true
     }
 
     private nonisolated func fecPayloadBudgetBytes(for item: WorkItem) -> Int {

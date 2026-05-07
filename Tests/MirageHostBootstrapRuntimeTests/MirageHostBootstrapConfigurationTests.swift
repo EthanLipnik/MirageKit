@@ -90,4 +90,15 @@ struct MirageHostBootstrapConfigurationTests {
 
         #expect(configuration.toBootstrapMetadata()?.wakeOnLAN?.macAddress == "AA:BB:CC:DD:EE:FF")
     }
+
+    @Test("Valid manual Wake MAC can provide wake metadata without auto MAC")
+    func manualWakeMACWithoutAutoMAC() {
+        let configuration = MirageHostBootstrapConfiguration(
+            enabled: true,
+            manualWakeOnLANMACAddress: "11:22:33:44:55:66",
+            wakeOnLANBroadcasts: ["192.168.1.255"]
+        )
+
+        #expect(configuration.toBootstrapMetadata()?.wakeOnLAN?.macAddress == "11:22:33:44:55:66")
+    }
 }

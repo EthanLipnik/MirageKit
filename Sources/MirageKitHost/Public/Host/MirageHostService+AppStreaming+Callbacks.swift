@@ -11,6 +11,7 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
@@ -211,26 +212,52 @@ extension MirageHostService {
               case .streaming = session.state else {
             return
         }
-        guard let parentWindowID = candidate.parentWindowID else { return }
 
-        let streamIDForClusterParent = await appStreamManager.streamIDForCapturedClusterWindow(
+        guard let streamID = await resolveParentStreamIDForAuxiliaryWindow(
             bundleIdentifier: bundleID,
-            windowID: parentWindowID
-        )
-        let directParentStreamID = await appStreamManager.streamIDForWindow(
-            bundleIdentifier: bundleID,
-            windowID: parentWindowID
-        )
-        let streamID = streamIDForClusterParent ?? directParentStreamID
-        guard let streamID else { return }
+            candidate: candidate,
+            session: session
+        ) else {
+            return
+        }
 
-        MirageLogger.host(
-            "Detected attached auxiliary window \(candidate.window.id) for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
-        )
-        await refreshVisibleAppStreamCaptureCluster(
-            streamID: streamID,
-            reason: "auxiliary window detected"
-        )
+        guard let coordinator = appAtlasCoordinatorsByClientID[session.clientID] else {
+            MirageLogger.host(
+                "Detected auxiliary window \(candidate.window.id) for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
+            )
+            await refreshVisibleAppStreamCaptureCluster(
+                streamID: streamID,
+                reason: "auxiliary window detected"
+            )
+            return
+        }
+
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let captureSource = try resolveCaptureSource(
+                for: candidate.window,
+                from: content,
+                allowFallbackRemap: false
+            )
+            try await coordinator.updateAuxiliaryOverlay(
+                parentStreamID: streamID,
+                candidate: candidate,
+                windowWrapper: SCWindowWrapper(window: captureSource.window),
+                applicationWrapper: SCApplicationWrapper(application: captureSource.application),
+                displayWrapper: SCDisplayWrapper(display: captureSource.display)
+            )
+            await appStreamManager.setCapturedClusterWindowIDs(
+                bundleIdentifier: bundleID,
+                streamID: streamID,
+                capturedClusterWindowIDs: await coordinator.capturedWindowIDs(streamID: streamID)
+            )
+
+            MirageLogger.host(
+                "Composited auxiliary window \(candidate.window.id) into app-atlas parent stream \(streamID) in \(bundleID)"
+            )
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to composite auxiliary window into app-atlas parent: ")
+        }
     }
 
     func handleWindowClosedFromStreamedApp(bundleID: String, windowID: WindowID) async {
@@ -281,6 +308,20 @@ extension MirageHostService {
     }
 
     func handleAuxiliaryWindowClosedFromStreamedApp(bundleID: String, windowID: WindowID) async {
+        if let session = await appStreamManager.getSession(bundleIdentifier: bundleID),
+           let coordinator = appAtlasCoordinatorsByClientID[session.clientID],
+           let streamID = await coordinator.removeAuxiliaryOverlay(windowID: windowID) {
+            await appStreamManager.setCapturedClusterWindowIDs(
+                bundleIdentifier: bundleID,
+                streamID: streamID,
+                capturedClusterWindowIDs: await coordinator.capturedWindowIDs(streamID: streamID)
+            )
+            MirageLogger.host(
+                "Removed composited auxiliary window \(windowID) from app-atlas stream \(streamID) in \(bundleID)"
+            )
+            return
+        }
+
         guard let streamID = await appStreamManager.streamIDForCapturedClusterWindow(
             bundleIdentifier: bundleID,
             windowID: windowID
@@ -295,6 +336,82 @@ extension MirageHostService {
             streamID: streamID,
             reason: "auxiliary window closed"
         )
+    }
+
+    private func resolveParentStreamIDForAuxiliaryWindow(
+        bundleIdentifier: String,
+        candidate: AppStreamWindowCandidate,
+        session: MirageAppStreamSession
+    ) async -> StreamID? {
+        if let parentWindowID = candidate.parentWindowID {
+            let streamIDForClusterParent = await appStreamManager.streamIDForCapturedClusterWindow(
+                bundleIdentifier: bundleIdentifier,
+                windowID: parentWindowID
+            )
+            let directParentStreamID = await appStreamManager.streamIDForWindow(
+                bundleIdentifier: bundleIdentifier,
+                windowID: parentWindowID
+            )
+            if let streamID = streamIDForClusterParent ?? directParentStreamID {
+                return streamID
+            }
+        }
+
+        let visibleStreamIDs = Set(session.windowStreams.values.map(\.streamID))
+        if candidate.isFocused || candidate.isMain || candidate.isModal {
+            let activeStreams = await appStreamManager.streamActivityMap(bundleIdentifier: bundleIdentifier)
+            if let activeStreamID = activeStreams
+                .filter({ entry in entry.value && visibleStreamIDs.contains(entry.key) })
+                .map(\.key)
+                .sorted()
+                .first {
+                return activeStreamID
+            }
+        }
+
+        let visibleParentCandidates = session.windowStreams.compactMap { _, info -> (streamID: StreamID, frame: CGRect)? in
+            guard let activeSession = activeSessionByStreamID[info.streamID] else { return nil }
+            return (
+                streamID: info.streamID,
+                frame: currentWindowFrame(for: activeSession.window.id) ?? activeSession.window.frame
+            )
+        }
+        return Self.bestAuxiliaryParentStream(
+            auxiliaryFrame: candidate.window.frame,
+            visibleParents: visibleParentCandidates
+        )
+    }
+
+    nonisolated static func bestAuxiliaryParentStream(
+        auxiliaryFrame: CGRect,
+        visibleParents: [(streamID: StreamID, frame: CGRect)]
+    ) -> StreamID? {
+        guard !visibleParents.isEmpty else { return nil }
+        let auxiliaryCenter = CGPoint(x: auxiliaryFrame.midX, y: auxiliaryFrame.midY)
+        return visibleParents.sorted { lhs, rhs in
+            let lhsOverlap = overlapArea(lhs.frame, auxiliaryFrame)
+            let rhsOverlap = overlapArea(rhs.frame, auxiliaryFrame)
+            if lhsOverlap != rhsOverlap { return lhsOverlap > rhsOverlap }
+
+            let lhsDistance = squaredDistance(from: auxiliaryCenter, to: CGPoint(x: lhs.frame.midX, y: lhs.frame.midY))
+            let rhsDistance = squaredDistance(from: auxiliaryCenter, to: CGPoint(x: rhs.frame.midX, y: rhs.frame.midY))
+            if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
+            return lhs.streamID < rhs.streamID
+        }
+        .first?
+        .streamID
+    }
+
+    private nonisolated static func overlapArea(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        let intersection = lhs.intersection(rhs)
+        guard !intersection.isNull else { return 0 }
+        return max(0, intersection.width) * max(0, intersection.height)
+    }
+
+    private nonisolated static func squaredDistance(from lhs: CGPoint, to rhs: CGPoint) -> CGFloat {
+        let dx = lhs.x - rhs.x
+        let dy = lhs.y - rhs.y
+        return (dx * dx) + (dy * dy)
     }
 
     func handleStreamedAppTerminated(bundleID: String) async {

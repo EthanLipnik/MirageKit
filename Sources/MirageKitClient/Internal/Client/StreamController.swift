@@ -305,11 +305,6 @@ actor StreamController {
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
     static let backpressureLogCooldown: CFAbsoluteTime = 1.0
-    static let overloadWindow: CFAbsoluteTime = 8.0
-    static let overloadQueueDropThreshold: Int = 12
-    static let overloadRecoveryThreshold: Int = 2
-    static let decodeStormThreshold: Int = 2
-    static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
     static let backgroundDecodeErrorLogInterval: CFAbsoluteTime = 2.0
     static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
@@ -398,9 +393,6 @@ actor StreamController {
 
     var queueDropsSinceLastLog: UInt64 = 0
     var lastQueueDropLogTime: CFAbsoluteTime = 0
-    var queueDropTimestamps: [CFAbsoluteTime] = []
-    var recoveryRequestTimestamps: [CFAbsoluteTime] = []
-    var decodeThresholdTimestamps: [CFAbsoluteTime] = []
     var decodeRecoveryEscalationTimestamps: [CFAbsoluteTime] = []
     var lastBackgroundDecodeErrorSignature: String?
     var lastBackgroundDecodeErrorLogTime: CFAbsoluteTime = 0
@@ -411,7 +403,6 @@ actor StreamController {
     var lastSoftRecoveryRequestTime: CFAbsoluteTime = 0
     var lastHardRecoveryStartTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
-    var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
     var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
     var streamCadenceClock = MirageStreamCadenceClock(targetFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
@@ -481,8 +472,6 @@ actor StreamController {
     /// Called when the first frame is presented for a stream.
     private(set) var onFirstFramePresented: (@MainActor @Sendable () -> Void)?
 
-    /// Called when sustained decode overload should trigger host fallback.
-    private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
     /// Called when freeze monitoring records a stall event.
     private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
     /// Called when client recovery state changes.
@@ -503,7 +492,6 @@ actor StreamController {
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onPostResizeFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
-        onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
         onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
@@ -516,7 +504,6 @@ actor StreamController {
         self.onFirstFrameDecoded = onFirstFrameDecoded
         self.onPostResizeFrameDecoded = onPostResizeFrameDecoded
         self.onFirstFramePresented = onFirstFramePresented
-        self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
         self.onTerminalStartupFailure = onTerminalStartupFailure
@@ -681,7 +668,6 @@ actor StreamController {
         finishFrameQueue()
         queueDropsSinceLastLog = 0
         lastQueueDropLogTime = 0
-        decodeThresholdTimestamps.removeAll(keepingCapacity: false)
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         lastBackgroundDecodeErrorSignature = nil
         lastBackgroundDecodeErrorLogTime = 0
@@ -1194,7 +1180,6 @@ actor StreamController {
         onFirstFrameDecoded = nil
         onPostResizeFrameDecoded = nil
         onFirstFramePresented = nil
-        onAdaptiveFallbackNeeded = nil
         onStallEvent = nil
         onRecoveryStatusChanged = nil
         onTerminalStartupFailure = nil

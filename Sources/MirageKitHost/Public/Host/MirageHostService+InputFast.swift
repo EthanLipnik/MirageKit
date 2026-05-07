@@ -30,7 +30,10 @@ extension MirageHostService {
                 return
             }
 
-            guard let cacheEntry = inputStreamCacheActor.get(inputMessage.streamID) else {
+            guard let inputTarget = inputStreamCacheActor.resolveInputTarget(
+                streamID: inputMessage.streamID,
+                event: inputMessage.event
+            ) else {
                 MirageLogger.host("No cached stream for input: \(inputMessage.streamID)")
                 return
             }
@@ -46,8 +49,8 @@ extension MirageHostService {
                 }
             }
 
-            if cacheEntry.window.id == 0 {
-                switch inputMessage.event {
+            if inputTarget.window.id == 0 {
+                switch inputTarget.event {
                 case .relativeResize:
                     // Desktop display sizing is driven by explicit display-resolution messages
                     // based on client view bounds, not drawable pixel caps.
@@ -61,14 +64,24 @@ extension MirageHostService {
                 }
             }
 
-            if cacheEntry.window.id == 0,
-               Self.shouldThrottlePointerEventForStallWindow(inputMessage.event),
+            if inputTarget.window.id == 0,
+               Self.shouldThrottlePointerEventForStallWindow(inputTarget.event),
                streamRegistry.shouldCoalesceDesktopPointerEvent(streamID: inputMessage.streamID) {
                 return
             }
 
-            if let handler = onInputEventStorage { handler(inputMessage.event, cacheEntry.window, client) } else {
-                inputController.handleInputEvent(inputMessage.event, window: cacheEntry.window)
+            if let handler = onInputEventStorage { handler(inputTarget.event, inputTarget.window, inputTarget.client) } else {
+                inputController.handleInputEvent(
+                    inputTarget.event,
+                    window: inputTarget.window,
+                    deferredInjectionValidator: { [weak self] in
+                        guard let self else { return false }
+                        guard self.streamRegistry.isInputSessionActive(sessionID, clientID: client.id) else {
+                            return false
+                        }
+                        return self.inputStreamCacheActor.get(inputMessage.streamID) != nil
+                    }
+                )
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode input event: ")

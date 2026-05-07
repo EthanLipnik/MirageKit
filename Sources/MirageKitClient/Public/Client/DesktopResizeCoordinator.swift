@@ -13,6 +13,12 @@ import Observation
 @Observable
 @MainActor
 final class DesktopResizeCoordinator {
+    enum DispatchPolicy: Equatable {
+        case startup
+        case immediate
+        case settledWindowMetrics
+    }
+
     struct RequestGeometry: Equatable {
         let logicalResolution: CGSize
         let displayScaleFactor: CGFloat
@@ -78,24 +84,49 @@ final class DesktopResizeCoordinator {
     var latestContainerDisplaySize: CGSize = .zero
     var latestDrawableViewSize: CGSize = .zero
     var latestRequestedTarget: RequestGeometry?
+    var latestRequestedDispatchPolicy: DispatchPolicy?
     var queuedTarget: RequestGeometry?
+    var queuedDispatchPolicy: DispatchPolicy?
     var lastSentTarget: RequestGeometry?
     var activeTransition: ActiveTransition?
     @ObservationIgnored var displayResolutionTask: Task<Void, Never>?
     @ObservationIgnored var resizeHoldoffTask: Task<Void, Never>?
+    @ObservationIgnored var presentationMaskTimeoutTask: Task<Void, Never>?
 
     func beginTransition(streamID: StreamID, transitionID: UUID, target: RequestGeometry) {
         activeTransition = ActiveTransition(streamID: streamID, transitionID: transitionID, target: target)
         lastSentTarget = target
         queuedTarget = nil
+        queuedDispatchPolicy = nil
         latestRequestedTarget = target
+        latestRequestedDispatchPolicy = nil
         isResizing = true
         maskActive = true
     }
 
-    func queueLatestTarget(_ target: RequestGeometry) {
+    func queueLatestTarget(
+        _ target: RequestGeometry,
+        dispatchPolicy: DispatchPolicy = .settledWindowMetrics,
+        activatePresentationMask: Bool = true
+    ) {
         latestRequestedTarget = target
+        latestRequestedDispatchPolicy = dispatchPolicy
         queuedTarget = target
+        queuedDispatchPolicy = dispatchPolicy
+        if activatePresentationMask {
+            isResizing = true
+            maskActive = true
+        }
+    }
+
+    func clearQueuedResizeRequest() {
+        latestRequestedTarget = nil
+        latestRequestedDispatchPolicy = nil
+        queuedTarget = nil
+        queuedDispatchPolicy = nil
+        if activeTransition == nil {
+            clearLocalPresentationState()
+        }
     }
 
     func acceptTransition(streamID: StreamID, transitionID: UUID?) -> Bool {
@@ -128,6 +159,7 @@ final class DesktopResizeCoordinator {
             displayPixelSize: acceptedDisplayPixelSize
         ) == true {
             queuedTarget = nil
+            queuedDispatchPolicy = nil
         }
 
         if latestRequestedTarget?.isEffectivelySameAcceptedStreamGeometry(
@@ -135,6 +167,7 @@ final class DesktopResizeCoordinator {
             displayPixelSize: acceptedDisplayPixelSize
         ) == true {
             latestRequestedTarget = nil
+            latestRequestedDispatchPolicy = nil
         }
 
         if activeTransition == nil, queuedTarget == nil {
@@ -145,6 +178,8 @@ final class DesktopResizeCoordinator {
     func clearLocalPresentationState() {
         isResizing = false
         maskActive = false
+        presentationMaskTimeoutTask?.cancel()
+        presentationMaskTimeoutTask = nil
     }
 
     func cancelPendingTasks() {
@@ -152,6 +187,8 @@ final class DesktopResizeCoordinator {
         displayResolutionTask = nil
         resizeHoldoffTask?.cancel()
         resizeHoldoffTask = nil
+        presentationMaskTimeoutTask?.cancel()
+        presentationMaskTimeoutTask = nil
     }
 
     func cancelPendingResizeDispatch() {
@@ -174,7 +211,9 @@ final class DesktopResizeCoordinator {
         latestContainerDisplaySize = .zero
         latestDrawableViewSize = .zero
         latestRequestedTarget = nil
+        latestRequestedDispatchPolicy = nil
         queuedTarget = nil
+        queuedDispatchPolicy = nil
         self.lastSentTarget = preserveLastSentTarget ? lastSentTarget : nil
         activeTransition = nil
     }

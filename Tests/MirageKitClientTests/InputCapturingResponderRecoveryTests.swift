@@ -16,8 +16,8 @@ import UIKit
 struct InputCapturingResponderRecoveryTests {
     typealias ScheduledOperation = @MainActor () -> Void
 
-    @Test("Hardware keyboard presence change preserves software keyboard state and requests recovery")
-    func hardwareKeyboardPresenceChangePreservesSoftwareStateAndRequestsRecovery() {
+    @Test("Hardware keyboard presence keeps software keyboard state while targeting capture view")
+    func hardwareKeyboardPresenceKeepsSoftwareStateWhileTargetingCaptureView() {
         let view = InputCapturingView(frame: .zero)
         var requestedTriggers: [InputCapturingResponderRecoveryTrigger] = []
         var hardwarePresenceEvents: [Bool] = []
@@ -29,9 +29,19 @@ struct InputCapturingResponderRecoveryTests {
 
         #expect(view.hardwareKeyboardPresent)
         #expect(view.softwareKeyboardVisible)
-        #expect(view.responderRecoveryTarget() == .softwareKeyboardField)
+        #expect(view.responderRecoveryTarget() == .captureView)
         #expect(requestedTriggers == [.hardwareKeyboardPresenceChanged])
         #expect(hardwarePresenceEvents == [true])
+    }
+
+    @Test("Software keyboard targets input field without hardware keyboard")
+    func softwareKeyboardTargetsInputFieldWithoutHardwareKeyboard() {
+        let view = InputCapturingView(frame: .zero)
+
+        view.softwareKeyboardVisible = true
+
+        #expect(!view.hardwareKeyboardPresent)
+        #expect(view.responderRecoveryTarget() == .softwareKeyboardField)
     }
 
     @Test("Controller retries once when the first recovery attempt lands before the window is key")

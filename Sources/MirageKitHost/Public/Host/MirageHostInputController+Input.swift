@@ -18,11 +18,16 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Input Handling
 
-    func handleInput(_ event: MirageInputEvent, window: MirageWindow) {
+    func handleInput(
+        _ event: MirageInputEvent,
+        window: MirageWindow,
+        deferredInjectionValidator: (@Sendable () -> Bool)?
+    ) {
         let windowFrame = window.frame
 
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
+            guard shouldProcessDeferredInput(deferredInjectionValidator) else { return }
 
             switch event {
             case let .mouseDown(e):

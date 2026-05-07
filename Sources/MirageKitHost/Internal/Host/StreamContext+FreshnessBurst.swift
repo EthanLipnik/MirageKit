@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 4/13/26.
 //
-//  Freshness-first overload recovery for severe standard-mode transport pressure.
+//  Freshness-first local backlog shedding for severe standard-mode send pressure.
 //
 
 import Foundation
@@ -51,27 +51,23 @@ extension StreamContext {
         let now = CFAbsoluteTimeGetCurrent()
         let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
         let bufferedFrames = frameInbox.pendingCount()
-        let queueDepthText = latencyBurstCaptureQueueDepthOverride.map(String.init) ?? String(latencyBurstCaptureQueueDepth)
-
         freshnessBurstActive = true
         freshnessBurstEntryCount &+= 1
 
         MirageLogger.metrics(
             "Freshness burst enter for stream \(streamID): " +
-                "reason=\(reason), queue=\(queuedKB)KB, bufferedFrames=\(bufferedFrames), queueDepth=\(queueDepthText)"
+                "reason=\(reason), queue=\(queuedKB)KB, bufferedFrames=\(bufferedFrames)"
         )
 
         await enterLatencyBurst(now: now, reason: "freshness burst (\(reason))")
-        freshnessBurstQueueResetCount &+= 1
-        freshnessBurstRecoveryKeyframeCount &+= 1
 
         backpressureActive = true
         backpressureActiveSnapshot = true
         backpressureActivatedAt = now
 
         MirageLogger.metrics(
-            "Freshness burst recovery keyframe queued for stream \(streamID): " +
-                "reason=\(reason), queueReset=true, pendingKeyframe=\(pendingKeyframeReason ?? "none")"
+            "Freshness burst local drain active for stream \(streamID): " +
+                "reason=\(reason), queueReset=false, recoveryKeyframe=false"
         )
         return true
     }
@@ -140,16 +136,10 @@ extension StreamContext {
     func coalesceKeyframeRecoveryForFreshnessBurst(reason: String) -> Bool {
         guard freshnessBurstActive else { return false }
 
-        freshnessBurstCoalescedKeyframeCount &+= 1
-        noteLossEvent(
-            reason: "Freshness burst keyframe coalesced (\(reason))",
-            enablePFrameFEC: true
-        )
         MirageLogger.metrics(
-            "Freshness burst coalesced recovery keyframe for stream \(streamID): " +
-                "reason=\(reason), count=\(freshnessBurstCoalescedKeyframeCount)"
+            "Freshness burst allowing explicit recovery keyframe for stream \(streamID): reason=\(reason)"
         )
-        return true
+        return false
     }
 }
 #endif

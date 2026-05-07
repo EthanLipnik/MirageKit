@@ -431,6 +431,10 @@ extension MirageHostService {
                         sessionID: clientContext.sessionID
                     )
                 }
+            },
+            publishOverlayRegions: { [weak self] streamID, regions in
+                guard let self else { return }
+                inputStreamCacheActor.setAuxiliaryOverlayRegions(streamID, regions: regions)
             }
         )
         appAtlasCoordinatorsByClientID[clientContext.client.id] = coordinator

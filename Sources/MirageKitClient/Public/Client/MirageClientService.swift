@@ -348,7 +348,7 @@ public final class MirageClientService {
     /// Whether the host currently accepts client-driven desktop resize requests.
     public internal(set) var desktopStreamAllowsClientResize: Bool = true
 
-    /// Active codec per stream (for guarding ProRes against adaptive fallback)
+    /// Active codec per stream for codec-specific fallback decisions.
     var activeStreamCodecs: [StreamID: MirageVideoCodec] = [:]
 
     /// Desktop stream mode (mirrored vs secondary display)
@@ -706,6 +706,8 @@ public final class MirageClientService {
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .seconds(3)
+    @ObservationIgnored var desktopPostResizeTransitionTimeout: Duration = .seconds(10)
     var postResizeTransitionTimeoutTasks: [StreamID: Task<Void, Never>] = [:]
     var pendingLocalDesktopStopStreamID: StreamID?
     var pendingLocalDesktopStopSessionID: UUID?
