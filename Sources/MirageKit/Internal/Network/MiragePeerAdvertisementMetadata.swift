@@ -22,6 +22,7 @@ package enum MiragePeerAdvertisementMetadata {
     private static let supportsHEVCKey = "mirage.supports-hevc"
     private static let supportsP3Key = "mirage.supports-p3"
     private static let supportedColorDepthsKey = "mirage.color-depths"
+    private static let supportsProRes4444Key = "mirage.supports-prores-4444"
     private static let maxFrameRateKey = "mirage.max-frame-rate"
     private static let wifiSubnetSignaturesKey = "mirage.net.wifi"
     private static let wiredSubnetSignaturesKey = "mirage.net.wired"
@@ -44,7 +45,8 @@ package enum MiragePeerAdvertisementMetadata {
         hostName: String? = nil,
         acceptingConnections: Bool = true,
         vpnAccessEnabled: Bool = false,
-        supportedColorDepths: [MirageStreamColorDepth]
+        supportedColorDepths: [MirageStreamColorDepth],
+        supportsProRes4444: Bool = false
     ) -> LoomPeerAdvertisement {
         let normalizedColorDepths = supportedColorDepths.sorted { lhs, rhs in
             lhs.sortRank < rhs.sortRank
@@ -68,6 +70,7 @@ package enum MiragePeerAdvertisementMetadata {
                 supportsHEVCKey: "1",
                 supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
                 supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
+                supportsProRes4444Key: supportsProRes4444 ? "1" : "0",
                 maxFrameRateKey: "120",
             ]
         )
@@ -114,6 +117,13 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func supportsP3ColorSpace(in advertisement: LoomPeerAdvertisement) -> Bool {
         boolValue(supportsP3Key, in: advertisement, defaultValue: true)
+    }
+
+    package static func supportsProRes4444(in advertisement: LoomPeerAdvertisement) -> Bool {
+        guard advertisement.metadata[supportsProRes4444Key] != nil else {
+            return supportedColorDepths(in: advertisement).contains(.ultra)
+        }
+        return boolValue(supportsProRes4444Key, in: advertisement, defaultValue: false)
     }
 
     package static func supportedColorDepths(in advertisement: LoomPeerAdvertisement) -> [MirageStreamColorDepth] {

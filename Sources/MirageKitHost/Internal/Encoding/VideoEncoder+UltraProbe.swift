@@ -29,6 +29,39 @@ package struct VideoEncoderUltraProbeResult: Sendable {
 }
 
 extension VideoEncoder {
+    package static func probeProRes4444Support() -> Bool {
+        guard captureAcceptsXF44() else { return false }
+
+        let width = 128
+        let height = 72
+        let imageBufferAttributes: CFDictionary = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_444YpCbCr10BiPlanarFullRange,
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferMetalCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+        ] as CFDictionary
+
+        var session: VTCompressionSession?
+        let status = VTCompressionSessionCreate(
+            allocator: kCFAllocatorDefault,
+            width: Int32(width),
+            height: Int32(height),
+            codecType: kCMVideoCodecType_AppleProRes4444,
+            encoderSpecification: [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
+            ] as CFDictionary,
+            imageBufferAttributes: imageBufferAttributes,
+            compressedDataAllocator: nil,
+            outputCallback: nil,
+            refcon: nil,
+            compressionSessionOut: &session
+        )
+        guard status == noErr, let session else { return false }
+        VTCompressionSessionInvalidate(session)
+        return true
+    }
+
     package static func probeStrictUltra444Support() -> VideoEncoderUltraProbeResult {
         let captureAcceptsXF44 = captureAcceptsXF44()
         guard captureAcceptsXF44 else {

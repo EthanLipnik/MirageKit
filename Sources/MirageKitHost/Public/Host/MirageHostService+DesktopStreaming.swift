@@ -195,7 +195,8 @@ extension MirageHostService {
         let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
             for: targetFrameRate ?? 60
         )
-        let resolvedColorDepth = effectiveColorDepth(for: colorDepth)
+        let resolvedCodec = effectiveVideoCodec(for: codec)
+        let resolvedColorDepth = effectiveColorDepth(for: colorDepth, codec: resolvedCodec)
         let virtualDisplayStartupSurface = desktopVirtualDisplayStartupSurface(
             requestedLogicalResolution: displayResolution,
             requestedScaleFactor: defaultDesktopBackingScale
@@ -264,8 +265,8 @@ extension MirageHostService {
             bitrate: bitrate
         )
 
-        if let codec {
-            config.codec = codec
+        if let resolvedCodec {
+            config.codec = resolvedCodec
         }
 
         let requestedBitrate = config.bitrate

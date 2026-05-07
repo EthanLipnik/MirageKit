@@ -138,7 +138,8 @@ package struct StartStreamMessage: Codable {
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
-        mediaMaxPacketSize: Int? = nil
+        mediaMaxPacketSize: Int? = nil,
+        codec: MirageVideoCodec? = nil
     ) {
         self.windowID = windowID
         self.dataPort = dataPort
@@ -159,6 +160,50 @@ package struct StartStreamMessage: Codable {
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
         self.mediaMaxPacketSize = mediaMaxPacketSize
+        self.codec = codec
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        windowID = try container.decode(WindowID.self, forKey: .windowID)
+        dataPort = container.decodeLossyIfPresent(UInt16.self, forKey: .dataPort)
+        targetFrameRate = container.decodeLossyIfPresent(Int.self, forKey: .targetFrameRate) ?? 60
+        scaleFactor = container.decodeLossyIfPresent(CGFloat.self, forKey: .scaleFactor)
+        pixelWidth = container.decodeLossyIfPresent(Int.self, forKey: .pixelWidth)
+        pixelHeight = container.decodeLossyIfPresent(Int.self, forKey: .pixelHeight)
+        displayWidth = container.decodeLossyIfPresent(Int.self, forKey: .displayWidth)
+        displayHeight = container.decodeLossyIfPresent(Int.self, forKey: .displayHeight)
+        keyFrameInterval = container.decodeLossyIfPresent(Int.self, forKey: .keyFrameInterval)
+        captureQueueDepth = container.decodeLossyIfPresent(Int.self, forKey: .captureQueueDepth)
+        colorDepth = container.decodeLossyIfPresent(MirageStreamColorDepth.self, forKey: .colorDepth)
+        bitrate = container.decodeLossyIfPresent(Int.self, forKey: .bitrate)
+        latencyMode = container.decodeLossyIfPresent(MirageStreamLatencyMode.self, forKey: .latencyMode)
+        allowRuntimeQualityAdjustment = container.decodeLossyIfPresent(
+            Bool.self,
+            forKey: .allowRuntimeQualityAdjustment
+        )
+        lowLatencyHighResolutionCompressionBoost = container.decodeLossyIfPresent(
+            Bool.self,
+            forKey: .lowLatencyHighResolutionCompressionBoost
+        )
+        disableResolutionCap = container.decodeLossyIfPresent(Bool.self, forKey: .disableResolutionCap)
+        streamScale = container.decodeLossyIfPresent(CGFloat.self, forKey: .streamScale)
+        audioConfiguration = container.decodeLossyIfPresent(
+            MirageAudioConfiguration.self,
+            forKey: .audioConfiguration
+        )
+        bitrateAdaptationCeiling = container.decodeLossyIfPresent(Int.self, forKey: .bitrateAdaptationCeiling)
+        encoderMaxWidth = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxWidth)
+        encoderMaxHeight = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxHeight)
+        mediaMaxPacketSize = container.decodeLossyIfPresent(Int.self, forKey: .mediaMaxPacketSize)
+        upscalingMode = container.decodeLossyIfPresent(MirageUpscalingMode.self, forKey: .upscalingMode)
+        codec = container.decodeLossyIfPresent(MirageVideoCodec.self, forKey: .codec)
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossyIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
+        try? decodeIfPresent(type, forKey: key)
     }
 }
 

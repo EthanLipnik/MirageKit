@@ -1543,8 +1543,28 @@ struct MirageKitTests {
         #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
+        #expect(MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded) == false)
         #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
         #expect(decoded.mirageAcceptingConnections == true)
+    }
+
+    @Test("Peer advertisement ProRes support round trips separately from HEVC Ultra")
+    func peerAdvertisementProResSupportRoundTripsSeparatelyFromUltraColorDepth() {
+        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
+            deviceID: UUID(),
+            identityKeyID: "test-key-id",
+            modelIdentifier: "Mac16,1",
+            iconName: "desktopcomputer",
+            machineFamily: "Mac",
+            supportedColorDepths: [.standard, .pro],
+            supportsProRes4444: true
+        )
+
+        let decoded = LoomPeerAdvertisement.from(txtRecord: advertisement.toTXTRecord())
+
+        #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
+        #expect(MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded))
+        #expect(decoded.mirageSupportsProRes4444)
     }
 
     @Test("Peer advertisement busy flag round trips")
@@ -1564,6 +1584,28 @@ struct MirageKitTests {
         let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
         #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == false)
         #expect(decoded.mirageAcceptingConnections == false)
+    }
+
+    @Test("Unknown video codec in stream requests decodes as nil")
+    func unknownVideoCodecInStreamRequestsDecodesAsNil() throws {
+        let startStream = try JSONDecoder().decode(
+            StartStreamMessage.self,
+            from: Data(#"{"windowID":1,"targetFrameRate":60,"codec":"future-codec"}"#.utf8)
+        )
+        let selectApp = try JSONDecoder().decode(
+            SelectAppMessage.self,
+            from: Data(#"{"bundleIdentifier":"com.example.Editor","targetFrameRate":60,"codec":"future-codec"}"#.utf8)
+        )
+        let customStream = try JSONDecoder().decode(
+            StartCustomStreamMessage.self,
+            from: Data(
+                #"{"kind":"com.example.custom","displayWidth":1280,"displayHeight":720,"targetFrameRate":60,"codec":"future-codec"}"#.utf8
+            )
+        )
+
+        #expect(startStream.codec == nil)
+        #expect(selectApp.codec == nil)
+        #expect(customStream.codec == nil)
     }
 
     @Test("Peer advertisement local network context round trips and preserves host fields")

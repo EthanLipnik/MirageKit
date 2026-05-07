@@ -53,6 +53,10 @@ public extension LoomPeerAdvertisement {
         mirageSupportedColorDepths.contains(.ultra)
     }
 
+    var mirageSupportsProRes4444: Bool {
+        MiragePeerAdvertisementMetadata.supportsProRes4444(in: self)
+    }
+
     var mirageMaxFrameRate: Int {
         MiragePeerAdvertisementMetadata.maxFrameRate(from: self)
     }

@@ -183,6 +183,7 @@ public final class MirageHostService {
     let serviceName: String
     var hostID: UUID = .init()
     public internal(set) var supportedColorDepths: [MirageStreamColorDepth] = [.standard, .pro]
+    public internal(set) var supportsProRes4444 = false
     let handshakeReplayProtector = LoomReplayProtector()
     let localNetworkMonitor = MirageLocalNetworkMonitor(label: "host")
     // Internal for low-power policy extension.
@@ -609,6 +610,7 @@ public final class MirageHostService {
             iconName: hardwareIconName
         )
         let supportedColorDepths = Self.detectSupportedColorDepths()
+        let supportsProRes4444 = Self.detectProRes4444Support()
         let resolvedDeviceID = deviceID ?? UUID()
         let peerAdvertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
             deviceID: resolvedDeviceID,
@@ -617,7 +619,8 @@ public final class MirageHostService {
             iconName: hardwareIconName,
             machineFamily: hardwareMachineFamily,
             hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
-            supportedColorDepths: supportedColorDepths
+            supportedColorDepths: supportedColorDepths,
+            supportsProRes4444: supportsProRes4444
         )
         MirageLogger.host(
             "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil") color=\(hardwareColorCode?.description ?? "nil")"
@@ -632,6 +635,7 @@ public final class MirageHostService {
         encoderConfig = encoderConfiguration
         networkConfig = resolvedConfiguration
         self.supportedColorDepths = supportedColorDepths
+        self.supportsProRes4444 = supportsProRes4444
 
         windowController.hostService = self
         inputController.hostService = self
@@ -783,6 +787,12 @@ public final class MirageHostService {
         return supported
     }
 
+    private static func detectProRes4444Support() -> Bool {
+        let supported = ProRes4444SupportProbeCache.supported
+        MirageLogger.host("ProRes 4444 support: \(supported)")
+        return supported
+    }
+
     private static func supportsProColorDepth() -> Bool {
         true
     }
@@ -799,10 +809,27 @@ public final class MirageHostService {
         static let result = VideoEncoder.probeStrictUltra444Support()
     }
 
+    private enum ProRes4444SupportProbeCache {
+        static let supported = VideoEncoder.probeProRes4444Support()
+    }
+
+    func effectiveVideoCodec(for requested: MirageVideoCodec?) -> MirageVideoCodec? {
+        guard requested == .proRes4444 else { return requested }
+        guard supportsProRes4444 else {
+            MirageLogger.host("ProRes 4444 request ignored because this host does not support ProRes 4444")
+            return nil
+        }
+        return .proRes4444
+    }
+
     func effectiveColorDepth(
-        for requested: MirageStreamColorDepth?
+        for requested: MirageStreamColorDepth?,
+        codec: MirageVideoCodec? = nil
     ) -> MirageStreamColorDepth? {
         guard let requested else { return nil }
+        if codec == .proRes4444, requested == .ultra, supportsProRes4444 {
+            return .ultra
+        }
         if supportedColorDepths.contains(requested) {
             return requested
         }

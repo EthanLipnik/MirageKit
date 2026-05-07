@@ -420,11 +420,13 @@ extension MirageClientService {
                 markStartupPacketPending(streamID)
             }
             registerStartupAttempt(startupAttemptID, for: streamID)
+            activeStreamCodecs[streamID] = started.codec
 
             if shouldSetupController {
                 await self.setupControllerForStream(
                     streamID,
                     beginPostResizeTransition: shouldBeginPostResizeTransition,
+                    codec: started.codec,
                     mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
                     dimensionToken: dimensionToken,
                     targetFrameRate: started.frameRate

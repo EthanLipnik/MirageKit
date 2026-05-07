@@ -516,7 +516,8 @@ public extension MirageHostService {
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
         let requestedColorDepth = colorDepth
-        let resolvedColorDepth = effectiveColorDepth(for: requestedColorDepth)
+        let resolvedCodec = effectiveVideoCodec(for: codec)
+        let resolvedColorDepth = effectiveColorDepth(for: requestedColorDepth, codec: resolvedCodec)
 
         if keyFrameInterval != nil || resolvedColorDepth != nil || captureQueueDepth != nil || bitrate != nil {
             effectiveEncoderConfig = encoderConfig.withOverrides(
@@ -537,8 +538,8 @@ public extension MirageHostService {
             if let bitrate { MirageLogger.host("Using client-requested bitrate: \(bitrate)") }
         }
 
-        if let codec {
-            effectiveEncoderConfig.codec = codec
+        if let resolvedCodec {
+            effectiveEncoderConfig.codec = resolvedCodec
         }
 
         // Switch to BGRA pixel format when client requests MetalFX upscaling.
