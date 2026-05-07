@@ -445,6 +445,7 @@ public class InputCapturingView: UIView {
     var rightClickGesture: UITapGestureRecognizer!
     var directTapGesture: UITapGestureRecognizer!
     var directLongPressGesture: UILongPressGestureRecognizer!
+    var directDoubleTapDragGesture: UIPanGestureRecognizer!
     var directTwoFingerTapGesture: UITapGestureRecognizer!
     var directTwoFingerDragGesture: UIPanGestureRecognizer!
     var navigationSwipeGestures: [UISwipeGestureRecognizer] = []
@@ -465,8 +466,11 @@ public class InputCapturingView: UIView {
     var longPressButtonDown = false
     var longPressCancelledForMultiTouch = false
     var directLongPressButtonDown = false
+    var directDoubleTapDragButtonDown = false
+    var directLongPressStartPoint: CGPoint = .zero
     var directTwoFingerDragButtonDown = false
     var swallowingDirectLongPressForCursorRecapture = false
+    var swallowingDirectDoubleTapDragForCursorRecapture = false
     var swallowingDirectTwoFingerDragForCursorRecapture = false
 
     /// Track last cursor position for scroll events in stream space.
@@ -705,6 +709,16 @@ public class InputCapturingView: UIView {
         lastTapTime = 0
     }
 
+    func isDirectPrimaryClickContinuationCandidate(at rawLocation: CGPoint, timestamp: TimeInterval) -> Bool {
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return false }
+        let location = normalizedLocation(rawLocation)
+        return nextPrimaryClickCount(at: location, timestamp: timestamp) > 1
+    }
+
+    nonisolated static func directTouchDragActivationExceeded(from start: CGPoint, to current: CGPoint) -> Bool {
+        hypot(current.x - start.x, current.y - start.y) >= dragActivationMovementThresholdPoints
+    }
+
     func nextSecondaryClickCount(at location: CGPoint, timestamp: TimeInterval) -> Int {
         let timeSinceLastTap = timestamp - lastRightTapTime
         let distance = clickDistanceInPoints(from: location, to: lastRightTapLocation)
@@ -740,7 +754,7 @@ public class InputCapturingView: UIView {
         if virtualDragActive {
             return trackpadCursorActionPosition()
         }
-        if longPressButtonDown || directLongPressButtonDown || directTwoFingerDragButtonDown {
+        if longPressButtonDown || directLongPressButtonDown || directDoubleTapDragButtonDown || directTwoFingerDragButtonDown {
             return lastPanLocation
         }
         if cursorLockEnabled {
@@ -758,6 +772,7 @@ public class InputCapturingView: UIView {
     func releaseActivePointerButtonsIfNeeded(reason: String) {
         let shouldReleasePrimaryButton = longPressButtonDown ||
             directLongPressButtonDown ||
+            directDoubleTapDragButtonDown ||
             directTwoFingerDragButtonDown ||
             lockedPointerButtonDown ||
             virtualDragActive ||
@@ -792,6 +807,7 @@ public class InputCapturingView: UIView {
 
         longPressButtonDown = false
         directLongPressButtonDown = false
+        directDoubleTapDragButtonDown = false
         directTwoFingerDragButtonDown = false
         lockedPointerButtonDown = false
         lockedPointerDraggedSinceDown = false
@@ -805,12 +821,14 @@ public class InputCapturingView: UIView {
         let hadSuppressedGesture = swallowingLongPressForCursorRecapture ||
             swallowingVirtualCursorLongPressForCursorRecapture ||
             swallowingDirectLongPressForCursorRecapture ||
+            swallowingDirectDoubleTapDragForCursorRecapture ||
             swallowingDirectTwoFingerDragForCursorRecapture ||
             suppressEscapeKeyUpForCursorUnlock
 
         swallowingLongPressForCursorRecapture = false
         swallowingVirtualCursorLongPressForCursorRecapture = false
         swallowingDirectLongPressForCursorRecapture = false
+        swallowingDirectDoubleTapDragForCursorRecapture = false
         swallowingDirectTwoFingerDragForCursorRecapture = false
         suppressEscapeKeyUpForCursorUnlock = false
         lockedPointerDraggedSinceDown = false
@@ -1345,6 +1363,7 @@ public class InputCapturingView: UIView {
             scrollPhysicsView?.directTouchScrollEnabled = false
             directTapGesture.isEnabled = false
             directLongPressGesture.isEnabled = false
+            directDoubleTapDragGesture.isEnabled = false
             directTwoFingerTapGesture.isEnabled = false
             directTwoFingerDragGesture.isEnabled = false
             virtualCursorPanGesture.isEnabled = true
@@ -1362,6 +1381,7 @@ public class InputCapturingView: UIView {
             scrollPhysicsView?.directTouchScrollEnabled = true
             directTapGesture.isEnabled = true
             directLongPressGesture.isEnabled = true
+            directDoubleTapDragGesture.isEnabled = true
             directTwoFingerTapGesture.isEnabled = true
             directTwoFingerDragGesture.isEnabled = true
             virtualCursorPanGesture.isEnabled = false
@@ -1380,6 +1400,7 @@ public class InputCapturingView: UIView {
                 scrollPhysicsView?.directTouchScrollEnabled = false
                 directTapGesture.isEnabled = false
                 directLongPressGesture.isEnabled = false
+                directDoubleTapDragGesture.isEnabled = false
                 directTwoFingerTapGesture.isEnabled = false
                 directTwoFingerDragGesture.isEnabled = false
                 virtualCursorPanGesture.isEnabled = true
@@ -1395,6 +1416,7 @@ public class InputCapturingView: UIView {
                 scrollPhysicsView?.directTouchScrollEnabled = true
                 directTapGesture.isEnabled = true
                 directLongPressGesture.isEnabled = true
+                directDoubleTapDragGesture.isEnabled = true
                 directTwoFingerTapGesture.isEnabled = true
                 directTwoFingerDragGesture.isEnabled = true
                 virtualCursorPanGesture.isEnabled = false

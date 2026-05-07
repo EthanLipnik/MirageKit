@@ -32,13 +32,10 @@ extension MirageHostService {
 
     /// Post a HID scroll event
     nonisolated func postHIDScrollEvent(_ event: MirageScrollEvent, location: CGPoint) {
-        guard let cgEvent = CGEvent(
-            scrollWheelEvent2Source: nil,
-            units: event.isPrecise ? .pixel : .line,
-            wheelCount: 2,
-            wheel1: Int32(event.deltaY),
-            wheel2: Int32(event.deltaX),
-            wheel3: 0
+        guard let cgEvent = MirageHostScrollEventFactory.makeScrollEvent(
+            from: event,
+            integerDeltaX: MirageHostScrollEventFactory.integerDelta(for: event.deltaX),
+            integerDeltaY: MirageHostScrollEventFactory.integerDelta(for: event.deltaY)
         ) else {
             return
         }

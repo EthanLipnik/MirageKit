@@ -32,6 +32,56 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Direct second tap can take drag ownership before scroll")
+    func directSecondTapCanTakeDragOwnershipBeforeScroll() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.commitPrimaryClick(at: CGPoint(x: 0.5, y: 0.25), timestamp: 10, clickCount: 1)
+
+        #expect(
+            view.isDirectPrimaryClickContinuationCandidate(
+                at: CGPoint(x: 160, y: 60),
+                timestamp: 10.2
+            )
+        )
+        #expect(
+            !view.isDirectPrimaryClickContinuationCandidate(
+                at: CGPoint(x: 160, y: 60),
+                timestamp: 10.75
+            )
+        )
+        #expect(
+            !view.isDirectPrimaryClickContinuationCandidate(
+                at: CGPoint(x: 250, y: 60),
+                timestamp: 10.2
+            )
+        )
+
+        view.directTouchInputMode = .dragCursor
+
+        #expect(
+            !view.isDirectPrimaryClickContinuationCandidate(
+                at: CGPoint(x: 160, y: 60),
+                timestamp: 10.2
+            )
+        )
+    }
+
+    @Test("Direct long press drag activates after movement threshold")
+    func directLongPressDragActivatesAfterMovementThreshold() {
+        #expect(
+            !InputCapturingView.directTouchDragActivationExceeded(
+                from: .zero,
+                to: CGPoint(x: InputCapturingView.dragActivationMovementThresholdPoints - 0.1, y: 0)
+            )
+        )
+        #expect(
+            InputCapturingView.directTouchDragActivationExceeded(
+                from: .zero,
+                to: CGPoint(x: InputCapturingView.dragActivationMovementThresholdPoints, y: 0)
+            )
+        )
+    }
+
     @Test("Input capturing view disables the generic pointer long press while cursor lock is active")
     func inputCapturingViewDisablesGenericPointerLongPressWhenCursorLocked() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -185,6 +235,7 @@ struct ScrollPhysicsCapturingViewTests {
         #expect(view.directRotationGesture.isEnabled)
         #expect(!view.directTapGesture.isEnabled)
         #expect(!view.directLongPressGesture.isEnabled)
+        #expect(!view.directDoubleTapDragGesture.isEnabled)
         #expect(!view.directTwoFingerTapGesture.isEnabled)
         #expect(!view.directTwoFingerDragGesture.isEnabled)
         #expect(view.virtualCursorPanGesture.isEnabled)

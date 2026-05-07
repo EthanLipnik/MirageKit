@@ -49,6 +49,17 @@ extension InputCapturingView {
         directLongPressGesture.delegate = self
         addGestureRecognizer(directLongPressGesture)
 
+        directDoubleTapDragGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleDirectDoubleTapDrag(_:))
+        )
+        directDoubleTapDragGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directDoubleTapDragGesture.minimumNumberOfTouches = 1
+        directDoubleTapDragGesture.maximumNumberOfTouches = 1
+        directDoubleTapDragGesture.delegate = self
+        addGestureRecognizer(directDoubleTapDragGesture)
+
+        scrollPhysicsView?.directTouchPanGestureRecognizer.require(toFail: directDoubleTapDragGesture)
         directTapGesture.require(toFail: directLongPressGesture)
 
         directTwoFingerTapGesture = UITapGestureRecognizer(target: self, action: #selector(handleDirectTwoFingerTap(_:)))
@@ -268,7 +279,8 @@ extension InputCapturingView {
             return
         }
 
-        let location = normalizedLocation(gesture.location(in: self))
+        let rawLocation = gesture.location(in: self)
+        let location = normalizedLocation(rawLocation)
         updatePointerLocationForDirectInteraction(location)
         let eventModifiers = modifiers(from: gesture)
 
@@ -278,14 +290,21 @@ extension InputCapturingView {
             resetPrimaryClickTracking()
             isDragging = false
             directLongPressButtonDown = false
+            directLongPressStartPoint = rawLocation
             lastPanLocation = location
 
         case .changed:
-            stopTouchScrollDeceleration()
+            let shouldActivateDrag = Self.directTouchDragActivationExceeded(
+                from: directLongPressStartPoint,
+                to: rawLocation
+            )
+            guard directLongPressButtonDown || shouldActivateDrag else {
+                return
+            }
             if !directLongPressButtonDown {
                 let mouseEvent = MirageMouseEvent(
                     button: .left,
-                    location: location,
+                    location: lastPanLocation,
                     clickCount: 1,
                     modifiers: eventModifiers
                 )
@@ -293,6 +312,7 @@ extension InputCapturingView {
                 directLongPressButtonDown = true
             }
             if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                stopTouchScrollDeceleration()
                 revealCursorAfterPointerMovement()
                 isDragging = true
                 let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
@@ -304,6 +324,21 @@ extension InputCapturingView {
              .cancelled,
              .failed:
             guard directLongPressButtonDown else {
+                if gesture.state == .ended {
+                    stopTouchScrollDeceleration()
+                    let now = CACurrentMediaTime()
+                    let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
+                    currentRightClickCount = clickCount
+                    let mouseEvent = MirageMouseEvent(
+                        button: .right,
+                        location: location,
+                        clickCount: clickCount,
+                        modifiers: eventModifiers
+                    )
+                    onInputEvent?(.rightMouseDown(mouseEvent))
+                    onInputEvent?(.rightMouseUp(mouseEvent))
+                    commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
+                }
                 isDragging = false
                 return
             }
@@ -316,6 +351,110 @@ extension InputCapturingView {
             )
             onInputEvent?(.mouseUp(mouseEvent))
             directLongPressButtonDown = false
+            isDragging = false
+
+        default:
+            break
+        }
+    }
+
+    @objc
+    func handleDirectDoubleTapDrag(_ gesture: UIPanGestureRecognizer) {
+        noteInteractionForResponderRecovery()
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+        if swallowingDirectDoubleTapDragForCursorRecapture {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                swallowingDirectDoubleTapDragForCursorRecapture = false
+            }
+            return
+        }
+        if gesture.state == .began, requestCursorLockRecaptureIfNeeded() {
+            swallowingDirectDoubleTapDragForCursorRecapture = true
+            return
+        }
+
+        let rawLocation = gesture.location(in: self)
+        let location = normalizedLocation(rawLocation)
+        updatePointerLocationForDirectInteraction(location)
+        let eventModifiers = modifiers(from: gesture)
+
+        switch gesture.state {
+        case .began:
+            stopTouchScrollDeceleration()
+            let translation = gesture.translation(in: self)
+            let startRawLocation = CGPoint(
+                x: rawLocation.x - translation.x,
+                y: rawLocation.y - translation.y
+            )
+            let startLocation = normalizedLocation(startRawLocation)
+            updatePointerLocationForDirectInteraction(startLocation)
+            let now = CACurrentMediaTime()
+            currentClickCount = nextPrimaryClickCount(at: startLocation, timestamp: now)
+            directDoubleTapDragButtonDown = true
+            isDragging = false
+            lastPanLocation = startLocation
+
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: startLocation,
+                clickCount: currentClickCount,
+                modifiers: eventModifiers
+            )
+            onInputEvent?(.mouseDown(mouseEvent))
+            if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                updatePointerLocationForDirectInteraction(location)
+                revealCursorAfterPointerMovement()
+                isDragging = true
+                let dragEvent = MirageMouseEvent(
+                    button: .left,
+                    location: location,
+                    clickCount: currentClickCount,
+                    modifiers: eventModifiers
+                )
+                onInputEvent?(.mouseDragged(dragEvent))
+                lastPanLocation = location
+            }
+
+        case .changed:
+            guard directDoubleTapDragButtonDown else { return }
+            if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                stopTouchScrollDeceleration()
+                if !isDragging { resetPrimaryClickTracking() }
+                revealCursorAfterPointerMovement()
+                isDragging = true
+                let mouseEvent = MirageMouseEvent(
+                    button: .left,
+                    location: location,
+                    clickCount: currentClickCount,
+                    modifiers: eventModifiers
+                )
+                onInputEvent?(.mouseDragged(mouseEvent))
+                lastPanLocation = location
+            }
+
+        case .ended,
+             .cancelled,
+             .failed:
+            guard directDoubleTapDragButtonDown else {
+                isDragging = false
+                return
+            }
+
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: location,
+                clickCount: max(1, currentClickCount),
+                modifiers: eventModifiers
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+            if gesture.state == .ended, !isDragging {
+                commitPrimaryClick(
+                    at: location,
+                    timestamp: CACurrentMediaTime(),
+                    clickCount: max(1, currentClickCount)
+                )
+            }
+            directDoubleTapDragButtonDown = false
             isDragging = false
 
         default:
@@ -1079,6 +1218,29 @@ extension InputCapturingView {
 // MARK: - UIGestureRecognizerDelegate
 
 extension InputCapturingView: UIGestureRecognizerDelegate {
+    override public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer == directDoubleTapDragGesture {
+            let rawLocation = gestureRecognizer.location(in: self)
+            let candidateLocation: CGPoint
+            if let panGesture = gestureRecognizer as? UIPanGestureRecognizer {
+                let translation = panGesture.translation(in: self)
+                candidateLocation = CGPoint(
+                    x: rawLocation.x - translation.x,
+                    y: rawLocation.y - translation.y
+                )
+            } else {
+                candidateLocation = rawLocation
+            }
+
+            return isDirectPrimaryClickContinuationCandidate(
+                at: candidateLocation,
+                timestamp: CACurrentMediaTime()
+            )
+        }
+
+        return true
+    }
+
     public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         let isStylus = isStylusTouch(touch)
         if touch.type == .direct, !isStylus { onDirectTouchActivity?() }

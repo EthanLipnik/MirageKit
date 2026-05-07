@@ -14,7 +14,8 @@ import UIKit
 
 /// Determines how screen touches are translated into host input.
 public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable {
-    /// Direct touches scroll natively; taps click; long press and two-finger drag perform left drag.
+    /// Direct touches scroll natively; taps click; stationary long press right-clicks;
+    /// long-press drag and two-finger drag perform left drag.
     case normal
 
     /// Simulated trackpad-style cursor movement.

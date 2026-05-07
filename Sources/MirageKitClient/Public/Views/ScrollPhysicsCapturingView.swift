@@ -342,7 +342,9 @@ final class ScrollPhysicsCapturingView: UIView {
     ) {
         setTracking(false, for: scrollView)
 
-        if !decelerate {
+        if decelerate {
+            onScroll?(0, 0, .ended, .began, inputSource(for: scrollView))
+        } else {
             onScroll?(0, 0, .ended, .none, inputSource(for: scrollView))
             recenterIfNeeded(for: scrollView)
         }
