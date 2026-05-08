@@ -117,5 +117,66 @@ struct StreamPacketSenderPacingTests {
 
         await sender.stop()
     }
+
+    @Test("Fragment plans reject header counts that cannot fit on the wire")
+    func fragmentPlansRejectHeaderCountsThatCannotFitOnTheWire() {
+        let maxPayloadSize = 512
+        let largestRepresentableByteCount = Int(UInt16.max) * maxPayloadSize
+        let representablePlan = StreamPacketSender.fragmentPlan(
+            frameByteCount: largestRepresentableByteCount,
+            maxPayload: maxPayloadSize,
+            fecBlockSize: 0
+        )
+        let oversizedPlan = StreamPacketSender.fragmentPlan(
+            frameByteCount: largestRepresentableByteCount + 1,
+            maxPayload: maxPayloadSize,
+            fecBlockSize: 0
+        )
+
+        #expect(representablePlan.totalFragmentCount == Int(UInt16.max))
+        #expect(StreamPacketSender.canRepresentFragmentPlan(
+            representablePlan,
+            frameByteCount: largestRepresentableByteCount
+        ))
+        #expect(oversizedPlan.totalFragmentCount == Int(UInt16.max) + 1)
+        #expect(!StreamPacketSender.canRepresentFragmentPlan(
+            oversizedPlan,
+            frameByteCount: largestRepresentableByteCount + 1
+        ))
+    }
+
+    @Test("Fragment plans account for FEC parity before UInt16 header conversion")
+    func fragmentPlansAccountForFECParityBeforeUInt16HeaderConversion() {
+        let maxPayloadSize = 512
+        let byteCountWithMaximumDataFragments = Int(UInt16.max) * maxPayloadSize
+        let plan = StreamPacketSender.fragmentPlan(
+            frameByteCount: byteCountWithMaximumDataFragments,
+            maxPayload: maxPayloadSize,
+            fecBlockSize: 2
+        )
+
+        #expect(plan.dataFragmentCount == Int(UInt16.max))
+        #expect(plan.parityFragmentCount > 0)
+        #expect(plan.totalFragmentCount > Int(UInt16.max))
+        #expect(!StreamPacketSender.canRepresentFragmentPlan(
+            plan,
+            frameByteCount: byteCountWithMaximumDataFragments
+        ))
+    }
+
+    @Test("Fragment plans reject frame byte counts that cannot fit in header")
+    func fragmentPlansRejectFrameByteCountsThatCannotFitInHeader() {
+        let plan = StreamPacketSender.fragmentPlan(
+            frameByteCount: Int(UInt32.max) + 1,
+            maxPayload: Int(UInt32.max) + 1,
+            fecBlockSize: 0
+        )
+
+        #expect(plan.totalFragmentCount == 1)
+        #expect(!StreamPacketSender.canRepresentFragmentPlan(
+            plan,
+            frameByteCount: Int(UInt32.max) + 1
+        ))
+    }
 }
 #endif

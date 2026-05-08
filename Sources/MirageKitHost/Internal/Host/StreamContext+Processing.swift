@@ -1126,13 +1126,39 @@ extension StreamContext {
         } else {
             "--"
         }
+        func fpsText(_ value: Double?) -> String {
+            value.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "--"
+        }
+        func intText(_ value: Int?) -> String {
+            value.map(String.init) ?? "--"
+        }
+        let virtualRefreshText = if let captureCadence,
+                                    let virtualDisplayRefreshRate = captureCadence.virtualDisplayRefreshRate {
+            virtualDisplayRefreshRate.formatted(.number.precision(.fractionLength(1)))
+        } else {
+            "--"
+        }
+        let nativeRefreshText = if let captureCadence,
+                                   let usesNativeRefresh = captureCadence.usesNativeRefreshMinimumFrameInterval {
+            usesNativeRefresh ? "true" : "false"
+        } else {
+            "--"
+        }
+        let cadenceText = "target=\(currentFrameRate)fps " +
+            "capture=\(fpsText(lastCaptureFPS))fps " +
+            "ingress=\(fpsText(lastCaptureIngressFPS))fps " +
+            "encodeAttempt=\(fpsText(lastEncodeAttemptFPS))fps " +
+            "policyRate=\(intText(captureCadence?.minimumFrameIntervalRate))fps " +
+            "displayRate=\(intText(captureCadence?.displayRefreshRate))Hz " +
+            "virtualRate=\(virtualRefreshText)Hz " +
+            "nativeInterval=\(nativeRefreshText)"
 
         switch action {
         case .none:
             return
         case .restartVirtualDisplayCadenceDriver:
             MirageLogger.capture(
-                "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
+                "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
             if let snapshot = await SharedVirtualDisplayManager.shared.restartCadenceDriver(for: .desktopStream) {
                 virtualDisplayContext = snapshot
@@ -1152,12 +1178,12 @@ extension StreamContext {
             }
         case .restartCapture:
             MirageLogger.capture(
-                "event=capture_cadence_recovery action=restart_capture stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
+                "event=capture_cadence_recovery action=restart_capture stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
             await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recovery")
         case .reassertVirtualDisplayMode:
             MirageLogger.capture(
-                "event=capture_cadence_recovery action=reassert_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
+                "event=capture_cadence_recovery action=reassert_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
             if let snapshot = await SharedVirtualDisplayManager.shared.reassertDisplayMode(for: .desktopStream) {
                 virtualDisplayContext = snapshot
@@ -1168,7 +1194,7 @@ extension StreamContext {
             await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence virtual-display reassert")
         case .recreateVirtualDisplay:
             MirageLogger.capture(
-                "event=capture_cadence_recovery action=recreate_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
+                "event=capture_cadence_recovery action=recreate_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
             do {
                 _ = try await SharedVirtualDisplayManager.shared.recreateDisplayForCadenceRecovery(for: .desktopStream)

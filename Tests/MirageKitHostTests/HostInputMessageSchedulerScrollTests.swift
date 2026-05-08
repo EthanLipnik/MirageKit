@@ -99,6 +99,38 @@ struct HostInputMessageSchedulerScrollTests {
         #expect(scrollEvents.first?.phase == MirageScrollPhase.none)
         #expect(scrollEvents.first?.timestamp == 2)
     }
+
+    @Test("Discrete keyboard messages survive pending continuous input trimming")
+    func discreteKeyboardMessagesSurvivePendingContinuousInputTrimming() async throws {
+        let streamID: StreamID = 703
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-keyboard-protected", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+        let keyCode: UInt16 = 0x31
+
+        for index in 0 ..< 320 {
+            let event = makeMouseEvent(timestamp: TimeInterval(index))
+            scheduler.enqueue(try inputMessage(index.isMultiple(of: 2) ? .mouseMoved(event) : .mouseDragged(event), streamID: streamID))
+        }
+        scheduler.enqueue(try inputMessage(.keyDown(MirageKeyEvent(keyCode: keyCode)), streamID: streamID))
+        for index in 320 ..< 640 {
+            let event = makeMouseEvent(timestamp: TimeInterval(index))
+            scheduler.enqueue(try inputMessage(index.isMultiple(of: 2) ? .mouseMoved(event) : .mouseDragged(event), streamID: streamID))
+        }
+
+        queue.activate()
+        try await waitForKeyboardEvent(events, keyCode: keyCode)
+
+        let deliveredKeyboardEvents = events.read { events in
+            events.compactMap { event -> MirageKeyEvent? in
+                guard case let .keyDown(keyEvent) = event else { return nil }
+                return keyEvent
+            }
+        }
+        #expect(deliveredKeyboardEvents.contains { $0.keyCode == keyCode })
+    }
 }
 
 private func inputMessage(_ event: MirageInputEvent, streamID: StreamID) throws -> ControlMessage {
@@ -120,5 +152,30 @@ private func waitForEvents(
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(events.read { $0.count } >= count)
+}
+
+private func waitForKeyboardEvent(
+    _ events: Locked<[MirageInputEvent]>,
+    keyCode: UInt16
+) async throws {
+    let deadline = Date().addingTimeInterval(2)
+    while Date() < deadline {
+        let didReceive = events.read { events in
+            events.contains { event in
+                guard case let .keyDown(keyEvent) = event else { return false }
+                return keyEvent.keyCode == keyCode
+            }
+        }
+        if didReceive { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Expected keyboard event with keyCode \(keyCode)")
+}
+
+private func makeMouseEvent(timestamp: TimeInterval) -> MirageMouseEvent {
+    MirageMouseEvent(
+        location: CGPoint(x: 0.5, y: 0.5),
+        timestamp: timestamp
+    )
 }
 #endif

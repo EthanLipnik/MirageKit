@@ -49,6 +49,7 @@ public struct MirageReceiverHealthController: Sendable {
         let isTransportClean: Bool
         let allowsProbePromotion: Bool
         let suppressesProbePromotion: Bool
+        let transportPressureReason: String?
     }
 
     private struct PendingPromotion: Sendable, Equatable {
@@ -100,9 +101,11 @@ public struct MirageReceiverHealthController: Sendable {
     private static let transportDropSevereCount: UInt64 = 24
     private static let deliveryStressRatio = 0.90
     private static let deliverySevereRatio = 0.70
+    private static let clientStarvationStressRatio = 0.50
 
     public private(set) var state: State = .stable
     public var promotionRecoveryMode: PromotionRecoveryMode
+    public private(set) var lastTransportPressureReason: String?
 
     private var lastTransitionAt: CFAbsoluteTime?
     private var sessionStartedAt: CFAbsoluteTime?
@@ -142,6 +145,7 @@ public struct MirageReceiverHealthController: Sendable {
         let preservedPromotionCeilingBps = preservingProbeCooldown ? promotionCeilingBps : nil
         let preservedSessionStartedAt = preservingSessionStart ? sessionStartedAt : nil
         state = .stable
+        lastTransportPressureReason = nil
         lastTransitionAt = nil
         sessionStartedAt = preservedSessionStartedAt
         healthySampleCount = 0
@@ -189,19 +193,24 @@ public struct MirageReceiverHealthController: Sendable {
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
-        allowsBackoff: Bool = true
+        allowsBackoff: Bool = true,
+        minimumHealthyFrameRate: Int? = nil
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0, !snapshots.isEmpty else {
             reset()
             return .none
         }
         return advance(
-            snapshot: Self.worstSnapshot(from: snapshots),
+            snapshot: Self.worstSnapshot(
+                from: snapshots,
+                minimumHealthyFrameRate: minimumHealthyFrameRate
+            ),
             currentBitrateBps: currentBitrateBps,
             ceilingBps: ceilingBps,
             now: now,
             allowsNewProbe: allowsNewProbe,
-            allowsBackoff: allowsBackoff
+            allowsBackoff: allowsBackoff,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
         )
     }
 
@@ -211,7 +220,8 @@ public struct MirageReceiverHealthController: Sendable {
         ceilingBps: Int,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
-        allowsBackoff: Bool = true
+        allowsBackoff: Bool = true,
+        minimumHealthyFrameRate: Int? = nil
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0 else {
             reset()
@@ -225,7 +235,11 @@ public struct MirageReceiverHealthController: Sendable {
             return .none
         }
 
-        let sample = Self.sample(from: snapshot)
+        let sample = Self.sample(
+            from: snapshot,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
+        )
+        lastTransportPressureReason = sample.transportPressureReason
         updateSampleCounters(sample: sample, now: now, allowsBackoff: allowsBackoff)
 
         if let promotionAction = advancePendingPromotion(
@@ -549,7 +563,8 @@ public struct MirageReceiverHealthController: Sendable {
     }
 
     private static func sample(
-        from snapshot: MirageClientMetricsSnapshot
+        from snapshot: MirageClientMetricsSnapshot,
+        minimumHealthyFrameRate: Int? = nil
     ) -> Sample {
         guard snapshot.hasHostMetrics else {
             return Sample(
@@ -557,11 +572,18 @@ public struct MirageReceiverHealthController: Sendable {
                 hasTransportPressure: false,
                 isTransportClean: false,
                 allowsProbePromotion: false,
-                suppressesProbePromotion: true
+                suppressesProbePromotion: true,
+                transportPressureReason: nil
             )
         }
 
-        let targetFPS = Double(max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60))
+        let requestedTargetFrameRate = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
+        let targetFPS = Double(
+            Self.effectiveHealthFrameRate(
+                requestedTargetFrameRate: requestedTargetFrameRate,
+                minimumHealthyFrameRate: minimumHealthyFrameRate
+            )
+        )
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
@@ -585,12 +607,25 @@ public struct MirageReceiverHealthController: Sendable {
         let deliveryRatio = snapshot.hostEncodedFPS > 0
             ? max(0, snapshot.receivedFPS) / max(1, snapshot.hostEncodedFPS)
             : 1
+        let deliveryBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliveryStressRatio
+        let deliverySevereBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliverySevereRatio
         let deliveryStress = hostPipelineHealthy &&
             clientCanVerifyTransport &&
+            deliveryBelowHealthFloor &&
             deliveryRatio < Self.deliveryStressRatio
         let deliverySevere = hostPipelineHealthy &&
             clientCanVerifyTransport &&
+            deliverySevereBelowHealthFloor &&
             deliveryRatio < Self.deliverySevereRatio
+        let clientKeyframeStarved = hostPipelineHealthy &&
+            snapshot.clientReassemblerPendingKeyframeCount > 0
+        let clientStarvationStress = clientKeyframeStarved && (
+            snapshot.receivedFPS < targetFPS * Self.clientStarvationStressRatio ||
+                snapshot.decodedFPS < targetFPS * Self.clientStarvationStressRatio ||
+                snapshot.submittedFPS < targetFPS * Self.clientStarvationStressRatio ||
+                snapshot.clientDroppedFrames > 0 ||
+                !snapshot.decodeHealthy
+        )
 
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
         let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
@@ -604,6 +639,26 @@ public struct MirageReceiverHealthController: Sendable {
             dropStress ||
             pairedPacerStress ||
             deliveryStress
+        let transportPressureReason = Self.transportPressureReason(
+            queueBytes: queueBytes,
+            queueStress: queueStress,
+            queueSevere: queueSevere,
+            sendStartDelayAverageMs: sendStartDelayAverageMs,
+            sendCompletionAverageMs: sendCompletionAverageMs,
+            sendDelayStress: sendDelayStress,
+            sendDelaySevere: sendDelaySevere,
+            packetPacerAverageSleepMs: packetPacerAverageSleepMs,
+            pairedPacerStress: pairedPacerStress,
+            pairedPacerSevere: pairedPacerSevere,
+            transportDropCount: transportDropCount,
+            dropStress: dropStress,
+            dropSevere: dropSevere,
+            deliveryRatio: deliveryRatio,
+            deliveryStress: deliveryStress,
+            deliverySevere: deliverySevere,
+            hostEncodedFPS: snapshot.hostEncodedFPS,
+            receivedFPS: snapshot.receivedFPS
+        )
 
         let targetFrameIntervalMs = 1000.0 / targetFPS
         let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
@@ -620,7 +675,8 @@ public struct MirageReceiverHealthController: Sendable {
         let suppressesProbePromotion = queueBytes > 0 ||
             transportDropCount > 0 ||
             sendDelayStress ||
-            pacerStress
+            pacerStress ||
+            clientStarvationStress
         let bottleneckKind = snapshot.bottleneckKind
         let clientBottleneckBlocksPromotion =
             bottleneckKind == .decodeBound ||
@@ -634,8 +690,75 @@ public struct MirageReceiverHealthController: Sendable {
             allowsProbePromotion: !suppressesProbePromotion &&
                 !clientBottleneckBlocksPromotion &&
                 smoothEnoughForPromotion,
-            suppressesProbePromotion: suppressesProbePromotion
+            suppressesProbePromotion: suppressesProbePromotion,
+            transportPressureReason: transportPressureReason
         )
+    }
+
+    private static func effectiveHealthFrameRate(
+        requestedTargetFrameRate: Int,
+        minimumHealthyFrameRate: Int?
+    ) -> Int {
+        let requestedTargetFrameRate = max(1, requestedTargetFrameRate)
+        guard let minimumHealthyFrameRate else { return requestedTargetFrameRate }
+        return min(requestedTargetFrameRate, max(1, minimumHealthyFrameRate))
+    }
+
+    private static func transportPressureReason(
+        queueBytes: Int,
+        queueStress: Bool,
+        queueSevere: Bool,
+        sendStartDelayAverageMs: Double,
+        sendCompletionAverageMs: Double,
+        sendDelayStress: Bool,
+        sendDelaySevere: Bool,
+        packetPacerAverageSleepMs: Double,
+        pairedPacerStress: Bool,
+        pairedPacerSevere: Bool,
+        transportDropCount: UInt64,
+        dropStress: Bool,
+        dropSevere: Bool,
+        deliveryRatio: Double,
+        deliveryStress: Bool,
+        deliverySevere: Bool,
+        hostEncodedFPS: Double,
+        receivedFPS: Double
+    ) -> String? {
+        if queueSevere || queueStress {
+            return "host send queue \(Self.formatBytes(queueBytes))"
+        }
+        if dropSevere || dropStress {
+            return "host packet drops \(transportDropCount)"
+        }
+        if sendDelaySevere || sendDelayStress {
+            let startText = Self.formatMilliseconds(sendStartDelayAverageMs)
+            let completionText = Self.formatMilliseconds(sendCompletionAverageMs)
+            return "host send delay start=\(startText) completion=\(completionText)"
+        }
+        if pairedPacerSevere || pairedPacerStress {
+            return "packet pacer \(Self.formatMilliseconds(packetPacerAverageSleepMs)) with queue/drop pressure"
+        }
+        if deliverySevere || deliveryStress {
+            let ratio = Int((deliveryRatio * 100).rounded())
+            let encodedText = hostEncodedFPS.formatted(.number.precision(.fractionLength(1)))
+            let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
+            return "delivery collapse \(ratio)% received (host=\(encodedText)fps received=\(receivedText)fps)"
+        }
+        return nil
+    }
+
+    private static func formatBytes(_ bytes: Int) -> String {
+        guard bytes >= 1024 else { return "\(bytes)B" }
+        let kib = Double(bytes) / 1024.0
+        if kib < 1024 {
+            return "\(kib.formatted(.number.precision(.fractionLength(1))))KiB"
+        }
+        let mib = kib / 1024.0
+        return "\(mib.formatted(.number.precision(.fractionLength(2))))MiB"
+    }
+
+    private static func formatMilliseconds(_ milliseconds: Double) -> String {
+        "\(milliseconds.formatted(.number.precision(.fractionLength(1))))ms"
     }
 
     private static func hostPipelineHealthy(
@@ -688,14 +811,24 @@ public struct MirageReceiverHealthController: Sendable {
         }
     }
 
-    private static func worstSnapshot(from snapshots: [MirageClientMetricsSnapshot]) -> MirageClientMetricsSnapshot {
+    private static func worstSnapshot(
+        from snapshots: [MirageClientMetricsSnapshot],
+        minimumHealthyFrameRate: Int?
+    ) -> MirageClientMetricsSnapshot {
         snapshots.max(by: { lhs, rhs in
-            healthPriority(for: lhs) < healthPriority(for: rhs)
+            healthPriority(for: lhs, minimumHealthyFrameRate: minimumHealthyFrameRate) <
+                healthPriority(for: rhs, minimumHealthyFrameRate: minimumHealthyFrameRate)
         }) ?? snapshots[0]
     }
 
-    private static func healthPriority(for snapshot: MirageClientMetricsSnapshot) -> Int {
-        let sample = sample(from: snapshot)
+    private static func healthPriority(
+        for snapshot: MirageClientMetricsSnapshot,
+        minimumHealthyFrameRate: Int?
+    ) -> Int {
+        let sample = sample(
+            from: snapshot,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
+        )
         var score = 0
         if sample.hasSevereTransportPressure {
             score += 1_000

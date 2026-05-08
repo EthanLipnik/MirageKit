@@ -2007,6 +2007,15 @@ public class InputCapturingView: UIView {
             object: nil
         )
 
+        #if os(iOS)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(softwareKeyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+        #endif
+
         #if canImport(GameController)
         NotificationCenter.default.addObserver(
             self,

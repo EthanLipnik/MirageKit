@@ -85,10 +85,62 @@ struct SharedClipboardTests {
     @Test("Shared clipboard oversized and empty payloads are rejected")
     func sharedClipboardOversizeDropBehavior() {
         let oversized = Data(repeating: 0x61, count: MirageSharedClipboard.maximumPayloadBytes + 1)
+        let maxText = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes)
+        let oversizedText = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes + 1)
+        let textRepresentation = SharedClipboardRepresentation(
+            kind: .text,
+            contentType: "public.utf8-plain-text",
+            filename: nil,
+            byteCount: maxText.count
+        )
+        let imageRepresentation = SharedClipboardRepresentation(
+            kind: .image,
+            contentType: "public.png",
+            filename: nil,
+            byteCount: oversized.count
+        )
+
         #expect(MirageSharedClipboard.validatedPayload(nil) == nil)
         #expect(MirageSharedClipboard.validatedPayload(Data()) == nil)
         #expect(MirageSharedClipboard.validatedPayload(oversized) == nil)
         #expect(MirageSharedClipboard.validatedPayload(Data("clipboard".utf8)) == Data("clipboard".utf8))
+        #expect(MirageSharedClipboard.validatedPayload(maxText, representation: textRepresentation) == maxText)
+        #expect(MirageSharedClipboard.validatedPayload(oversizedText, representation: textRepresentation) == nil)
+        #expect(MirageSharedClipboard.validatedPayload(oversized, representation: imageRepresentation) == nil)
+    }
+
+    @Test("Shared clipboard chunks 256 KiB text payloads")
+    func sharedClipboardChunksLargeTextPayloads() throws {
+        let payload = Data(repeating: 0x61, count: MirageSharedClipboard.maximumTextPayloadBytes)
+        let item = MirageSharedClipboardItem(
+            representation: SharedClipboardRepresentation(
+                kind: .text,
+                contentType: "public.utf8-plain-text",
+                filename: nil,
+                byteCount: payload.count
+            ),
+            payload: payload
+        )
+        let localSend = MirageSharedClipboardLocalSend(
+            item: item,
+            orderingToken: MirageSharedClipboardOrderingToken(
+                logicalVersion: 1,
+                changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000CAFE")!
+            )
+        )
+        let context = MirageMediaSecurityContext(
+            sessionKey: Data(repeating: 0x4D, count: MirageMediaSecurity.sessionKeyLength),
+            udpRegistrationToken: Data(repeating: 0x52, count: MirageMediaSecurity.registrationTokenLength)
+        )
+
+        let messages = try MirageSharedClipboard.makeUpdateMessages(
+            localSend: localSend,
+            sentAtMs: 123,
+            mediaSecurityContext: context,
+            source: .client
+        )
+
+        #expect(messages.count == MirageSharedClipboard.maximumTextPayloadBytes / MirageSharedClipboard.chunkSize)
     }
 
     @Test("Shared clipboard accepts newer logical versions despite physical clock skew")
@@ -121,33 +173,204 @@ struct SharedClipboardTests {
     func metadataOnlyHostDeclarationSuppressesStaleClientSync() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 5)
+        let observedAtMs: Int64 = 10_000
 
         let remoteToken = MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         )
-        state.recordRemoteDeclaration(changeCount: 5, orderingToken: remoteToken)
+        state.recordRemoteDeclaration(
+            changeCount: 5,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
 
-        #expect(state.prepareLocalSend(currentItem: textItem("old-client"), changeCount: 5) == nil)
-        let localSend = state.prepareLocalSend(currentItem: textItem("new-client"), changeCount: 6)
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("old-client"),
+                changeCount: 5,
+                nowMs: observedAtMs
+            ) == nil
+        )
+        let localSend = state.prepareLocalSend(
+            currentItem: textItem("new-client"),
+            changeCount: 6,
+            nowMs: afterRemoteWindow(from: observedAtMs)
+        )
         #expect(localSend?.text == "new-client")
         #expect(localSend?.orderingToken.logicalVersion == 2)
     }
 
-    @Test("Metadata-only host declaration does not suppress existing client clipboard change")
-    func metadataOnlyHostDeclarationDoesNotSuppressExistingClientChange() {
+    @Test("Metadata-only host declaration allows existing client clipboard change after recent window")
+    func metadataOnlyHostDeclarationAllowsExistingClientChangeAfterRecentWindow() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 5)
+        let observedAtMs: Int64 = 20_000
 
         let remoteToken = MirageSharedClipboardOrderingToken(
             logicalVersion: 1,
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
         )
-        state.recordRemoteDeclaration(changeCount: 6, orderingToken: remoteToken)
+        state.recordRemoteDeclaration(
+            changeCount: 6,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
 
-        let localSend = state.prepareLocalSend(currentItem: textItem("client-newer"), changeCount: 6)
+        let localSend = state.prepareLocalSend(
+            currentItem: textItem("client-newer"),
+            changeCount: 6,
+            nowMs: afterRemoteWindow(from: observedAtMs)
+        )
         #expect(localSend?.text == "client-newer")
         #expect(localSend?.orderingToken.logicalVersion == 2)
+    }
+
+    @Test("Payload-bearing host observation suppresses client paste sync before apply")
+    func payloadBearingHostObservationSuppressesClientPasteSyncBeforeApply() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        let observedAtMs: Int64 = 30_000
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 3,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
+        )
+
+        let recorded = state.recordRemoteTransferObservation(
+            changeCount: 5,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+        #expect(recorded)
+        #expect(state.latestOrderingToken == nil)
+        #expect(state.shouldApplyRemoteUpdate(orderingToken: remoteToken))
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("client"),
+                changeCount: 5,
+                nowMs: observedAtMs
+            ) == nil
+        )
+    }
+
+    @Test("Observed host token can still be finalized")
+    func observedHostTokenCanStillBeFinalized() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 4,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!
+        )
+
+        state.recordRemoteTransferObservation(
+            changeCount: 5,
+            orderingToken: remoteToken,
+            observedAtMs: 40_000
+        )
+
+        #expect(state.shouldApplyRemoteUpdate(orderingToken: remoteToken))
+        state.recordRemoteWrite(changeCount: 6, orderingToken: remoteToken)
+        #expect(state.latestOrderingToken == remoteToken)
+        #expect(!state.shouldApplyRemoteUpdate(orderingToken: remoteToken))
+    }
+
+    @Test("Client pasteboard changes inside recent host window are treated as host-origin")
+    func clientPasteboardChangesInsideRecentHostWindowAreTreatedAsHostOrigin() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 10)
+        let observedAtMs: Int64 = 50_000
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 1,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
+        )
+
+        state.recordRemoteTransferObservation(
+            changeCount: 10,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("maybe-host"),
+                changeCount: 11,
+                nowMs: observedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+            ) == nil
+        )
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("maybe-host"),
+                changeCount: 11,
+                nowMs: afterRemoteWindow(from: observedAtMs)
+            ) == nil
+        )
+    }
+
+    @Test("Client pasteboard changes after recent host window can sync")
+    func clientPasteboardChangesAfterRecentHostWindowCanSync() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 10)
+        let observedAtMs: Int64 = 60_000
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 1,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
+        )
+
+        state.recordRemoteTransferObservation(
+            changeCount: 10,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+
+        let localSend = state.prepareLocalSend(
+            currentItem: textItem("client-newer"),
+            changeCount: 11,
+            nowMs: afterRemoteWindow(from: observedAtMs)
+        )
+
+        #expect(localSend?.text == "client-newer")
+        #expect(localSend?.orderingToken.logicalVersion == 2)
+    }
+
+    @Test("Stale host observations do not override newer ordering")
+    func staleHostObservationsDoNotOverrideNewerOrdering() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 0)
+        let newerToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 5,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000000A")!
+        )
+        let olderToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 4,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-00000000000B")!
+        )
+
+        let recordedNewer = state.recordRemoteTransferObservation(
+            changeCount: 0,
+            orderingToken: newerToken,
+            observedAtMs: 70_000
+        )
+        let recordedOlder = state.recordRemoteTransferObservation(
+            changeCount: 1,
+            orderingToken: olderToken,
+            observedAtMs: 71_000
+        )
+        #expect(recordedNewer)
+        #expect(!recordedOlder)
+        #expect(state.latestRemoteClipboardObservedAtMs == 70_000)
+
+        let localSend = state.prepareLocalSend(
+            currentItem: textItem("client-newer"),
+            changeCount: 1,
+            nowMs: afterRemoteWindow(from: 70_000)
+        )
+        #expect(localSend?.orderingToken.logicalVersion == 6)
+        let recordedOlderAfterLocalSend = state.recordRemoteTransferObservation(
+            changeCount: 2,
+            orderingToken: olderToken,
+            observedAtMs: 74_000
+        )
+        #expect(!recordedOlderAfterLocalSend)
     }
 
     @Test("Host-applied payload is not sent back on next client paste")
@@ -306,6 +529,10 @@ private func textItem(_ text: String) -> MirageSharedClipboardItem {
         ),
         payload: payload
     )
+}
+
+private func afterRemoteWindow(from observedAtMs: Int64) -> Int64 {
+    observedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds + 1
 }
 
 private extension Optional where Wrapped == MirageSharedClipboardLocalSend {

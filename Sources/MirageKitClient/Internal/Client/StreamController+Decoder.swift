@@ -53,6 +53,7 @@ extension StreamController {
         cancelMemoryBudgetRecoveryTask()
         stopFirstPresentedFrameMonitor()
         MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()

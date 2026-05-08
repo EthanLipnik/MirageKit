@@ -82,6 +82,29 @@ struct DesktopVirtualDisplayStartupSessionTests {
         #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .conservative)
     }
 
+    @Test("ScreenCaptureKit content list failures remain readiness retryable")
+    func screenCaptureKitContentListFailuresRemainReadinessRetryable() {
+        let plan = makePlan()
+        var session = DesktopVirtualDisplayStartupSession(plan: plan)
+
+        let failureClass = session.recordFailure(
+            NSError(
+                domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+                code: -3813
+            )
+        )
+
+        let nextIndex = session.nextRetryIndex(
+            after: failureClass,
+            attempts: plan.attempts,
+            currentIndex: 0
+        )
+
+        #expect(failureClass == .readiness)
+        #expect(nextIndex == 2)
+        #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .conservative)
+    }
+
     @Test("Non-retryable failures abort the ladder")
     func nonRetryableFailuresAbortTheLadder() {
         let plan = makePlan()

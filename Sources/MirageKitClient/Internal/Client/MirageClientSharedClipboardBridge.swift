@@ -216,24 +216,20 @@ private actor ClientClipboardSnapshotReader {
         filename: String?,
         payload: Data
     ) -> MirageSharedClipboardItem {
-        guard payload.count <= MirageSharedClipboard.maximumPayloadBytes else {
+        let representation = SharedClipboardRepresentation(
+            kind: kind,
+            contentType: contentType,
+            filename: filename,
+            byteCount: payload.count
+        )
+        guard payload.count <= MirageSharedClipboard.maximumPayloadBytes(for: representation) else {
             return MirageSharedClipboardItem(
-                representation: SharedClipboardRepresentation(
-                    kind: kind,
-                    contentType: contentType,
-                    filename: filename,
-                    byteCount: payload.count
-                ),
+                representation: representation,
                 payload: nil
             )
         }
         return MirageSharedClipboardItem(
-            representation: SharedClipboardRepresentation(
-                kind: kind,
-                contentType: contentType,
-                filename: filename,
-                byteCount: payload.count
-            ),
+            representation: representation,
             payload: payload
         )
     }
@@ -250,6 +246,11 @@ private extension NSImage {
     }
 }
 #endif
+
+enum MirageClientSharedClipboardManualSyncPreparation: Sendable, Equatable {
+    case send(localSend: MirageSharedClipboardLocalSend, sentAtMs: Int64)
+    case hostAlreadyCurrent
+}
 
 @MainActor
 final class MirageClientSharedClipboardBridge {
@@ -295,9 +296,23 @@ final class MirageClientSharedClipboardBridge {
         let changeCount = await ClientClipboardSnapshotReader.shared.changeCount()
         clipboardState.recordRemoteDeclaration(
             changeCount: changeCount,
-            orderingToken: orderingToken
+            orderingToken: orderingToken,
+            observedAtMs: MirageSharedClipboard.currentTimestampMs()
         )
         MirageLogger.client("Recorded shared clipboard declaration from host: sentAtMs=\(sentAtMs)")
+    }
+
+    func noteRemoteTransferObservation(
+        orderingToken: MirageSharedClipboardOrderingToken,
+        sentAtMs: Int64
+    ) async {
+        let changeCount = await ClientClipboardSnapshotReader.shared.changeCount()
+        let recorded = clipboardState.recordRemoteTransferObservation(
+            changeCount: changeCount,
+            orderingToken: orderingToken
+        )
+        guard recorded else { return }
+        MirageLogger.client("Recorded shared clipboard payload observation from host: sentAtMs=\(sentAtMs)")
     }
 
     func applyRemoteItem(
@@ -320,26 +335,28 @@ final class MirageClientSharedClipboardBridge {
         )
     }
 
-    func prepareCurrentClipboardManualSend()
-        async -> (localSend: MirageSharedClipboardLocalSend, sentAtMs: Int64)? {
+    func prepareCurrentClipboardManualSync()
+        async -> MirageClientSharedClipboardManualSyncPreparation? {
         let currentChangeCount = await ClientClipboardSnapshotReader.shared.changeCount()
-        if clipboardState.shouldSuppressLocalSend(changeCount: currentChangeCount) {
-            clipboardState.recordObservedChangeCount(currentChangeCount)
+        let nowMs = MirageSharedClipboard.currentTimestampMs()
+        if clipboardState.shouldSuppressLocalSend(changeCount: currentChangeCount, nowMs: nowMs) {
+            clipboardState.recordSuppressedLocalSend(changeCount: currentChangeCount)
             MirageLogger.client("Shared clipboard manual sync skipped: host clipboard is newer")
-            return nil
+            return .hostAlreadyCurrent
         }
 
         let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
         guard let localSend = clipboardState.prepareLocalSend(
             currentItem: snapshot.item,
-            changeCount: snapshot.changeCount
+            changeCount: snapshot.changeCount,
+            nowMs: nowMs
         ) else {
             MirageLogger.client("Shared clipboard manual sync skipped: no local clipboard change")
             return nil
         }
 
         let sentAtMs = MirageSharedClipboard.currentTimestampMs()
-        return (localSend, sentAtMs)
+        return .send(localSend: localSend, sentAtMs: sentAtMs)
     }
 
     private func activate() async {

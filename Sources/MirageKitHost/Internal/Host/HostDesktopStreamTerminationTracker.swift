@@ -14,12 +14,19 @@ import MirageKit
 actor HostDesktopStreamTerminationTracker {
     static let shared = HostDesktopStreamTerminationTracker()
 
+    enum DesktopStreamStartupStage: String, Codable, Sendable {
+        case displaySetup
+        case streamStarted
+        case firstPacket
+    }
+
     private struct ActiveDesktopStreamMarker: Codable {
         let runID: String
         let streamID: StreamID
         let startedAtUnix: TimeInterval
         let requestedPixelWidth: Int
         let requestedPixelHeight: Int
+        var stage: DesktopStreamStartupStage?
         var firstPacketSentAtUnix: TimeInterval?
     }
 
@@ -35,10 +42,12 @@ actor HostDesktopStreamTerminationTracker {
     nonisolated static func shouldReportUncleanTermination(
         currentRunID: String,
         markerRunID: String,
-        firstPacketSentAtUnix: TimeInterval?
+        firstPacketSentAtUnix: TimeInterval?,
+        stage: DesktopStreamStartupStage? = nil
     ) -> Bool {
         guard markerRunID != currentRunID else { return false }
-        return firstPacketSentAtUnix != nil
+        if firstPacketSentAtUnix != nil { return true }
+        return stage == .displaySetup || stage == .streamStarted
     }
 
     func reportUncleanTerminationIfNeeded() {
@@ -58,22 +67,49 @@ actor HostDesktopStreamTerminationTracker {
         guard Self.shouldReportUncleanTermination(
             currentRunID: runID,
             markerRunID: marker.runID,
-            firstPacketSentAtUnix: marker.firstPacketSentAtUnix
+            firstPacketSentAtUnix: marker.firstPacketSentAtUnix,
+            stage: marker.stage
         ) else {
             return
         }
 
+        CGVirtualDisplayBridge.invalidateAllPersistentSerials()
+
         let ageSeconds = max(0, Int(Date().timeIntervalSince1970 - marker.startedAtUnix))
         MirageLogger.fault(
             .host,
-            "Detected unexpected host termination during desktop stream: " +
+            "Detected unexpected host termination during desktop stream setup: " +
                 "previousRunID=\(marker.runID), streamID=\(marker.streamID), " +
+                "stage=\(marker.stage?.rawValue ?? "unknown"), " +
                 "requested=\(marker.requestedPixelWidth)x\(marker.requestedPixelHeight) px, " +
                 "ageSeconds=\(ageSeconds)"
         )
     }
 
+    func markDesktopDisplaySetupStarted(streamID: StreamID, requestedPixelResolution: CGSize) {
+        writeMarker(
+            streamID: streamID,
+            requestedPixelResolution: requestedPixelResolution,
+            stage: .displaySetup,
+            firstPacketSentAtUnix: nil
+        )
+    }
+
     func markDesktopStreamStarted(streamID: StreamID, requestedPixelResolution: CGSize) {
+        writeMarker(
+            streamID: streamID,
+            requestedPixelResolution: requestedPixelResolution,
+            stage: .streamStarted,
+            firstPacketSentAtUnix: nil
+        )
+    }
+
+    private func writeMarker(
+        streamID: StreamID,
+        requestedPixelResolution: CGSize,
+        stage: DesktopStreamStartupStage,
+        firstPacketSentAtUnix: TimeInterval?
+    ) {
         guard Self.shouldTrackTerminationMarkers(bundleIdentifier: Bundle.main.bundleIdentifier) else { return }
         let marker = ActiveDesktopStreamMarker(
             runID: runID,
@@ -81,7 +117,8 @@ actor HostDesktopStreamTerminationTracker {
             startedAtUnix: Date().timeIntervalSince1970,
             requestedPixelWidth: max(1, Int(requestedPixelResolution.width.rounded())),
             requestedPixelHeight: max(1, Int(requestedPixelResolution.height.rounded())),
-            firstPacketSentAtUnix: nil
+            stage: stage,
+            firstPacketSentAtUnix: firstPacketSentAtUnix
         )
 
         let encoder = JSONEncoder()
@@ -101,6 +138,7 @@ actor HostDesktopStreamTerminationTracker {
         guard marker.runID == runID, marker.streamID == streamID else { return }
         guard marker.firstPacketSentAtUnix == nil else { return }
 
+        marker.stage = .firstPacket
         marker.firstPacketSentAtUnix = Date().timeIntervalSince1970
 
         let encoder = JSONEncoder()

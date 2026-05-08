@@ -376,6 +376,11 @@ extension MirageClientService {
         let storedSessions = sessionStore.activeSessions
         let disconnectedControlChannel = controlChannel
         let disconnectedLoomSession = loomSession
+        let disconnectDiagnostics = controlDisconnectDiagnostics(
+            reason: reason,
+            activeStreams: sessions
+        )
+        MirageLogger.client("Control disconnect diagnostics: \(disconnectDiagnostics)")
 
         self.controlChannel = nil
         loomSession = nil
@@ -555,6 +560,64 @@ extension MirageClientService {
 
         if notifyDelegate {
             delegate?.clientService(self, didDisconnectFromHost: reason)
+        }
+    }
+
+    private func controlDisconnectDiagnostics(
+        reason: String,
+        activeStreams: [ClientStreamSession]
+    ) -> String {
+        let now = CFAbsoluteTimeGetCurrent()
+        let latestInboundActivityTime = fastPathState.latestInboundActivityTime()
+        let inboundAgeMs = latestInboundActivityTime > 0
+            ? Int(max(0, now - latestInboundActivityTime) * 1000)
+            : -1
+        let pathStatus = currentControlPathStatus
+        let interfaces = pathStatus?.interfaceSummary ?? "unknown"
+        let localEndpoint = pathStatus?.localEndpointDescription ?? "unknown"
+        let remoteEndpoint = pathStatus?.remoteEndpointDescription ?? "unknown"
+        let streamIDs = activeStreams
+            .map(\.id)
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
+        let mediaStreamIDs = activeStreams
+            .map(\.mediaStreamID)
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
+
+        return [
+            "reason=\(reason)",
+            "path=\(pathStatus?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)",
+            "interfaces=\(interfaces)",
+            "local=\(localEndpoint)",
+            "remote=\(remoteEndpoint)",
+            "lastInboundAgeMs=\(inboundAgeMs)",
+            "lastOutboundAgeMs=unavailable",
+            "pendingAckAgeMs=unavailable",
+            "connectionState=\(Self.controlDisconnectConnectionStateName(connectionState))",
+            "bootstrapComplete=\(hasCompletedBootstrap)",
+            "activeStreamIDs=[\(streamIDs)]",
+            "activeMediaStreamIDs=[\(mediaStreamIDs)]",
+            "desktopStreamID=\(desktopStreamID.map(String.init) ?? "nil")",
+        ].joined(separator: " ")
+    }
+
+    private static func controlDisconnectConnectionStateName(_ state: ConnectionState) -> String {
+        switch state {
+        case .disconnected:
+            return "disconnected"
+        case .connecting:
+            return "connecting"
+        case .handshaking:
+            return "handshaking"
+        case .connected:
+            return "connected"
+        case .reconnecting:
+            return "reconnecting"
+        case .error:
+            return "error"
         }
     }
 

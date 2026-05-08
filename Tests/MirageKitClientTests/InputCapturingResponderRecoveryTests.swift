@@ -126,6 +126,24 @@ struct InputCapturingResponderRecoveryTests {
         )
     }
 
+    @Test("Desktop stream start and transition triggers can recover during activation")
+    func desktopStreamTriggersCanRecoverDuringActivation() {
+        let activationContext = makeContext(sceneActivationState: .foregroundInactive)
+
+        #expect(
+            InputCapturingResponderRecoveryPolicy.decision(
+                for: activationContext,
+                trigger: .desktopStreamStarted
+            ) == .recover
+        )
+        #expect(
+            InputCapturingResponderRecoveryPolicy.decision(
+                for: activationContext,
+                trigger: .desktopTransitionCommitted
+            ) == .recover
+        )
+    }
+
     @Test("Software keyboard input sends events while hardware keyboard is present")
     func softwareKeyboardInputSendsEventsWhileHardwareKeyboardIsPresent() {
         let view = InputCapturingView(frame: .zero)
@@ -149,6 +167,36 @@ struct InputCapturingResponderRecoveryTests {
         #expect(keyEvents[0].charactersIgnoringModifiers == "a")
         #expect(keyEvents[2].keyCode == 0x33)
     }
+
+    #if os(iOS)
+    @Test("Active system keyboard hide is treated as software keyboard dismissal")
+    func activeSystemKeyboardHideIsTreatedAsSoftwareKeyboardDismissal() {
+        let decision = softwareKeyboardSystemHideDecision(
+            softwareKeyboardVisible: true,
+            isSoftwareKeyboardShown: true,
+            isSoftwareKeyboardResponderActive: true,
+            applicationState: .active,
+            isKeyWindow: true,
+            sceneActivationState: .foregroundActive
+        )
+
+        #expect(decision == .dismiss)
+    }
+
+    @Test("Background system keyboard hide does not dismiss requested software keyboard")
+    func backgroundSystemKeyboardHideDoesNotDismissRequestedSoftwareKeyboard() {
+        let decision = softwareKeyboardSystemHideDecision(
+            softwareKeyboardVisible: true,
+            isSoftwareKeyboardShown: true,
+            isSoftwareKeyboardResponderActive: true,
+            applicationState: .background,
+            isKeyWindow: true,
+            sceneActivationState: .foregroundActive
+        )
+
+        #expect(decision == .ignore)
+    }
+    #endif
 
     private func makeContext(
         hasWindow: Bool = true,

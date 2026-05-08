@@ -18,12 +18,25 @@ extension MirageHostService {
         from client: MirageConnectedClient,
         sessionID: UUID
     ) {
-        guard streamRegistry.isInputSessionActive(sessionID, clientID: client.id) else { return }
+        let sessionActive = streamRegistry.isInputSessionActive(sessionID, clientID: client.id)
+        guard sessionActive else { return }
 
         do {
             let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            HostKeyboardInputDiagnostics.logReceive(
+                event: inputMessage.event,
+                streamID: inputMessage.streamID,
+                sessionActive: sessionActive,
+                path: "input_fast"
+            )
 
             if let customInputHandler = streamRegistry.customInputHandler(streamID: inputMessage.streamID) {
+                HostKeyboardInputDiagnostics.logTargetResolution(
+                    event: inputMessage.event,
+                    streamID: inputMessage.streamID,
+                    targetState: "custom_handler",
+                    path: "input_fast"
+                )
                 Task(priority: .userInitiated) {
                     await customInputHandler.handleInput(inputMessage.event, streamID: inputMessage.streamID)
                 }
@@ -34,9 +47,21 @@ extension MirageHostService {
                 streamID: inputMessage.streamID,
                 event: inputMessage.event
             ) else {
+                HostKeyboardInputDiagnostics.logTargetResolution(
+                    event: inputMessage.event,
+                    streamID: inputMessage.streamID,
+                    targetState: "missing_cache",
+                    path: "input_fast"
+                )
                 MirageLogger.host("No cached stream for input: \(inputMessage.streamID)")
                 return
             }
+            HostKeyboardInputDiagnostics.logTargetResolution(
+                event: inputTarget.event,
+                streamID: inputMessage.streamID,
+                targetState: inputTarget.window.id == 0 ? "desktop_active" : "window_\(inputTarget.window.id)",
+                path: "input_fast"
+            )
 
             if AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(inputMessage.event) {
                 dispatchMainWork { [weak self] in

@@ -103,6 +103,9 @@ extension StreamController {
                 .client(
                     "Hard recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
                 )
+            if reason == .decodeErrorThreshold {
+                reassembler.enterKeyframeOnlyMode()
+            }
             if restartRecoveryLoop, presentationTier == .activeLive {
                 await startKeyframeRecoveryLoopIfNeeded()
             }
@@ -124,6 +127,7 @@ extension StreamController {
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0

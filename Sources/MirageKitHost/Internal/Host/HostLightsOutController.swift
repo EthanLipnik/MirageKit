@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/5/26.
 //
-//  Blackout overlays and shortcut recovery for Lights Out mode.
+//  Blackout overlays, display dimming, and shortcut recovery for Lights Out mode.
 //
 
 import AppKit
@@ -68,7 +68,7 @@ final class HostLightsOutController {
             label.font = .systemFont(ofSize: 28, weight: .semibold)
             label.maximumNumberOfLines = 2
             label.lineBreakMode = .byWordWrapping
-            label.isHidden = false
+            label.isHidden = true
 
             view.addSubview(label)
             NSLayoutConstraint.activate([
@@ -90,6 +90,10 @@ final class HostLightsOutController {
             }
         }
 
+        func setMessageVisible(_ visible: Bool) {
+            messageLabel.isHidden = !visible
+        }
+
         func setMessage(_ message: String) {
             messageLabel.stringValue = message
         }
@@ -100,12 +104,27 @@ final class HostLightsOutController {
         }
     }
 
+    private struct DisplayGammaSnapshot {
+        let red: [CGGammaValue]
+        let green: [CGGammaValue]
+        let blue: [CGGammaValue]
+        let sampleCount: UInt32
+    }
+
     private var target: Target?
     private var overlays: [CGDirectDisplayID: Overlay] = [:]
+    private var eventTap: CFMachPort?
+    private var eventTapSource: CFRunLoopSource?
+    private var messageHideTask: Task<Void, Never>?
     private var screenChangeObserver: Any?
+    private var brightnessSnapshot: [CGDirectDisplayID: DisplayGammaSnapshot] = [:]
     private let hotKeyRegistrar: any HostLightsOutHotKeyRegistering
+    private let revealClock = ContinuousClock()
+    private var revealUntil: ContinuousClock.Instant?
 
     private let messageTitleText = "Streaming with Mirage"
+    private let messageDuration: Duration = .seconds(5)
+    private let dimmedGammaScale: CGGammaValue = 0.05
 
     var onOverlayWindowsChanged: (@MainActor () -> Void)?
     var onEmergencyShortcut: (@MainActor () async -> Void)?
@@ -147,20 +166,28 @@ final class HostLightsOutController {
 
         target = newTarget
         let displayIDs = resolveDisplayIDs(for: newTarget)
-        // TODO: Re-enable BetterDisplay software-brightness recovery after the Lights Out behavior is validated.
         updateOverlays(for: displayIDs, emergencyShortcut: emergencyShortcut)
+        updateBrightnessSnapshot(for: displayIDs)
+        applyRevealState()
+        ensureEventTapActive()
         ensureScreenChangeObserver()
         return true
     }
 
     func deactivate() {
         target = nil
+        messageHideTask?.cancel()
+        messageHideTask = nil
+        revealUntil = nil
+        restoreBrightness()
         hotKeyRegistrar.unregister()
+        removeEventTap()
         removeScreenChangeObserver()
         for overlay in overlays.values {
             overlay.close()
         }
         overlays.removeAll()
+        brightnessSnapshot.removeAll()
         onOverlayWindowsChanged?()
     }
 
@@ -170,6 +197,20 @@ final class HostLightsOutController {
         Task { @MainActor [weak self] in
             await self?.onEmergencyShortcut?()
         }
+    }
+
+    private func handleLocalInteraction(triggerMessage: Bool) {
+        guard isActive else { return }
+        let now = revealClock.now
+        let wasRevealed = revealUntil != nil && now < (revealUntil ?? now)
+        if triggerMessage {
+            showMessage()
+        }
+        revealUntil = now + messageDuration
+        if !wasRevealed {
+            restoreBrightness()
+        }
+        scheduleReDim()
     }
 
     // MARK: - Overlay Management
@@ -204,6 +245,40 @@ final class HostLightsOutController {
         }
     }
 
+    private func showMessage() {
+        for overlay in overlays.values {
+            overlay.setMessageVisible(true)
+        }
+    }
+
+    private func hideMessage() {
+        for overlay in overlays.values {
+            overlay.setMessageVisible(false)
+        }
+    }
+
+    private func scheduleReDim() {
+        messageHideTask?.cancel()
+        guard let revealUntil else { return }
+        messageHideTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let deadline = revealUntil
+            if deadline > self.revealClock.now {
+                do {
+                    try await Task.sleep(until: deadline, clock: self.revealClock)
+                } catch {
+                    return
+                }
+            }
+            if Task.isCancelled { return }
+            if self.revealUntil == deadline {
+                self.revealUntil = nil
+                self.hideMessage()
+                self.dimDisplays()
+            }
+        }
+    }
+
     nonisolated static func overlayMessage(
         for emergencyShortcut: MirageClientShortcutBinding,
         title: String = "Streaming with Mirage"
@@ -230,6 +305,199 @@ final class HostLightsOutController {
 
         let physicalDisplays = displays.filter { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
         return Set(physicalDisplays)
+    }
+
+    // MARK: - Brightness
+
+    private func updateBrightnessSnapshot(for displayIDs: Set<CGDirectDisplayID>) {
+        let removed = brightnessSnapshot.keys.filter { !displayIDs.contains($0) }
+        for displayID in removed {
+            if let snapshot = brightnessSnapshot[displayID] {
+                applyGamma(snapshot, scale: 1.0, displayID: displayID)
+            }
+            brightnessSnapshot.removeValue(forKey: displayID)
+        }
+
+        for displayID in displayIDs where brightnessSnapshot[displayID] == nil {
+            if let snapshot = captureGammaSnapshot(for: displayID) {
+                brightnessSnapshot[displayID] = snapshot
+            }
+        }
+    }
+
+    private func dimDisplays() {
+        for (displayID, snapshot) in brightnessSnapshot {
+            applyGamma(snapshot, scale: dimmedGammaScale, displayID: displayID)
+        }
+    }
+
+    private func restoreBrightness() {
+        for (displayID, snapshot) in brightnessSnapshot {
+            applyGamma(snapshot, scale: 1.0, displayID: displayID)
+        }
+    }
+
+    private func applyRevealState() {
+        if let revealUntil, revealClock.now < revealUntil {
+            showMessage()
+            restoreBrightness()
+        } else {
+            hideMessage()
+            dimDisplays()
+        }
+    }
+
+    private func captureGammaSnapshot(for displayID: CGDirectDisplayID) -> DisplayGammaSnapshot? {
+        let maxSamples: Int = 256
+        var red = [CGGammaValue](repeating: 0, count: maxSamples)
+        var green = [CGGammaValue](repeating: 0, count: maxSamples)
+        var blue = [CGGammaValue](repeating: 0, count: maxSamples)
+        var sampleCount: UInt32 = 0
+        let result = CGGetDisplayTransferByTable(
+            displayID,
+            UInt32(maxSamples),
+            &red,
+            &green,
+            &blue,
+            &sampleCount
+        )
+        guard result == .success, sampleCount > 0 else { return nil }
+        let count = Int(sampleCount)
+        return DisplayGammaSnapshot(
+            red: Array(red.prefix(count)),
+            green: Array(green.prefix(count)),
+            blue: Array(blue.prefix(count)),
+            sampleCount: sampleCount
+        )
+    }
+
+    private func applyGamma(_ snapshot: DisplayGammaSnapshot, scale: CGGammaValue, displayID: CGDirectDisplayID) {
+        let clampedScale = max(0, min(1, scale))
+        let red = snapshot.red.map { min(1, max(0, $0 * clampedScale)) }
+        let green = snapshot.green.map { min(1, max(0, $0 * clampedScale)) }
+        let blue = snapshot.blue.map { min(1, max(0, $0 * clampedScale)) }
+
+        red.withUnsafeBufferPointer { redPtr in
+            green.withUnsafeBufferPointer { greenPtr in
+                blue.withUnsafeBufferPointer { bluePtr in
+                    guard let redBase = redPtr.baseAddress,
+                          let greenBase = greenPtr.baseAddress,
+                          let blueBase = bluePtr.baseAddress else {
+                        return
+                    }
+                    let result = CGSetDisplayTransferByTable(
+                        displayID,
+                        snapshot.sampleCount,
+                        redBase,
+                        greenBase,
+                        blueBase
+                    )
+                    if result != .success {
+                        MirageLogger.host("Lights Out: failed to apply display gamma (\(displayID), error \(result.rawValue))")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Local Interaction
+
+    private func ensureEventTapActive() {
+        guard eventTap == nil else { return }
+
+        let mask = Self.eventMask()
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let controller = Unmanaged<HostLightsOutController>.fromOpaque(refcon).takeUnretainedValue()
+            return controller.handleEventTap(type: type, event: event)
+        }
+
+        let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+
+        guard let tap else {
+            MirageLogger.error(.host, "Lights Out: failed to create event tap")
+            return
+        }
+
+        eventTap = tap
+        eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        if let eventTapSource {
+            CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        MirageLogger.host("Lights Out: event tap enabled")
+    }
+
+    private func removeEventTap() {
+        guard let tap = eventTap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        if let eventTapSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        eventTapSource = nil
+        eventTap = nil
+        MirageLogger.host("Lights Out: event tap disabled")
+    }
+
+    private nonisolated func handleEventTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let tap = self.eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        if MirageInjectedEventTag.isInjected(event) {
+            return Unmanaged.passUnretained(event)
+        }
+
+        if Self.shouldTriggerRevealMessage(for: type) {
+            Task { @MainActor [weak self] in
+                self?.handleLocalInteraction(triggerMessage: true)
+            }
+        }
+
+        return nil
+    }
+
+    private static func eventMask() -> CGEventMask {
+        let types: [CGEventType] = [
+            .leftMouseDown,
+            .leftMouseUp,
+            .rightMouseDown,
+            .rightMouseUp,
+            .otherMouseDown,
+            .otherMouseUp,
+            .leftMouseDragged,
+            .rightMouseDragged,
+            .otherMouseDragged,
+            .mouseMoved,
+            .scrollWheel,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+        ]
+
+        return types.reduce(CGEventMask(0)) { mask, type in
+            mask | CGEventMask(1 << type.rawValue)
+        }
+    }
+
+    nonisolated static func shouldTriggerRevealMessage(for type: CGEventType) -> Bool {
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown, .keyUp, .flagsChanged:
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Screen Change Handling
@@ -261,6 +529,8 @@ final class HostLightsOutController {
         }
         let displayIDs = resolveDisplayIDs(for: target)
         updateOverlays(for: displayIDs, emergencyShortcut: emergencyShortcut)
+        updateBrightnessSnapshot(for: displayIDs)
+        applyRevealState()
     }
 }
 #endif

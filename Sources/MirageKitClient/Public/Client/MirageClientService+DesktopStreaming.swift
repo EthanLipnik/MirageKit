@@ -306,12 +306,16 @@ public extension MirageClientService {
         }
 
         let failedDesktopSessionID = desktopSessionID
-        let restartRequest = makeDesktopStreamRestartRequest(from: previousRequest)
+        var restartRequest = makeDesktopStreamRestartRequest(from: previousRequest)
+        if controlPathSnapshot?.kind == .vpn {
+            restartRequest = remoteStartupRecoveryRestartRequest(from: restartRequest)
+        }
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
             "Restarting desktop stream in-session after terminal startup failure: " +
                 "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
-                "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString)"
+                "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
+                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
         )
 
         if let failedDesktopSessionID {
@@ -354,6 +358,54 @@ public extension MirageClientService {
             clearPendingDesktopStreamStartState()
             return false
         }
+    }
+
+    package func remoteStartupRecoveryRestartRequest(
+        from request: StartDesktopStreamMessage
+    ) -> StartDesktopStreamMessage {
+        var lowered = StartDesktopStreamMessage(
+            startupRequestID: request.startupRequestID,
+            scaleFactor: request.scaleFactor,
+            displayWidth: request.displayWidth,
+            displayHeight: request.displayHeight,
+            targetFrameRate: min(max(1, request.targetFrameRate), 60),
+            streamScale: request.streamScale,
+            audioConfiguration: request.audioConfiguration,
+            dataPort: request.dataPort,
+            useHostResolution: request.useHostResolution,
+            mediaMaxPacketSize: request.mediaMaxPacketSize
+        )
+        lowered.keyFrameInterval = request.keyFrameInterval
+        lowered.captureQueueDepth = request.captureQueueDepth
+        lowered.colorDepth = request.colorDepth
+        lowered.mode = request.mode
+        lowered.cursorPresentation = request.cursorPresentation
+        lowered.enteredBitrate = request.enteredBitrate
+        lowered.bitrate = request.bitrate
+        lowered.latencyMode = request.latencyMode
+        lowered.allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
+        lowered.lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost
+        lowered.disableResolutionCap = false
+        lowered.upscalingMode = request.upscalingMode
+        lowered.codec = request.codec
+        lowered.encoderMaxWidth = min(request.encoderMaxWidth ?? 1_920, 1_920)
+        lowered.encoderMaxHeight = min(request.encoderMaxHeight ?? 1_080, 1_080)
+        if let bitrate = request.bitrate {
+            lowered.bitrate = min(bitrate, 24_000_000)
+        }
+        if let enteredBitrate = request.enteredBitrate {
+            lowered.enteredBitrate = min(enteredBitrate, 24_000_000)
+        }
+        if let bitrateAdaptationCeiling = request.bitrateAdaptationCeiling {
+            lowered.bitrateAdaptationCeiling = min(bitrateAdaptationCeiling, 80_000_000)
+        }
+        MirageLogger.client(
+            "Lowered remote desktop restart tier after startup recovery: " +
+                "fps=\(lowered.targetFrameRate), bitrate=\(lowered.bitrate ?? 0), " +
+                "ceiling=\(lowered.bitrateAdaptationCeiling ?? 0), " +
+                "encoderMax=\(lowered.encoderMaxWidth ?? 0)x\(lowered.encoderMaxHeight ?? 0)"
+        )
+        return lowered
     }
 
     /// Cancel any in-progress stream setup on the host.

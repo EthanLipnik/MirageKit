@@ -1370,7 +1370,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return slot
     }
 
-    private static func persistentSerialNumber(for colorSpace: MirageColorSpace) -> UInt32 {
+    static func persistentSerialNumber(for colorSpace: MirageColorSpace) -> UInt32 {
         if let cached = cachedSerialNumbers[colorSpace] {
             return cached
         }

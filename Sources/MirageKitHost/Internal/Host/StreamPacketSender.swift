@@ -77,6 +77,7 @@ actor StreamPacketSender {
         case expiredBeforeSend = "expired-before-send"
         case expiredDuringSend = "expired-during-send"
         case expiredQueuedFrame = "expired-queued-frame"
+        case oversizedFrame = "oversized-frame"
         case queueEviction = "queue-eviction"
     }
 
@@ -190,6 +191,15 @@ actor StreamPacketSender {
         let totalMs: Int
         let maxMs: Int
         let count: Int
+    }
+
+    struct FragmentPlan: Sendable, Equatable {
+        let dataFragmentCount: Int
+        let parityFragmentCount: Int
+
+        var totalFragmentCount: Int {
+            dataFragmentCount + parityFragmentCount
+        }
     }
 
     private struct PacketBudgetSample: Sendable {
@@ -694,13 +704,15 @@ actor StreamPacketSender {
 
         let maxPayload = maxPayloadSize
         let frameByteCount = max(0, item.frameByteCount)
-        let dataFragmentCount = dataFragmentCount(for: frameByteCount, maxPayload: maxPayload)
-        let fecBlockSize = max(0, item.fecBlockSize)
-        let parityFragmentCount = parityFragmentCount(
-            dataFragmentCount: dataFragmentCount,
-            blockSize: fecBlockSize
+        let fragmentPlan = Self.fragmentPlan(
+            frameByteCount: frameByteCount,
+            maxPayload: maxPayload,
+            fecBlockSize: item.fecBlockSize
         )
-        let totalFragments = dataFragmentCount + parityFragmentCount
+        let dataFragmentCount = fragmentPlan.dataFragmentCount
+        let fecBlockSize = max(0, item.fecBlockSize)
+        let parityFragmentCount = fragmentPlan.parityFragmentCount
+        let totalFragments = fragmentPlan.totalFragmentCount
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
         var didRecordSendStart = false
         var submittedFragmentCount = 0
@@ -718,6 +730,16 @@ actor StreamPacketSender {
                 }
             }
         )
+        guard Self.canRepresentFragmentPlan(fragmentPlan, frameByteCount: frameByteCount) else {
+            dropOversizedFrameDuringFragmentation(
+                item: item,
+                frameByteCount: frameByteCount,
+                totalFragments: totalFragments,
+                remainingQueuedBytes: remainingQueuedBytes,
+                transportCompletionTracker: transportCompletionTracker
+            )
+            return
+        }
 
         var currentSequence = item.sequenceNumberStart
         var framePacerSleepTotalMs = 0
@@ -1106,12 +1128,39 @@ actor StreamPacketSender {
         }
     }
 
-    private func dataFragmentCount(for frameByteCount: Int, maxPayload: Int) -> Int {
+    nonisolated static func fragmentPlan(
+        frameByteCount: Int,
+        maxPayload: Int,
+        fecBlockSize: Int
+    ) -> FragmentPlan {
+        let maxPayload = max(0, maxPayload)
+        let frameByteCount = max(0, frameByteCount)
+        let dataFragmentCount = dataFragmentCount(for: frameByteCount, maxPayload: maxPayload)
+        let parityFragmentCount = parityFragmentCount(
+            dataFragmentCount: dataFragmentCount,
+            blockSize: max(0, fecBlockSize)
+        )
+        return FragmentPlan(
+            dataFragmentCount: dataFragmentCount,
+            parityFragmentCount: parityFragmentCount
+        )
+    }
+
+    nonisolated static func canRepresentFragmentPlan(
+        _ fragmentPlan: FragmentPlan,
+        frameByteCount: Int
+    ) -> Bool {
+        frameByteCount >= 0 &&
+            frameByteCount <= Int(UInt32.max) &&
+            fragmentPlan.totalFragmentCount <= Int(UInt16.max)
+    }
+
+    private nonisolated static func dataFragmentCount(for frameByteCount: Int, maxPayload: Int) -> Int {
         guard frameByteCount > 0, maxPayload > 0 else { return 0 }
         return (frameByteCount + maxPayload - 1) / maxPayload
     }
 
-    private func parityFragmentCount(dataFragmentCount: Int, blockSize: Int) -> Int {
+    private nonisolated static func parityFragmentCount(dataFragmentCount: Int, blockSize: Int) -> Int {
         guard dataFragmentCount > 0, blockSize > 1 else { return 0 }
         return (dataFragmentCount + blockSize - 1) / blockSize
     }
@@ -1147,6 +1196,31 @@ actor StreamPacketSender {
                 clientVisible: fragmentsSubmitted > 0
             )
         }
+        transportCompletionTracker.recordDrop()
+        transportCompletionTracker.close()
+        if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+    }
+
+    private func dropOversizedFrameDuringFragmentation(
+        item: WorkItem,
+        frameByteCount: Int,
+        totalFragments: Int,
+        remainingQueuedBytes: Int,
+        transportCompletionTracker: TransportCompletionTracker
+    ) {
+        stalePacketDropCount &+= 1
+        queueLock.withLock {
+            markDependencyFrameDroppedLocked(
+                item,
+                reason: .oversizedFrame,
+                clientVisible: false
+            )
+        }
+        MirageLogger.stream(
+            "Dropping oversized encoded frame \(item.frameNumber) for stream \(item.streamID): " +
+                "frameBytes=\(frameByteCount), fragments=\(totalFragments), " +
+                "maxFrameBytes=\(UInt32.max), maxFragments=\(UInt16.max)"
+        )
         transportCompletionTracker.recordDrop()
         transportCompletionTracker.close()
         if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }

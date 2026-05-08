@@ -57,13 +57,16 @@ extension MirageClientService {
             return false
         }
         #if canImport(UIKit)
-        guard let preparedSend = await ensureSharedClipboardBridge().prepareCurrentClipboardManualSend() else {
+        guard let preparation = await ensureSharedClipboardBridge().prepareCurrentClipboardManualSync() else {
             return false
+        }
+        guard case let .send(localSend: localSend, sentAtMs: sentAtMs) = preparation else {
+            return true
         }
         do {
             try await sendSharedClipboardUpdateReliably(
-                localSend: preparedSend.localSend,
-                sentAtMs: preparedSend.sentAtMs
+                localSend: localSend,
+                sentAtMs: sentAtMs
             )
             return true
         } catch {
@@ -95,9 +98,10 @@ extension MirageClientService {
         MirageLogger.client(
             "Sending shared clipboard update to host: kind=\(localSend.item.representation.kind.rawValue), bytes=\(localSend.item.representation.byteCount), chunks=\(messages.count), transferable=\(localSend.hasPayload)"
         )
-        for message in messages {
+        for (index, message) in messages.enumerated() {
             try await controlChannel.send(message)
-            if messages.count > 1 { await Task.yield() }
+            guard index < messages.count - 1 else { continue }
+            try await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
         }
     }
 

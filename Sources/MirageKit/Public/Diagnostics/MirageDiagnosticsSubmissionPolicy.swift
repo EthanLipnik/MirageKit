@@ -117,6 +117,22 @@ public enum MirageDiagnosticsSubmissionPolicy {
             )
         }
 
+        if isExpectedBootstrapHandoffConnectionRace(event, lowercasedMessage: lowercasedMessage) {
+            return breadcrumbOnly(
+                issueKind: "bootstrap-handoff-already-connected",
+                failureStage: "bootstrap-handoff",
+                recoveryOutcome: "expected-lifecycle"
+            )
+        }
+
+        if isExpectedAppWindowCapacityRejection(lowercasedMessage) {
+            return breadcrumbOnly(
+                issueKind: "app-window-capacity",
+                failureStage: "app-selection",
+                recoveryOutcome: "expected-limit"
+            )
+        }
+
         if isExpectedVersionOrProtocolRejection(lowercasedMessage) {
             return breadcrumbOnly(
                 issueKind: "protocol-incompatible",
@@ -148,6 +164,22 @@ public enum MirageDiagnosticsSubmissionPolicy {
                 failureStage: "startup",
                 recoveryOutcome: "fallback-exhausted",
                 transportHealth: inferredTransportHealth(from: lowercasedMessage)
+            )
+        }
+
+        if lowercasedMessage.contains("failed to restart desktop virtual display after display topology change") {
+            return breadcrumbOnly(
+                issueKind: "desktop-topology-refresh",
+                failureStage: "display-topology",
+                recoveryOutcome: "expected-lifecycle"
+            )
+        }
+
+        if isScreenCaptureKitContentListUnavailable(event) {
+            return capture(
+                issueKind: "screencapturekit-content-list-unavailable",
+                failureStage: "capture-start",
+                recoveryOutcome: "fallback-exhausted"
             )
         }
 
@@ -420,6 +452,30 @@ private extension MirageDiagnosticsSubmissionPolicy {
             return true
         }
         return false
+    }
+
+    static func isExpectedBootstrapHandoffConnectionRace(
+        _ event: LoomDiagnosticsErrorEvent,
+        lowercasedMessage: String
+    ) -> Bool {
+        guard event.category.rawValue == "bootstrapHandoff" ||
+            event.category.rawValue == "bootstrap_handoff" else {
+            return false
+        }
+
+        return lowercasedMessage.contains("already connected or connecting")
+    }
+
+    static func isExpectedAppWindowCapacityRejection(_ lowercasedMessage: String) -> Bool {
+        lowercasedMessage.contains("max app windows reached")
+    }
+
+    static func isScreenCaptureKitContentListUnavailable(_ event: LoomDiagnosticsErrorEvent) -> Bool {
+        guard let metadata = event.metadata,
+              metadata.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" else {
+            return false
+        }
+        return [-3813, -3814, -3815].contains(metadata.code)
     }
 
     static func isVirtualDisplayStartupFailure(

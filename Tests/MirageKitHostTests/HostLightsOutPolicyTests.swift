@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import Carbon.HIToolbox
+import CoreGraphics
 import MirageKit
 @testable import MirageKitHost
 import Testing
@@ -96,6 +97,20 @@ struct HostLightsOutShortcutTests {
         let message = HostLightsOutController.overlayMessage(for: shortcut)
 
         #expect(message == "Streaming with Mirage\nPress ⇧⌘Q to Force Stop Streams")
+    }
+
+    @Test("Local host input reveals recovery message")
+    func localHostInputRevealsRecoveryMessage() {
+        #expect(HostLightsOutController.shouldTriggerRevealMessage(for: .leftMouseDown))
+        #expect(HostLightsOutController.shouldTriggerRevealMessage(for: .scrollWheel))
+        #expect(HostLightsOutController.shouldTriggerRevealMessage(for: .keyDown))
+        #expect(HostLightsOutController.shouldTriggerRevealMessage(for: .flagsChanged))
+    }
+
+    @Test("Pointer movement alone does not reveal recovery message")
+    func pointerMovementAloneDoesNotRevealRecoveryMessage() {
+        #expect(!HostLightsOutController.shouldTriggerRevealMessage(for: .mouseMoved))
+        #expect(!HostLightsOutController.shouldTriggerRevealMessage(for: .leftMouseDragged))
     }
 }
 #endif

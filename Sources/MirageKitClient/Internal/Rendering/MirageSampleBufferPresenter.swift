@@ -141,6 +141,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard displayLayer.status != .failed else { return .blocked }
 
         let now = CACurrentMediaTime()
+        rebaseSequenceTrackingIfNeeded(for: streamID)
         guard MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: lastSubmittedSequence) else {
             return .noPendingFrame
         }
@@ -162,7 +163,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         if frame.sequence <= lastSubmittedSequence {
             let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
-            if latestSequence > 0, latestSequence < lastSubmittedSequence {
+            if latestSequence > 0, latestSequence <= lastSubmittedSequence {
                 MirageLogger.renderer(
                     "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
                 )
@@ -193,6 +194,21 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             for: streamID
         )
         return .submitted
+    }
+
+    private func rebaseSequenceTrackingIfNeeded(for streamID: StreamID) {
+        guard lastSubmittedSequence > 0 else { return }
+        let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
+        guard latestSequence > 0,
+              latestSequence <= lastSubmittedSequence,
+              MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) > 0 else {
+            return
+        }
+        MirageLogger.renderer(
+            "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
+        )
+        resetSequenceTrackingState()
+        refreshFrameListener(for: streamID)
     }
 
     private func presentationPixelBuffer(for frame: MirageRenderFrame) -> CVPixelBuffer {

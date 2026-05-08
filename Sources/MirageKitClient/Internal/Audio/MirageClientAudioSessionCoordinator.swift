@@ -33,6 +33,7 @@ internal actor MirageClientAudioSessionCoordinator {
     private var playbackLeaseCount = 0
     private var dictationLeaseCount = 0
     private var currentConfiguration: MirageClientAudioSessionConfiguration?
+    private var pendingActivationConfiguration: MirageClientAudioSessionConfiguration?
     private var activationFailureCount = 0
     private var activationBackoffUntil: ContinuousClock.Instant?
     private var loggedInactiveDeferral = false
@@ -87,6 +88,7 @@ internal actor MirageClientAudioSessionCoordinator {
         playbackLeaseCount = 0
         dictationLeaseCount = 0
         currentConfiguration = nil
+        pendingActivationConfiguration = nil
         activationFailureCount = 0
         activationBackoffUntil = nil
         loggedInactiveDeferral = false
@@ -129,18 +131,26 @@ internal actor MirageClientAudioSessionCoordinator {
         if currentConfiguration == desiredConfiguration {
             return true
         }
+        if pendingActivationConfiguration == desiredConfiguration {
+            return true
+        }
 
         if let activationBackoffUntil, ContinuousClock.now < activationBackoffUntil {
             return currentConfiguration != nil
         }
 
+        pendingActivationConfiguration = desiredConfiguration
         do {
             try await driver.activate(desiredConfiguration)
             currentConfiguration = desiredConfiguration
+            pendingActivationConfiguration = nil
             activationFailureCount = 0
             activationBackoffUntil = nil
             return true
         } catch {
+            if pendingActivationConfiguration == desiredConfiguration {
+                pendingActivationConfiguration = nil
+            }
             if shouldSuppressActivationError(error) {
                 activationFailureCount += 1
                 if activationFailureCount <= Self.maxActivationRetries {
@@ -166,6 +176,7 @@ internal actor MirageClientAudioSessionCoordinator {
     private func deactivateIfNeeded() async {
         guard currentConfiguration != nil else { return }
         currentConfiguration = nil
+        pendingActivationConfiguration = nil
         activationFailureCount = 0
         activationBackoffUntil = nil
         loggedInactiveDeferral = false

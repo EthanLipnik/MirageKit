@@ -38,6 +38,13 @@ extension StreamContext {
         return .fullReconfiguration
     }
 
+    static func captureConfigurationAfterEncoderResolution(
+        requested: MirageEncoderConfiguration,
+        resolvedPixelFormat: MiragePixelFormat
+    ) -> MirageEncoderConfiguration {
+        requested.withInternalOverrides(pixelFormat: resolvedPixelFormat)
+    }
+
     func updateEncoderSettings(
         colorDepth: MirageStreamColorDepth?,
         bitrate: Int?,
@@ -103,13 +110,16 @@ extension StreamContext {
         ultraValidationSuccessLogged = false
 
         await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
-        if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
         if let encoder {
             try await encoder.updateConfiguration(encoderConfig)
             let resolvedPixelFormat = await encoder.getActivePixelFormat()
             activePixelFormat = resolvedPixelFormat
-            encoderConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
+            encoderConfig = Self.captureConfigurationAfterEncoderResolution(
+                requested: encoderConfig,
+                resolvedPixelFormat: resolvedPixelFormat
+            )
         }
+        if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
         updateQueueLimits()
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Encoder settings update")

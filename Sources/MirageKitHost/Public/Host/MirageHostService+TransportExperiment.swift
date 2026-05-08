@@ -18,6 +18,14 @@ extension MirageHostService {
         let transportWasAlreadyGone = !transportRegistry.hasVideoConnection(streamID: streamID)
         let fatalConnectionError = isFatalConnectionError(error)
         let userDependentError = LoomDiagnosticsActionability.isLikelyUserDependent(error: error)
+        let errorDescription = String(describing: error)
+        let sendQueueCancelledDuringTeardown = errorDescription.contains("Unreliable send queue cancelled")
+        if transportWasAlreadyGone && sendQueueCancelledDuringTeardown {
+            MirageLogger.host(
+                "Video transport teardown for stream \(streamID) after client disconnect: \(error)"
+            )
+            return
+        }
         if transportWasAlreadyGone || fatalConnectionError || userDependentError {
             MirageLogger.host(
                 "Video transport closed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled), fatal=\(fatalConnectionError), userDependent=\(userDependentError)): \(error)"

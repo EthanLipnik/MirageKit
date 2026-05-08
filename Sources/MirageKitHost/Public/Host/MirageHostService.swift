@@ -370,6 +370,7 @@ public final class MirageHostService {
     var desktopSharedDisplayTransitionDepth: Int = 0
     var desktopPresentationGeneration: UInt64 = 0
     @ObservationIgnored nonisolated(unsafe) var desktopDisplayTopologyRefreshTask: Task<Void, Never>?
+    @ObservationIgnored nonisolated(unsafe) var deferredDesktopStartupDisplayCleanupTask: Task<Void, Never>?
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []

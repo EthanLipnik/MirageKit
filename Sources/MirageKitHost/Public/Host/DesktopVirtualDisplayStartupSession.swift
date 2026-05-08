@@ -144,6 +144,10 @@ struct DesktopVirtualDisplayStartupSession {
             }
         }
 
+        if Self.isScreenCaptureKitContentListUnavailable(error) {
+            return .readiness
+        }
+
         if let mirageError = error as? MirageError {
             switch mirageError {
             case .timeout, .captureSetupFailed:
@@ -164,6 +168,14 @@ struct DesktopVirtualDisplayStartupSession {
         }
 
         return .nonRetryable
+    }
+
+    private static func isScreenCaptureKitContentListUnavailable(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" else {
+            return false
+        }
+        return [-3813, -3814, -3815].contains(nsError.code)
     }
 
     func persistIfPreferred(

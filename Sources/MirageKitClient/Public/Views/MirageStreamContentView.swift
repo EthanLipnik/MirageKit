@@ -632,7 +632,9 @@ public struct MirageStreamContentView: View {
 
             // Intercept Cmd+V on iOS to sync clipboard to host before the paste keypress arrives.
             #if canImport(UIKit)
-            if isSharedClipboardPasteShortcut(keyEvent) {
+            if isSharedClipboardPasteShortcut(keyEvent),
+               clientService.sharedClipboardEnabled,
+               clientService.clientClipboardSharingEnabled {
                 suppressNextOrderedPasteKeyUp = true
                 sendOrderedSharedClipboardPaste(keyEvent)
                 return
@@ -685,9 +687,11 @@ public struct MirageStreamContentView: View {
         )
         Task { @MainActor in
             let synced = await clientService.syncLocalClipboardToHost()
-            if synced {
-                MirageLogger.client("Forwarding paste shortcut after shared clipboard sync")
+            guard synced else {
+                MirageLogger.client("Suppressing paste shortcut because shared clipboard sync did not complete")
+                return
             }
+            MirageLogger.client("Forwarding paste shortcut after shared clipboard sync")
             forwardInputEventToHost(.keyDown(keyEvent))
             forwardInputEventToHost(.keyUp(keyUpEvent))
         }

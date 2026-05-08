@@ -72,41 +72,63 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
     public let hostPipelinePixelRate: Double?
     public let currentTier: MirageAutomaticDesktopWorkloadTier?
     let sourceCadenceDeficient: Bool
+    let clientPipelineDeficient: Bool
+    let minimumHealthyFrameRate: Int
+    let usesVariableHighRefreshFloor: Bool
 
     public var isPipelineBound: Bool {
         switch bottleneckKind {
-        case .captureBound, .encodeBound, .hostCadenceLimited, .decodeBound, .presentationBound, .mixed:
+        case .captureBound, .encodeBound:
             true
+        case .hostCadenceLimited:
+            usesVariableHighRefreshFloor ? sourceCadenceDeficient : true
+        case .decodeBound, .presentationBound:
+            clientPipelineDeficient
+        case .mixed:
+            sourceCadenceDeficient || clientPipelineDeficient
         case .networkBound, .unknown:
             false
         }
     }
 
     public var isHostPipelineBound: Bool {
-        guard let currentTier, let hostPipelinePixelRate else { return false }
+        guard currentTier != nil, hostPipelinePixelRate != nil else { return false }
         switch bottleneckKind {
-        case .captureBound, .encodeBound, .hostCadenceLimited:
+        case .captureBound, .encodeBound:
             return true
+        case .hostCadenceLimited:
+            return usesVariableHighRefreshFloor ? sourceCadenceDeficient : true
         case .mixed:
-            return sourceCadenceDeficient || hostPipelinePixelRate < currentTier.pixelRate * 0.90
+            let frameRateFloor = usesVariableHighRefreshFloor
+                ? minimumHealthyFrameRate
+                : (currentTier?.targetFrameRate ?? minimumHealthyFrameRate)
+            return sourceCadenceDeficient || hostPipelineFPS < Double(frameRateFloor) * 0.90
         case .decodeBound, .presentationBound, .networkBound, .unknown:
             return false
         }
     }
 
     public var isClientPipelineBound: Bool {
-        guard let currentTier, let observedPixelRate else { return false }
+        guard currentTier != nil, observedPixelRate != nil else { return false }
         switch bottleneckKind {
         case .decodeBound, .presentationBound:
-            return true
+            return clientPipelineDeficient
         case .mixed:
-            return !sourceCadenceDeficient && observedPixelRate < currentTier.pixelRate * 0.90
+            return !sourceCadenceDeficient && clientPipelineDeficient
         case .captureBound, .encodeBound, .hostCadenceLimited, .networkBound, .unknown:
             return false
         }
     }
 
-    public static func evaluate(snapshot: MirageClientMetricsSnapshot?) -> MirageStreamPipelineHealth {
+    private var hostPipelineFPS: Double {
+        guard let currentTier, let hostPipelinePixelRate else { return 0 }
+        return hostPipelinePixelRate / max(1.0, currentTier.pixelRate / Double(max(1, currentTier.targetFrameRate)))
+    }
+
+    public static func evaluate(
+        snapshot: MirageClientMetricsSnapshot?,
+        minimumHealthyFrameRate: Int? = nil
+    ) -> MirageStreamPipelineHealth {
         guard let snapshot else {
             return MirageStreamPipelineHealth(
                 bottleneckKind: .unknown,
@@ -114,7 +136,10 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
                 observedPixelRate: nil,
                 hostPipelinePixelRate: nil,
                 currentTier: nil,
-                sourceCadenceDeficient: false
+                sourceCadenceDeficient: false,
+                clientPipelineDeficient: false,
+                minimumHealthyFrameRate: 60,
+                usesVariableHighRefreshFloor: false
             )
         }
 
@@ -176,6 +201,13 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
         } else {
             Optional<Double>.none
         }
+        let requestedTargetFrameRate = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
+        let effectiveMinimumHealthyFrameRate = effectiveHealthFrameRate(
+            requestedTargetFrameRate: requestedTargetFrameRate,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
+        )
+        let usesVariableHighRefreshFloor = requestedTargetFrameRate >= 90 &&
+            effectiveMinimumHealthyFrameRate < requestedTargetFrameRate
 
         return MirageStreamPipelineHealth(
             bottleneckKind: snapshot.bottleneckKind,
@@ -183,12 +215,24 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             observedPixelRate: observedPixelRate,
             hostPipelinePixelRate: hostPipelinePixelRate,
             currentTier: currentTier,
-            sourceCadenceDeficient: sourceCadenceDeficient(snapshot: snapshot)
+            sourceCadenceDeficient: sourceCadenceDeficient(
+                snapshot: snapshot,
+                minimumHealthyFrameRate: effectiveMinimumHealthyFrameRate
+            ),
+            clientPipelineDeficient: clientPipelineDeficient(
+                snapshot: snapshot,
+                minimumHealthyFrameRate: effectiveMinimumHealthyFrameRate
+            ),
+            minimumHealthyFrameRate: effectiveMinimumHealthyFrameRate,
+            usesVariableHighRefreshFloor: usesVariableHighRefreshFloor
         )
     }
 
-    private static func sourceCadenceDeficient(snapshot: MirageClientMetricsSnapshot) -> Bool {
-        let targetFPS = Double(max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60))
+    private static func sourceCadenceDeficient(
+        snapshot: MirageClientMetricsSnapshot,
+        minimumHealthyFrameRate: Int
+    ) -> Bool {
+        let targetFPS = Double(max(1, minimumHealthyFrameRate))
         let frameBudgetMs = 1_000.0 / targetFPS
         let lowSourceCadence = [
             snapshot.hostCaptureIngressFPS,
@@ -213,6 +257,42 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             p99Gap >= max(35.0, frameBudgetMs * 2.0) ||
             worstGap >= max(70.0, frameBudgetMs * 4.0) ||
             (snapshot.hostCaptureLongFrameGapCount ?? 0) > 0
+    }
+
+    private static func clientPipelineDeficient(
+        snapshot: MirageClientMetricsSnapshot,
+        minimumHealthyFrameRate: Int
+    ) -> Bool {
+        let targetFPS = Double(max(1, minimumHealthyFrameRate))
+        let frameBudgetMs = 1_000.0 / targetFPS
+        let clientCadence = minimumPositive([
+            snapshot.decodedFPS,
+            snapshot.submittedFPS,
+            snapshot.uniqueSubmittedFPS,
+            snapshot.clientPresentedFPS > 0 ? snapshot.clientPresentedFPS : nil,
+            snapshot.clientLayerAcceptedFPS > 0 ? snapshot.clientLayerAcceptedFPS : nil,
+        ]) ?? 0
+        let belowHealthFloor = clientCadence > 0 && clientCadence < targetFPS * 0.90
+        let decodeFailed = !snapshot.decodeHealthy &&
+            (snapshot.receivedFPS > 0 || snapshot.decodedFPS > 0)
+        let presentationStalled =
+            snapshot.clientPresentationStallCount > 0 ||
+            snapshot.clientWorstPresentationGapMs >= max(120.0, frameBudgetMs * 6.0) ||
+            snapshot.clientFrameIntervalP99Ms >= max(80.0, frameBudgetMs * 4.0) ||
+            snapshot.clientDisplayTickIntervalP99Ms >= max(80.0, frameBudgetMs * 4.0) ||
+            snapshot.clientPendingFrameAgeMs >= max(40.0, frameBudgetMs * 3.0) ||
+            snapshot.clientOverwrittenPendingFrames >= 3 ||
+            snapshot.clientDisplayLayerNotReadyCount >= 2
+        return belowHealthFloor || decodeFailed || presentationStalled
+    }
+
+    private static func effectiveHealthFrameRate(
+        requestedTargetFrameRate: Int,
+        minimumHealthyFrameRate: Int?
+    ) -> Int {
+        let requestedTargetFrameRate = max(1, requestedTargetFrameRate)
+        guard let minimumHealthyFrameRate else { return requestedTargetFrameRate }
+        return min(requestedTargetFrameRate, max(1, minimumHealthyFrameRate))
     }
 
     private static func minimumPositive(_ values: [Double?]) -> Double? {
@@ -254,6 +334,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         resizeCriticalSectionActive: Bool,
         minimumTargetFrameRate: Int = 30,
         maximumTargetFrameRate: Int = 60,
+        minimumHealthyFrameRate: Int? = nil,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Action {
         guard !resizeCriticalSectionActive else {
@@ -262,7 +343,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             return .none
         }
 
-        let health = MirageStreamPipelineHealth.evaluate(snapshot: snapshot)
+        let health = MirageStreamPipelineHealth.evaluate(
+            snapshot: snapshot,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
+        )
         guard health.transportIsClean,
               let currentTier = health.currentTier else {
             pipelinePressureSampleCount = 0
@@ -383,13 +467,13 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             normalizedMinimumTargetFrameRate,
             MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
         )
-        if let sameResolutionFrameRateTier = sameResolutionFrameRateRecoveryTier(
-            currentTier: currentTier,
-            observedPixelRate: pipelinePixelRate,
-            minimumTargetFrameRate: normalizedMinimumTargetFrameRate,
-            maximumTargetFrameRate: normalizedMaximumTargetFrameRate
-        ) {
-            return sameResolutionFrameRateTier
+        if currentTier.targetFrameRate > 60,
+           currentTier.targetFrameRate > normalizedMinimumTargetFrameRate,
+           let frameRatePreservingTier = reducedResolutionTierPreservingFrameRate(
+               currentTier: currentTier,
+               pipelinePixelRate: pipelinePixelRate
+           ) {
+            return frameRatePreservingTier
         }
 
         let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
@@ -436,8 +520,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             Double(max(1, Int(currentTier.encodedPixelSize.width))) *
                 Double(max(1, Int(currentTier.encodedPixelSize.height)))
         )
-        let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
-        let targetPixels = sustainablePixelRate / Double(max(1, currentTier.targetFrameRate))
+        let targetPixels = targetPixelsPreservingFrameRate(
+            currentTier: currentTier,
+            pipelinePixelRate: pipelinePixelRate
+        )
         guard targetPixels < currentPixels * 0.97 else { return nil }
 
         let scale = max(0.35, sqrt(max(1.0, targetPixels) / currentPixels))
@@ -453,28 +539,38 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return targetTier
     }
 
-    private static func sameResolutionFrameRateRecoveryTier(
+    private static func reducedResolutionTierPreservingFrameRate(
         currentTier: MirageAutomaticDesktopWorkloadTier,
-        observedPixelRate: Double,
-        minimumTargetFrameRate: Int,
-        maximumTargetFrameRate: Int
+        pipelinePixelRate: Double
     ) -> MirageAutomaticDesktopWorkloadTier? {
-        guard currentTier.targetFrameRate > 60 else { return nil }
-        let candidateFrameRates = [90, 60, 30, 20].filter {
-            $0 >= minimumTargetFrameRate &&
-                $0 <= maximumTargetFrameRate &&
-                $0 < currentTier.targetFrameRate
-        }
-        for frameRate in candidateFrameRates {
-            let tier = MirageAutomaticDesktopWorkloadTier(
-                encodedPixelSize: currentTier.encodedPixelSize,
-                targetFrameRate: frameRate
-            )
-            if tier.pixelRate <= observedPixelRate {
-                return tier
-            }
-        }
-        return nil
+        let currentPixels = max(
+            1.0,
+            Double(max(1, Int(currentTier.encodedPixelSize.width))) *
+                Double(max(1, Int(currentTier.encodedPixelSize.height)))
+        )
+        let targetPixels = targetPixelsPreservingFrameRate(
+            currentTier: currentTier,
+            pipelinePixelRate: pipelinePixelRate
+        )
+        guard targetPixels < currentPixels * 0.97 else { return nil }
+        let scale = max(0.35, sqrt(max(1.0, targetPixels) / currentPixels))
+        let targetTier = MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: CGSize(
+                width: currentTier.encodedPixelSize.width * scale,
+                height: currentTier.encodedPixelSize.height * scale
+            ),
+            targetFrameRate: currentTier.targetFrameRate
+        )
+        guard targetTier.pixelRate < currentTier.pixelRate else { return nil }
+        return targetTier
+    }
+
+    private static func targetPixelsPreservingFrameRate(
+        currentTier: MirageAutomaticDesktopWorkloadTier,
+        pipelinePixelRate: Double
+    ) -> Double {
+        let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
+        return sustainablePixelRate / Double(max(1, currentTier.targetFrameRate))
     }
 
     private static func isSevereClientPresentationCollapse(

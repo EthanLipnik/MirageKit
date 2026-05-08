@@ -75,6 +75,102 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(policy.evaluate(pressured) == .none)
     }
 
+    @Test("High refresh variable cadence above floor does not recover")
+    func highRefreshVariableCadenceAboveFloorDoesNotRecover() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                targetFrameRate: 120,
+                captureFPS: 64,
+                captureCadence: StreamCaptureCadenceMetrics(
+                    deliveredFrameGapWorstMs: 22,
+                    deliveredFrameGapP99Ms: 21,
+                    usesDisplayRefreshCadence: true,
+                    usesNativeRefreshMinimumFrameInterval: true,
+                    minimumFrameIntervalRate: 120,
+                    displayRefreshRate: 120,
+                    virtualDisplayRefreshRate: 120
+                )
+            )
+        )
+
+        #expect(action == .none)
+    }
+
+    @Test("High refresh capture below floor restarts capture immediately")
+    func highRefreshCaptureBelowFloorRestartsCaptureImmediately() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                targetFrameRate: 120,
+                captureFPS: 50,
+                captureCadence: StreamCaptureCadenceMetrics(
+                    deliveredFrameGapWorstMs: 22,
+                    deliveredFrameGapP99Ms: 21,
+                    usesDisplayRefreshCadence: true,
+                    usesNativeRefreshMinimumFrameInterval: true,
+                    minimumFrameIntervalRate: 120,
+                    displayRefreshRate: 120,
+                    virtualDisplayRefreshRate: 120
+                )
+            )
+        )
+
+        #expect(action == .restartCapture)
+    }
+
+    @Test("High refresh policy rate mismatch reasserts virtual display mode")
+    func highRefreshPolicyRateMismatchReassertsVirtualDisplayMode() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                targetFrameRate: 120,
+                captureFPS: 64,
+                captureCadence: StreamCaptureCadenceMetrics(
+                    deliveredFrameGapWorstMs: 22,
+                    deliveredFrameGapP99Ms: 21,
+                    usesDisplayRefreshCadence: true,
+                    usesNativeRefreshMinimumFrameInterval: true,
+                    minimumFrameIntervalRate: 60,
+                    displayRefreshRate: 60,
+                    virtualDisplayRefreshRate: 120
+                )
+            )
+        )
+
+        #expect(action == .reassertVirtualDisplayMode)
+    }
+
+    @Test("High refresh healthy cadence does not recover")
+    func highRefreshHealthyCadenceDoesNotRecover() {
+        var policy = policy(consecutiveBadWindowsRequired: 1)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                targetFrameRate: 120,
+                captureFPS: 116,
+                captureCadence: StreamCaptureCadenceMetrics(
+                    deliveredFrameGapWorstMs: 12,
+                    deliveredFrameGapP99Ms: 10,
+                    usesDisplayRefreshCadence: true,
+                    usesNativeRefreshMinimumFrameInterval: true,
+                    minimumFrameIntervalRate: 120,
+                    displayRefreshRate: 120,
+                    virtualDisplayRefreshRate: 120
+                )
+            )
+        )
+
+        #expect(action == .none)
+    }
+
     private func policy(
         consecutiveBadWindowsRequired: Int,
         actionCooldownSeconds: Double = 0,
@@ -95,26 +191,30 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         now: Double,
         startupSettled: Bool = true,
         isResizing: Bool = false,
-        isEncodingSuspendedForResize: Bool = false
+        isEncodingSuspendedForResize: Bool = false,
+        targetFrameRate: Int = 60,
+        captureFPS: Double = 58,
+        captureCadence: StreamCaptureCadenceMetrics? = nil
     ) -> HostCaptureCadenceRecoveryPolicy.Sample {
-        HostCaptureCadenceRecoveryPolicy.Sample(
+        let frameBudgetMs = 1_000.0 / Double(max(1, targetFrameRate))
+        return HostCaptureCadenceRecoveryPolicy.Sample(
             now: now,
             isDesktopDisplayStream: true,
             startupSettled: startupSettled,
             isResizing: isResizing,
             isEncodingSuspendedForResize: isEncodingSuspendedForResize,
-            targetFrameRate: 60,
-            captureFPS: 58,
-            captureIngressFPS: 58,
-            encodeAttemptFPS: 58,
+            targetFrameRate: targetFrameRate,
+            captureFPS: captureFPS,
+            captureIngressFPS: captureFPS,
+            encodeAttemptFPS: captureFPS,
             averageEncodeMs: 7,
-            frameBudgetMs: 16.67,
+            frameBudgetMs: frameBudgetMs,
             sendQueueBytes: 0,
             queuePressureBytes: 1_200_000,
             sendStartDelayMaxMs: 3,
             sendCompletionMaxMs: 10,
             packetPacerFrameMaxSleepMs: 1,
-            captureCadence: StreamCaptureCadenceMetrics(
+            captureCadence: captureCadence ?? StreamCaptureCadenceMetrics(
                 wallClockGapWorstMs: 96,
                 wallClockGapP95Ms: 48,
                 wallClockGapP99Ms: 48,

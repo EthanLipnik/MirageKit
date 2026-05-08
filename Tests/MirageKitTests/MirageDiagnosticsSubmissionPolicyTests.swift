@@ -110,6 +110,72 @@ struct MirageDiagnosticsSubmissionPolicyTests {
         #expect(classification.issueKind == "virtual-display-startup")
     }
 
+    @Test("Display topology refresh failures stay breadcrumb-only")
+    func displayTopologyRefreshFailuresStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Failed to restart desktop virtual display after display topology change: ",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "MirageKitHost.SharedVirtualDisplayManager.SharedDisplayError",
+                    domain: "MirageKitHost.SharedVirtualDisplayManager.SharedDisplayError",
+                    code: 4
+                )
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "desktop-topology-refresh")
+        #expect(classification.recoveryOutcome == "expected-lifecycle")
+    }
+
+    @Test("ScreenCaptureKit content list failures get a concrete issue kind")
+    func screenCaptureKitContentListFailuresGetConcreteIssueKind() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "host",
+                message: "Failed to handle desktop stream request: ",
+                metadata: LoomDiagnosticsErrorMetadata(
+                    typeName: "NSError",
+                    domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+                    code: -3813
+                )
+            )
+        )
+
+        #expect(classification.disposition == .capture)
+        #expect(classification.issueKind == "screencapturekit-content-list-unavailable")
+        #expect(classification.failureStage == "capture-start")
+    }
+
+    @Test("Bootstrap handoff reconnect races stay breadcrumb-only")
+    func bootstrapHandoffReconnectRacesStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "bootstrap_handoff",
+                message: "Wake reconnect failed for host MacBook Pro: protocolError(\"Already connected or connecting\")"
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "bootstrap-handoff-already-connected")
+        #expect(classification.recoveryOutcome == "expected-lifecycle")
+    }
+
+    @Test("App window capacity rejections stay breadcrumb-only")
+    func appWindowCapacityRejectionsStayBreadcrumbOnly() {
+        let classification = MirageDiagnosticsSubmissionPolicy.classification(
+            for: makeEvent(
+                category: "appState",
+                message: "Client error: protocolError(\"Max app windows reached for SimplyFatt\")"
+            )
+        )
+
+        #expect(classification.disposition == .breadcrumbOnly)
+        #expect(classification.issueKind == "app-window-capacity")
+        #expect(classification.recoveryOutcome == "expected-limit")
+    }
+
     @Test("Expected transport closures stay breadcrumb-only")
     func expectedTransportClosuresStayBreadcrumbOnly() {
         let classification = MirageDiagnosticsSubmissionPolicy.classification(

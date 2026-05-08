@@ -10,6 +10,8 @@
 @testable import MirageKitClient
 import AVFoundation
 import CoreGraphics
+import CoreMedia
+import CoreVideo
 import Testing
 
 @MainActor
@@ -76,6 +78,40 @@ struct MirageSampleBufferPresentationPipelineTests {
         #expect(stopCount == 0)
     }
 
+    @Test("Presenter rebases sequence state after render-store clear")
+    func presenterRebasesSequenceStateAfterRenderStoreClear() {
+        let streamID: StreamID = 245
+        let layer = AVSampleBufferDisplayLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let presenter = MirageSampleBufferPresenter(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            presenter.setStreamID(nil)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        presenter.setStreamID(streamID)
+        MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: 2,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+    }
+
     private func makePipeline(
         displayLayer: AVSampleBufferDisplayLayer,
         startDisplayClock: @escaping MirageSampleBufferPresentationPipeline.StartDisplayClock = { _, _ in },
@@ -109,6 +145,24 @@ struct MirageSampleBufferPresentationPipelineTests {
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
             containerSizingMode: .viewBounds
         )
+    }
+
+    private func makePixelBuffer() -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            8,
+            8,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &buffer
+        )
+        #expect(status == kCVReturnSuccess)
+        guard let buffer else {
+            Issue.record("Failed to allocate CVPixelBuffer")
+            fatalError("Unable to allocate CVPixelBuffer for test")
+        }
+        return buffer
     }
 }
 #endif

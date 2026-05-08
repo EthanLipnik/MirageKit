@@ -327,9 +327,9 @@ extension MirageClientService {
         _ event: RuntimeWorkloadSafetyStallEvent
     ) -> Bool {
         switch event {
-        case .clientRenderCapacity:
+        case .clientRenderCapacity, .presentationRecovery:
             true
-        case .presentationRecovery, .keyframeStarved, .packetStarved:
+        case .keyframeStarved, .packetStarved:
             false
         }
     }

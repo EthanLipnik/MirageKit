@@ -29,7 +29,6 @@ extension DecodeErrorTracker {
         // Initial threshold fire
         if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
             thresholdFired = true
-            recoveryRequiresKeyframeDecode = true
             let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
             guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {
                 let remainingMs = Int(((thresholdDispatchCooldown - timeSinceLastThreshold) * 1000).rounded(.up))
@@ -40,6 +39,7 @@ extension DecodeErrorTracker {
             }
 
             lastThresholdTime = now
+            recoveryRequiresKeyframeDecode = true
             // Call handler outside lock to avoid deadlocks
             lock.unlock()
             MirageLogger.decoder("Decode error threshold reached (\(consecutiveErrors) errors) - requesting keyframe")

@@ -186,9 +186,14 @@ extension CGVirtualDisplayBridge {
             let isMirage = isMirageDisplay(display)
             let isVirtual = isVirtualDisplay(display)
             let isMain = display == CGMainDisplayID()
+            let mode = CGDisplayCopyDisplayMode(display)
+            let pixelSizeText = mode.map { "\($0.pixelWidth)x\($0.pixelHeight)" } ?? "unknown"
+            let refreshText = mode.map {
+                $0.refreshRate.formatted(.number.precision(.fractionLength(1)))
+            } ?? "unknown"
             MirageLogger
                 .host(
-                    "  Display \(display): bounds=\(bounds), vendor=0x\(String(vendorID, radix: 16)), model=0x\(String(modelID, radix: 16)), mirage=\(isMirage), virtual=\(isVirtual), main=\(isMain)"
+                    "  Display \(display): bounds=\(bounds), pixels=\(pixelSizeText), refresh=\(refreshText)Hz, vendor=0x\(String(vendorID, radix: 16)), model=0x\(String(modelID, radix: 16)), mirage=\(isMirage), virtual=\(isVirtual), main=\(isMain)"
                 )
         }
 

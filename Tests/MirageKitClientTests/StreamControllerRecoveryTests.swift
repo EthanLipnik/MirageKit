@@ -326,8 +326,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Decode threshold recovery is deferred until sustained freeze")
-    func decodeThresholdRecoveryIsDeferredUntilSustainedFreeze() async throws {
+    @Test("Decode threshold requests immediate keyframe")
+    func decodeThresholdRequestsImmediateKeyframe() async throws {
         let streamID: StreamID = 44
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -342,10 +342,10 @@ struct StreamControllerRecoveryTests {
 
         await controller.markFirstFramePresented()
         await controller.handleDecodeErrorThresholdSignal()
-        await controller.handleDecodeErrorThresholdSignal()
-        await controller.handleDecodeErrorThresholdSignal()
-        try await Task.sleep(for: .milliseconds(250))
-        #expect(keyframeCounter.value == 0)
+        try await waitUntil("decode-threshold immediate keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -404,6 +404,49 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.firstPresentedFrameWaitStartTime > 0)
         #expect(!(await controller.hasDecodedFirstFrame))
         #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Decode threshold while awaiting recovered presentation requests immediate keyframe")
+    func decodeThresholdWhileAwaitingRecoveredPresentationRequestsImmediateKeyframe() async throws {
+        let streamID: StreamID = 247
+        let keyframeCounter = LockedCounter()
+        let clock = ManualTimeProvider(start: 4_000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.updatePresentationTier(.activeLive)
+        await controller.markFirstFramePresented()
+
+        await controller.requestRecovery(
+            reason: .frameLoss,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "test-hard-recovery"
+        )
+        let baselineRequests = keyframeCounter.value
+        #expect(await controller.awaitingFirstPresentedFrame)
+        #expect(baselineRequests >= 1)
+
+        clock.advance(by: StreamController.recoveryRequestDispatchCooldown + 0.01)
+        await controller.handleDecodeErrorThresholdSignal()
+
+        try await waitUntil("decode-threshold keyframe while awaiting recovered presentation") {
+            keyframeCounter.value > baselineRequests
+        }
+        #expect(await controller.awaitingFirstPresentedFrame)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -734,9 +777,85 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.clientRecoveryStatus == .hardRecovery)
 
         MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
-        let recoveredProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        var recoveredProgress = false
+        let timeoutAt = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < timeoutAt {
+            let synced = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+            let progressTime = await controller.lastPresentedProgressTime
+            if synced || progressTime > 0 {
+                recoveredProgress = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
         #expect(recoveredProgress)
         #expect(await controller.lastPresentedProgressTime > 0)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Throttled decode threshold after hard recovery progress keeps P-frame admission")
+    func throttledDecodeThresholdAfterHardRecoveryProgressKeepsPFrameAdmission() async {
+        let streamID: StreamID = 154
+        let keyframeCounter = LockedCounter()
+        let thresholdCounter = LockedCounter()
+        let clock = ManualTimeProvider(start: 7_500)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.decoder.setErrorThresholdHandler {
+            thresholdCounter.increment()
+        }
+        await controller.updatePresentationTier(.activeLive)
+        await controller.markFirstFramePresented()
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "test-hard-recovery"
+        )
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+        #expect(keyframeCounter.value >= 1)
+
+        guard let tracker = await controller.decoder.errorTracker else {
+            Issue.record("Missing decoder error tracker")
+            await controller.stop()
+            MirageRenderStreamStore.shared.clear(for: streamID)
+            return
+        }
+        #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
+
+        tracker.recordSuccess(isKeyframe: true)
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        let recoveredProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        #expect(recoveredProgress)
+        await controller.clearTransientRecoveryStateAfterPresentationProgress()
+        #expect(await controller.clientRecoveryStatus == .idle)
+
+        let baselineThresholds = thresholdCounter.value
+        let maxErrors = await controller.decoder.maxConsecutiveErrors
+        tracker.lastThresholdTime = CFAbsoluteTimeGetCurrent()
+        for _ in 0 ..< maxErrors {
+            tracker.recordError(isKeyframe: false)
+        }
+
+        #expect(thresholdCounter.value == baselineThresholds)
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+        #expect(await controller.clientRecoveryStatus == .idle)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)

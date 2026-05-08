@@ -89,6 +89,11 @@ extension MirageClientService {
             return
         }
 
+        await ensureSharedClipboardBridge().noteRemoteTransferObservation(
+            orderingToken: orderingToken,
+            sentAtMs: sentAtMs
+        )
+
         guard let fullPayload = clipboardChunkBuffer.addChunk(
             changeID: orderingToken.changeID,
             chunkIndex: chunkIndex,
@@ -96,7 +101,10 @@ extension MirageClientService {
             payload: payload
         ) else { return }
 
-        guard let validatedPayload = MirageSharedClipboard.validatedPayload(fullPayload) else {
+        guard let validatedPayload = MirageSharedClipboard.validatedPayload(
+            fullPayload,
+            representation: representation
+        ) else {
             await ensureSharedClipboardBridge().noteRemoteDeclaration(
                 orderingToken: orderingToken,
                 sentAtMs: sentAtMs

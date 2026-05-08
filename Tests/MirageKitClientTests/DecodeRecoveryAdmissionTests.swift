@@ -59,6 +59,35 @@ struct DecodeRecoveryAdmissionTests {
 
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
     }
+
+    @Test("Throttled threshold keeps P-frame admission after recovered session reset")
+    func throttledThresholdKeepsPFrameAdmissionAfterRecoveredSessionReset() {
+        let thresholdRequests = TestCounter()
+        let tracker = DecodeErrorTracker(maxErrors: 2) {
+            thresholdRequests.increment()
+        }
+
+        tracker.recordError(isKeyframe: false)
+        tracker.recordError(isKeyframe: false)
+
+        #expect(thresholdRequests.value == 1)
+        #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
+
+        tracker.clearForSessionReset()
+        #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
+
+        tracker.recordSuccess(isKeyframe: true)
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+
+        let baselineRequests = thresholdRequests.value
+        tracker.lastThresholdTime = CFAbsoluteTimeGetCurrent()
+
+        tracker.recordError(isKeyframe: false)
+        tracker.recordError(isKeyframe: false)
+
+        #expect(thresholdRequests.value == baselineRequests)
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+    }
 }
 
 private final class TestCounter: @unchecked Sendable {

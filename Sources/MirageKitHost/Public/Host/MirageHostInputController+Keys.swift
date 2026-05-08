@@ -80,6 +80,11 @@ extension MirageHostInputController {
     ) {
         guard let cgEvent = makeInjectedKeyboardEvent(isKeyDown: isKeyDown, event) else { return }
 
+        HostKeyboardInputDiagnostics.logPost(
+            keyEvent: event,
+            isKeyDown: isKeyDown,
+            domain: domain
+        )
         postEvent(cgEvent, domain: domain)
 
         // Refresh timestamps only for modifiers tracked via flagsChanged state.
@@ -103,6 +108,10 @@ extension MirageHostInputController {
         domain: HostKeyboardInjectionDomain
     ) {
         let transitionPlan = Self.modifierTransitionPlan(from: lastSentModifiers, to: modifiers)
+        HostKeyboardInputDiagnostics.logPost(
+            modifiers: modifiers,
+            domain: domain
+        )
 
         var cumulativeFlags = lastSentModifiers
         for (flag, keyCode) in Self.modifierKeyCodes where transitionPlan.pressed.contains(keyCode) {

@@ -16,7 +16,9 @@ public final class MirageClientSessionStore {
     // MARK: - Stream Sessions
 
     /// Active stream sessions by session ID.
+    @ObservationIgnored
     private var streamSessions: [StreamSessionID: MirageStreamSessionState] = [:]
+    private var streamSessionsRevision: UInt64 = 0
 
     /// Minimum window sizes per session (observable for resize completion detection).
     public var sessionMinSizes: [StreamSessionID: CGSize] = [:]
@@ -57,35 +59,43 @@ public final class MirageClientSessionStore {
     /// Get a session by ID.
     /// - Parameter id: Session identifier to look up.
     public func session(for id: StreamSessionID) -> MirageStreamSessionState? {
-        streamSessions[id]
+        observeStreamSessions()
+        return streamSessions[id]
     }
 
     /// Get a session by window ID.
     /// - Parameter windowID: Window identifier to match.
     public func sessionForStream(_ windowID: WindowID) -> MirageStreamSessionState? {
-        streamSessions.values.first { $0.window.id == windowID }
+        observeStreamSessions()
+        return streamSessions.values.first { $0.window.id == windowID }
     }
 
     /// Get a session by stream ID.
     /// - Parameter streamID: Stream identifier to match.
     public func sessionByStreamID(_ streamID: StreamID) -> MirageStreamSessionState? {
-        streamSessions.values.first { $0.streamID == streamID }
+        observeStreamSessions()
+        return streamSessions.values.first { $0.streamID == streamID }
     }
 
     /// Get the first session rendering from a physical media stream.
     /// - Parameter mediaStreamID: Media stream identifier to match.
     public func sessionByMediaStreamID(_ mediaStreamID: StreamID) -> MirageStreamSessionState? {
-        streamSessions.values.first { $0.mediaStreamID == mediaStreamID }
+        observeStreamSessions()
+        return streamSessions.values.first { $0.mediaStreamID == mediaStreamID }
     }
 
     /// Get all sessions rendering from a physical media stream.
     /// - Parameter mediaStreamID: Media stream identifier to match.
     public func sessionsByMediaStreamID(_ mediaStreamID: StreamID) -> [MirageStreamSessionState] {
-        streamSessions.values.filter { $0.mediaStreamID == mediaStreamID }
+        observeStreamSessions()
+        return streamSessions.values.filter { $0.mediaStreamID == mediaStreamID }
     }
 
     /// Get all active sessions.
-    public var activeSessions: [MirageStreamSessionState] { Array(streamSessions.values) }
+    public var activeSessions: [MirageStreamSessionState] {
+        observeStreamSessions()
+        return Array(streamSessions.values)
+    }
 
     /// Create a new stream session.
     /// - Parameters:
@@ -146,6 +156,7 @@ public final class MirageClientSessionStore {
         }
 
         streamSessions[sessionID] = state
+        markStreamSessionsChanged()
         return sessionID
     }
 
@@ -165,7 +176,10 @@ public final class MirageClientSessionStore {
                 pendingClientRecoveryStatusByStreamID.removeValue(forKey: mediaStreamID)
             }
         }
-        streamSessions.removeValue(forKey: sessionID)
+        let removedSession = streamSessions.removeValue(forKey: sessionID)
+        if removedSession != nil {
+            markStreamSessionsChanged()
+        }
         sessionMinSizes.removeValue(forKey: sessionID)
         sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
     }
@@ -173,19 +187,22 @@ public final class MirageClientSessionStore {
     /// Get stream ID for a session.
     /// - Parameter sessionID: Session identifier to query.
     public func streamID(for sessionID: StreamSessionID) -> StreamID? {
-        streamSessions[sessionID]?.streamID
+        observeStreamSessions()
+        return streamSessions[sessionID]?.streamID
     }
 
     /// Get media stream ID for a session.
     /// - Parameter sessionID: Session identifier to query.
     public func mediaStreamID(for sessionID: StreamSessionID) -> StreamID? {
-        streamSessions[sessionID]?.mediaStreamID
+        observeStreamSessions()
+        return streamSessions[sessionID]?.mediaStreamID
     }
 
     /// Get window for a session.
     /// - Parameter sessionID: Session identifier to query.
     public func window(for sessionID: StreamSessionID) -> MirageWindow? {
-        streamSessions[sessionID]?.window
+        observeStreamSessions()
+        return streamSessions[sessionID]?.window
     }
 
     /// Update window metadata for an existing session keyed by stream ID.
@@ -198,6 +215,7 @@ public final class MirageClientSessionStore {
         guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
         session.window = window
         session.atlasRegion = atlasRegion
+        markStreamSessionsChanged()
     }
 
     /// Update only the atlas region for an existing logical stream.
@@ -381,6 +399,14 @@ public final class MirageClientSessionStore {
         streamSessions.contains { candidateSessionID, session in
             candidateSessionID != sessionID && session.mediaStreamID == mediaStreamID
         }
+    }
+
+    private func observeStreamSessions() {
+        _ = streamSessionsRevision
+    }
+
+    private func markStreamSessionsChanged() {
+        streamSessionsRevision &+= 1
     }
 
     private func applyResolvedTiers(_ tiers: [StreamID: StreamPresentationTier]) {

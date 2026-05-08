@@ -22,6 +22,8 @@ enum InputCapturingResponderRecoveryTrigger: String {
     case viewDidAppear = "view_did_appear"
     case callbacksConfigured = "callbacks_configured"
     case streamIdentityUpdated = "stream_identity_updated"
+    case desktopStreamStarted = "desktop_stream_started"
+    case desktopTransitionCommitted = "desktop_transition_committed"
     case hardwareKeyboardPresenceChanged = "hardware_keyboard_presence_changed"
     case focusChanged = "focus_changed"
     case interaction = "interaction"
@@ -102,6 +104,8 @@ enum InputCapturingResponderRecoveryPolicy {
         switch trigger {
         case .applicationDidBecomeActive,
              .sceneDidActivate,
+             .desktopStreamStarted,
+             .desktopTransitionCommitted,
              .viewDidAppear,
              .windowDidBecomeKey:
             return true

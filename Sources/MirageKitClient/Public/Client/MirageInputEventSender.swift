@@ -36,6 +36,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         case stylusHover
     }
 
+    private static let keyboardDiagnosticRateLimiter = MirageKeyboardInputDiagnosticRateLimiter()
     private static let maxPendingInputs = 256
     private static let maxPendingContactSamples = 4096
 
@@ -93,6 +94,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
             return
         }
+        Self.logKeyboardDiagnosticIfNeeded(
+            event,
+            streamID: streamID,
+            deliveryMode: .reliable,
+            path: "client_send_reliable"
+        )
         let data = try makeInputMessageData(event: event, streamID: streamID)
         if let sendHandler = currentSendHandler() {
             try await sendHandler(data, .reliable)
@@ -106,6 +113,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
             return
         }
+        Self.logKeyboardDiagnosticIfNeeded(
+            event,
+            streamID: streamID,
+            deliveryMode: Self.deliveryMode(for: event),
+            path: "client_send_best_effort_enqueue"
+        )
 
         sendQueue.async { [weak self] in
             guard let self else { return }
@@ -359,6 +372,25 @@ public final class MirageInputEventSender: @unchecked Sendable {
         default:
             .orderedBestEffort
         }
+    }
+
+    private static func logKeyboardDiagnosticIfNeeded(
+        _ event: MirageInputEvent,
+        streamID: StreamID,
+        deliveryMode: DeliveryMode,
+        path: String
+    ) {
+        guard let diagnostic = MirageKeyboardInputDiagnostics.diagnosticEvent(for: event) else {
+            return
+        }
+        let rateLimitKey = "client:\(path):\(streamID):\(diagnostic.rateLimitKey)"
+        guard keyboardDiagnosticRateLimiter.shouldLog(key: rateLimitKey) else {
+            return
+        }
+        MirageLogger.client(
+            "Keyboard input send: stream=\(streamID), kind=\(diagnostic.kind), " +
+                "key=\(diagnostic.keyCodeCategory), delivery=\(deliveryMode), path=\(path)"
+        )
     }
 
     private func recordInteractionIfNeeded(

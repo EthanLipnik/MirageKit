@@ -298,10 +298,30 @@ extension MirageHostService {
 
             await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
             let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 8, delayMs: 60)
+            guard isDesktopDisplayTopologyRefreshStillActive(
+                streamID: streamID,
+                clientSessionID: clientContext.sessionID
+            ) else {
+                await desktopContext.resumeEncodingAfterDesktopResize()
+                MirageLogger.host(
+                    "Desktop display topology refresh ended because the stream is no longer active"
+                )
+                return
+            }
             try await desktopContext.hardResetDesktopDisplayCapture(
                 displayWrapper: captureDisplay,
                 resolution: virtualResolution
             )
+            guard isDesktopDisplayTopologyRefreshStillActive(
+                streamID: streamID,
+                clientSessionID: clientContext.sessionID
+            ) else {
+                await desktopContext.resumeEncodingAfterDesktopResize()
+                MirageLogger.host(
+                    "Desktop display topology refresh completed after the stream stopped"
+                )
+                return
+            }
 
             let inputGeometry = updateDesktopInputGeometry(
                 streamID: streamID,
@@ -345,12 +365,30 @@ extension MirageHostService {
             )
         } catch {
             await desktopContext.resumeEncodingAfterDesktopResize()
+            guard isDesktopDisplayTopologyRefreshStillActive(
+                streamID: streamID,
+                clientSessionID: clientContext.sessionID
+            ) else {
+                MirageLogger.host(
+                    "Desktop display topology refresh stopped during teardown after \(reason): \(error)"
+                )
+                return
+            }
             MirageLogger.error(
                 .host,
                 error: error,
                 message: "Failed to restart desktop virtual display after display topology change: "
             )
         }
+    }
+
+    private func isDesktopDisplayTopologyRefreshStillActive(
+        streamID: StreamID,
+        clientSessionID: UUID
+    ) -> Bool {
+        streamID == desktopStreamID &&
+            desktopStreamContext != nil &&
+            desktopStreamClientContext?.sessionID == clientSessionID
     }
 
     func currentDesktopVirtualDisplayPixelResolution(fallback: CGSize? = nil) async -> CGSize? {

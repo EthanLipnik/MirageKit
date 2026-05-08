@@ -70,6 +70,40 @@ struct SharedVirtualDisplayValidationTests {
         #expect(acceptance == nil)
     }
 
+    @Test("Post-ready enforcement is skipped when observed mode matches")
+    func postReadyEnforcementIsSkippedWhenObservedModeMatches() {
+        let observed = SharedVirtualDisplayManager.ObservedDisplayMode(
+            logicalResolution: CGSize(width: 1280, height: 720),
+            pixelResolution: CGSize(width: 2560, height: 1440),
+            refreshRate: 60
+        )
+
+        #expect(
+            !SharedVirtualDisplayManager.needsPostReadyModeEnforcement(
+                observedMode: observed,
+                expectedPixelResolution: CGSize(width: 2560, height: 1440),
+                expectedRefreshRate: 60
+            )
+        )
+    }
+
+    @Test("Post-ready enforcement runs when observed mode differs")
+    func postReadyEnforcementRunsWhenObservedModeDiffers() {
+        let observed = SharedVirtualDisplayManager.ObservedDisplayMode(
+            logicalResolution: CGSize(width: 1280, height: 720),
+            pixelResolution: CGSize(width: 1920, height: 1080),
+            refreshRate: 30
+        )
+
+        #expect(
+            SharedVirtualDisplayManager.needsPostReadyModeEnforcement(
+                observedMode: observed,
+                expectedPixelResolution: CGSize(width: 2560, height: 1440),
+                expectedRefreshRate: 60
+            )
+        )
+    }
+
     @Test("Retina requests accept stable 1x fallback when pixel resolution is preserved")
     func retinaRequestsAcceptStableOneXFallbackWhenPixelResolutionIsPreserved() {
         #expect(

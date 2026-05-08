@@ -395,6 +395,8 @@ public final class MirageStreamViewController: UIViewController {
     private var pointerLockRequested: Bool = false
     private var pointerLockObserver: NSObjectProtocol?
     private var lastResolvedPointerLockState: MirageResolvedPointerLockState?
+    private var lastDesktopSessionIDForResponderRecovery: UUID?
+    private var lastDesktopMediaStreamIDForResponderRecovery: StreamID?
 
     override public func loadView() {
         view = captureView
@@ -491,6 +493,8 @@ public final class MirageStreamViewController: UIViewController {
         ignoresSafeArea: Bool
     ) {
         // Establish media and logical stream identities before cursor stores refresh.
+        let previousDesktopSessionID = lastDesktopSessionIDForResponderRecovery
+        let previousDesktopMediaStreamID = lastDesktopMediaStreamIDForResponderRecovery
         currentStreamID = streamID
         captureView.mediaStreamID = mediaStreamID
         captureView.streamID = streamID
@@ -523,7 +527,23 @@ public final class MirageStreamViewController: UIViewController {
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()
-        captureView.requestResponderRecovery(.streamIdentityUpdated)
+        let responderRecoveryTrigger: InputCapturingResponderRecoveryTrigger
+        if let desktopSessionID {
+            if previousDesktopSessionID != desktopSessionID {
+                responderRecoveryTrigger = .desktopStreamStarted
+            } else if previousDesktopMediaStreamID != mediaStreamID {
+                responderRecoveryTrigger = .desktopTransitionCommitted
+            } else {
+                responderRecoveryTrigger = .streamIdentityUpdated
+            }
+            lastDesktopSessionIDForResponderRecovery = desktopSessionID
+            lastDesktopMediaStreamIDForResponderRecovery = mediaStreamID
+        } else {
+            lastDesktopSessionIDForResponderRecovery = nil
+            lastDesktopMediaStreamIDForResponderRecovery = nil
+            responderRecoveryTrigger = .streamIdentityUpdated
+        }
+        captureView.requestResponderRecovery(responderRecoveryTrigger)
     }
 
     deinit {

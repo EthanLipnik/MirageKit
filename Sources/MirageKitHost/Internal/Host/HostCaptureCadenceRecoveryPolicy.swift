@@ -40,6 +40,9 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         var sendStartHealthyFrameMultiplier: Double = 2.0
         var sendCompletionHealthyMinimumMs: Double = 50.0
         var sendCompletionHealthyFrameMultiplier: Double = 3.0
+        var highRefreshTargetFrameRate: Int = 90
+        var highRefreshMinimumHealthyFrameRate: Int = 60
+        var highRefreshPolicyRateMismatchRatio: Double = 0.85
     }
 
     struct Sample: Sendable {
@@ -107,6 +110,26 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             return .none
         }
 
+        if let immediateAction = Self.highRefreshImmediateRecoveryAction(sample, configuration: configuration) {
+            guard lastActionTime <= 0 || sample.now - lastActionTime >= configuration.actionCooldownSeconds else {
+                return .none
+            }
+            badWindowCount = 0
+            goodWindowCount = 0
+            lastActionTime = sample.now
+            switch immediateAction {
+            case .restartVirtualDisplayCadenceDriver:
+                cadenceDriverRestartCount += 1
+            case .restartCapture:
+                captureRestartCount += 1
+            case .reassertVirtualDisplayMode:
+                virtualDisplayReassertCount += 1
+            case .recreateVirtualDisplay, .none:
+                break
+            }
+            return immediateAction
+        }
+
         goodWindowCount = 0
         badWindowCount += 1
         guard badWindowCount >= configuration.consecutiveBadWindowsRequired else { return .none }
@@ -135,7 +158,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         _ sample: Sample,
         configuration: Configuration
     ) -> Bool {
-        let targetFPS = Double(max(1, sample.targetFrameRate))
+        let targetFPS = effectiveHealthFrameRate(sample, configuration: configuration)
         let fpsFloor = targetFPS * configuration.captureFPSFloorRatio
         let lowCaptureFPS = [
             sample.captureFPS,
@@ -175,6 +198,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         let explicitDrops = (cadence?.longFrameGapCount ?? 0) > 0 ||
             (cadence?.cadenceDropCount ?? 0) > 0
         let virtualTimingSuspect = cadence?.virtualDisplayTimingSuspect == true
+        let highRefreshPolicyMismatch = highRefreshPolicyRateMismatch(sample, configuration: configuration)
 
         return lowCaptureFPS ||
             highP99Gap ||
@@ -182,7 +206,49 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             repeatedDisplayDrift ||
             statusLimited ||
             explicitDrops ||
-            virtualTimingSuspect
+            virtualTimingSuspect ||
+            highRefreshPolicyMismatch
+    }
+
+    private static func highRefreshImmediateRecoveryAction(
+        _ sample: Sample,
+        configuration: Configuration
+    ) -> Action? {
+        guard sample.targetFrameRate >= configuration.highRefreshTargetFrameRate,
+              let observedCaptureFPS = [
+                  sample.captureFPS,
+                  sample.captureIngressFPS,
+                  sample.encodeAttemptFPS,
+              ].compactMap({ value -> Double? in
+                  guard let value, value > 0 else { return nil }
+                  return value
+              }).max() else {
+            return nil
+        }
+
+        if highRefreshPolicyRateMismatch(sample, configuration: configuration) {
+            return .reassertVirtualDisplayMode
+        }
+        let healthFPS = effectiveHealthFrameRate(sample, configuration: configuration)
+        guard observedCaptureFPS < healthFPS * configuration.captureFPSFloorRatio else { return nil }
+        return .restartCapture
+    }
+
+    private static func highRefreshPolicyRateMismatch(
+        _ sample: Sample,
+        configuration: Configuration
+    ) -> Bool {
+        guard let cadence = sample.captureCadence else { return false }
+        let targetFPS = Double(max(1, sample.targetFrameRate))
+        let expectedFloor = targetFPS * configuration.highRefreshPolicyRateMismatchRatio
+        guard (cadence.virtualDisplayRefreshRate ?? 0) >= expectedFloor else { return false }
+
+        let observedPolicyRate = [
+            cadence.displayRefreshRate.map { Double($0) },
+            cadence.minimumFrameIntervalRate.map { Double($0) },
+        ].compactMap { $0 }.min()
+        guard let observedPolicyRate else { return false }
+        return observedPolicyRate < expectedFloor
     }
 
     private static func downstreamIsHealthy(
@@ -217,6 +283,17 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             sendStartHealthy &&
             sendCompletionHealthy &&
             pacerHealthy
+    }
+
+    private static func effectiveHealthFrameRate(
+        _ sample: Sample,
+        configuration: Configuration
+    ) -> Double {
+        let targetFrameRate = max(1, sample.targetFrameRate)
+        guard targetFrameRate >= configuration.highRefreshTargetFrameRate else {
+            return Double(targetFrameRate)
+        }
+        return Double(min(targetFrameRate, max(1, configuration.highRefreshMinimumHealthyFrameRate)))
     }
 
     private static func largest(_ values: Double?...) -> Double? {

@@ -145,7 +145,10 @@ extension MirageHostService {
                 payload: payload
               ) else { return }
 
-        guard let validatedPayload = MirageSharedClipboard.validatedPayload(fullPayload) else { return }
+        guard let validatedPayload = MirageSharedClipboard.validatedPayload(
+            fullPayload,
+            representation: representation
+        ) else { return }
 
         await ensureSharedClipboardBridge().applyRemoteItem(
             MirageSharedClipboardItem(

@@ -142,24 +142,20 @@ private actor HostClipboardSnapshotReader {
         filename: String?,
         payload: Data
     ) -> MirageSharedClipboardItem {
-        guard payload.count <= MirageSharedClipboard.maximumPayloadBytes else {
+        let representation = SharedClipboardRepresentation(
+            kind: kind,
+            contentType: contentType,
+            filename: filename,
+            byteCount: payload.count
+        )
+        guard payload.count <= MirageSharedClipboard.maximumPayloadBytes(for: representation) else {
             return MirageSharedClipboardItem(
-                representation: SharedClipboardRepresentation(
-                    kind: kind,
-                    contentType: contentType,
-                    filename: filename,
-                    byteCount: payload.count
-                ),
+                representation: representation,
                 payload: nil
             )
         }
         return MirageSharedClipboardItem(
-            representation: SharedClipboardRepresentation(
-                kind: kind,
-                contentType: contentType,
-                filename: filename,
-                byteCount: payload.count
-            ),
+            representation: representation,
             payload: payload
         )
     }

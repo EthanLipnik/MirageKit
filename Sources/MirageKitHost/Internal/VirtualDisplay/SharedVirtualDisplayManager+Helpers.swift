@@ -92,6 +92,24 @@ extension SharedVirtualDisplayManager {
         )
     }
 
+    static func needsPostReadyModeEnforcement(
+        observedMode: ObservedDisplayMode?,
+        expectedPixelResolution: CGSize,
+        expectedRefreshRate: Double,
+        pixelTolerance: CGFloat = 1.0,
+        refreshTolerance: Double = 1.0
+    ) -> Bool {
+        guard let observedMode else { return true }
+
+        let widthDelta = abs(observedMode.pixelResolution.width - expectedPixelResolution.width)
+        let heightDelta = abs(observedMode.pixelResolution.height - expectedPixelResolution.height)
+        guard widthDelta <= pixelTolerance, heightDelta <= pixelTolerance else {
+            return true
+        }
+
+        return abs(observedMode.refreshRate - expectedRefreshRate) > refreshTolerance
+    }
+
     private func creationAttempts(
         resolution: CGSize,
         colorSpace: MirageColorSpace,
@@ -459,13 +477,15 @@ extension SharedVirtualDisplayManager {
             VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
         }
 
-        if (displayObject as AnyObject).responds(to: invalidateSelector) {
-            _ = (displayObject as AnyObject).perform(invalidateSelector)
-            MirageLogger.host("Invalidated failed-attempt virtual display object \(displayID)")
-        }
+        await withDisplayMutation(kind: .virtualDisplayDestroy) {
+            if (displayObject as AnyObject).responds(to: invalidateSelector) {
+                _ = (displayObject as AnyObject).perform(invalidateSelector)
+                MirageLogger.host("Invalidated failed-attempt virtual display object \(displayID)")
+            }
 
-        CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-        await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
+            CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
+            await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
+        }
 
         if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
             orphanedDisplayIDs.insert(displayID)
@@ -496,15 +516,17 @@ extension SharedVirtualDisplayManager {
         let expectedLogicalResolution = useHiDPI
             ? Self.logicalResolution(for: normalizedResolution, scaleFactor: display.scaleFactor)
             : normalizedResolution
-        let success = CGVirtualDisplayBridge.updateDisplayResolution(
-            display: display.displayRef.value,
-            width: Int(normalizedResolution.width),
-            height: Int(normalizedResolution.height),
-            refreshRate: Double(refreshRate),
-            hiDPI: useHiDPI,
-            colorSpace: display.colorSpace,
-            isFallbackProbe: true
-        )
+        let success = await withDisplayMutation(kind: .virtualDisplayModeUpdate) {
+            CGVirtualDisplayBridge.updateDisplayResolution(
+                display: display.displayRef.value,
+                width: Int(normalizedResolution.width),
+                height: Int(normalizedResolution.height),
+                refreshRate: Double(refreshRate),
+                hiDPI: useHiDPI,
+                colorSpace: display.colorSpace,
+                isFallbackProbe: true
+            )
+        }
         guard success else { return nil }
 
         let validationOutcome = await validateDisplayMode(
@@ -591,15 +613,18 @@ extension SharedVirtualDisplayManager {
             try startupBudget?.checkAvailable()
             let requestedResolution = attempt.resolution
 
-            guard let displayContext = CGVirtualDisplayBridge.createVirtualDisplay(
-                name: displayName,
-                width: Int(requestedResolution.width),
-                height: Int(requestedResolution.height),
-                refreshRate: Double(refreshRate),
-                hiDPI: attempt.hiDPI,
-                colorSpace: attempt.colorSpace,
-                startupBudget: startupBudget
-            ) else {
+            let createdDisplayContext = await withDisplayMutation(kind: .virtualDisplayCreate) {
+                CGVirtualDisplayBridge.createVirtualDisplay(
+                    name: displayName,
+                    width: Int(requestedResolution.width),
+                    height: Int(requestedResolution.height),
+                    refreshRate: Double(refreshRate),
+                    hiDPI: attempt.hiDPI,
+                    colorSpace: attempt.colorSpace,
+                    startupBudget: startupBudget
+                )
+            }
+            guard let displayContext = createdDisplayContext else {
                 MirageLogger.host(
                     "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height)), color=\(attempt.colorSpace.displayName)"
                 )
@@ -629,19 +654,32 @@ extension SharedVirtualDisplayManager {
                 continue
             }
 
-            let enforceHiDPI = effectiveScaleHint > 1.5
-            let enforced = CGVirtualDisplayBridge.updateDisplayResolution(
-                display: displayContext.display,
-                width: Int(effectivePixel.width.rounded()),
-                height: Int(effectivePixel.height.rounded()),
-                refreshRate: Double(refreshRate),
-                hiDPI: enforceHiDPI,
-                colorSpace: attempt.colorSpace,
-                isFallbackProbe: true
-            )
-            guard enforced else {
-                await destroyAttemptDisplay(displayContext)
-                continue
+            let observedModeAfterReady = observedDisplayMode(displayID: displayContext.displayID)
+            if Self.needsPostReadyModeEnforcement(
+                observedMode: observedModeAfterReady,
+                expectedPixelResolution: effectivePixel,
+                expectedRefreshRate: Double(refreshRate)
+            ) {
+                let enforceHiDPI = effectiveScaleHint > 1.5
+                let enforced = await withDisplayMutation(kind: .virtualDisplayModeUpdate) {
+                    CGVirtualDisplayBridge.updateDisplayResolution(
+                        display: displayContext.display,
+                        width: Int(effectivePixel.width.rounded()),
+                        height: Int(effectivePixel.height.rounded()),
+                        refreshRate: Double(refreshRate),
+                        hiDPI: enforceHiDPI,
+                        colorSpace: attempt.colorSpace,
+                        isFallbackProbe: true
+                    )
+                }
+                guard enforced else {
+                    await destroyAttemptDisplay(displayContext)
+                    continue
+                }
+            } else {
+                MirageLogger.host(
+                    "Skipping post-ready virtual display mode enforcement for \(displayContext.displayID); observed mode already matches \(Int(effectivePixel.width))x\(Int(effectivePixel.height)) @ \(refreshRate)Hz"
+                )
             }
 
             guard let spaceID = await waitForSpaceAssignment(
@@ -737,11 +775,13 @@ extension SharedVirtualDisplayManager {
                 "Virtual display selection decision: rung=\(attempt.label), requested=\(Int(normalizedRequested.width))x\(Int(normalizedRequested.height)), resolved=\(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)), scale=\(displayScaleFactor), aspectDelta=\(aspectDeltaPercent)%"
             )
 
+            let keepaliveDisplayID = displayContext.displayID
+            let keepaliveRefreshRate = displayContext.refreshRate
             await MainActor.run {
                 VirtualDisplayKeepaliveController.shared.start(
-                    displayID: displayContext.displayID,
+                    displayID: keepaliveDisplayID,
                     spaceID: spaceID,
-                    refreshRate: displayContext.refreshRate
+                    refreshRate: keepaliveRefreshRate
                 )
             }
 
@@ -817,13 +857,15 @@ extension SharedVirtualDisplayManager {
 
         let invalidateSelector = NSSelectorFromString("invalidate")
         let displayObject = display.displayRef.value
-        if (displayObject as AnyObject).responds(to: invalidateSelector) {
-            _ = (displayObject as AnyObject).perform(invalidateSelector)
-            MirageLogger.host("Invalidated virtual display object \(displayID)")
-        }
+        await withDisplayMutation(kind: .virtualDisplayDestroy) {
+            if (displayObject as AnyObject).responds(to: invalidateSelector) {
+                _ = (displayObject as AnyObject).perform(invalidateSelector)
+                MirageLogger.host("Invalidated virtual display object \(displayID)")
+            }
 
-        CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-        await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
+            CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
+            await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
+        }
 
         if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
             orphanedDisplayIDs.insert(displayID)
@@ -850,6 +892,16 @@ extension SharedVirtualDisplayManager {
         guard let display = sharedDisplay else { return }
         sharedDisplay = nil
         await destroyDisplay(display, removalWaitMs: removalWaitMs)
+    }
+
+    private func withDisplayMutation<T>(
+        kind: VirtualDisplayMutationKind,
+        operation: () async -> T
+    ) async -> T {
+        let lease = await VirtualDisplayMutationCoordinator.shared.acquire(kind: kind)
+        let result = await operation()
+        await VirtualDisplayMutationCoordinator.shared.release(lease)
+        return result
     }
 }
 #endif

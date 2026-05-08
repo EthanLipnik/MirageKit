@@ -80,9 +80,9 @@ struct RuntimeWorkloadSafetyPolicyTests {
         ) == nil)
     }
 
-    @Test("Presenter and starvation recovery events do not allow FPS fallback")
+    @Test("Presenter recovery allows FPS fallback while starvation alone does not")
     func recoveryEventsDoNotAllowFrameRateFallback() {
-        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
+        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
         #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.keyframeStarved))
         #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.packetStarved))
         #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.clientRenderCapacity))

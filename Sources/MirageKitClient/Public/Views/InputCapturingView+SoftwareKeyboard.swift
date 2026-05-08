@@ -172,6 +172,29 @@ extension InputCapturingView {
         }
     }
 
+    #if os(iOS)
+    @objc
+    func softwareKeyboardWillHide(_: Notification) {
+        handleSoftwareKeyboardSystemHide()
+    }
+
+    func handleSoftwareKeyboardSystemHide() {
+        let decision = softwareKeyboardSystemHideDecision(
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            isSoftwareKeyboardShown: isSoftwareKeyboardShown,
+            isSoftwareKeyboardResponderActive: isSoftwareKeyboardResponderActive,
+            applicationState: UIApplication.shared.applicationState,
+            isKeyWindow: window?.isKeyWindow == true,
+            sceneActivationState: window?.windowScene?.activationState
+        )
+        guard decision == .dismiss else { return }
+
+        softwareKeyboardDismissalPending = true
+        cancelPendingResponderRecovery()
+        notifySoftwareKeyboardVisibilityChanged(false)
+    }
+    #endif
+
     func handleSoftwareKeyboardResponderChange(isFirstResponder: Bool) {
         guard isSoftwareKeyboardResponderActive != isFirstResponder else { return }
         isSoftwareKeyboardResponderActive = isFirstResponder
@@ -229,6 +252,30 @@ extension InputCapturingView {
         )
     }
 }
+
+#if os(iOS)
+enum SoftwareKeyboardSystemHideDecision: Equatable {
+    case dismiss
+    case ignore
+}
+
+func softwareKeyboardSystemHideDecision(
+    softwareKeyboardVisible: Bool,
+    isSoftwareKeyboardShown: Bool,
+    isSoftwareKeyboardResponderActive: Bool,
+    applicationState: UIApplication.State,
+    isKeyWindow: Bool,
+    sceneActivationState: UIScene.ActivationState?
+) -> SoftwareKeyboardSystemHideDecision {
+    guard softwareKeyboardVisible || isSoftwareKeyboardShown else { return .ignore }
+    guard isSoftwareKeyboardResponderActive || isSoftwareKeyboardShown else { return .ignore }
+    guard applicationState == .active else { return .ignore }
+    guard isKeyWindow else { return .ignore }
+    guard sceneActivationState == .foregroundActive else { return .ignore }
+
+    return .dismiss
+}
+#endif
 
 struct SoftwareModifierKey: Hashable {
     let title: String

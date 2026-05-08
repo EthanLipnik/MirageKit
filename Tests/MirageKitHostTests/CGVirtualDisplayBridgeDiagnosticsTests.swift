@@ -12,7 +12,7 @@ import CoreGraphics
 import Foundation
 import Testing
 
-@Suite("CGVirtualDisplayBridge Diagnostics")
+@Suite("CGVirtualDisplayBridge Diagnostics", .serialized)
 struct CGVirtualDisplayBridgeDiagnosticsTests {
 
     @Test("Cached descriptor profile is evicted immediately after failure")
@@ -77,6 +77,46 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         )
 
         #expect(attempts.first?.profile == .serial0GlobalQueue)
+    }
+
+    @Test("Invalidating all persistent serials rotates serials and clears cached descriptor profiles")
+    func invalidatingAllPersistentSerialsRotatesSerialsAndClearsCachedProfiles() {
+        CGVirtualDisplayBridge.storePreferredDescriptorProfile(
+            .serial0GlobalQueue,
+            for: .displayP3,
+            width: 5120,
+            height: 2880,
+            refreshRate: 60,
+            hiDPI: true
+        )
+        let p3Serial = CGVirtualDisplayBridge.persistentSerialNumber(for: .displayP3)
+        let sRGBSerial = CGVirtualDisplayBridge.persistentSerialNumber(for: .sRGB)
+        defer {
+            CGVirtualDisplayBridge.invalidateAllPersistentSerials()
+            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(
+                for: .displayP3,
+                width: 5120,
+                height: 2880,
+                refreshRate: 60,
+                hiDPI: true
+            )
+        }
+
+        CGVirtualDisplayBridge.invalidateAllPersistentSerials()
+
+        #expect(CGVirtualDisplayBridge.persistentSerialNumber(for: .displayP3) != p3Serial)
+        #expect(CGVirtualDisplayBridge.persistentSerialNumber(for: .sRGB) != sRGBSerial)
+
+        let attempts = CGVirtualDisplayBridge.descriptorAttempts(
+            persistentSerial: CGVirtualDisplayBridge.persistentSerialNumber(for: .displayP3),
+            hiDPI: true,
+            colorSpace: .displayP3,
+            width: 5120,
+            height: 2880,
+            refreshRate: 60,
+            cachedHint: nil
+        )
+        #expect(attempts.first?.profile != .serial0GlobalQueue)
     }
 
     private func waitUntil(

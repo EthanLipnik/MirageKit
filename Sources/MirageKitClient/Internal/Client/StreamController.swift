@@ -847,7 +847,7 @@ actor StreamController {
                 } else {
                     MirageLogger.debug(
                         .client,
-                        "\(logMessage) [suppressed-until-freeze-actionable]"
+                        "\(logMessage) [suppressed-until-recovery-actionable]"
                     )
                 }
             }
