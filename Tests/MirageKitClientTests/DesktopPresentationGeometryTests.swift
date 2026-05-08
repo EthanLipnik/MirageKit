@@ -46,5 +46,50 @@ struct DesktopPresentationGeometryTests {
 
         #expect(localPoint == CGPoint(x: 440, y: 225))
     }
+
+    @Test("Unified desktop resize reports stream view bounds")
+    func unifiedDesktopResizeReportsStreamViewBounds() {
+        let boundsSize = CGSize(width: 1234, height: 710)
+        let contentLayoutSize = CGSize(width: 1234, height: 678)
+
+        let reportedSize = MirageStreamPresentationPolicy.containerSize(
+            boundsSize: boundsSize,
+            contentLayoutSize: contentLayoutSize,
+            mode: .viewBounds
+        )
+
+        #expect(reportedSize == boundsSize)
+    }
+
+    @Test("Content-layout sizing remains available for non-unified contexts")
+    func contentLayoutSizingRemainsAvailable() {
+        let boundsSize = CGSize(width: 1234, height: 710)
+        let contentLayoutSize = CGSize(width: 1234, height: 678)
+
+        let reportedSize = MirageStreamPresentationPolicy.containerSize(
+            boundsSize: boundsSize,
+            contentLayoutSize: contentLayoutSize,
+            mode: .contentLayout
+        )
+
+        #expect(reportedSize == contentLayoutSize)
+    }
+
+    @Test("Host display size only creates presentation reference for aspect fit")
+    func hostDisplaySizeOnlyCreatesPresentationReferenceForAspectFit() {
+        let hostDisplaySize = CGSize(width: 1224, height: 672)
+
+        let fillReference = MirageStreamPresentationPolicy.localAspectFitReferenceSize(
+            prefersLocalAspectFitPresentation: false,
+            hostDisplayPointSize: hostDisplaySize
+        )
+        let aspectFitReference = MirageStreamPresentationPolicy.localAspectFitReferenceSize(
+            prefersLocalAspectFitPresentation: true,
+            hostDisplayPointSize: hostDisplaySize
+        )
+
+        #expect(fillReference == nil)
+        #expect(aspectFitReference == hostDisplaySize)
+    }
 }
 #endif

@@ -296,11 +296,11 @@ public extension MirageClientService {
                 self?.clearStartupAttempt(for: capturedStreamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(capturedStreamID)")
             },
-            onStallEvent: { [weak self] in
+            onStallEvent: { [weak self] event in
                 guard let self else { return }
                 self.stallEvents &+= 1
                 self.inputEventSender.activateTemporaryPointerCoalescing(for: capturedStreamID, duration: 1.2)
-                self.handleRuntimeWorkloadSafetyStallEvent(streamID: capturedStreamID)
+                self.handleRuntimeWorkloadSafetyStallEvent(streamID: capturedStreamID, event: event)
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
             onRecoveryStatusChanged: { [weak self] status in
@@ -753,7 +753,7 @@ public extension MirageClientService {
             guard let controller = controllersByStream[policy.streamID] else { continue }
             let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
                 policy.targetFPS,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: policy.streamID)
             )
             await controller.updateCadenceTarget(
                 sourceFPS: targetFPS,
@@ -767,7 +767,7 @@ public extension MirageClientService {
             let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
             let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
                 policy.targetFPS,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: policy.streamID)
             )
             return "\(policy.streamID)=\(policy.tier.rawValue):\(targetFPS)fps@\(bitrate)"
         }.joined(separator: ", ")

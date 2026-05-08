@@ -5,16 +5,17 @@
 //  Created by Ethan Lipnik on 5/7/26.
 //
 
+#if os(macOS)
 @testable import MirageKitHost
+import AppKit
 import CoreGraphics
 import MirageKit
 import Testing
 
-#if os(macOS)
 @Suite("Host Scroll Event Factory")
 struct HostScrollEventFactoryTests {
-    @Test("Precise scroll events carry continuous metadata and both axis deltas")
-    func preciseScrollEventCarriesContinuousMetadataAndBothAxisDeltas() throws {
+    @Test("Native precise scroll events expose AppKit scrolling deltas")
+    func nativePreciseScrollEventsExposeAppKitScrollingDeltas() throws {
         let event = MirageScrollEvent(
             deltaX: -2.5,
             deltaY: 4.75,
@@ -28,21 +29,24 @@ struct HostScrollEventFactoryTests {
             integerDeltaX: -2,
             integerDeltaY: 4
         ))
+        let nsEvent = try #require(NSEvent(cgEvent: cgEvent))
 
-        #expect(cgEvent.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1) == 4.75)
-        #expect(cgEvent.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2) == -2.5)
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 4)
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) == -2)
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventIsContinuous) == 1)
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventScrollPhase) == Int64(CGScrollPhase.changed.rawValue))
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventMomentumPhase) == Int64(CGMomentumScrollPhase.continuous.rawValue))
+        #expect(nsEvent.hasPreciseScrollingDeltas)
+        #expect(nsEvent.scrollingDeltaY == 4)
+        #expect(nsEvent.scrollingDeltaX == -2)
     }
 
-    @Test("Precise sub-pixel scroll events are preserved")
-    func preciseSubPixelScrollEventsArePreserved() throws {
+    @Test("Native sub-pixel scroll events preserve phase while waiting for integer movement")
+    func nativeSubPixelScrollEventsPreservePhaseWhileWaitingForIntegerMovement() throws {
         let event = MirageScrollEvent(
             deltaX: 0.25,
             deltaY: -0.5,
+            phase: .changed,
             isPrecise: true
         )
 
@@ -51,11 +55,51 @@ struct HostScrollEventFactoryTests {
             integerDeltaX: 0,
             integerDeltaY: 0
         ))
+        let nsEvent = try #require(NSEvent(cgEvent: cgEvent))
 
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventDeltaAxis1) == 0)
         #expect(cgEvent.getIntegerValueField(.scrollWheelEventDeltaAxis2) == 0)
-        #expect(cgEvent.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1) == -0.5)
-        #expect(cgEvent.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2) == 0.25)
+        #expect(cgEvent.getIntegerValueField(.scrollWheelEventScrollPhase) == Int64(CGScrollPhase.changed.rawValue))
+        #expect(nsEvent.scrollingDeltaY == 0)
+        #expect(nsEvent.scrollingDeltaX == 0)
+    }
+
+    @Test("Legacy precise scroll events keep constructor movement fields")
+    func legacyPreciseScrollEventsKeepConstructorMovementFields() throws {
+        let event = MirageScrollEvent(
+            deltaX: -2.5,
+            deltaY: 4.75,
+            isPrecise: true
+        )
+
+        let cgEvent = try #require(MirageHostScrollEventFactory.makeScrollEvent(
+            from: event,
+            integerDeltaX: -2,
+            integerDeltaY: 4
+        ))
+        let nsEvent = try #require(NSEvent(cgEvent: cgEvent))
+
+        #expect(cgEvent.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 4)
+        #expect(cgEvent.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) == -2)
+        #expect(cgEvent.getIntegerValueField(.scrollWheelEventScrollPhase) == 0)
+        #expect(cgEvent.getIntegerValueField(.scrollWheelEventMomentumPhase) == 0)
+        #expect(nsEvent.scrollingDeltaY == 4)
+        #expect(nsEvent.scrollingDeltaX == -2)
+    }
+
+    @Test("Legacy precise sub-pixel scroll events wait for integer fallback")
+    func legacyPreciseSubPixelScrollEventsWaitForIntegerFallback() {
+        let event = MirageScrollEvent(
+            deltaX: 0.25,
+            deltaY: -0.5,
+            isPrecise: true
+        )
+
+        #expect(MirageHostScrollEventFactory.makeScrollEvent(
+            from: event,
+            integerDeltaX: 0,
+            integerDeltaY: 0
+        ) == nil)
     }
 
     @Test("Boundary phase scroll events are preserved without movement")

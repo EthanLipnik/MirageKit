@@ -69,7 +69,7 @@ private final class MirageStreamReceiveSource: @unchecked Sendable {
     }
 }
 
-private final class HostInputMessageScheduler: @unchecked Sendable {
+final class HostInputMessageScheduler: @unchecked Sendable {
     private struct PendingMessage {
         let message: ControlMessage
         let streamID: StreamID?
@@ -175,9 +175,28 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     private func append(_ pending: PendingMessage) {
+        if let last = pendingMessages.last,
+           last.streamID == pending.streamID,
+           let mergedMessage = Self.mergedNativeContinuousScrollMessage(
+               olderMessage: last.message,
+               newerMessage: pending.message
+           ) {
+            pendingMessages[pendingMessages.count - 1] = PendingMessage(
+                message: mergedMessage,
+                classification: Self.classification(for: mergedMessage)
+            )
+            return
+        }
+
+        if Self.hasNativeScrollMetadata(pending.message) {
+            pendingMessages.append(pending)
+            return
+        }
+
         if case let .replaceable(kind) = pending.priority,
            let last = pendingMessages.last,
            last.streamID == pending.streamID,
+           !Self.hasNativeScrollMetadata(last.message),
            last.priority == .replaceable(kind) {
             pendingMessages[pendingMessages.count - 1] = pending
             return
@@ -263,8 +282,40 @@ private final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     private static func isBoundaryScrollEvent(_ event: MirageScrollEvent) -> Bool {
-        event.phase == .began || event.phase == .ended || event.phase == .cancelled
-            || event.momentumPhase == .began || event.momentumPhase == .ended || event.momentumPhase == .cancelled
+        event.isBoundaryScrollEvent
+    }
+
+    private static func hasNativeScrollMetadata(_ message: ControlMessage) -> Bool {
+        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload),
+              case let .scrollWheel(event) = inputMessage.event else {
+            return false
+        }
+        return event.hasNativeScrollMetadata
+    }
+
+    private static func mergedNativeContinuousScrollMessage(
+        olderMessage: ControlMessage,
+        newerMessage: ControlMessage
+    ) -> ControlMessage? {
+        guard olderMessage.type == .inputEvent,
+              newerMessage.type == .inputEvent,
+              let olderInputMessage = try? InputEventMessage.deserializePayload(olderMessage.payload),
+              let newerInputMessage = try? InputEventMessage.deserializePayload(newerMessage.payload),
+              olderInputMessage.streamID == newerInputMessage.streamID,
+              case let .scrollWheel(olderScrollEvent) = olderInputMessage.event,
+              case let .scrollWheel(newerScrollEvent) = newerInputMessage.event,
+              let mergedScrollEvent = olderScrollEvent.mergedWithCompatibleNativeContinuousScrollEvent(
+                  newerScrollEvent
+              ) else {
+            return nil
+        }
+
+        let mergedInputMessage = InputEventMessage(
+            streamID: newerInputMessage.streamID,
+            event: .scrollWheel(mergedScrollEvent)
+        )
+        guard let payload = try? mergedInputMessage.serializePayload() else { return nil }
+        return ControlMessage(type: .inputEvent, payload: payload)
     }
 }
 

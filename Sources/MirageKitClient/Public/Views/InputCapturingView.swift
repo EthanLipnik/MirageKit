@@ -245,6 +245,9 @@ public class InputCapturingView: UIView {
     var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
     var usesVisibleVirtualCursor: Bool { usesVirtualTrackpad && !cursorLockEnabled }
     var usesLockedTrackpadCursor: Bool { usesVirtualTrackpad && cursorLockEnabled }
+    var usesNativeScrollEventMetadata: Bool {
+        UserDefaults.standard.bool(forKey: MirageNativeScrollEventMetadataPreference.defaultsKey)
+    }
 
     /// Configured actions for Apple Pencil hardware gestures.
     public var pencilGestureConfiguration: MiragePencilGestureConfiguration = .default
@@ -1123,15 +1126,15 @@ public class InputCapturingView: UIView {
             let modifiers = keyboardModifiers
             sendModifierSnapshotIfNeeded(modifiers)
             let location = scrollEventLocation(source: source, phase: phase, momentumPhase: momentumPhase)
-            let scrollEvent = MirageScrollEvent(
+            guard let scrollEvent = makeScrollEvent(
                 deltaX: deltaX,
                 deltaY: deltaY,
                 location: location,
                 phase: phase,
                 momentumPhase: momentumPhase,
                 modifiers: modifiers,
-                isPrecise: true // Trackpad scrolling is precise
-            )
+                isPrecise: true
+            ) else { return }
             onInputEvent?(.scrollWheel(scrollEvent))
         }
 
@@ -1583,6 +1586,32 @@ public class InputCapturingView: UIView {
         case .indirectPointer:
             return lastCursorPosition
         }
+    }
+
+    func makeScrollEvent(
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        location: CGPoint?,
+        phase: MirageScrollPhase = .none,
+        momentumPhase: MirageScrollPhase = .none,
+        modifiers: MirageModifierFlags,
+        isPrecise: Bool
+    ) -> MirageScrollEvent? {
+        let resolvedPhase = usesNativeScrollEventMetadata ? phase : .none
+        let resolvedMomentumPhase = usesNativeScrollEventMetadata ? momentumPhase : .none
+        guard deltaX != 0 || deltaY != 0 || resolvedPhase != .none || resolvedMomentumPhase != .none else {
+            return nil
+        }
+
+        return MirageScrollEvent(
+            deltaX: deltaX,
+            deltaY: deltaY,
+            location: location,
+            phase: resolvedPhase,
+            momentumPhase: resolvedMomentumPhase,
+            modifiers: modifiers,
+            isPrecise: isPrecise
+        )
     }
 
     func setTrackpadCursorVisible(_ isVisible: Bool) {

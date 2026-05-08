@@ -87,6 +87,15 @@ extension StreamContext {
         virtualDisplayContext
     }
 
+    func configureDesktopVirtualDisplayCapture(
+        snapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        usesDisplayRefreshCadence: Bool?
+    ) {
+        virtualDisplayContext = snapshot
+        desktopCaptureUsesDisplayRefreshCadenceOverride = usesDisplayRefreshCadence
+        updateWindowCaptureVirtualDisplayState(snapshot)
+    }
+
     func setDisplayP3CoverageStatusOverride(_ status: MirageDisplayP3CoverageStatus?) {
         displayP3CoverageStatusOverride = status
     }

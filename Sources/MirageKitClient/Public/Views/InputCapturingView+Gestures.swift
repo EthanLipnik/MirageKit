@@ -709,16 +709,16 @@ extension InputCapturingView {
             return MirageScrollPhase(gestureState: gesture.state)
         }()
 
-        let scrollEvent = MirageScrollEvent(
+        if let scrollEvent = makeScrollEvent(
             deltaX: translation.x,
             deltaY: translation.y,
             location: location,
             phase: phase,
             modifiers: eventModifiers,
-            isPrecise: true // Trackpad/touch scrolling is precise
-        )
-
-        if translation != .zero || phase != .none { onInputEvent?(.scrollWheel(scrollEvent)) }
+            isPrecise: true
+        ) {
+            onInputEvent?(.scrollWheel(scrollEvent))
+        }
 
         if shouldDecelerate && (gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed) { startTouchScrollDeceleration(with: velocity, location: location) } else if gesture.state == .cancelled || gesture.state == .failed {
             stopTouchScrollDeceleration()
@@ -1158,7 +1158,7 @@ extension InputCapturingView {
         )
 
         if translation != .zero {
-            let scrollEvent = MirageScrollEvent(
+            guard let scrollEvent = makeScrollEvent(
                 deltaX: translation.x,
                 deltaY: translation.y,
                 location: touchScrollDecelerationLocation,
@@ -1166,7 +1166,7 @@ extension InputCapturingView {
                 momentumPhase: .changed,
                 modifiers: keyboardModifiers,
                 isPrecise: true
-            )
+            ) else { return }
             onInputEvent?(.scrollWheel(scrollEvent))
         }
 
@@ -1176,7 +1176,7 @@ extension InputCapturingView {
 
         if hypot(touchScrollDecelerationVelocity.x, touchScrollDecelerationVelocity.y) < 8 {
             stopTouchScrollDeceleration()
-            let endEvent = MirageScrollEvent(
+            guard let endEvent = makeScrollEvent(
                 deltaX: 0,
                 deltaY: 0,
                 location: touchScrollDecelerationLocation,
@@ -1184,7 +1184,7 @@ extension InputCapturingView {
                 momentumPhase: .ended,
                 modifiers: keyboardModifiers,
                 isPrecise: true
-            )
+            ) else { return }
             onInputEvent?(.scrollWheel(endEvent))
         }
     }

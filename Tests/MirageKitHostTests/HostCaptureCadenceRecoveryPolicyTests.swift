@@ -21,25 +21,25 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(policy.evaluate(sample(now: 3, isEncodingSuspendedForResize: true)) == .none)
     }
 
-    @Test("Sustained bad capture cadence restarts SCStream first")
-    func sustainedBadCaptureCadenceRestartsCaptureFirst() {
+    @Test("Sustained bad capture cadence restarts virtual display cadence driver first")
+    func sustainedBadCaptureCadenceRestartsVirtualDisplayCadenceDriverFirst() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         #expect(policy.evaluate(sample(now: 1)) == .none)
-        #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 3)) == .restartVirtualDisplayCadenceDriver)
     }
 
-    @Test("Repeated bad windows escalate from restart to virtual display reassert")
+    @Test("Repeated bad windows escalate from cadence driver restart to virtual display reassert")
     func repeatedBadWindowsEscalateToVirtualDisplayReassert() {
         var policy = policy(
             consecutiveBadWindowsRequired: 1,
             actionCooldownSeconds: 1,
-            captureRestartsBeforeReassert: 2,
+            cadenceDriverRestartsBeforeReassert: 2,
             virtualDisplayReassertsBeforeRecreate: 2
         )
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
-        #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
+        #expect(policy.evaluate(sample(now: 3)) == .restartVirtualDisplayCadenceDriver)
         #expect(policy.evaluate(sample(now: 5)) == .reassertVirtualDisplayMode)
     }
 
@@ -48,11 +48,11 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         var policy = policy(
             consecutiveBadWindowsRequired: 1,
             actionCooldownSeconds: 1,
-            captureRestartsBeforeReassert: 1,
+            cadenceDriverRestartsBeforeReassert: 1,
             virtualDisplayReassertsBeforeRecreate: 1
         )
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
         #expect(policy.evaluate(sample(now: 3)) == .reassertVirtualDisplayMode)
         #expect(policy.evaluate(sample(now: 5)) == .recreateVirtualDisplay)
     }
@@ -61,7 +61,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
     func cooldownPreventsRestartLoops() {
         var policy = policy(consecutiveBadWindowsRequired: 1, actionCooldownSeconds: 8)
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
         #expect(policy.evaluate(sample(now: 2)) == .none)
     }
 
@@ -78,12 +78,14 @@ struct HostCaptureCadenceRecoveryPolicyTests {
     private func policy(
         consecutiveBadWindowsRequired: Int,
         actionCooldownSeconds: Double = 0,
-        captureRestartsBeforeReassert: Int = 2,
+        cadenceDriverRestartsBeforeReassert: Int = 2,
+        captureRestartsBeforeReassert: Int = 0,
         virtualDisplayReassertsBeforeRecreate: Int = 2
     ) -> HostCaptureCadenceRecoveryPolicy {
         var policy = HostCaptureCadenceRecoveryPolicy()
         policy.configuration.consecutiveBadWindowsRequired = consecutiveBadWindowsRequired
         policy.configuration.actionCooldownSeconds = actionCooldownSeconds
+        policy.configuration.cadenceDriverRestartsBeforeReassert = cadenceDriverRestartsBeforeReassert
         policy.configuration.captureRestartsBeforeReassert = captureRestartsBeforeReassert
         policy.configuration.virtualDisplayReassertsBeforeRecreate = virtualDisplayReassertsBeforeRecreate
         return policy

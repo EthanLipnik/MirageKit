@@ -1212,6 +1212,16 @@ extension StreamController {
         syncPresentationProgressFromFrameStore(now: now)
         guard lastPresentedProgressTime > 0,
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
+
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        if pendingFrameCount > 0,
+           await maybeTriggerRenderSubmissionRecovery(
+               now: now,
+               pendingFrameCount: pendingFrameCount
+           ) {
+            return
+        }
+
         guard reassembler.isAwaitingKeyframe() else { return }
         let lastPacketTime = reassembler.latestPacketReceivedTime()
         let packetStarved = lastPacketTime <= 0 || now - lastPacketTime >= Self.freezeTimeout
@@ -1224,6 +1234,44 @@ extension StreamController {
             keyframeStarved: true,
             packetStarved: packetStarved
         )
+    }
+
+    private func maybeTriggerRenderSubmissionRecovery(
+        now: CFAbsoluteTime,
+        pendingFrameCount: Int
+    ) async -> Bool {
+        if lastFreezeRecoveryTime > 0,
+           now - lastFreezeRecoveryTime < Self.freezeRecoveryCooldown {
+            return true
+        }
+
+        lastFreezeRecoveryTime = now
+        consecutiveFreezeRecoveries &+= 1
+        Task { @MainActor [weak self] in
+            await self?.onStallEvent?(.presentationRecovery)
+        }
+
+        let metricsSnapshot = metricsTracker.snapshot(now: now)
+        await maybeLogStreamingAnomalyDiagnostic(
+            trigger: "freeze-recovery-render-submission",
+            decodedFPS: metricsSnapshot.decodedFPS,
+            receivedFPS: metricsSnapshot.receivedFPS
+        )
+
+        let didRequestPresenterRecovery = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        if didRequestPresenterRecovery {
+            MirageLogger.client(
+                "Presentation stall detected with pending render frames for stream \(streamID); " +
+                    "requested presenter recovery (pendingFrames=\(pendingFrameCount), attempt=\(consecutiveFreezeRecoveries))"
+            )
+            return true
+        }
+
+        MirageLogger.client(
+            "Presentation stall detected with pending render frames for stream \(streamID), " +
+                "but no presenter recovery handler was active (pendingFrames=\(pendingFrameCount))"
+        )
+        return false
     }
 
     nonisolated static func defaultApplicationForegroundProvider() async -> Bool {
@@ -1255,8 +1303,9 @@ extension StreamController {
         }
         lastFreezeRecoveryTime = now
         consecutiveFreezeRecoveries &+= 1
+        let stallEvent: RuntimeWorkloadSafetyStallEvent = packetStarved ? .packetStarved : .keyframeStarved
         Task { @MainActor [weak self] in
-            await self?.onStallEvent?()
+            await self?.onStallEvent?(stallEvent)
         }
 
         switch Self.freezeRecoveryDecision(

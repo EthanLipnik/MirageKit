@@ -10,6 +10,8 @@
 @testable import MirageKitHost
 import MirageKit
 import CoreGraphics
+import CoreMedia
+import CoreVideo
 import Foundation
 import Testing
 
@@ -234,6 +236,28 @@ struct KeyframeRecoveryPolicyTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: now) == 0)
     }
 
+    @Test("Steady-state idle capture frames stay out of encode inbox")
+    func steadyStateIdleFramesStayOutOfEncodeInbox() async {
+        let context = makeContext()
+
+        await context.recordCaptureIngress(makeIdleFrame())
+
+        #expect(context.frameInbox.pendingCount() == 0)
+        #expect(await context.lastCapturedFrame?.info.isIdleFrame == true)
+    }
+
+    @Test("Accepted recovery requests do not reopen idle capture hot path")
+    func acceptedRecoveryRequestsDoNotReopenIdleCaptureHotPath() async {
+        let context = makeContext()
+
+        let ack = await context.requestKeyframe()
+        await context.recordCaptureIngress(makeIdleFrame())
+
+        #expect(ack.accepted)
+        #expect(context.frameInbox.pendingCount() == 0)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
+    }
+
     @Test("Keyframe packet pacing override raises send rate while capping burst budget")
     func startupPacketPacingCapsKeyframeBurstBudget() {
         let startupParameters = StreamPacketSender.packetPacingParameters(
@@ -284,6 +308,35 @@ struct KeyframeRecoveryPolicyTests {
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             latencyMode: latencyMode
+        )
+    }
+
+    private func makeIdleFrame() -> CapturedFrame {
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            8,
+            8,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &pixelBuffer
+        )
+        #expect(status == kCVReturnSuccess)
+        guard let pixelBuffer else {
+            Issue.record("Failed to create CVPixelBuffer")
+            fatalError("Failed to create CVPixelBuffer")
+        }
+
+        return CapturedFrame(
+            pixelBuffer: pixelBuffer,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            duration: CMTime(value: 1, timescale: 60),
+            captureTime: CFAbsoluteTimeGetCurrent(),
+            info: CapturedFrameInfo(
+                contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+                dirtyPercentage: 0,
+                isIdleFrame: true
+            )
         )
     }
 }

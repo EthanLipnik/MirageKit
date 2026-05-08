@@ -645,7 +645,7 @@ public final class MirageClientService {
     var stallEvents: UInt64 = 0
     var activeJitterHoldMs: Int = 0
     var emergencyReceiverFallbackLastAppliedTimeByStream: [StreamID: CFAbsoluteTime] = [:]
-    var runtimeWorkloadSafetyFrameRateCap: Int?
+    var runtimeWorkloadSafetyFrameRateCapsByStream: [StreamID: RuntimeWorkloadSafetyFrameRateCap] = [:]
     var runtimeWorkloadSafetyLastFallbackReason: String?
     var runtimeWorkloadSafetyMemoryPressureCount: Int = 0
     var runtimeWorkloadSafetyLastMemoryPressureTime: CFAbsoluteTime?
@@ -918,7 +918,7 @@ public final class MirageClientService {
         #if os(macOS)
         self.deviceName = deviceName ?? Host.current().localizedName ?? "Mac"
         #else
-        self.deviceName = deviceName ?? UIDevice.current.name
+        self.deviceName = deviceName ?? MirageSupportInfo.deviceDisplayName()
         #endif
 
         var resolvedConfiguration = loomConfiguration
@@ -997,7 +997,8 @@ public final class MirageClientService {
             "client.memoryPressureCount": .int(runtimeWorkloadSafetyMemoryPressureCount),
             "client.memoryPressureLastAgeSeconds": runtimeWorkloadSafetyLastMemoryPressureTime
                 .map { LoomDiagnosticsValue.double(max(0, CFAbsoluteTimeGetCurrent() - $0)) } ?? .null,
-            "client.runtimeWorkloadFrameRateCap": runtimeWorkloadSafetyFrameRateCap.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.runtimeWorkloadFrameRateCap": runtimeWorkloadSafetyEffectiveFrameRateCap()
+                .map(LoomDiagnosticsValue.int) ?? .null,
             "client.runtimeWorkloadFallbackReason": runtimeWorkloadSafetyLastFallbackReason.map(LoomDiagnosticsValue.string) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
             "client.primaryStreamID": diagnosticsPrimaryStreamID().map { .int(Int($0)) } ?? .null,

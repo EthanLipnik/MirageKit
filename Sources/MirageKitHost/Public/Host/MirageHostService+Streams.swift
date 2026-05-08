@@ -976,6 +976,8 @@ public extension MirageHostService {
     }
 
     func registerActiveStreamSession(_ session: MirageStreamSession) {
+        let wasActive = activeSessionByStreamID[session.id] != nil
+
         if let previousSession = activeSessionByStreamID[session.id],
            previousSession.window.id != session.window.id,
            activeStreamIDByWindowID[previousSession.window.id] == session.id {
@@ -993,6 +995,9 @@ public extension MirageHostService {
         }
 
         syncSharedClipboardState()
+        if !wasActive {
+            notifyActiveStreamActivityChanged()
+        }
     }
 
     func removeActiveStreamSession(streamID: StreamID) {
@@ -1012,6 +1017,9 @@ public extension MirageHostService {
         }
 
         syncSharedClipboardState()
+        if removedSession != nil {
+            notifyActiveStreamActivityChanged()
+        }
     }
 
     func stopStream(

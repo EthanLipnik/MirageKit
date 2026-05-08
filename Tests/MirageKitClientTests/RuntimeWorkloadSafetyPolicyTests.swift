@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 @testable import MirageKitClient
 import Testing
 
@@ -51,38 +52,40 @@ struct RuntimeWorkloadSafetyPolicyTests {
         ) == nil)
     }
 
-    @Test("ProMotion stall heuristic only applies to high frame-rate streams and active caps")
+    @Test("ProMotion stall heuristic only applies to high frame-rate streams")
     func proMotionStallTargets() {
         #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
             currentFrameRate: 120,
-            activeCap: nil,
             recentStallCount: 1
         ) == nil)
         #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
             currentFrameRate: 120,
-            activeCap: nil,
             recentStallCount: 2
         ) == 60)
         #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
             currentFrameRate: 90,
-            activeCap: nil,
             recentStallCount: 2
         ) == 60)
         #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
             currentFrameRate: 60,
-            activeCap: nil,
             recentStallCount: 2
         ) == nil)
         #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
             currentFrameRate: 60,
-            activeCap: 60,
-            recentStallCount: 2
-        ) == 30)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 30,
-            activeCap: 60,
             recentStallCount: 2
         ) == nil)
+        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
+            currentFrameRate: 30,
+            recentStallCount: 2
+        ) == nil)
+    }
+
+    @Test("Presenter and starvation recovery events do not allow FPS fallback")
+    func recoveryEventsDoNotAllowFrameRateFallback() {
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.keyframeStarved))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.packetStarved))
+        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.clientRenderCapacity))
     }
 
     @Test("Runtime caps clamp frame rates without forcing streams below their current target")
@@ -108,19 +111,28 @@ struct RuntimeWorkloadSafetyPolicyTests {
     }
 
     @MainActor
-    @Test("Runtime cap resets without mutating saved frame-rate preference")
-    func runtimeCapResetDoesNotPersist() {
+    @Test("Runtime cap is stream scoped and does not mutate saved frame-rate preference")
+    func runtimeCapIsStreamScopedAndDoesNotPersist() {
         let service = MirageClientService()
+        let streamID: StreamID = 7
         service.updateMaxRefreshRateOverride(120)
-        service.runtimeWorkloadSafetyFrameRateCap = 60
+        service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] = RuntimeWorkloadSafetyFrameRateCap(
+            frameRate: 60,
+            reason: .promotionStall,
+            appliedAt: CFAbsoluteTimeGetCurrent(),
+            expiresAt: CFAbsoluteTimeGetCurrent() + 60
+        )
 
         #expect(service.maxRefreshRateOverride == 120)
-        #expect(service.getScreenMaxRefreshRate() == 60)
+        #expect(service.getScreenMaxRefreshRate() == 120)
+        #expect(service.resolvedStreamCadenceFrameRate(for: streamID, fallback: 120) == 60)
+        #expect(service.resolvedStreamCadenceFrameRate(for: 8, fallback: 120) == 120)
 
         service.resetRuntimeWorkloadSafetyState()
 
         #expect(service.maxRefreshRateOverride == 120)
         #expect(service.getScreenMaxRefreshRate() == 120)
+        #expect(service.resolvedStreamCadenceFrameRate(for: streamID, fallback: 120) == 120)
     }
 }
 #endif

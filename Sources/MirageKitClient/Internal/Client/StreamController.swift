@@ -474,8 +474,8 @@ actor StreamController {
     /// Called when the first frame is presented for a stream.
     private(set) var onFirstFramePresented: (@MainActor @Sendable () -> Void)?
 
-    /// Called when freeze monitoring records a stall event.
-    private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
+    /// Called when freeze monitoring records a typed stall event.
+    private(set) var onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)?
     /// Called when client recovery state changes.
     private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
     /// Called when bounded startup recovery is exhausted before the first frame is presented.
@@ -494,7 +494,7 @@ actor StreamController {
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onPostResizeFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
-        onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
+        onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
         onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
     ) {

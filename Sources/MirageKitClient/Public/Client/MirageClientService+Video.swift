@@ -688,7 +688,7 @@ extension MirageClientService {
         let clampedFrameRate = targetFrameRate.map {
             Self.runtimeWorkloadSafetyCappedFrameRate(
                 $0,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
         let request = StreamEncoderSettingsChangeMessage(

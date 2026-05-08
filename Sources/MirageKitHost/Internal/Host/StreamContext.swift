@@ -60,6 +60,7 @@ actor StreamContext {
     var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
     var captureShowsCursor: Bool = false
+    var desktopCaptureUsesDisplayRefreshCadenceOverride: Bool?
 
     var encoder: VideoEncoder?
     var isRunning = false
@@ -184,6 +185,7 @@ actor StreamContext {
     var lastCaptureIngressFPS: Double?
     var lastCaptureFPS: Double?
     var lastEncodeAttemptFPS: Double?
+    var lastCaptureCadenceMetrics: StreamCaptureCadenceMetrics?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
     var captureIngressDelayTotalMs: Double = 0
     var captureIngressDelayMaxMs: Double = 0

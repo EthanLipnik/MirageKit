@@ -539,6 +539,58 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
+    @Test("Freeze monitor requests presenter recovery when render submission stalls with pending frames")
+    func freezeMonitorRequestsPresenterRecoveryForRenderSubmissionStall() async throws {
+        let keyframeCounter = LockedCounter()
+        let presenterRecoveryCounter = LockedCounter()
+        let presenterOwner = NSObject()
+        let streamID: StreamID = 149
+        let clock = ManualTimeProvider(start: 8_000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        await controller.markFirstFramePresented()
+        await controller.forcePresentationStallForTesting(now: clock.now)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        try await waitUntil("render-submission presenter recovery", timeout: .seconds(3)) {
+            presenterRecoveryCounter.value >= 1
+        }
+        #expect(keyframeCounter.value == 0)
+        let reassembler = await controller.getReassembler()
+        #expect(!reassembler.isAwaitingKeyframe())
+
+        await controller.stop()
+    }
+
     @Test("First-frame watchdog uses hard recovery when startup is packet-starved")
     func firstFrameWatchdogUsesHardRecoveryWhenStartupIsPacketStarved() async throws {
         let clock = ManualTimeProvider(start: 1_000)

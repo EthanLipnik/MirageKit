@@ -236,6 +236,12 @@ public struct MirageStreamContentView: View {
         suppressesWindowDrivenResizeForLocalPresentation || appStreamPrefersAspectFitPresentation
     }
 
+    #if os(macOS)
+    private var macOSContainerSizingMode: MirageStreamContainerSizingMode {
+        isDesktopStream && !prefersLocalAspectFitPresentation ? .viewBounds : .contentLayout
+    }
+    #endif
+
     private var appStreamPrefersAspectFitPresentation: Bool {
         guard !isDesktopStream else { return false }
         let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
@@ -394,6 +400,8 @@ public struct MirageStreamContentView: View {
                     presentationTier: streamPresentationTier,
                     preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                     maxDrawableSize: maxDrawableSize,
+                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+                    containerSizingMode: macOSContainerSizingMode,
                     clientShortcuts: clientReservedShortcuts,
                     onClientShortcut: handleReservedShortcut,
                     actions: actions,

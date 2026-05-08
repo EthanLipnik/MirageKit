@@ -112,11 +112,30 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(decision.state.qualityOverBudgetCount == 0)
     }
 
+    @Test("Source cadence deficits suppress encode-driven quality drops")
+    func sourceCadenceDeficitsSuppressEncodeDrivenQualityDrops() {
+        let decision = decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.75,
+                qualityOverBudgetCount: 2,
+                qualityUnderBudgetCount: 0
+            ),
+            encodeOverBudget: true,
+            sourceCadenceDeficient: true
+        )
+
+        #expect(decision.action == .hold)
+        #expect(decision.state.activeQuality == 0.75)
+        #expect(decision.state.qualityOverBudgetCount == 0)
+    }
+
+
     private func decide(
         state: MirageRuntimeQualityAdjustmentState,
         qualityFloor: Float = 0.28,
         qualityCeiling: Float = 0.75,
         encodeOverBudget: Bool,
+        sourceCadenceDeficient: Bool = false,
         allowsRaise: Bool = true,
         allowEncodeDrivenQualityRelief: Bool = true,
         qualityDropThreshold: Int = 3,
@@ -129,6 +148,7 @@ struct RuntimeQualityAdjustmentPolicyTests {
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
             encodeOverBudget: encodeOverBudget,
+            sourceCadenceDeficient: sourceCadenceDeficient,
             allowsRaise: allowsRaise,
             allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
             qualityDropThreshold: qualityDropThreshold,

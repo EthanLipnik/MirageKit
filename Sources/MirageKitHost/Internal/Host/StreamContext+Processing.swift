@@ -1040,7 +1040,7 @@ extension StreamContext {
         guard let telemetry else { return nil }
         let cadence = telemetry.cadenceMetrics
         let virtualDisplay = virtualDisplayContext
-        return StreamCaptureCadenceMetrics(
+        let metrics = StreamCaptureCadenceMetrics(
             wallClockGapWorstMs: cadence.wallClockGapWorstMs,
             wallClockGapP95Ms: cadence.wallClockGapP95Ms,
             wallClockGapP99Ms: cadence.wallClockGapP99Ms,
@@ -1077,6 +1077,8 @@ extension StreamContext {
             virtualDisplayGeneration: virtualDisplay?.generation,
             virtualDisplayTimingSuspect: cadence.virtualDisplayTimingSuspect
         )
+        lastCaptureCadenceMetrics = metrics
+        return metrics
     }
 
     func applyCaptureCadenceRecoveryIfNeeded(
@@ -1128,6 +1130,26 @@ extension StreamContext {
         switch action {
         case .none:
             return
+        case .restartVirtualDisplayCadenceDriver:
+            MirageLogger.capture(
+                "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
+            )
+            if let snapshot = await SharedVirtualDisplayManager.shared.restartCadenceDriver(for: .desktopStream) {
+                virtualDisplayContext = snapshot
+                updateWindowCaptureVirtualDisplayState(snapshot)
+            } else if let snapshot = virtualDisplayContext {
+                await MainActor.run {
+                    VirtualDisplayKeepaliveController.shared.restart(
+                        displayID: snapshot.displayID,
+                        spaceID: snapshot.spaceID,
+                        refreshRate: snapshot.refreshRate
+                    )
+                }
+            } else {
+                MirageLogger.capture(
+                    "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver result=skipped_no_display"
+                )
+            }
         case .restartCapture:
             MirageLogger.capture(
                 "event=capture_cadence_recovery action=restart_capture stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText)"
@@ -1241,6 +1263,7 @@ extension StreamContext {
 
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
+        let sourceCadenceDeficient = virtualDisplaySourceCadenceIsDeficient(queueBytes: queueBytes)
         let allowsRaise = now >= qualityRaiseSuppressionUntil
         let allowEncodeDrivenQualityRelief = true
         let baseDropThreshold = qualityDropThreshold
@@ -1255,6 +1278,7 @@ extension StreamContext {
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
             encodeOverBudget: encodeOverBudget,
+            sourceCadenceDeficient: sourceCadenceDeficient,
             allowsRaise: allowsRaise,
             allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
             qualityDropThreshold: baseDropThreshold,
@@ -1293,6 +1317,46 @@ extension StreamContext {
                 "Quality up to \(qualityText) (encode \(avgText)ms)"
             )
         }
+    }
+
+    func virtualDisplaySourceCadenceIsDeficient(queueBytes: Int) -> Bool {
+        guard captureMode == .display,
+              !isAppStream,
+              virtualDisplayContext != nil,
+              currentFrameRate >= 90 else {
+            return false
+        }
+        guard queueBytes <= max(64 * 1024, queuePressureBytes / 2) else { return false }
+
+        let targetFPS = Double(max(1, currentFrameRate))
+        let cadenceFloor = targetFPS * 0.85
+        let lowCaptureCadence = [
+            lastCaptureIngressFPS,
+            lastCaptureFPS,
+            lastEncodeAttemptFPS,
+        ].contains { value in
+            guard let value, value > 0 else { return false }
+            return value < cadenceFloor
+        }
+        let cadence = lastCaptureCadenceMetrics
+        let frameBudgetMs = 1_000.0 / targetFPS
+        let p99Gap = max(
+            cadence?.wallClockGapP99Ms ?? 0,
+            cadence?.displayTimeGapP99Ms ?? 0,
+            cadence?.deliveredFrameGapP99Ms ?? 0
+        )
+        let worstGap = max(
+            cadence?.wallClockGapWorstMs ?? 0,
+            cadence?.displayTimeGapWorstMs ?? 0,
+            cadence?.deliveredFrameGapWorstMs ?? 0
+        )
+        let unevenSourceCadence =
+            p99Gap >= max(35.0, frameBudgetMs * 2.0) ||
+            worstGap >= max(70.0, frameBudgetMs * 4.0) ||
+            (cadence?.longFrameGapCount ?? 0) > 0 ||
+            cadence?.virtualDisplayTimingSuspect == true
+
+        return lowCaptureCadence || unevenSourceCadence
     }
 }
 #endif

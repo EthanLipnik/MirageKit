@@ -153,11 +153,99 @@ struct MirageInputEventSenderCoalescingTests {
         ])
     }
 
+    @Test("Native continuous scroll events merge by summing deltas")
+    func nativeContinuousScrollEventsMergeBySummingDeltas() async throws {
+        let sender = MirageInputEventSender()
+        let recorder = InputEventRecorder()
+        let streamID: StreamID = 908
+        let location = CGPoint(x: 0.5, y: 0.5)
+
+        sender.updateSendHandler { data, _ in
+            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+                Issue.record("Expected a serialized control message")
+                return
+            }
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            await recorder.append(inputMessage.event)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+            deltaX: 1,
+            deltaY: 2,
+            location: location,
+            phase: .changed,
+            isPrecise: true,
+            timestamp: 1
+        )), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+            deltaX: 3,
+            deltaY: 4,
+            location: location,
+            phase: .changed,
+            isPrecise: true,
+            timestamp: 2
+        )), streamID: streamID)
+
+        try await Task.sleep(for: .milliseconds(150))
+
+        let scrollEvents = await recorder.scrollEvents()
+        #expect(scrollEvents.count == 1)
+        #expect(scrollEvents.first?.deltaX == 4)
+        #expect(scrollEvents.first?.deltaY == 6)
+        #expect(scrollEvents.first?.phase == .changed)
+        #expect(scrollEvents.first?.timestamp == 2)
+    }
+
+    @Test("Legacy scroll events keep replacement behavior instead of merging")
+    func legacyScrollEventsKeepReplacementBehaviorInsteadOfMerging() async throws {
+        let sender = MirageInputEventSender()
+        let recorder = InputEventRecorder()
+        let streamID: StreamID = 909
+        let location = CGPoint(x: 0.5, y: 0.5)
+
+        sender.updateSendHandler { data, _ in
+            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+                Issue.record("Expected a serialized control message")
+                return
+            }
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            await recorder.append(inputMessage.event)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x7E)), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+            deltaX: 1,
+            deltaY: 2,
+            location: location,
+            isPrecise: true,
+            timestamp: 1
+        )), streamID: streamID)
+        sender.sendInputFireAndForget(.scrollWheel(MirageScrollEvent(
+            deltaX: 3,
+            deltaY: 4,
+            location: location,
+            isPrecise: true,
+            timestamp: 2
+        )), streamID: streamID)
+
+        try await Task.sleep(for: .milliseconds(150))
+
+        let scrollEvents = await recorder.scrollEvents()
+        #expect(scrollEvents.count == 1)
+        #expect(scrollEvents.first?.deltaX == 3)
+        #expect(scrollEvents.first?.deltaY == 4)
+        #expect(scrollEvents.first?.phase == MirageScrollPhase.none)
+        #expect(scrollEvents.first?.timestamp == 2)
+    }
+
     @Test("Only replaceable realtime input uses droppable delivery mode")
     func onlyReplaceableRealtimeInputUsesDroppableDeliveryMode() async throws {
         let sender = MirageInputEventSender()
         let recorder = DeliveryModeRecorder()
-        let streamID: StreamID = 908
+        let streamID: StreamID = 910
         let keyEvent = MirageKeyEvent(keyCode: 0x7E, modifiers: [])
 
         sender.updateSendHandler { _, deliveryMode in
@@ -223,6 +311,21 @@ private actor PointerBatchRecorder {
 
     func snapshot() -> [MiragePointerSampleBatch] {
         batches
+    }
+}
+
+private actor InputEventRecorder {
+    private var events: [MirageInputEvent] = []
+
+    func append(_ event: MirageInputEvent) {
+        events.append(event)
+    }
+
+    func scrollEvents() -> [MirageScrollEvent] {
+        events.compactMap { event in
+            guard case let .scrollWheel(scrollEvent) = event else { return nil }
+            return scrollEvent
+        }
     }
 }
 

@@ -39,6 +39,7 @@ public class MirageSampleBufferView: UIView {
     public var preferredMaximumRenderFPS: Int? {
         didSet {
             guard preferredMaximumRenderFPS != oldValue else { return }
+            applyRenderConfiguration()
             applyRenderPreferences()
         }
     }
@@ -46,39 +47,34 @@ public class MirageSampleBufferView: UIView {
     public var maxDrawableSize: CGSize? {
         didSet {
             guard maxDrawableSize != oldValue else { return }
-            setNeedsLayout()
+            applyRenderConfiguration()
         }
     }
 
     public var prefersLocalAspectFitPresentation: Bool = false {
         didSet {
             guard prefersLocalAspectFitPresentation != oldValue else { return }
-            applyPresentationVideoGravity()
-            requestImmediateSubmission()
+            applyRenderConfiguration()
         }
     }
 
     public var contentRectOverride: CGRect? {
         didSet {
             guard contentRectOverride != oldValue else { return }
-            presenter.setContentRectOverride(contentRectOverride)
-            requestImmediateSubmission()
+            applyRenderConfiguration()
         }
     }
 
     public var streamID: StreamID? {
         didSet {
-            bindStreamForPresentation(streamID)
+            applyRenderConfiguration()
         }
     }
 
     public var streamPresentationTier: StreamPresentationTier = .activeLive {
         didSet {
             guard streamPresentationTier != oldValue else { return }
-            presentationScheduler.setPresentationTier(streamPresentationTier)
-            let requested = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
-            applyDisplayRefreshRateLock(requested)
-            requestImmediateSubmission()
+            applyRenderConfiguration()
         }
     }
 
@@ -86,18 +82,9 @@ public class MirageSampleBufferView: UIView {
 
     let preferencesObserver = MirageUserDefaultsObserver()
     lazy var refreshRateMonitor = MirageRefreshRateMonitor(view: self)
-    var presenter: MirageSampleBufferPresenter!
-    @MainActor var presentationScheduler: MirageRenderPresentationScheduler!
+    var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayLink: CADisplayLink?
-    private var displayLayerReadinessRetryTask: Task<Void, Never>?
-
-    var maxRenderFPS: Int = 60
-    var appliedRefreshRateLock: Int = 0
-    var lastReportedDrawableSize: CGSize = .zero
-    var lastReportedDrawableMetrics: MirageDrawableMetrics?
-
-    static let maxDrawableWidth: CGFloat = 5120
-    static let maxDrawableHeight: CGFloat = 2880
+    private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
 
     var displayLayer: AVSampleBufferDisplayLayer {
         guard let layer = layer as? AVSampleBufferDisplayLayer else {
@@ -133,7 +120,6 @@ public class MirageSampleBufferView: UIView {
     }
 
     deinit {
-        stopDisplayLayerReadinessRetry()
         suspendRendering(clearCurrentFrame: true)
     }
 
@@ -144,26 +130,24 @@ public class MirageSampleBufferView: UIView {
         if superview != nil {
             refreshRateMonitor.start()
             resumeRendering()
-            startPresentationDisplayLinkIfNeeded()
             requestImmediateSubmission()
         } else {
             refreshRateMonitor.stop()
             stopPresentationDisplayLink()
-            stopDisplayLayerReadinessRetry()
             suspendRendering()
         }
     }
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()
-        applyPresentationVideoGravity()
+        applyRenderConfiguration()
         if window != nil {
             refreshRateMonitor.start()
-            startPresentationDisplayLinkIfNeeded()
+            resumeRendering()
         } else {
             stopPresentationDisplayLink()
         }
-        applyDisplayRefreshRateLock(maxRenderFPS)
+        applyRenderPreferences()
         setNeedsLayout()
     }
 
@@ -171,12 +155,11 @@ public class MirageSampleBufferView: UIView {
         super.layoutSubviews()
 
         contentScaleFactor = effectiveScale
-        let displayLayer = self.displayLayer
-        displayLayer.frame = bounds
-        displayLayer.contentsScale = effectiveScale
-
-        reportDrawableMetricsIfChanged()
-        requestImmediateSubmission()
+        presentationPipeline.layoutDisplayLayer(
+            bounds: bounds,
+            scale: effectiveScale,
+            metricsContext: currentDrawableMetricsContext()
+        )
     }
 
     // MARK: - Public Controls
@@ -186,47 +169,32 @@ public class MirageSampleBufferView: UIView {
     }
 
     public func resumeRendering() {
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
-        startPresentationDisplayLinkIfNeeded()
-        requestImmediateSubmission()
+        presentationPipeline.resumeRendering()
     }
 
     func activateStreamPresentation() {
-        bindStreamForPresentation(streamID)
+        presentationPipeline.activateStreamPresentation()
     }
 
     func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
-        if resetPresentationState {
-            presenter.resetPresentationState()
-        }
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
-        requestImmediateSubmission()
+        presentationPipeline.resumeRenderingAfterApplicationActivation(resetPresentationState: resetPresentationState)
     }
 
     public var hasDisplayLayerFailure: Bool {
-        presenter.hasDisplayLayerFailure
+        presentationPipeline.hasDisplayLayerFailure
     }
 
     var currentPresentationReferenceSize: CGSize? {
-        presenter.currentContentReferenceSize
+        presentationPipeline.currentPresentationReferenceSize
     }
 
     func resolvedPresentedContentRect(in bounds: CGRect) -> CGRect {
-        guard bounds.width > 0, bounds.height > 0 else { return .zero }
-        guard prefersLocalAspectFitPresentation else { return bounds }
-        return DesktopPresentationGeometry.resolvedContentRect(
-            referenceSize: currentPresentationReferenceSize,
-            in: bounds
-        )
+        presentationPipeline.resolvedPresentedContentRect(in: bounds)
     }
 
     public func suspendRendering(clearCurrentFrame: Bool) {
         stopPresentationDisplayLink()
-        stopDisplayLayerReadinessRetry()
-        presenter.setRenderingSuspended(true, clearCurrentFrame: clearCurrentFrame)
-        presentationScheduler.setRenderingSuspended(true)
+        presentationPipeline.suspendRendering(clearCurrentFrame: clearCurrentFrame)
     }
 
     // MARK: - Setup
@@ -235,32 +203,34 @@ public class MirageSampleBufferView: UIView {
         insetsLayoutMarginsFromSafeArea = false
 
         let displayLayer = self.displayLayer
-        displayLayer.backgroundColor = UIColor.black.cgColor
-        displayLayer.wantsExtendedDynamicRangeContent = true
-        displayLayer.contentsScale = effectiveScale
-        displayLayer.isOpaque = true
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        applyPresentationVideoGravity()
-
-        presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
-        presentationScheduler = MirageRenderPresentationScheduler(
-            submit: { [weak presenter] referenceTime in
-                presenter?.submitPendingFrameIfPossible(referenceTime: referenceTime) ?? .blocked
+        presentationPipeline = MirageSampleBufferPresentationPipeline(
+            displayLayer: displayLayer,
+            platformName: "iOS",
+            canStartDisplayClock: { [weak self] in
+                guard let self else { return false }
+                return window != nil || superview != nil
             },
-            hasPendingFrame: { [weak presenter] in
-                presenter?.hasPendingFrameForCurrentPresenter ?? false
+            startDisplayClock: { [weak self] targetFPS, tickHandler in
+                self?.startPresentationDisplayLink(targetFPS: targetFPS, tickHandler: tickHandler)
             },
-            onDisplayLayerNotReady: { [weak self] in
-                self?.armDisplayLayerReadinessRetry()
+            stopDisplayClock: { [weak self] in
+                self?.stopPresentationDisplayLink()
+            },
+            updateDisplayClockTargetFPS: { [weak self] targetFPS in
+                self?.updatePresentationDisplayLinkFrameRate(targetFPS: targetFPS)
+            },
+            requestPlatformLayout: { [weak self] in
+                self?.setNeedsLayout()
             }
         )
-        presentationScheduler.setPresentationTier(streamPresentationTier)
-        presenter.onFrameAvailable = { [weak self] in
-            self?.handleFrameAvailable()
+        presentationPipeline.setInitialVideoLayerState(scale: effectiveScale)
+        presentationPipeline.onDrawableMetricsChanged = { [weak self] metrics in
+            self?.onDrawableMetricsChanged?(metrics)
         }
-        presenter.onPresentationRecoveryRequested = { [weak self] in
-            self?.recoverPresentationPipeline()
+        presentationPipeline.onRefreshRateOverrideChange = { [weak self] override in
+            self?.onRefreshRateOverrideChange?(override)
         }
+        applyRenderConfiguration()
 
         refreshRateMonitor.onOverrideChange = { [weak self] override in
             self?.applyRefreshRateOverride(override)
@@ -270,97 +240,51 @@ public class MirageSampleBufferView: UIView {
         startObservingPreferences()
     }
 
-    private func applyPresentationVideoGravity() {
-        displayLayer.videoGravity = prefersLocalAspectFitPresentation ? .resizeAspect : .resize
-    }
-
     // MARK: - Draw Path
 
-    private func bindStreamForPresentation(_ streamID: StreamID?) {
-        presenter.setStreamID(streamID)
-        presentationScheduler.setStreamID(streamID)
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
-        if streamID == nil {
-            stopPresentationDisplayLink()
-        } else {
-            startPresentationDisplayLinkIfNeeded()
-        }
-        requestImmediateSubmission()
-    }
-
-    private func recoverPresentationPipeline() {
-        presenter.setStreamID(streamID)
-        presentationScheduler.setStreamID(streamID)
-        presenter.resetPresentationState(preserveLoggedLayerFailure: true)
-        presentationScheduler.reset()
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
-        startPresentationDisplayLinkIfNeeded()
-        requestImmediateSubmission()
-    }
-
     func requestImmediateSubmission() {
-        presentationScheduler.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
-    }
-
-    private func handleFrameAvailable() {
-        presentationScheduler.handleFrameAvailable(referenceTime: CACurrentMediaTime())
+        presentationPipeline.requestImmediateSubmission()
     }
 
     private func startPresentationDisplayLinkIfNeeded() {
-        guard window != nil || superview != nil else { return }
-        guard streamID != nil else { return }
+        presentationPipeline.resumeRendering()
+    }
+
+    private func startPresentationDisplayLink(
+        targetFPS: Int,
+        tickHandler: @escaping MirageSampleBufferPresentationPipeline.DisplayTickHandler
+    ) {
+        presentationDisplayTickHandler = tickHandler
         guard presentationDisplayLink == nil else {
-            updatePresentationDisplayLinkFrameRate()
+            updatePresentationDisplayLinkFrameRate(targetFPS: targetFPS)
             return
         }
 
         let displayLink = CADisplayLink(target: self, selector: #selector(handlePresentationDisplayLinkTick(_:)))
         presentationDisplayLink = displayLink
-        updatePresentationDisplayLinkFrameRate()
+        updatePresentationDisplayLinkFrameRate(targetFPS: targetFPS)
         displayLink.add(to: .main, forMode: .common)
-        presentationScheduler.setDisplayClockActive(true)
     }
 
     private func stopPresentationDisplayLink() {
         presentationDisplayLink?.invalidate()
         presentationDisplayLink = nil
-        presentationScheduler.setDisplayClockActive(false)
+        presentationDisplayTickHandler = nil
     }
 
-    func updatePresentationDisplayLinkFrameRate() {
+    func updatePresentationDisplayLinkFrameRate(targetFPS: Int) {
         guard let presentationDisplayLink else { return }
-        let rawHostFPS = MirageRenderModePolicy.normalizedTargetFPS(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
-        let hostFPS = streamPresentationTier == .passiveSnapshot ? rawHostFPS : max(20, rawHostFPS)
-        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : hostFPS
-        presentationScheduler.setTargetFPS(localFPS)
+        let localFPS = max(1, targetFPS)
         presentationDisplayLink.preferredFrameRateRange = CAFrameRateRange(
             minimum: Float(localFPS),
-            maximum: Float(hostFPS),
+            maximum: Float(localFPS),
             preferred: Float(localFPS)
         )
     }
 
     @objc private func handlePresentationDisplayLinkTick(_ displayLink: CADisplayLink) {
         let referenceTime = displayLink.targetTimestamp > 0 ? displayLink.targetTimestamp : CACurrentMediaTime()
-        presentationScheduler.handleDisplayTick(referenceTime: referenceTime)
-    }
-
-    private func armDisplayLayerReadinessRetry() {
-        guard displayLayerReadinessRetryTask == nil else { return }
-        displayLayerReadinessRetryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(16))
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            displayLayerReadinessRetryTask = nil
-            presentationScheduler.requestReadinessRetry(referenceTime: CACurrentMediaTime())
-        }
-    }
-
-    private func stopDisplayLayerReadinessRetry() {
-        displayLayerReadinessRetryTask?.cancel()
-        displayLayerReadinessRetryTask = nil
+        presentationDisplayTickHandler?(referenceTime)
     }
 }
 #endif

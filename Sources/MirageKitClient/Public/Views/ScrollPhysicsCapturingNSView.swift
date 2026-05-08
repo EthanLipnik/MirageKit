@@ -107,6 +107,14 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    /// Bounds source reported to window-driven stream resize logic.
+    var containerSizingMode: MirageStreamContainerSizingMode = .contentLayout {
+        didSet {
+            guard containerSizingMode != oldValue else { return }
+            reportContainerSizeIfChanged(force: true)
+        }
+    }
+
     /// Whether locked desktop cursor input may move beyond the streamed view bounds.
     var allowsExtendedCursorBounds: Bool = false {
         didSet {
@@ -341,13 +349,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func resolvedContainerSize() -> CGSize {
-        if let window {
-            let contentLayoutSize = window.contentLayoutRect.size
-            if contentLayoutSize.width > 0, contentLayoutSize.height > 0 {
-                return contentLayoutSize
-            }
-        }
-        return bounds.size
+        MirageStreamPresentationPolicy.containerSize(
+            boundsSize: bounds.size,
+            contentLayoutSize: window?.contentLayoutRect.size,
+            mode: containerSizingMode
+        )
     }
 
     private func startModifierPollingIfNeeded() {
@@ -790,8 +796,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     override func scrollWheel(with event: NSEvent) {
         guard isInputProcessingActive else { return }
 
-        let phase = MirageScrollPhase(from: event.phase)
-        let momentumPhase = MirageScrollPhase(from: event.momentumPhase)
+        let usesNativeScrollEventMetadata = UserDefaults.standard.bool(
+            forKey: MirageNativeScrollEventMetadataPreference.defaultsKey
+        )
+        let phase = usesNativeScrollEventMetadata ? MirageScrollPhase(from: event.phase) : .none
+        let momentumPhase = usesNativeScrollEventMetadata ? MirageScrollPhase(from: event.momentumPhase) : .none
         let isPrecise = event.hasPreciseScrollingDeltas
 
         if cursorLockEnabled {

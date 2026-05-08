@@ -87,19 +87,19 @@ extension WindowCaptureEngine {
             switch latencyMode {
             case .smoothest:
                 soft = min(max(safeConfiguredSoft, 0.60), 1.00)
-                hard = min(max(max(soft + 0.20, soft * 1.20), 1.10), 1.25)
-                debounce = 0.08
+                hard = min(max(max(soft + 5.00, soft * 6.00), 5.50), 8.00)
+                debounce = 0.60
             case .lowestLatency:
                 soft = min(max(safeConfiguredSoft, 1.20), 2.00)
-                hard = min(max(max(soft + 0.60, soft * 1.40), 1.80), 2.50)
-                debounce = 0.05
+                hard = min(max(max(soft + 3.00, soft * 4.00), 4.50), 6.00)
+                debounce = 0.40
             }
 
             return CaptureStallPolicy(
                 softStallThreshold: soft,
                 hardRestartThreshold: hard,
                 restartDebounce: debounce,
-                cancellationGrace: 0.20
+                cancellationGrace: 0.75
             )
         }
 

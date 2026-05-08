@@ -88,7 +88,8 @@ extension StreamContext {
         await startEncoderWithSharedCallback(pinnedContentRect: pinnedRect, logPrefix: "Desktop frame")
 
         let isMirageDisplay = CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
-        let captureEngine = try await setupAndStartCaptureEngine(usesDisplayRefreshCadence: isMirageDisplay)
+        let usesDisplayRefreshCadence = desktopCaptureUsesDisplayRefreshCadenceOverride ?? isMirageDisplay
+        let captureEngine = try await setupAndStartCaptureEngine(usesDisplayRefreshCadence: usesDisplayRefreshCadence)
         let resolvedExcludedWindows = excludedWindows.map(\.window)
         let captureSizeForSCK = isMirageDisplay ? outputSize : nil
         try await captureEngine.startDisplayCapture(

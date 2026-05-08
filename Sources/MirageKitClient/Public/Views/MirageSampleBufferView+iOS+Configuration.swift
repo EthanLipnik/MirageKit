@@ -9,41 +9,31 @@
 
 import MirageKit
 #if os(iOS) || os(visionOS)
-import QuartzCore
 import UIKit
 
 extension MirageSampleBufferView {
-    // MARK: - Metrics / Layout
+    // MARK: - Configuration
 
-    func reportDrawableMetricsIfChanged() {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let pixelSize = cappedDrawableSize(
-            CGSize(
-                width: bounds.width * contentScaleFactor,
-                height: bounds.height * contentScaleFactor
+    func applyRenderConfiguration() {
+        presentationPipeline.applyConfiguration(
+            MirageStreamRenderConfiguration(
+                logicalStreamID: streamID,
+                mediaStreamID: streamID,
+                contentRectOverride: contentRectOverride,
+                presentationTier: streamPresentationTier,
+                preferredMaximumRenderFPS: preferredMaximumRenderFPS,
+                maxDrawableSize: maxDrawableSize,
+                prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+                containerSizingMode: .viewBounds
             )
         )
-        let drawableSize = pixelSize
-        guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-        let metrics = currentDrawableMetrics(drawableSize: drawableSize)
-        guard MirageDrawableMetrics.shouldReportChange(
-            from: lastReportedDrawableMetrics,
-            to: metrics
-        ) else {
-            return
-        }
-
-        lastReportedDrawableSize = drawableSize
-        lastReportedDrawableMetrics = metrics
-        onDrawableMetricsChanged?(metrics)
     }
 
-    #if os(visionOS)
-    private func currentDrawableMetrics(drawableSize: CGSize) -> MirageDrawableMetrics {
+    // MARK: - Metrics / Layout
+
+    func currentDrawableMetricsContext() -> MirageDrawableMetricsContext {
+        #if os(visionOS)
         let boundsSize = bounds.size
-        let scaleX = boundsSize.width > 0 ? drawableSize.width / boundsSize.width : 0
-        let scaleY = boundsSize.height > 0 ? drawableSize.height / boundsSize.height : 0
-        let scale = max(0.1, max(scaleX, scaleY))
         let windowPointSize = window?.bounds.size ?? boundsSize
         let screenScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
         let nativePixelSize = CGSize(
@@ -51,36 +41,26 @@ extension MirageSampleBufferView {
             height: windowPointSize.height * screenScale
         )
 
-        return MirageDrawableMetrics(
-            pixelSize: drawableSize,
-            viewSize: boundsSize,
-            scaleFactor: scale,
+        return MirageDrawableMetricsContext(
             screenPointSize: windowPointSize,
             screenScale: screenScale,
             screenNativePixelSize: nativePixelSize,
             screenNativeScale: screenScale
         )
-    }
-    #else
-    private func currentDrawableMetrics(drawableSize: CGSize) -> MirageDrawableMetrics {
-        let boundsSize = bounds.size
-        let scaleX = boundsSize.width > 0 ? drawableSize.width / boundsSize.width : 0
-        let scaleY = boundsSize.height > 0 ? drawableSize.height / boundsSize.height : 0
-        let scale = max(0.1, max(scaleX, scaleY))
+        #else
         let screen = resolveCurrentScreen()
         let nativeScale = screen.nativeScale > 0 ? screen.nativeScale : screen.scale
 
-        return MirageDrawableMetrics(
-            pixelSize: drawableSize,
-            viewSize: boundsSize,
-            scaleFactor: scale,
+        return MirageDrawableMetricsContext(
             screenPointSize: screen.bounds.size,
             screenScale: screen.scale,
             screenNativePixelSize: orientedNativePixelSize(for: screen),
             screenNativeScale: nativeScale
         )
+        #endif
     }
 
+    #if !os(visionOS)
     private func resolveCurrentScreen() -> UIScreen {
         if let screen = window?.windowScene?.screen { return screen }
         if let screen = window?.screen { return screen }
@@ -100,51 +80,6 @@ extension MirageSampleBufferView {
     }
     #endif
 
-    func cappedDrawableSize(_ size: CGSize) -> CGSize {
-        guard size.width > 0, size.height > 0 else { return size }
-
-        if let maxDrawableSize, maxDrawableSize.width <= 0 || maxDrawableSize.height <= 0 {
-            return CGSize(width: alignedEven(size.width), height: alignedEven(size.height))
-        }
-
-        var width = size.width
-        var height = size.height
-        let aspectRatio = width / height
-        let maxSize = resolvedMaxDrawableSize()
-
-        if width > maxSize.width {
-            width = maxSize.width
-            height = width / aspectRatio
-        }
-
-        if height > maxSize.height {
-            height = maxSize.height
-            width = height * aspectRatio
-        }
-
-        return CGSize(width: alignedEven(width), height: alignedEven(height))
-    }
-
-    private func resolvedMaxDrawableSize() -> CGSize {
-        let defaultSize = CGSize(width: Self.maxDrawableWidth, height: Self.maxDrawableHeight)
-        guard let maxDrawableSize,
-              maxDrawableSize.width > 0,
-              maxDrawableSize.height > 0 else {
-            return defaultSize
-        }
-
-        return CGSize(
-            width: min(defaultSize.width, maxDrawableSize.width),
-            height: min(defaultSize.height, maxDrawableSize.height)
-        )
-    }
-
-    private func alignedEven(_ value: CGFloat) -> CGFloat {
-        let rounded = CGFloat(Int(value.rounded()))
-        let even = rounded - CGFloat(Int(rounded) % 2)
-        return max(2, even)
-    }
-
     // MARK: - Preferences
 
     func applyRenderPreferences() {
@@ -154,27 +89,7 @@ extension MirageSampleBufferView {
     }
 
     func applyRefreshRateOverride(_ override: Int) {
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(override)
-        maxRenderFPS = clamped
-        presenter.setTargetFPS(clamped)
-        presentationScheduler.setTargetFPS(clamped)
-        applyDisplayRefreshRateLock(clamped)
-        onRefreshRateOverrideChange?(clamped)
-    }
-
-    func applyDisplayRefreshRateLock(_ fps: Int) {
-        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
-        let localFPS = streamPresentationTier == .passiveSnapshot ? 1 : max(20, clamped)
-        let changed = appliedRefreshRateLock != clamped
-        appliedRefreshRateLock = clamped
-        presentationScheduler.setTargetFPS(localFPS)
-        updatePresentationDisplayLinkFrameRate()
-
-        guard changed else { return }
-        let streamLabel = streamID.map { "\($0)" } ?? "none"
-        MirageLogger.renderer(
-            "Applied iOS render refresh lock: stream=\(streamLabel) host=\(clamped)Hz local=\(localFPS)Hz tier=\(streamPresentationTier.rawValue)"
-        )
+        presentationPipeline.applyResolvedRenderFPS(override)
     }
 
     func startObservingPreferences() {

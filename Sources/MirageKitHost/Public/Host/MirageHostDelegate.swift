@@ -30,6 +30,10 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     @MainActor
     func hostService(_ service: MirageHostService, didDisconnectClient client: MirageConnectedClient)
 
+    /// Called when active desktop or app stream state changes.
+    @MainActor
+    func hostServiceDidChangeActiveStreams(_ service: MirageHostService)
+
     /// Called when an input event is received from a client
     @MainActor
     func hostService(
@@ -70,6 +74,7 @@ public extension MirageHostDelegate {
 
     func hostService(_: MirageHostService, didConnectClient _: MirageConnectedClient) {}
     func hostService(_: MirageHostService, didDisconnectClient _: MirageConnectedClient) {}
+    func hostServiceDidChangeActiveStreams(_: MirageHostService) {}
 
     func hostService(
         _: MirageHostService,

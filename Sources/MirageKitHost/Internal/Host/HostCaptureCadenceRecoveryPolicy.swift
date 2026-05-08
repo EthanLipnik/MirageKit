@@ -14,6 +14,7 @@ import MirageKit
 struct HostCaptureCadenceRecoveryPolicy: Sendable {
     enum Action: Sendable, Equatable {
         case none
+        case restartVirtualDisplayCadenceDriver
         case restartCapture
         case reassertVirtualDisplayMode
         case recreateVirtualDisplay
@@ -22,7 +23,8 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
     struct Configuration: Sendable, Equatable {
         var consecutiveBadWindowsRequired: Int = 2
         var goodWindowsRequiredToResetEscalation: Int = 3
-        var captureRestartsBeforeReassert: Int = 2
+        var cadenceDriverRestartsBeforeReassert: Int = 2
+        var captureRestartsBeforeReassert: Int = 0
         var virtualDisplayReassertsBeforeRecreate: Int = 2
         var actionCooldownSeconds: CFAbsoluteTime = 8.0
         var captureFPSFloorRatio: Double = 0.90
@@ -63,6 +65,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
     var configuration = Configuration()
     private var badWindowCount = 0
     private var goodWindowCount = 0
+    private var cadenceDriverRestartCount = 0
     private var captureRestartCount = 0
     private var virtualDisplayReassertCount = 0
     private var lastActionTime: CFAbsoluteTime = 0
@@ -70,6 +73,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
     mutating func reset() {
         badWindowCount = 0
         goodWindowCount = 0
+        cadenceDriverRestartCount = 0
         captureRestartCount = 0
         virtualDisplayReassertCount = 0
         lastActionTime = 0
@@ -95,6 +99,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             } else {
                 goodWindowCount += 1
                 if goodWindowCount >= configuration.goodWindowsRequiredToResetEscalation {
+                    cadenceDriverRestartCount = 0
                     captureRestartCount = 0
                     virtualDisplayReassertCount = 0
                 }
@@ -111,6 +116,10 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
 
         badWindowCount = 0
         lastActionTime = sample.now
+        if cadenceDriverRestartCount < configuration.cadenceDriverRestartsBeforeReassert {
+            cadenceDriverRestartCount += 1
+            return .restartVirtualDisplayCadenceDriver
+        }
         if captureRestartCount < configuration.captureRestartsBeforeReassert {
             captureRestartCount += 1
             return .restartCapture

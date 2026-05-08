@@ -116,8 +116,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
-    @Test("Client presentation deficit downshifts when host remains 60fps")
-    func clientPresentationDeficitDownshiftsWhenHostRemains60FPS() {
+    @Test("Client presentation deficit preserves 60fps while lowering resolution")
+    func clientPresentationDeficitPreserves60FPSWhileLoweringResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -138,11 +138,13 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target == .fullHD60)
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 3840)
+        #expect(target.encodedPixelSize.height < 2160)
     }
 
-    @Test("ProMotion presentation deficit can choose 90fps before reducing resolution")
-    func proMotionPresentationDeficitCanChoose90FPSBeforeReducingResolution() {
+    @Test("ProMotion presentation deficit preserves refresh before reducing FPS")
+    func proMotionPresentationDeficitPreservesRefreshBeforeReducingFPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -167,12 +169,13 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
-        #expect(target.targetFrameRate == 90)
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
-    @Test("ProMotion presentation collapse lowers same-size refresh to 60fps first")
-    func proMotionPresentationCollapseLowersSameSizeRefreshTo60FPSFirst() {
+    @Test("ProMotion presentation collapse preserves refresh with a lower resolution first")
+    func proMotionPresentationCollapsePreservesRefreshWithLowerResolutionFirst() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -197,8 +200,9 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
-        #expect(target.targetFrameRate == 60)
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
     @Test("Severe ProMotion presentation collapse downshifts after three samples")
@@ -233,23 +237,26 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected fast workload reconfiguration")
             return
         }
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
-        #expect(target.targetFrameRate == 60)
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
         #expect(reason.contains("client presentation collapse"))
     }
 
-    @Test("Source-bound 70fps ProMotion samples do not fast downshift")
-    func sourceBound70FPSProMotionSamplesDoNotFastDownshift() {
+    @Test("Virtual-display source-bound ProMotion samples do not reconfigure workload")
+    func virtualDisplaySourceBoundProMotionSamplesDoNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
-        let snapshot = pipelineBoundSnapshot(
+        var snapshot = pipelineBoundSnapshot(
             width: 2752,
             height: 2064,
             targetFrameRate: 120,
             cadenceFPS: 70
         )
+        snapshot.hostCaptureUsesDisplayRefreshCadence = true
+        snapshot.hostCaptureVirtualDisplayTimingSuspect = true
 
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
-        for sample in 0..<3 {
+        for sample in 0..<8 {
             action = controller.advance(
                 snapshot: snapshot,
                 resizeCriticalSectionActive: false,
@@ -262,8 +269,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(action == .none)
     }
 
-    @Test("ProMotion severe presentation collapse reduces resolution when 60fps cannot fit")
-    func proMotionSeverePresentationCollapseReducesResolutionWhen60FPSCannotFit() {
+    @Test("ProMotion severe presentation collapse still preserves refresh while reducing resolution")
+    func proMotionSeverePresentationCollapsePreservesRefreshWhileReducingResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -288,7 +295,9 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target == .qhd60)
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
     @Test("Severe client presentation cadence spikes downshift even near target FPS")
@@ -310,7 +319,9 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target == .qhd60)
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")

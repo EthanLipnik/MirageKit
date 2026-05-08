@@ -319,7 +319,9 @@ extension MirageHostService {
             colorSpace: MirageColorSpace?,
             captureSource: MirageDesktopCaptureSource,
             allowsClientResize: Bool,
-            presentationResolution: CGSize
+            presentationResolution: CGSize,
+            virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+            usesDisplayRefreshCadence: Bool?
         )?
         var lastVirtualDisplayError: Error?
         let startupBudget = DesktopVirtualDisplayStartupBudget(maxDuration: 10.0)
@@ -357,7 +359,9 @@ extension MirageHostService {
                 colorSpace: nil,
                 captureSource: .mainDisplayFallback,
                 allowsClientResize: false,
-                presentationResolution: presentationResolution
+                presentationResolution: presentationResolution,
+                virtualDisplaySnapshot: nil,
+                usesDisplayRefreshCadence: nil
             )
             logDesktopStartStep("host-resolution main display acquired (\(fallback.displayID))")
         }
@@ -488,6 +492,16 @@ extension MirageHostService {
                             "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
                         )
                     }
+                    let cadenceValidation = await SharedVirtualDisplayManager.shared.validateDisplayCadence(
+                        context,
+                        targetFrameRate: attempt.refreshRate
+                    )
+                    let usesDisplayRefreshCadence = cadenceValidation.usesNativeDisplayCadence
+                    if !usesDisplayRefreshCadence {
+                        MirageLogger.host(
+                            "Desktop virtual display \(context.displayID) did not prove \(attempt.refreshRate)Hz live cadence; using explicit SCK frame interval"
+                        )
+                    }
                     if context.colorSpace != config.colorSpace {
                         MirageLogger.host(
                             "Desktop display color space adjusted by virtual display manager: requested=\(config.colorSpace.displayName), effective=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue)"
@@ -513,7 +527,9 @@ extension MirageHostService {
                         colorSpace: captureDisplayColorSpace,
                         captureSource: .virtualDisplay,
                         allowsClientResize: true,
-                        presentationResolution: captureResolution
+                        presentationResolution: captureResolution,
+                        virtualDisplaySnapshot: context,
+                        usesDisplayRefreshCadence: usesDisplayRefreshCadence
                     )
                     virtualDisplayStartupSession.persistIfPreferred(
                         from: context,
@@ -630,7 +646,9 @@ extension MirageHostService {
                 colorSpace: nil,
                 captureSource: .mainDisplayFallback,
                 allowsClientResize: false,
-                presentationResolution: fallbackPresentationResolution
+                presentationResolution: fallbackPresentationResolution,
+                virtualDisplaySnapshot: nil,
+                usesDisplayRefreshCadence: nil
             )
             logDesktopStartStep("main display fallback acquired (\(fallback.displayID))")
         }
@@ -645,6 +663,8 @@ extension MirageHostService {
         let captureSource = acquiredCaptureContext.captureSource
         let allowsClientResize = acquiredCaptureContext.allowsClientResize
         let presentationResolution = acquiredCaptureContext.presentationResolution
+        let virtualDisplaySnapshot = acquiredCaptureContext.virtualDisplaySnapshot
+        let usesDisplayRefreshCadence = acquiredCaptureContext.usesDisplayRefreshCadence
         desktopCaptureSource = captureSource
 
         if captureSource == .mainDisplayFallback {
@@ -719,6 +739,10 @@ extension MirageHostService {
         if let captureDisplayP3CoverageStatus {
             await streamContext.setDisplayP3CoverageStatusOverride(captureDisplayP3CoverageStatus)
         }
+        await streamContext.configureDesktopVirtualDisplayCapture(
+            snapshot: virtualDisplaySnapshot,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
         await streamContext.logBitrateContract(event: "start")
         logDesktopStartStep("stream context created (\(streamID))")
         if allowRuntimeQualityAdjustment == false {
@@ -764,6 +788,7 @@ extension MirageHostService {
         desktopStreamClientContext = clientContext
         desktopRequestedScaleFactor = desktopBackingScale.scaleFactor
         streamsByID[streamID] = streamContext
+        notifyActiveStreamActivityChanged()
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
         var effectiveAudioConfiguration = resolvedAudioConfiguration
@@ -1109,6 +1134,7 @@ extension MirageHostService {
         desktopStreamID = nil
         desktopSessionID = nil
         desktopRequestedScaleFactor = nil
+        notifyActiveStreamActivityChanged()
         desktopStreamMode = .unified
         desktopCursorPresentation = .simulatedCursor
         if let failedContext {
@@ -1183,6 +1209,7 @@ extension MirageHostService {
         desktopStreamID = nil
         desktopSessionID = nil
         desktopStreamClientContext = nil
+        notifyActiveStreamActivityChanged()
         streamsByID.removeValue(forKey: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)

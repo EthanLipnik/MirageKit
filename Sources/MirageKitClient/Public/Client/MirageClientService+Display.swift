@@ -264,10 +264,7 @@ extension MirageClientService {
 
     /// Get the selected target refresh rate requested by the client.
     public func getScreenMaxRefreshRate() -> Int {
-        Self.runtimeWorkloadSafetyCappedFrameRate(
-            preferredScreenMaxRefreshRate(),
-            cap: runtimeWorkloadSafetyFrameRateCap
-        )
+        preferredScreenMaxRefreshRate()
     }
 
     func preferredScreenMaxRefreshRate() -> Int {
@@ -303,22 +300,25 @@ extension MirageClientService {
         if let fallback {
             return Self.runtimeWorkloadSafetyCappedFrameRate(
                 fallback,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
         if let observed = observedFrameRateByStream[streamID], observed > 0 {
             return Self.runtimeWorkloadSafetyCappedFrameRate(
                 observed,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
         if let override = refreshRateOverridesByStream[streamID], override > 0 {
             return Self.runtimeWorkloadSafetyCappedFrameRate(
                 override,
-                cap: runtimeWorkloadSafetyFrameRateCap
+                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
-        return getScreenMaxRefreshRate()
+        return Self.runtimeWorkloadSafetyCappedFrameRate(
+            getScreenMaxRefreshRate(),
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
+        )
     }
 
     func applyStreamCadenceTarget(
@@ -329,7 +329,7 @@ extension MirageClientService {
     async {
         let targetFrameRate = Self.runtimeWorkloadSafetyCappedFrameRate(
             frameRate,
-            cap: runtimeWorkloadSafetyFrameRateCap
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         updateObservedFrameRate(targetFrameRate, for: streamID)
         let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
@@ -388,7 +388,7 @@ extension MirageClientService {
 
         let effectiveTarget = Self.runtimeWorkloadSafetyCappedTier(
             target,
-            cap: runtimeWorkloadSafetyFrameRateCap
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         let snapshot = metricsStore.snapshot(for: streamID)
         let currentFrameRate = snapshot?.hostTargetFrameRate ?? 0
@@ -582,7 +582,7 @@ extension MirageClientService {
 
         let clamped = Self.runtimeWorkloadSafetyCappedFrameRate(
             maxRefreshRate,
-            cap: runtimeWorkloadSafetyFrameRateCap
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         let request = StreamRefreshRateChangeMessage(
             streamID: streamID,
@@ -602,7 +602,7 @@ extension MirageClientService {
         }
         let clamped = Self.runtimeWorkloadSafetyCappedFrameRate(
             maxRefreshRate,
-            cap: runtimeWorkloadSafetyFrameRateCap
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         let existing = refreshRateOverridesByStream[streamID]
         guard existing != clamped else { return }

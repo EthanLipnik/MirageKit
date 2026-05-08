@@ -24,6 +24,20 @@ func sharedDisplayMissingUpdateDecision(allowRecreation: Bool) -> SharedDisplayM
 extension SharedVirtualDisplayManager {
     // MARK: - Consumer-Based Acquisition (for non-stream consumers)
 
+    struct VirtualDisplayCadenceValidation: Sendable, Equatable {
+        let displayID: CGDirectDisplayID
+        let targetFPS: Double
+        let observedFPS: Double?
+        let usesNativeDisplayCadence: Bool
+
+        var logLabel: String {
+            let observedText = observedFPS
+                .map { $0.formatted(.number.precision(.fractionLength(1))) }
+                ?? "unavailable"
+            return "target=\(Int(targetFPS))Hz observed=\(observedText)Hz nativeCadence=\(usesNativeDisplayCadence)"
+        }
+    }
+
     private func syncActiveConsumerColorSpace(
         _ consumer: DisplayConsumer,
         to colorSpace: MirageColorSpace
@@ -408,6 +422,57 @@ extension SharedVirtualDisplayManager {
         sharedDisplay = updatedDisplay
         syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
         return snapshot(from: updatedDisplay)
+    }
+
+    func restartCadenceDriver(for consumer: DisplayConsumer) async -> DisplaySnapshot? {
+        guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
+        await MainActor.run {
+            VirtualDisplayKeepaliveController.shared.restart(
+                displayID: display.displayID,
+                spaceID: display.spaceID,
+                refreshRate: display.refreshRate
+            )
+        }
+        return snapshot(from: display)
+    }
+
+    func validateDisplayCadence(
+        _ snapshot: DisplaySnapshot,
+        targetFrameRate: Int,
+        durationSeconds: Double = 0.35
+    ) async -> VirtualDisplayCadenceValidation {
+        let targetFPS = Double(max(1, targetFrameRate))
+        guard let cadenceProbe = VirtualDisplayCadenceProbe(displayID: snapshot.displayID),
+              cadenceProbe.start() else {
+            MirageLogger.host(
+                "Virtual display cadence validation unavailable for display \(snapshot.displayID); using explicit SCK frame interval"
+            )
+            return VirtualDisplayCadenceValidation(
+                displayID: snapshot.displayID,
+                targetFPS: targetFPS,
+                observedFPS: nil,
+                usesNativeDisplayCadence: false
+            )
+        }
+
+        let clampedDuration = max(0.10, min(durationSeconds, 1.0))
+        cadenceProbe.beginMeasurement()
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        try? await Task.sleep(for: .milliseconds(Int((clampedDuration * 1000).rounded())))
+        let elapsed = max(0.001, CFAbsoluteTimeGetCurrent() - startedAt)
+        let observedFPS = cadenceProbe.completeMeasurement(durationSeconds: elapsed)
+        cadenceProbe.stop()
+        let usesNativeDisplayCadence = observedFPS.map { $0 >= targetFPS * 0.85 } ?? false
+        let validation = VirtualDisplayCadenceValidation(
+            displayID: snapshot.displayID,
+            targetFPS: targetFPS,
+            observedFPS: observedFPS,
+            usesNativeDisplayCadence: usesNativeDisplayCadence
+        )
+        MirageLogger.host(
+            "Virtual display cadence validation for display \(snapshot.displayID): \(validation.logLabel)"
+        )
+        return validation
     }
 
     func recreateDisplayForCadenceRecovery(

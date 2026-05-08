@@ -1910,4 +1910,10 @@ public final class MirageHostService {
     // MARK: - Private
 }
 
+extension MirageHostService {
+    func notifyActiveStreamActivityChanged() {
+        delegate?.hostServiceDidChangeActiveStreams(self)
+    }
+}
+
 #endif

@@ -33,6 +33,7 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
         qualityFloor: Float,
         qualityCeiling: Float,
         encodeOverBudget: Bool,
+        sourceCadenceDeficient: Bool = false,
         allowsRaise: Bool,
         allowEncodeDrivenQualityRelief: Bool,
         qualityDropThreshold: Int,
@@ -41,7 +42,7 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
         qualityRaiseStep: Float
     ) -> MirageRuntimeQualityAdjustmentDecision {
         var nextState = state
-        let qualityDropSignal = allowEncodeDrivenQualityRelief && encodeOverBudget
+        let qualityDropSignal = allowEncodeDrivenQualityRelief && encodeOverBudget && !sourceCadenceDeficient
 
         if !qualityDropSignal {
             nextState.qualityOverBudgetCount = 0

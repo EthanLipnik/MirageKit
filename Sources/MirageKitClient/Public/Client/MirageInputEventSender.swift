@@ -127,9 +127,22 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     private func appendPendingInput(_ pending: PendingInput) {
+        if let last = pendingInputs.last,
+           last.streamID == pending.streamID,
+           let mergedEvent = last.event.mergedWithCompatibleNativeContinuousScrollEvent(pending.event) {
+            pendingInputs[pendingInputs.count - 1] = PendingInput(event: mergedEvent, streamID: pending.streamID)
+            return
+        }
+
+        if pending.event.hasNativeScrollMetadata {
+            pendingInputs.append(pending)
+            return
+        }
+
         if let kind = replaceableContinuousKind(for: pending.event),
            let last = pendingInputs.last,
            last.streamID == pending.streamID,
+           !last.event.hasNativeScrollMetadata,
            replaceableContinuousKind(for: last.event) == kind {
             pendingInputs[pendingInputs.count - 1] = pending
             return
@@ -360,6 +373,20 @@ public final class MirageInputEventSender: @unchecked Sendable {
 }
 
 private extension MirageInputEvent {
+    var hasNativeScrollMetadata: Bool {
+        guard case let .scrollWheel(event) = self else { return false }
+        return event.hasNativeScrollMetadata
+    }
+
+    func mergedWithCompatibleNativeContinuousScrollEvent(_ newerEvent: MirageInputEvent) -> MirageInputEvent? {
+        guard case let .scrollWheel(scrollEvent) = self,
+              case let .scrollWheel(newerScrollEvent) = newerEvent,
+              let mergedEvent = scrollEvent.mergedWithCompatibleNativeContinuousScrollEvent(newerScrollEvent) else {
+            return nil
+        }
+        return .scrollWheel(mergedEvent)
+    }
+
     var shouldGateAutomaticProbe: Bool {
         switch self {
         case .keyDown,

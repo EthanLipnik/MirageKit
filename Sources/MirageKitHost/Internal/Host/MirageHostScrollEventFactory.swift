@@ -27,7 +27,12 @@ enum MirageHostScrollEventFactory {
         integerDeltaX: Int32,
         integerDeltaY: Int32
     ) -> CGEvent? {
-        guard shouldPost(event: event, integerDeltaX: integerDeltaX, integerDeltaY: integerDeltaY) else {
+        let usesNativeScrollMetadata = event.hasNativeScrollMetadata
+        guard shouldPost(
+            integerDeltaX: integerDeltaX,
+            integerDeltaY: integerDeltaY,
+            usesNativeScrollMetadata: usesNativeScrollMetadata
+        ) else {
             return nil
         }
 
@@ -42,29 +47,26 @@ enum MirageHostScrollEventFactory {
             return nil
         }
 
-        applyNativeScrollMetadata(
-            from: event,
-            integerDeltaX: integerDeltaX,
-            integerDeltaY: integerDeltaY,
-            to: cgEvent
-        )
+        if usesNativeScrollMetadata {
+            applyNativeScrollMetadata(
+                from: event,
+                to: cgEvent
+            )
+        }
         return cgEvent
     }
 
     private static func shouldPost(
-        event: MirageScrollEvent,
         integerDeltaX: Int32,
-        integerDeltaY: Int32
+        integerDeltaY: Int32,
+        usesNativeScrollMetadata: Bool
     ) -> Bool {
         if integerDeltaX != 0 || integerDeltaY != 0 { return true }
-        if event.phase != .none || event.momentumPhase != .none { return true }
-        return event.isPrecise && (event.deltaX != 0 || event.deltaY != 0)
+        return usesNativeScrollMetadata
     }
 
     private static func applyNativeScrollMetadata(
         from event: MirageScrollEvent,
-        integerDeltaX: Int32,
-        integerDeltaY: Int32,
         to cgEvent: CGEvent
     ) {
         cgEvent.setIntegerValueField(
@@ -78,25 +80,6 @@ enum MirageHostScrollEventFactory {
         cgEvent.setIntegerValueField(
             .scrollWheelEventMomentumPhase,
             value: event.momentumPhase.cgMomentumScrollPhaseValue
-        )
-        cgEvent.setDoubleValueField(
-            .scrollWheelEventFixedPtDeltaAxis1,
-            value: Double(event.deltaY)
-        )
-        cgEvent.setDoubleValueField(
-            .scrollWheelEventFixedPtDeltaAxis2,
-            value: Double(event.deltaX)
-        )
-
-        guard event.isPrecise else { return }
-
-        cgEvent.setIntegerValueField(
-            .scrollWheelEventPointDeltaAxis1,
-            value: Int64(integerDeltaY)
-        )
-        cgEvent.setIntegerValueField(
-            .scrollWheelEventPointDeltaAxis2,
-            value: Int64(integerDeltaX)
         )
     }
 }
