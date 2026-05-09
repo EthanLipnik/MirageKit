@@ -57,10 +57,17 @@ extension SharedVirtualDisplayManager {
                         width: CGFloat(scDisplay.width),
                         height: CGFloat(scDisplay.height)
                     )
+                    let expectedLogicalResolution = expectedPixelResolution.flatMap {
+                        Self.expectedLogicalSCDisplayResolution(
+                            displayID: displayID,
+                            expectedPixelResolution: $0
+                        )
+                    }
                     if let expectedPixelResolution,
                        !Self.scDisplayResolutionMatches(
                            observed: observedResolution,
-                           expected: expectedPixelResolution
+                           expected: expectedPixelResolution,
+                           expectedLogical: expectedLogicalResolution
                        ) {
                         lastObservedResolution = observedResolution
                         if attempt < maxAttempts {
@@ -108,8 +115,8 @@ extension SharedVirtualDisplayManager {
                         "SCDisplay not found for displayID \(displayID) after \(maxAttempts) attempts. Available: \(available)"
                     )
                 }
-            } catch is SharedDisplayError {
-                throw SharedDisplayError.noActiveDisplay
+            } catch let error as SharedDisplayError {
+                throw error
             } catch {
                 if attempt < maxAttempts {
                     MirageLogger.host(
@@ -137,7 +144,42 @@ extension SharedVirtualDisplayManager {
     static func scDisplayResolutionMatches(
         observed: CGSize,
         expected: CGSize,
+        expectedLogical: CGSize? = nil,
         tolerance: CGFloat = 1.0
+    )
+    -> Bool {
+        if resolutionMatches(observed, expected, tolerance: tolerance) {
+            return true
+        }
+        if let expectedLogical,
+           expectedLogical.width > 0,
+           expectedLogical.height > 0,
+           resolutionMatches(observed, expectedLogical, tolerance: tolerance) {
+            return true
+        }
+        return false
+    }
+
+    private static func expectedLogicalSCDisplayResolution(
+        displayID: CGDirectDisplayID,
+        expectedPixelResolution: CGSize,
+        tolerance: CGFloat = 1.0
+    )
+    -> CGSize? {
+        guard let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID),
+              resolutionMatches(modeSizes.pixel, expectedPixelResolution, tolerance: tolerance),
+              modeSizes.logical.width > 0,
+              modeSizes.logical.height > 0,
+              !resolutionMatches(modeSizes.logical, modeSizes.pixel, tolerance: tolerance) else {
+            return nil
+        }
+        return modeSizes.logical
+    }
+
+    private static func resolutionMatches(
+        _ observed: CGSize,
+        _ expected: CGSize,
+        tolerance: CGFloat
     )
     -> Bool {
         abs(observed.width - expected.width) <= tolerance &&

@@ -566,9 +566,16 @@ struct DesktopResizeTransactionPolicyTests {
             )
         )
         #expect(
+            SharedVirtualDisplayManager.scDisplayResolutionMatches(
+                observed: CGSize(width: 1224, height: 704),
+                expected: CGSize(width: 2448, height: 1408),
+                expectedLogical: CGSize(width: 1224, height: 704)
+            )
+        )
+        #expect(
             !SharedVirtualDisplayManager.scDisplayResolutionMatches(
-                observed: CGSize(width: 1360, height: 1016),
-                expected: CGSize(width: 2720, height: 2032)
+                observed: CGSize(width: 1224, height: 704),
+                expected: CGSize(width: 2448, height: 1408)
             )
         )
     }
