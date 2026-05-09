@@ -14,6 +14,7 @@ import MirageKit
 extension StreamContext {
     func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
         guard feedback.streamID == streamID else { return }
+        guard shouldEncodeFrames else { return }
         realtimeMediaSession.recordFeedback(feedback)
     }
 }

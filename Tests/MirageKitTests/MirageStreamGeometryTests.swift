@@ -89,4 +89,19 @@ struct MirageStreamGeometryTests {
         #expect(geometry.encodedPixelSize == CGSize(width: 8240, height: 4000))
         #expect(geometry.resolvedStreamScale == 1.0)
     }
+
+    @Test("Geometry can preserve desktop aspect at report-like low scale")
+    func geometryCanPreserveDesktopAspectAtReportLikeLowScale() {
+        let geometry = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: CGSize(width: 2448, height: 1408),
+            requestedStreamScale: 752.0 / 2448.0,
+            disableResolutionCap: true
+        )
+
+        let aspect = geometry.encodedPixelSize.width / geometry.encodedPixelSize.height
+        let baseAspect = 2448.0 / 1408.0
+        #expect(geometry.encodedPixelSize == CGSize(width: 752, height: 432))
+        #expect(geometry.encodedPixelSize != CGSize(width: 736, height: 416))
+        #expect(abs(aspect - baseAspect) / baseAspect < 0.002)
+    }
 }

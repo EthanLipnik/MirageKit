@@ -149,8 +149,34 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(action == .none)
     }
 
-    @Test("Sustained severe 60fps client collapse can reduce encoded size")
-    func sustainedSevere60FPSClientCollapseCanReduceEncodedSize() {
+    @Test("Report-like 60fps presentation bound preserve priority holds resolution")
+    func reportLike60FPSPresentationBoundPreservePriorityHoldsResolution() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 2448,
+            height: 1408,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+        snapshot.decodedFPS = 60
+        snapshot.layerEnqueueFPS = 45
+        snapshot.uniqueLayerEnqueueFPS = 45
+        snapshot.clientOverwrittenPendingFrames = 4
+        snapshot.clientDisplayLayerNotReadyCount = 3
+        snapshot.clientPendingFrameAgeMs = 72
+
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
+            snapshot: snapshot,
+            minimumTargetFrameRate: 60,
+            adaptivePriority: .preserveResolutionAndBitrate
+        )
+
+        #expect(action == .none)
+    }
+
+    @Test("Smoothness priority severe 60fps client collapse can reduce encoded size")
+    func smoothnessPrioritySevere60FPSClientCollapseCanReduceEncodedSize() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -171,6 +197,7 @@ struct AutomaticDesktopWorkloadControllerTests {
                 snapshot: snapshot,
                 resizeCriticalSectionActive: false,
                 minimumTargetFrameRate: 60,
+                adaptivePriority: .prioritizeSmoothness,
                 now: CFAbsoluteTime(sample)
             )
         }
@@ -183,6 +210,47 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.encodedPixelSize.width < 3840)
         #expect(target.encodedPixelSize.height < 2160)
         #expect(reason.contains("client layer enqueue collapse"))
+    }
+
+    @Test("Presentation-bound preserve priority restores reduced resolution toward desktop baseline")
+    func presentationBoundPreservePriorityRestoresReducedResolutionTowardDesktopBaseline() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 736,
+            height: 416,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+        snapshot.decodedFPS = 60
+        snapshot.layerEnqueueFPS = 45
+        snapshot.uniqueLayerEnqueueFPS = 45
+        snapshot.clientOverwrittenPendingFrames = 4
+        snapshot.clientDisplayLayerNotReadyCount = 3
+        snapshot.clientPendingFrameAgeMs = 72
+
+        let preferredMaximumTier = MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: CGSize(width: 2448, height: 1408),
+            targetFrameRate: 60
+        )
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
+            snapshot: snapshot,
+            minimumTargetFrameRate: 60,
+            maximumTargetFrameRate: 60,
+            adaptivePriority: .preserveResolutionAndBitrate,
+            preferredMaximumTier: preferredMaximumTier
+        )
+
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected resolution restoration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(snapshot.bottleneckKind == .presentationBound)
+        #expect(target.encodedPixelSize.width > 736)
+        #expect(target.encodedPixelSize.height > 416)
+        #expect(target.pixelRate <= preferredMaximumTier.pixelRate)
+        #expect(reason.contains("resolution restoration"))
     }
 
     @Test("Clean variable ProMotion cadence above floor does not reconfigure")
@@ -560,6 +628,13 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect((downscale?.encodedPixelSize.width ?? 0) <= 2096)
         #expect((downscale?.encodedPixelSize.height ?? 0) <= 1200)
 
+        let reportScale = MirageClientService.automaticDesktopStreamScaleReconfigurationPlan(
+            targetEncodedPixelSize: CGSize(width: 752, height: 432),
+            baseDisplayPixelSize: CGSize(width: 2448, height: 1408)
+        )
+        #expect(reportScale?.encodedPixelSize == CGSize(width: 752, height: 432))
+        #expect(reportScale?.encodedPixelSize != CGSize(width: 736, height: 416))
+
         let fullQuality = MirageClientService.automaticDesktopStreamScaleReconfigurationPlan(
             targetEncodedPixelSize: CGSize(width: 2560, height: 1440),
             baseDisplayPixelSize: CGSize(width: 2448, height: 1408)
@@ -607,6 +682,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         maximumTargetFrameRate: Int = 60,
         minimumHealthyFrameRate: Int? = nil,
         adaptivePriority: MirageAdaptiveQualityPriority = .preserveResolutionAndBitrate,
+        preferredMaximumTier: MirageAutomaticDesktopWorkloadTier? = nil,
         startingAt start: Int = 0
     ) -> MirageAutomaticDesktopWorkloadController.Action {
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
@@ -618,6 +694,7 @@ struct AutomaticDesktopWorkloadControllerTests {
                 maximumTargetFrameRate: maximumTargetFrameRate,
                 minimumHealthyFrameRate: minimumHealthyFrameRate,
                 adaptivePriority: adaptivePriority,
+                preferredMaximumTier: preferredMaximumTier,
                 now: CFAbsoluteTime(sample)
             )
             if sampleAction != .none {

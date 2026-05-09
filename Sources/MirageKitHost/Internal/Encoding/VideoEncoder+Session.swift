@@ -74,7 +74,7 @@ extension VideoEncoder {
         pixelFormat: MiragePixelFormat? = nil
     ) -> Bool {
         guard latencyMode == .lowestLatency else { return false }
-        return standardLowLatencyUsesSunshinePolicy(
+        return usesStandardLowLatencyRateControl(
             streamKind: streamKind,
             colorDepth: colorDepth,
             pixelFormat: pixelFormat
@@ -86,7 +86,7 @@ extension VideoEncoder {
         colorDepth: MirageStreamColorDepth? = nil,
         pixelFormat: MiragePixelFormat? = nil
     ) -> Bool {
-        !standardLowLatencyUsesSunshinePolicy(
+        !usesStandardLowLatencyRateControl(
             streamKind: streamKind,
             colorDepth: colorDepth,
             pixelFormat: pixelFormat
@@ -107,7 +107,7 @@ extension VideoEncoder {
             )
     }
 
-    nonisolated static func standardLowLatencyUsesSunshinePolicy(
+    nonisolated static func usesStandardLowLatencyRateControl(
         streamKind: StreamKind,
         colorDepth: MirageStreamColorDepth? = nil,
         pixelFormat: MiragePixelFormat? = nil
@@ -782,7 +782,7 @@ extension VideoEncoder {
                 status: &status
             )
             if averageBitRateApplied {
-                // Sunshine-style VT defaults rely on bitrate + realtime + speed priority,
+                // Standard low-latency VT tuning relies on bitrate + realtime + speed priority,
                 // without forcing an ultra-tight DataRateLimits window.
                 strategy = .averageBitRateOnly
                 windowSeconds = nil
@@ -829,7 +829,7 @@ extension VideoEncoder {
 
     func applyBitrateSettingsToActiveSession() {
         guard let session = compressionSession else { return }
-        if !isProRes, Self.standardLowLatencyUsesSunshinePolicy(
+        if !isProRes, Self.usesStandardLowLatencyRateControl(
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
             pixelFormat: activePixelFormat
@@ -897,7 +897,7 @@ extension VideoEncoder {
         if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
             applyStandardLowLatencyThroughputSettings(
                 session,
-                useSunshinePolicy: standardLowLatencyTuningEnabled,
+                usesStandardLowLatencyRateControl: standardLowLatencyTuningEnabled,
                 status: &standardLowLatencyStatus
             )
         } else {
@@ -1066,7 +1066,7 @@ extension VideoEncoder {
 
     private func applyStandardLowLatencyThroughputSettings(
         _ session: VTCompressionSession,
-        useSunshinePolicy: Bool,
+        usesStandardLowLatencyRateControl: Bool,
         status: inout SessionPolicyStatus
     ) {
         applyMaximizePowerEfficiencyTracked(session, status: &status)
@@ -1077,7 +1077,7 @@ extension VideoEncoder {
             propertyName: "referenceBufferCount",
             status: &status
         )
-        guard useSunshinePolicy else { return }
+        guard usesStandardLowLatencyRateControl else { return }
         setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_AllowOpenGOP,

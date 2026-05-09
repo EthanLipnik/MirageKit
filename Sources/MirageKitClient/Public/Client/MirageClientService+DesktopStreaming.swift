@@ -304,7 +304,7 @@ public extension MirageClientService {
             failedStreamID: failedStreamID,
             reasonLabel: failure.reason.logLabel,
             logContext: "terminal startup failure"
-        )
+        ) != nil
     }
 
     internal func restartDesktopStreamAfterTerminalLiveRecoveryFailure(
@@ -315,31 +315,51 @@ public extension MirageClientService {
             failedStreamID: failedStreamID,
             reasonLabel: failure.reason.logLabel,
             logContext: "terminal live recovery failure"
-        )
+        ) != nil
     }
 
     func restartDesktopStreamAfterForegroundRecoveryFailure(
         streamID failedStreamID: StreamID,
         reason: String
     ) async -> Bool {
+        await requestDesktopStreamRestartAfterForegroundRecoveryFailure(
+            streamID: failedStreamID,
+            reason: reason
+        ) != nil
+    }
+
+    func requestDesktopStreamRestartAfterForegroundRecoveryFailure(
+        streamID failedStreamID: StreamID,
+        reason: String
+    ) async -> DesktopStreamRestartRequest? {
         await restartDesktopStreamAfterLiveFailure(
             failedStreamID: failedStreamID,
             reasonLabel: reason,
-            logContext: "foreground recovery probe failure"
+            logContext: "foreground recovery probe failure",
+            enforcesRestartLimit: false
         )
     }
 
     private func restartDesktopStreamAfterLiveFailure(
         failedStreamID: StreamID,
         reasonLabel: String,
-        logContext: String
-    ) async -> Bool {
-        guard canRestartDesktopStreamAfterTerminalStartupFailure(streamID: failedStreamID),
+        logContext: String,
+        enforcesRestartLimit: Bool = true
+    ) async -> DesktopStreamRestartRequest? {
+        guard case .connected = connectionState,
+              controlChannel != nil,
               let previousRequest = lastDesktopStreamStartRequest else {
-            return false
+            return nil
+        }
+        let hasFailedStreamActive = desktopStreamID == failedStreamID
+        guard hasFailedStreamActive || (!enforcesRestartLimit && desktopStreamID == nil) else {
+            return nil
+        }
+        guard !enforcesRestartLimit || desktopStreamRestartAttempts < desktopStreamRestartLimit else {
+            return nil
         }
 
-        let failedDesktopSessionID = desktopSessionID
+        let failedDesktopSessionID = hasFailedStreamActive ? desktopSessionID : nil
         var restartRequest = makeDesktopStreamRestartRequest(from: previousRequest)
         if controlPathSnapshot?.kind == .vpn {
             restartRequest = remoteStartupRecoveryRestartRequest(from: restartRequest)
@@ -347,7 +367,7 @@ public extension MirageClientService {
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
             "Restarting desktop stream in-session after \(logContext): " +
-                "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
+                "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts), " +
                 "reason=\(reasonLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
                 "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
         )
@@ -366,7 +386,7 @@ public extension MirageClientService {
             notifyStopReason: nil
         )
 
-        guard case .connected = connectionState else { return false }
+        guard case .connected = connectionState else { return nil }
 
         lastDesktopStreamStartRequest = restartRequest
         pendingStreamSetupRequestID = restartRequest.startupRequestID
@@ -386,11 +406,15 @@ public extension MirageClientService {
             MirageLogger.client(
                 "Desktop restart: request sent after \(logContext) for stream \(failedStreamID)"
             )
-            return true
+            return DesktopStreamRestartRequest(
+                failedStreamID: failedStreamID,
+                startupRequestID: restartRequest.startupRequestID,
+                attempt: desktopStreamRestartAttempts
+            )
         } catch {
             MirageLogger.error(.client, error: error, message: "Desktop restart failed after \(logContext): ")
             clearPendingDesktopStreamStartState()
-            return false
+            return nil
         }
     }
 

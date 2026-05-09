@@ -21,6 +21,12 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         let colorPrimaries: String?
         let transferFunction: String?
         let yCbCrMatrix: String?
+
+        func matchesBase(_ metadata: MirageRenderFramePresentationMetadata) -> Bool {
+            width == metadata.pixelWidth &&
+                height == metadata.pixelHeight &&
+                pixelFormat == metadata.pixelFormat
+        }
     }
 
     static let cmTimeScale: CMTimeScale = 1_000_000_000
@@ -39,6 +45,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var cachedFormatDescription: CMVideoFormatDescription?
     private var lastSubmittedCursor: MirageRenderCursor = .zero
     private var lastMappedPresentationTime: CMTime = .invalid
+    private var lastAppliedContentsRect: CGRect?
     private var loggedLayerFailure = false
     private var lastFrameSubmissionTime: CFTimeInterval = 0
     private var displayLayerNotReadyStartTime: CFTimeInterval = 0
@@ -62,6 +69,14 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     var hasPendingFrameForCurrentPresenter: Bool {
         guard let streamID else { return false }
         return MirageRenderStreamStore.shared.hasFrameForPresentation(
+            for: streamID,
+            after: resolvedSubmittedCursor(for: streamID)
+        )
+    }
+
+    var pendingFrameCountForCurrentPresenter: Int {
+        guard let streamID else { return 0 }
+        return MirageRenderStreamStore.shared.pendingFrameCount(
             for: streamID,
             after: resolvedSubmittedCursor(for: streamID)
         )
@@ -127,7 +142,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private func clearCurrentFrameState() {
         guard let displayLayer else { return }
         displayLayer.flushAndRemoveImage()
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        applyLayerContentsRect(CGRect(x: 0, y: 0, width: 1, height: 1), to: displayLayer)
         currentContentReferenceSize = nil
         lastSubmittedCursor = baselineCursorForCurrentStream()
         displayLayerNotReadyStartTime = 0
@@ -170,10 +185,11 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             )
         }
 
-        let pixelBuffer = presentationPixelBuffer(for: frame)
+        let presentationFrame = presentationPixelBuffer(for: frame)
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
-            from: pixelBuffer,
+            from: presentationFrame.pixelBuffer,
+            metadata: presentationFrame.metadata,
             timing: timing,
             referenceTime: referenceTime
         ) else {
@@ -193,19 +209,21 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         return .submitted
     }
 
-    private func presentationPixelBuffer(for frame: MirageRenderFrame) -> CVPixelBuffer {
+    private func presentationPixelBuffer(
+        for frame: MirageRenderFrame
+    ) -> (pixelBuffer: CVPixelBuffer, metadata: MirageRenderFramePresentationMetadata?) {
         guard let contentRectOverride else {
-            updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
-            return frame.pixelBuffer
+            updateLayerContentRect(frame.presentationMetadata)
+            return (frame.pixelBuffer, frame.presentationMetadata)
         }
 
         guard let cropResult = pixelBufferCropper.crop(frame.pixelBuffer, to: contentRectOverride) else {
             updateLayerContentRect(contentRectOverride, pixelBuffer: frame.pixelBuffer)
-            return frame.pixelBuffer
+            return (frame.pixelBuffer, nil)
         }
 
         resetLayerContentRect(to: cropResult.contentRect)
-        return cropResult.pixelBuffer
+        return (cropResult.pixelBuffer, nil)
     }
 
     private func resetSequenceTrackingState() {
@@ -251,7 +269,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
         guard width > 0, height > 0 else {
-            displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            applyLayerContentsRect(CGRect(x: 0, y: 0, width: 1, height: 1), to: displayLayer)
             currentContentReferenceSize = nil
             return
         }
@@ -270,21 +288,34 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             width: min(max(resolvedContentRect.size.width / width, 0), 1),
             height: min(max(resolvedContentRect.size.height / height, 0), 1)
         )
-        displayLayer.contentsRect = normalized
+        applyLayerContentsRect(normalized, to: displayLayer)
+    }
+
+    private func updateLayerContentRect(_ metadata: MirageRenderFramePresentationMetadata) {
+        guard let displayLayer else { return }
+        currentContentReferenceSize = metadata.contentReferenceSize
+        applyLayerContentsRect(metadata.normalizedContentRect, to: displayLayer)
     }
 
     private func resetLayerContentRect(to contentRect: CGRect) {
         guard let displayLayer else { return }
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        applyLayerContentsRect(CGRect(x: 0, y: 0, width: 1, height: 1), to: displayLayer)
         currentContentReferenceSize = contentRect.size
+    }
+
+    private func applyLayerContentsRect(_ rect: CGRect, to displayLayer: AVSampleBufferDisplayLayer) {
+        guard lastAppliedContentsRect != rect else { return }
+        displayLayer.contentsRect = rect
+        lastAppliedContentsRect = rect
     }
 
     private func makeSampleBuffer(
         from pixelBuffer: CVPixelBuffer,
+        metadata: MirageRenderFramePresentationMetadata?,
         timing: MirageRenderPresentationTiming,
         referenceTime: CFTimeInterval
     ) -> (sampleBuffer: CMSampleBuffer, mappedPresentationTime: CMTime)? {
-        guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
+        guard let formatDescription = formatDescription(for: pixelBuffer, metadata: metadata) else { return nil }
 
         let samplePresentationTime = mappedPresentationTime(
             referenceTime: referenceTime,
@@ -343,11 +374,21 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         return minimumPresentationTime
     }
 
-    private func formatDescription(for pixelBuffer: CVPixelBuffer) -> CMVideoFormatDescription? {
+    private func formatDescription(
+        for pixelBuffer: CVPixelBuffer,
+        metadata: MirageRenderFramePresentationMetadata?
+    ) -> CMVideoFormatDescription? {
+        if let metadata,
+           let cachedFormatKey,
+           cachedFormatKey.matchesBase(metadata),
+           let cachedFormatDescription {
+            return cachedFormatDescription
+        }
+
         let key = PixelBufferFormatKey(
-            width: CVPixelBufferGetWidth(pixelBuffer),
-            height: CVPixelBufferGetHeight(pixelBuffer),
-            pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
+            width: metadata?.pixelWidth ?? CVPixelBufferGetWidth(pixelBuffer),
+            height: metadata?.pixelHeight ?? CVPixelBufferGetHeight(pixelBuffer),
+            pixelFormat: metadata?.pixelFormat ?? CVPixelBufferGetPixelFormatType(pixelBuffer),
             colorPrimaries: bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey),
             transferFunction: bufferAttachmentString(pixelBuffer, key: kCVImageBufferTransferFunctionKey),
             yCbCrMatrix: bufferAttachmentString(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey)

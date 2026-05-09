@@ -27,6 +27,18 @@ private extension StreamController {
 
 @Suite("Stream Controller Recovery", .serialized)
 struct StreamControllerRecoveryTests {
+    @Test("Receiver media feedback can be suspended during background pause")
+    func receiverMediaFeedbackCanBeSuspendedDuringBackgroundPause() async {
+        let controller = StreamController(streamID: 89, maxPayloadSize: 1200)
+
+        #expect(await controller.mediaFeedbackSuspended == false)
+        await controller.setMediaFeedbackSuspended(true)
+        #expect(await controller.mediaFeedbackSuspended)
+        await controller.setMediaFeedbackSuspended(false)
+        #expect(await controller.mediaFeedbackSuspended == false)
+        await controller.stop()
+    }
+
     @Test("Post-resize first-frame watchdog arms in recovery mode")
     func postResizeFirstFrameWatchdogArmsInRecoveryMode() async {
         let controller = StreamController(streamID: 90, maxPayloadSize: 1200)
@@ -1119,6 +1131,8 @@ struct StreamControllerRecoveryTests {
             awaitFirstPresentedFrame: true,
             firstPresentedFrameWaitReason: "application-activation-recovery"
         )
+        markSubmitted(streamID: streamID, sequence: 2)
+        await controller.markFirstFramePresented()
 
         clock.advance(by: StreamController.hardRecoveryMinimumInterval + 0.1)
         await controller.requestRecovery(

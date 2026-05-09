@@ -142,12 +142,18 @@ extension MirageHostService {
         from clientContext: ClientContext
     )
     async {
-        MirageLogger.host("Received message type: \(message.type) from \(clientContext.client.name)")
+        if Self.shouldLogReceivedControlMessageType(message.type) {
+            MirageLogger.host("Received message type: \(message.type) from \(clientContext.client.name)")
+        }
         guard let handler = controlMessageHandlers[message.type] else {
             MirageLogger.host("Unhandled message type: \(message.type)")
             return
         }
         await handler(message, clientContext)
+    }
+
+    nonisolated static func shouldLogReceivedControlMessageType(_ type: ControlMessageType) -> Bool {
+        type != .receiverMediaFeedback
     }
 
     private func handleStartStreamMessage(

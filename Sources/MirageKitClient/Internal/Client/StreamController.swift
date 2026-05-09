@@ -210,7 +210,11 @@ actor StreamController {
         let layerEnqueueFPS: Double
         let uniqueLayerEnqueueFPS: Double
         let pendingFrameCount: Int
+        let unsubmittedPendingFrameCount: Int
+        let retainedSubmittedFrameCount: Int
         let pendingFrameAgeMs: Double
+        let oldestUnsubmittedAgeMs: Double
+        let newestUnsubmittedAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let lateFrameDrops: UInt64
         let coalescedBeforeSubmitCount: UInt64
@@ -218,6 +222,8 @@ actor StreamController {
         let correctedStreamTimestampCount: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
+        let displayTickNoFrameCount: UInt64
+        let frameArrivalFallbackCount: UInt64
         let missedVSyncCount: UInt64
         let displayTickIntervalP95Ms: Double
         let displayTickIntervalP99Ms: Double
@@ -226,6 +232,17 @@ actor StreamController {
         let worstPresentationGapMs: Double
         let frameIntervalP95Ms: Double
         let frameIntervalP99Ms: Double
+        let frameIntervalMaxMs: Double
+        let displayTickIntervalMaxMs: Double
+        let renderStoreClearCount: UInt64
+        let renderGenerationBumpCount: UInt64
+        let renderMemoryTrimClearCount: UInt64
+        let presenterTimingResetCount: UInt64
+        let displayLayerLivenessResetCount: UInt64
+        let presentationRecoveryRequestCount: UInt64
+        let presentationRecoveryHandlerDispatchCount: UInt64
+        let lastRenderGenerationBumpReason: String?
+        let lastPresentationRecoveryOutcome: String?
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
         let reassemblerPendingFrameCount: Int
@@ -486,6 +503,7 @@ actor StreamController {
     var metricsTask: Task<Void, Never>?
     var mediaFeedbackTask: Task<Void, Never>?
     var mediaFeedbackSequence: UInt64 = 0
+    var mediaFeedbackSuspended = false
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let metricsDispatchInterval: Duration = .milliseconds(500)
     static let mediaFeedbackDispatchInterval: Duration = .milliseconds(75)
@@ -1371,8 +1389,18 @@ actor StreamController {
         mediaFeedbackSequence = 0
     }
 
+    func setMediaFeedbackSuspended(_ suspended: Bool) {
+        guard mediaFeedbackSuspended != suspended else { return }
+        mediaFeedbackSuspended = suspended
+        if suspended {
+            MirageLogger.client("Suspended receiver media feedback for stream \(streamID)")
+        } else {
+            MirageLogger.client("Resumed receiver media feedback for stream \(streamID)")
+        }
+    }
+
     private func dispatchMediaFeedback() async {
-        guard isRunning, !isStopping else { return }
+        guard isRunning, !isStopping, !mediaFeedbackSuspended else { return }
         let now = currentTime()
         let frameSnapshot = metricsTracker.snapshot(now: now)
         let reassemblerMetrics = reassembler.snapshotMetrics()
@@ -1431,6 +1459,7 @@ actor StreamController {
         let reassemblerMetrics = reassembler.snapshotMetrics()
         let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let renderDiagnostics = MirageRenderStreamStore.shared.diagnosticsSnapshot(for: streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(
@@ -1449,7 +1478,11 @@ actor StreamController {
             layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
             uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,
+            unsubmittedPendingFrameCount: renderTelemetry.unsubmittedPendingFrameCount,
+            retainedSubmittedFrameCount: renderTelemetry.retainedSubmittedFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+            oldestUnsubmittedAgeMs: renderTelemetry.oldestUnsubmittedAgeMs,
+            newestUnsubmittedAgeMs: renderTelemetry.newestUnsubmittedAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             lateFrameDrops: renderTelemetry.lateFrameDrops,
             coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
@@ -1457,6 +1490,8 @@ actor StreamController {
             correctedStreamTimestampCount: renderTelemetry.correctedStreamTimestampCount,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
+            displayTickNoFrameCount: renderTelemetry.displayTickNoFrameCount,
+            frameArrivalFallbackCount: renderTelemetry.frameArrivalFallbackCount,
             missedVSyncCount: renderTelemetry.missedVSyncCount,
             displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
@@ -1465,6 +1500,17 @@ actor StreamController {
             worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
             frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
             frameIntervalP99Ms: renderTelemetry.frameIntervalP99Ms,
+            frameIntervalMaxMs: renderTelemetry.frameIntervalMaxMs,
+            displayTickIntervalMaxMs: renderTelemetry.displayTickIntervalMaxMs,
+            renderStoreClearCount: renderDiagnostics.clearCount,
+            renderGenerationBumpCount: renderDiagnostics.generationBumpCount,
+            renderMemoryTrimClearCount: renderDiagnostics.memoryTrimClearCount,
+            presenterTimingResetCount: renderDiagnostics.presenterTimingResetCount,
+            displayLayerLivenessResetCount: renderDiagnostics.displayLayerLivenessResetCount,
+            presentationRecoveryRequestCount: renderDiagnostics.presentationRecoveryRequestCount,
+            presentationRecoveryHandlerDispatchCount: renderDiagnostics.presentationRecoveryHandlerDispatchCount,
+            lastRenderGenerationBumpReason: renderDiagnostics.lastGenerationBumpReason,
+            lastPresentationRecoveryOutcome: renderDiagnostics.lastPresentationRecoveryOutcome,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
             reassemblerPendingFrameCount: reassemblerMetrics.pendingFrameCount,

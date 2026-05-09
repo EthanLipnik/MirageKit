@@ -827,6 +827,61 @@ extension StreamContext {
         lastStreamStatsLogTime = now
     }
 
+    func resetStreamingStatsBaseline(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        encodedFrameCount = 0
+        idleEncodedCount = 0
+        syntheticFrameCount = 0
+        idleSkippedCount = 0
+        lastStreamStatsLogTime = now
+
+        captureIngressIntervalCount = 0
+        captureIntervalCount = 0
+        captureDroppedIntervalCount = 0
+        encodeAttemptIntervalCount = 0
+        encodeAcceptedIntervalCount = 0
+        encodeRejectedIntervalCount = 0
+        encodeErrorIntervalCount = 0
+        backpressureDropIntervalCount = 0
+        encodeSkipQueueFullIntervalCount = 0
+        encodeSkipDimensionIntervalCount = 0
+        encodeSkipInactiveIntervalCount = 0
+        encodeSkipNoSessionIntervalCount = 0
+        syntheticIntervalCount = 0
+        lastPipelineStatsLogTime = now
+    }
+
+    func seedStreamingStatsForTesting(
+        encodedFrames: UInt64,
+        captureIngressFrames: UInt64,
+        lastStreamStatsLogTime: CFAbsoluteTime,
+        lastPipelineStatsLogTime: CFAbsoluteTime,
+        shouldEncodeFrames: Bool = true
+    ) {
+        encodedFrameCount = encodedFrames
+        captureIngressIntervalCount = captureIngressFrames
+        self.lastStreamStatsLogTime = lastStreamStatsLogTime
+        self.lastPipelineStatsLogTime = lastPipelineStatsLogTime
+        self.shouldEncodeFrames = shouldEncodeFrames
+    }
+
+    func setShouldEncodeFramesForTesting(_ shouldEncodeFrames: Bool) {
+        self.shouldEncodeFrames = shouldEncodeFrames
+    }
+
+    func streamingStatsBaselineForTesting() -> (
+        encodedFrames: UInt64,
+        captureIngressFrames: UInt64,
+        lastStreamStatsLogTime: CFAbsoluteTime,
+        lastPipelineStatsLogTime: CFAbsoluteTime
+    ) {
+        (
+            encodedFrameCount,
+            captureIngressIntervalCount,
+            lastStreamStatsLogTime,
+            lastPipelineStatsLogTime
+        )
+    }
+
     private struct CaptureValidationSnapshot: Sendable {
         let pixelFormat: String
         let colorPrimaries: String?

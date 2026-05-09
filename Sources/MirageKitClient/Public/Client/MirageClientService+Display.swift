@@ -426,6 +426,12 @@ extension MirageClientService {
             )
             : nil
         let targetEncodedSize = streamScalePlan?.encodedPixelSize ?? effectiveTarget.encodedPixelSize
+        let diagnosticSuffix = Self.automaticDesktopWorkloadDiagnosticsSuffix(
+            baseDisplayPixelSize: desktopStreamResolution,
+            currentStreamScale: clampedStreamScale(),
+            plannedEncodedPixelSize: targetEncodedSize,
+            currentEncodedPixelSize: currentEncodedSize
+        )
         let needsStreamScaleChange = !Self.approximatelyEqualEncodedSize(
             currentEncodedSize,
             targetEncodedSize
@@ -440,7 +446,8 @@ extension MirageClientService {
             if needsStreamScaleChange && !allowsAutomaticStreamScale {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =
                     "deferred stream=\(streamID) reason=stream-scale-not-allowed target=\(effectiveTarget.logLabel) " +
-                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)" +
+                    diagnosticSuffix
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
                         "target \(effectiveTarget.logLabel) requires stream-scale update but host-resolution desktop " +
@@ -449,7 +456,8 @@ extension MirageClientService {
             } else if needsStreamScaleChange && streamScalePlan == nil {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =
                     "deferred stream=\(streamID) reason=display-size-missing target=\(effectiveTarget.logLabel) " +
-                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)" +
+                    diagnosticSuffix
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
                         "target \(effectiveTarget.logLabel) requires stream-scale update but desktop display size is missing"
@@ -457,7 +465,8 @@ extension MirageClientService {
             } else {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =
                     "deferred stream=\(streamID) reason=no-change target=\(effectiveTarget.logLabel) " +
-                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)" +
+                    diagnosticSuffix
             }
             return false
         }
@@ -481,7 +490,8 @@ extension MirageClientService {
             "requested stream=\(streamID) target=\(effectiveTarget.logLabel) " +
             "frameRate=\(decision.shouldChangeFrameRate) streamScale=\(decision.shouldChangeStreamScale) " +
             "scale=\(streamScalePlan.map { String(format: "%.3f", $0.streamScale) } ?? "nil") " +
-            "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
+            "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)" +
+            diagnosticSuffix
         return true
     }
 
@@ -511,16 +521,70 @@ extension MirageClientService {
         let targetPixelSize = MirageStreamGeometry.alignedEncodedSize(targetEncodedPixelSize)
         let widthScale = targetPixelSize.width / basePixelSize.width
         let heightScale = targetPixelSize.height / basePixelSize.height
-        let streamScale = MirageStreamGeometry.clampStreamScale(min(1.0, widthScale, heightScale))
-        let resolvedPlan = MirageStreamGeometry.resolveEncodedPlan(
+        let preferredScale = MirageStreamGeometry.clampStreamScale(min(1.0, max(widthScale, heightScale)))
+        var resolvedPlan = MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: basePixelSize,
-            requestedStreamScale: streamScale,
+            requestedStreamScale: preferredScale,
             disableResolutionCap: true
         )
+        if !Self.encodedPixelSize(resolvedPlan.encodedPixelSize, fitsWithin: targetPixelSize) {
+            let fallbackScale = MirageStreamGeometry.clampStreamScale(min(1.0, widthScale, heightScale))
+            resolvedPlan = MirageStreamGeometry.resolveEncodedPlan(
+                basePixelSize: basePixelSize,
+                requestedStreamScale: fallbackScale,
+                disableResolutionCap: true
+            )
+        }
         return AutomaticDesktopStreamScalePlan(
             streamScale: resolvedPlan.resolvedStreamScale,
             encodedPixelSize: resolvedPlan.encodedPixelSize
         )
+    }
+
+    private nonisolated static func encodedPixelSize(_ size: CGSize, fitsWithin limit: CGSize) -> Bool {
+        size.width <= limit.width && size.height <= limit.height
+    }
+
+    private nonisolated static func automaticDesktopWorkloadDiagnosticsSuffix(
+        baseDisplayPixelSize: CGSize?,
+        currentStreamScale: CGFloat,
+        plannedEncodedPixelSize: CGSize,
+        currentEncodedPixelSize: CGSize
+    ) -> String {
+        let basePixelSize = baseDisplayPixelSize.map(MirageStreamGeometry.alignedEncodedSize)
+        let baseText = basePixelSize.map(Self.formatDiagnosticSize) ?? "nil"
+        let plannedAspectDelta = aspectDeltaPercent(plannedEncodedPixelSize, relativeTo: basePixelSize)
+        let currentAspectDelta = aspectDeltaPercent(currentEncodedPixelSize, relativeTo: basePixelSize)
+        return " base=\(baseText)" +
+            " currentScale=\(String(format: "%.3f", currentStreamScale))" +
+            " planned=\(formatDiagnosticSize(plannedEncodedPixelSize))" +
+            " actual=\(formatDiagnosticSize(currentEncodedPixelSize))" +
+            " plannedAspectDelta=\(formatDiagnosticPercent(plannedAspectDelta))" +
+            " actualAspectDelta=\(formatDiagnosticPercent(currentAspectDelta))"
+    }
+
+    private nonisolated static func formatDiagnosticSize(_ size: CGSize) -> String {
+        guard size.width > 0, size.height > 0 else { return "nil" }
+        return "\(Int(size.width))x\(Int(size.height))"
+    }
+
+    private nonisolated static func aspectDeltaPercent(_ size: CGSize, relativeTo baseSize: CGSize?) -> Double? {
+        guard let baseSize,
+              size.width > 0,
+              size.height > 0,
+              baseSize.width > 0,
+              baseSize.height > 0 else {
+            return nil
+        }
+        let aspect = size.width / size.height
+        let baseAspect = baseSize.width / baseSize.height
+        guard baseAspect > 0 else { return nil }
+        return abs((aspect / baseAspect) - 1.0) * 100.0
+    }
+
+    private nonisolated static func formatDiagnosticPercent(_ value: Double?) -> String {
+        guard let value else { return "nil" }
+        return String(format: "%.3f%%", value)
     }
 
     struct AutomaticDesktopWorkloadReconfigurationDecision: Equatable {

@@ -20,14 +20,20 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var layerEnqueueFPS: Double
     public var uniqueLayerEnqueueFPS: Double
     public var pendingFrameCount: Int
+    public var clientUnsubmittedPendingFrameCount: Int
+    public var clientRetainedSubmittedFrameCount: Int
     public var clientPendingFrameAgeMs: Double
+    public var clientOldestUnsubmittedAgeMs: Double
+    public var clientNewestUnsubmittedAgeMs: Double
     public var clientOverwrittenPendingFrames: UInt64
     public var clientLateFrameDrops: UInt64
-    package var clientCoalescedBeforeSubmitCount: UInt64
+    public internal(set) var clientCoalescedBeforeSubmitCount: UInt64
     package var clientDuplicateRemoteTimestampCount: UInt64
     package var clientCorrectedStreamTimestampCount: UInt64
     public var clientDisplayLayerNotReadyCount: UInt64
     public var clientRepeatedFrameCount: UInt64
+    public var clientDisplayTickNoFrameCount: UInt64
+    public var clientFrameArrivalFallbackCount: UInt64
     public var clientMissedVSyncCount: UInt64
     public var clientDisplayTickIntervalP95Ms: Double
     public var clientDisplayTickIntervalP99Ms: Double
@@ -36,6 +42,21 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientWorstPresentationGapMs: Double
     public var clientFrameIntervalP95Ms: Double
     public var clientFrameIntervalP99Ms: Double
+    public var clientFrameIntervalMaxMs: Double
+    public var clientDisplayTickIntervalMaxMs: Double
+    public internal(set) var clientAudioStaleVideoGateCount: UInt64
+    public internal(set) var clientAudioStaleVideoSoftHoldCount: UInt64
+    public internal(set) var clientAudioStaleVideoConfirmedGateCount: UInt64
+    public internal(set) var clientAudioStaleVideoMaxSnapshotAgeMs: Double
+    public internal(set) var clientRenderStoreClearCount: UInt64
+    public internal(set) var clientRenderGenerationBumpCount: UInt64
+    public internal(set) var clientRenderMemoryTrimClearCount: UInt64
+    public internal(set) var clientPresenterTimingResetCount: UInt64
+    public internal(set) var clientDisplayLayerLivenessResetCount: UInt64
+    public internal(set) var clientPresentationRecoveryRequestCount: UInt64
+    public internal(set) var clientPresentationRecoveryHandlerDispatchCount: UInt64
+    public internal(set) var clientLastRenderGenerationBumpReason: String?
+    public internal(set) var clientLastPresentationRecoveryOutcome: String?
     public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
     public var clientReassemblerPendingFrameCount: Int
@@ -173,11 +194,17 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         layerEnqueueFPS: Double = 0,
         uniqueLayerEnqueueFPS: Double = 0,
         pendingFrameCount: Int = 0,
+        clientUnsubmittedPendingFrameCount: Int = 0,
+        clientRetainedSubmittedFrameCount: Int = 0,
         clientPendingFrameAgeMs: Double = 0,
+        clientOldestUnsubmittedAgeMs: Double = 0,
+        clientNewestUnsubmittedAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
         clientLateFrameDrops: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
         clientRepeatedFrameCount: UInt64 = 0,
+        clientDisplayTickNoFrameCount: UInt64 = 0,
+        clientFrameArrivalFallbackCount: UInt64 = 0,
         clientMissedVSyncCount: UInt64 = 0,
         clientDisplayTickIntervalP95Ms: Double = 0,
         clientDisplayTickIntervalP99Ms: Double = 0,
@@ -186,6 +213,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientWorstPresentationGapMs: Double = 0,
         clientFrameIntervalP95Ms: Double = 0,
         clientFrameIntervalP99Ms: Double = 0,
+        clientFrameIntervalMaxMs: Double = 0,
+        clientDisplayTickIntervalMaxMs: Double = 0,
         decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
         clientReassemblerPendingFrameCount: Int = 0,
@@ -238,7 +267,11 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.layerEnqueueFPS = layerEnqueueFPS
         self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
         self.pendingFrameCount = pendingFrameCount
+        self.clientUnsubmittedPendingFrameCount = clientUnsubmittedPendingFrameCount
+        self.clientRetainedSubmittedFrameCount = clientRetainedSubmittedFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
+        self.clientOldestUnsubmittedAgeMs = clientOldestUnsubmittedAgeMs
+        self.clientNewestUnsubmittedAgeMs = clientNewestUnsubmittedAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientLateFrameDrops = clientLateFrameDrops
         self.clientCoalescedBeforeSubmitCount = 0
@@ -246,6 +279,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientCorrectedStreamTimestampCount = 0
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
+        self.clientDisplayTickNoFrameCount = clientDisplayTickNoFrameCount
+        self.clientFrameArrivalFallbackCount = clientFrameArrivalFallbackCount
         self.clientMissedVSyncCount = clientMissedVSyncCount
         self.clientDisplayTickIntervalP95Ms = clientDisplayTickIntervalP95Ms
         self.clientDisplayTickIntervalP99Ms = clientDisplayTickIntervalP99Ms
@@ -254,6 +289,21 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientWorstPresentationGapMs = clientWorstPresentationGapMs
         self.clientFrameIntervalP95Ms = clientFrameIntervalP95Ms
         self.clientFrameIntervalP99Ms = clientFrameIntervalP99Ms
+        self.clientFrameIntervalMaxMs = clientFrameIntervalMaxMs
+        self.clientDisplayTickIntervalMaxMs = clientDisplayTickIntervalMaxMs
+        self.clientAudioStaleVideoGateCount = 0
+        self.clientAudioStaleVideoSoftHoldCount = 0
+        self.clientAudioStaleVideoConfirmedGateCount = 0
+        self.clientAudioStaleVideoMaxSnapshotAgeMs = 0
+        self.clientRenderStoreClearCount = 0
+        self.clientRenderGenerationBumpCount = 0
+        self.clientRenderMemoryTrimClearCount = 0
+        self.clientPresenterTimingResetCount = 0
+        self.clientDisplayLayerLivenessResetCount = 0
+        self.clientPresentationRecoveryRequestCount = 0
+        self.clientPresentationRecoveryHandlerDispatchCount = 0
+        self.clientLastRenderGenerationBumpReason = nil
+        self.clientLastPresentationRecoveryOutcome = nil
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
         self.clientReassemblerPendingFrameCount = clientReassemblerPendingFrameCount
@@ -355,11 +405,17 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         layerEnqueueFPS: Double,
         uniqueLayerEnqueueFPS: Double,
         pendingFrameCount: Int,
+        unsubmittedPendingFrameCount: Int = 0,
+        retainedSubmittedFrameCount: Int = 0,
         pendingFrameAgeMs: Double,
+        oldestUnsubmittedAgeMs: Double = 0,
+        newestUnsubmittedAgeMs: Double = 0,
         overwrittenPendingFrames: UInt64,
         lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
+        displayTickNoFrameCount: UInt64 = 0,
+        frameArrivalFallbackCount: UInt64 = 0,
         missedVSyncCount: UInt64 = 0,
         displayTickIntervalP95Ms: Double = 0,
         displayTickIntervalP99Ms: Double = 0,
@@ -368,6 +424,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         worstPresentationGapMs: Double = 0,
         frameIntervalP95Ms: Double = 0,
         frameIntervalP99Ms: Double = 0,
+        frameIntervalMaxMs: Double = 0,
+        displayTickIntervalMaxMs: Double = 0,
         decodeHealthy: Bool
     ) {
         lock.lock()
@@ -382,11 +440,17 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.layerEnqueueFPS = max(0, layerEnqueueFPS)
         snapshot.uniqueLayerEnqueueFPS = max(0, uniqueLayerEnqueueFPS)
         snapshot.pendingFrameCount = max(0, pendingFrameCount)
+        snapshot.clientUnsubmittedPendingFrameCount = max(0, unsubmittedPendingFrameCount)
+        snapshot.clientRetainedSubmittedFrameCount = max(0, retainedSubmittedFrameCount)
         snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
+        snapshot.clientOldestUnsubmittedAgeMs = max(0, oldestUnsubmittedAgeMs)
+        snapshot.clientNewestUnsubmittedAgeMs = max(0, newestUnsubmittedAgeMs)
         snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
         snapshot.clientLateFrameDrops = lateFrameDrops
         snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
         snapshot.clientRepeatedFrameCount = repeatedFrameCount
+        snapshot.clientDisplayTickNoFrameCount = displayTickNoFrameCount
+        snapshot.clientFrameArrivalFallbackCount = frameArrivalFallbackCount
         snapshot.clientMissedVSyncCount = missedVSyncCount
         snapshot.clientDisplayTickIntervalP95Ms = max(0, displayTickIntervalP95Ms)
         snapshot.clientDisplayTickIntervalP99Ms = max(0, displayTickIntervalP99Ms)
@@ -395,6 +459,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientWorstPresentationGapMs = max(0, worstPresentationGapMs)
         snapshot.clientFrameIntervalP95Ms = max(0, frameIntervalP95Ms)
         snapshot.clientFrameIntervalP99Ms = max(0, frameIntervalP99Ms)
+        snapshot.clientFrameIntervalMaxMs = max(0, frameIntervalMaxMs)
+        snapshot.clientDisplayTickIntervalMaxMs = max(0, displayTickIntervalMaxMs)
         snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
         snapshot.clientReassemblerPendingFrameCount = max(0, reassemblerPendingFrameCount)
@@ -559,6 +625,50 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientCoalescedBeforeSubmitCount = coalescedBeforeSubmitCount
         snapshot.clientDuplicateRemoteTimestampCount = duplicateRemoteTimestampCount
         snapshot.clientCorrectedStreamTimestampCount = correctedStreamTimestampCount
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+    }
+
+    package func updateClientAudioSyncDiagnostics(
+        streamID: StreamID,
+        staleVideoGateCount: UInt64,
+        staleVideoSoftHoldCount: UInt64,
+        staleVideoConfirmedGateCount: UInt64,
+        staleVideoMaxSnapshotAgeMs: Double
+    ) {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.clientAudioStaleVideoGateCount = staleVideoGateCount
+        snapshot.clientAudioStaleVideoSoftHoldCount = staleVideoSoftHoldCount
+        snapshot.clientAudioStaleVideoConfirmedGateCount = staleVideoConfirmedGateCount
+        snapshot.clientAudioStaleVideoMaxSnapshotAgeMs = max(0, staleVideoMaxSnapshotAgeMs)
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+    }
+
+    package func updateClientPresentationDiagnostics(
+        streamID: StreamID,
+        renderStoreClearCount: UInt64,
+        renderGenerationBumpCount: UInt64,
+        renderMemoryTrimClearCount: UInt64,
+        presenterTimingResetCount: UInt64,
+        displayLayerLivenessResetCount: UInt64,
+        presentationRecoveryRequestCount: UInt64,
+        presentationRecoveryHandlerDispatchCount: UInt64,
+        lastRenderGenerationBumpReason: String?,
+        lastPresentationRecoveryOutcome: String?
+    ) {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.clientRenderStoreClearCount = renderStoreClearCount
+        snapshot.clientRenderGenerationBumpCount = renderGenerationBumpCount
+        snapshot.clientRenderMemoryTrimClearCount = renderMemoryTrimClearCount
+        snapshot.clientPresenterTimingResetCount = presenterTimingResetCount
+        snapshot.clientDisplayLayerLivenessResetCount = displayLayerLivenessResetCount
+        snapshot.clientPresentationRecoveryRequestCount = presentationRecoveryRequestCount
+        snapshot.clientPresentationRecoveryHandlerDispatchCount = presentationRecoveryHandlerDispatchCount
+        snapshot.clientLastRenderGenerationBumpReason = lastRenderGenerationBumpReason
+        snapshot.clientLastPresentationRecoveryOutcome = lastPresentationRecoveryOutcome
         metricsByStream[streamID] = snapshot
         lock.unlock()
     }

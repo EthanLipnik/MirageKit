@@ -138,6 +138,91 @@ struct MirageSampleBufferPresentationPipelineTests {
         #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .noPendingFrame)
     }
 
+    @Test("Repeated identical layout does not trigger duplicate immediate submission")
+    func repeatedIdenticalLayoutDoesNotTriggerDuplicateImmediateSubmission() {
+        let streamID: StreamID = 247
+        let layer = AVSampleBufferDisplayLayer()
+        let pipeline = makePipeline(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            pipeline.applyConfiguration(configuration(streamID: nil))
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        pipeline.applyConfiguration(configuration(streamID: streamID))
+        let first = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        pipeline.layoutDisplayLayer(bounds: CGRect(x: 0, y: 0, width: 8, height: 8), scale: 1)
+
+        let firstSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(firstSnapshot.cursor == first.cursor)
+
+        let second = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: 2,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+        pipeline.layoutDisplayLayer(
+            bounds: CGRect(x: 0, y: 0, width: 8, height: 8),
+            scale: 1,
+            metricsContext: MirageDrawableMetricsContext(
+                screenPointSize: CGSize(width: 16, height: 16),
+                screenScale: 2,
+                screenNativePixelSize: CGSize(width: 32, height: 32),
+                screenNativeScale: 2
+            )
+        )
+
+        let secondSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(secondSnapshot.cursor == first.cursor)
+        #expect(MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: first.cursor))
+        #expect(second.cursor.isAfter(first.cursor))
+    }
+
+    @Test("Presenter caches contentsRect and preserves rect reset behavior")
+    func presenterCachesContentsRectAndPreservesRectResetBehavior() {
+        let streamID: StreamID = 248
+        let layer = AVSampleBufferDisplayLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let presenter = MirageSampleBufferPresenter(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            presenter.setStreamID(nil)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        presenter.setStreamID(streamID)
+        MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 4, height: 8),
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+        #expect(layer.contentsRect == CGRect(x: 0, y: 0, width: 0.5, height: 1))
+
+        MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 4, y: 0, width: 4, height: 8),
+            decodeTime: 2,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+        #expect(layer.contentsRect == CGRect(x: 0.5, y: 0, width: 0.5, height: 1))
+
+        presenter.resetPresentationState()
+        #expect(layer.contentsRect == CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
     private func makePipeline(
         displayLayer: AVSampleBufferDisplayLayer,
         startDisplayClock: @escaping MirageSampleBufferPresentationPipeline.StartDisplayClock = { _, _ in },

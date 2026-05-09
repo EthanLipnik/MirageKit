@@ -127,6 +127,8 @@ struct RenderFrameQueueSPSCTests {
         #expect(telemetry.layerEnqueueFPS >= 1)
         #expect(telemetry.uniqueLayerEnqueueFPS >= 1)
         #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.unsubmittedPendingFrameCount == 0)
+        #expect(telemetry.retainedSubmittedFrameCount == 2)
         #expect(telemetry.overwrittenPendingFrames == 1)
         #expect(telemetry.displayLayerNotReadyCount == 1)
         #expect(telemetry.targetFPS == 60)
@@ -376,6 +378,134 @@ struct RenderFrameQueueSPSCTests {
 
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: result.cursor) == 0)
+    }
+
+    @Test("Display tick selection submits single pending frame and keeps one future frame")
+    func displayTickSelectionSubmitsSinglePendingFrameAndKeepsOneFutureFrame() {
+        let streamID: StreamID = 316
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        let first = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        let baseline = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        let singlePendingSelection = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: baseline
+        )
+        #expect(singlePendingSelection?.cursor == first.cursor)
+
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: first.cursor,
+            mappedPresentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+
+        let second = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+        let future = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 3,
+            presentationTime: CMTime(value: 3, timescale: 60),
+            for: streamID
+        )
+
+        let backlogSelection = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: first.cursor
+        )
+
+        #expect(backlogSelection?.cursor == second.cursor)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: second.cursor) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor == second.cursor)
+        #expect(future.cursor.isAfter(second.cursor))
+    }
+
+    @Test("Pending frame cursor fast path matches selection semantics")
+    func pendingFrameCursorFastPathMatchesSelectionSemantics() {
+        let streamID: StreamID = 315
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        let retainedFirst = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+        let retainedSecond = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 3,
+            presentationTime: CMTime(value: 3, timescale: 60),
+            for: streamID
+        )
+        let baseline = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: baseline))
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: baseline) == 2)
+
+        let firstSelected = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: baseline
+        )
+        #expect(firstSelected?.cursor == retainedFirst.cursor)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: firstSelected?.cursor ?? baseline) == 1)
+
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: retainedFirst.cursor,
+            mappedPresentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+        #expect(MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: retainedFirst.cursor))
+
+        let secondSelected = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: retainedFirst.cursor
+        )
+        #expect(secondSelected?.cursor == retainedSecond.cursor)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: retainedSecond.cursor) == 0)
+        #expect(!MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: retainedSecond.cursor))
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        let newGenerationFrame = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 4,
+            presentationTime: CMTime(value: 4, timescale: 60),
+            for: streamID
+        )
+
+        #expect(newGenerationFrame.cursor.generation > retainedSecond.cursor.generation)
+        #expect(MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: retainedSecond.cursor))
+        #expect(
+            MirageRenderStreamStore.shared.frameForPresentation(
+                for: streamID,
+                after: retainedSecond.cursor
+            )?.cursor == newGenerationFrame.cursor
+        )
     }
 
     @Test("Diagnostics retain cumulative render reset and recovery counters")

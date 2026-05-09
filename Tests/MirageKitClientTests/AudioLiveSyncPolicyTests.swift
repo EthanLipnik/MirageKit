@@ -88,6 +88,46 @@ struct AudioLiveSyncPolicyTests {
         #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
     }
 
+    @Test("Single stale video decision becomes soft hold after presentation")
+    func singleStaleVideoDecisionBecomesSoftHoldAfterPresentation() {
+        let frames = [
+            makeFrame(timestampNs: 1_000_000_000),
+            makeFrame(timestampNs: 1_100_000_000),
+            makeFrame(timestampNs: 1_200_000_000),
+        ]
+        let staleDecision = LiveAudioSyncPolicy.decide(
+            frames: frames,
+            videoState: .staleAfterPresentation,
+            liveTailDurationSeconds: 0.150
+        )
+
+        let decision = MirageClientService.audioDecisionAfterStaleVideoHysteresis(
+            staleDecision,
+            confirmGate: false
+        )
+
+        #expect(!decision.shouldGatePlayback)
+        #expect(decision.reason == "stale-video-presentation-soft")
+        #expect(decision.droppedCount == 1)
+        #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
+    }
+
+    @Test("Stale video gate confirmation requires repeated stale decisions or hard age")
+    func staleVideoGateConfirmationRequiresRepeatedStaleDecisionsOrHardAge() {
+        #expect(!MirageClientService.shouldConfirmStaleVideoGate(
+            consecutiveDecisionCount: 1,
+            staleSnapshotAgeSeconds: 0.300
+        ))
+        #expect(MirageClientService.shouldConfirmStaleVideoGate(
+            consecutiveDecisionCount: 2,
+            staleSnapshotAgeSeconds: 0.300
+        ))
+        #expect(MirageClientService.shouldConfirmStaleVideoGate(
+            consecutiveDecisionCount: 1,
+            staleSnapshotAgeSeconds: 0.750
+        ))
+    }
+
     @Test("Policy resumes near live video without gate")
     func policyResumesAgainstFreshVideo() {
         let frames = [

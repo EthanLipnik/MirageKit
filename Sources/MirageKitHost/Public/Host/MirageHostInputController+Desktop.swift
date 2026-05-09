@@ -18,6 +18,8 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Desktop Input Handling
 
+    private nonisolated static let desktopPointerWarpDiagnosticCornerInset: CGFloat = 24
+
     nonisolated static func desktopInjectionCursorPosition(
         fromCocoaScreenPosition position: CGPoint,
         primaryDisplayHeight: CGFloat
@@ -58,6 +60,79 @@ extension MirageHostInputController {
         }
     }
 
+    nonisolated static func shouldLogDesktopPointerWarpDiagnostic(point: CGPoint, bounds: CGRect) -> Bool {
+        let inset = desktopPointerWarpDiagnosticCornerInset
+        let nearLeft = point.x <= bounds.minX + inset
+        let nearRight = point.x >= bounds.maxX - inset
+        let nearTop = point.y <= bounds.minY + inset
+        let nearBottom = point.y >= bounds.maxY - inset
+        let outsideBounds = !bounds.insetBy(dx: -inset, dy: -inset).contains(point)
+
+        return outsideBounds || ((nearLeft || nearRight) && (nearTop || nearBottom))
+    }
+
+    nonisolated static func logDesktopPointerWarpDiagnostic(
+        source: String,
+        type: CGEventType,
+        normalizedLocation: CGPoint,
+        point: CGPoint,
+        currentCursorPosition: CGPoint,
+        bounds: CGRect
+    ) {
+        guard shouldLogDesktopPointerWarpDiagnostic(point: point, bounds: bounds) else { return }
+
+        let distance = hypot(point.x - currentCursorPosition.x, point.y - currentCursorPosition.y)
+        MirageLogger.host(
+            "Desktop pointer warp diagnostic source=\(source) type=\(desktopPointerWarpEventTypeDescription(type)) " +
+                "normalized=\(desktopPointerWarpPointDescription(normalizedLocation)) " +
+                "target=\(desktopPointerWarpPointDescription(point)) " +
+                "current=\(desktopPointerWarpPointDescription(currentCursorPosition)) " +
+                "bounds=\(desktopPointerWarpRectDescription(bounds)) " +
+                "distance=\(desktopPointerWarpScalarDescription(distance)) " +
+                "pid=\(ProcessInfo.processInfo.processIdentifier)"
+        )
+    }
+
+    private nonisolated static func desktopPointerWarpEventTypeDescription(_ type: CGEventType) -> String {
+        switch type {
+        case .leftMouseDown:
+            "leftMouseDown"
+        case .leftMouseUp:
+            "leftMouseUp"
+        case .rightMouseDown:
+            "rightMouseDown"
+        case .rightMouseUp:
+            "rightMouseUp"
+        case .otherMouseDown:
+            "otherMouseDown"
+        case .otherMouseUp:
+            "otherMouseUp"
+        case .mouseMoved:
+            "mouseMoved"
+        case .leftMouseDragged:
+            "leftMouseDragged"
+        case .rightMouseDragged:
+            "rightMouseDragged"
+        case .otherMouseDragged:
+            "otherMouseDragged"
+        default:
+            "rawValue(\(type.rawValue))"
+        }
+    }
+
+    private nonisolated static func desktopPointerWarpPointDescription(_ point: CGPoint) -> String {
+        "(\(desktopPointerWarpScalarDescription(point.x)),\(desktopPointerWarpScalarDescription(point.y)))"
+    }
+
+    private nonisolated static func desktopPointerWarpRectDescription(_ rect: CGRect) -> String {
+        "origin=\(desktopPointerWarpPointDescription(rect.origin)) " +
+            "size=(\(desktopPointerWarpScalarDescription(rect.width)),\(desktopPointerWarpScalarDescription(rect.height)))"
+    }
+
+    private nonisolated static func desktopPointerWarpScalarDescription(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+
     /// Handle input events for desktop streaming.
     /// - Parameters:
     ///   - event: The input event received from the client.
@@ -79,30 +154,30 @@ extension MirageHostInputController {
             case let .mouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.leftMouseDown, e, requestedPoint: point)
+                injectDesktopPointerEvent(.leftMouseDown, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .mouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.leftMouseUp, e, at: point)
             case let .rightMouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.rightMouseDown, e, requestedPoint: point)
+                injectDesktopPointerEvent(.rightMouseDown, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .rightMouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.rightMouseUp, e, requestedPoint: point)
+                injectDesktopPointerEvent(.rightMouseUp, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .otherMouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.otherMouseDown, e, requestedPoint: point)
+                injectDesktopPointerEvent(.otherMouseDown, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .otherMouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.otherMouseUp, e, at: point)
             case let .mouseMoved(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.mouseMoved, e, requestedPoint: point)
+                injectDesktopPointerEvent(.mouseMoved, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .mouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.leftMouseDragged, e, requestedPoint: point)
+                injectDesktopPointerEvent(.leftMouseDragged, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .pointerSampleBatch(batch):
                 if batch.phase == .began {
                     clearUnexpectedSystemModifiers(domain: .hid)
@@ -110,10 +185,10 @@ extension MirageHostInputController {
                 injectDesktopPointerSampleBatch(batch, bounds: bounds)
             case let .rightMouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.rightMouseDragged, e, requestedPoint: point)
+                injectDesktopPointerEvent(.rightMouseDragged, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .otherMouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopPointerEvent(.otherMouseDragged, e, requestedPoint: point)
+                injectDesktopPointerEvent(.otherMouseDragged, e, requestedPoint: point, normalizedLocation: e.location, bounds: bounds)
             case let .scrollWheel(e):
                 injectDesktopScrollEvent(e, bounds: bounds)
             case let .magnify(e):
@@ -152,7 +227,9 @@ extension MirageHostInputController {
     private func injectDesktopPointerEvent(
         _ type: CGEventType,
         _ event: MirageMouseEvent,
-        requestedPoint: CGPoint
+        requestedPoint: CGPoint,
+        normalizedLocation: CGPoint,
+        bounds: CGRect
     ) {
         let currentCursorPosition = Self.desktopInjectionCursorPosition(
             fromCocoaScreenPosition: NSEvent.mouseLocation,
@@ -164,6 +241,14 @@ extension MirageHostInputController {
             currentCursorPosition: currentCursorPosition
         )
         if Self.shouldWarpDesktopPointerEvent(type) {
+            Self.logDesktopPointerWarpDiagnostic(
+                source: "desktop-pointer",
+                type: type,
+                normalizedLocation: normalizedLocation,
+                point: point,
+                currentCursorPosition: currentCursorPosition,
+                bounds: bounds
+            )
             CGWarpMouseCursorPosition(point)
         }
         injectDesktopMouseEvent(type, event, at: point)

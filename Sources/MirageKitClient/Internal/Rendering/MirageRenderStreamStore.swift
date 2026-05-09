@@ -58,7 +58,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let layerEnqueueFPS: Double
         let uniqueLayerEnqueueFPS: Double
         let pendingFrameCount: Int
+        let unsubmittedPendingFrameCount: Int
+        let retainedSubmittedFrameCount: Int
         let pendingFrameAgeMs: Double
+        let oldestUnsubmittedAgeMs: Double
+        let newestUnsubmittedAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let lateFrameDrops: UInt64
         let coalescedBeforeSubmitCount: UInt64
@@ -66,6 +70,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let correctedStreamTimestampCount: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
+        let displayTickNoFrameCount: UInt64
+        let frameArrivalFallbackCount: UInt64
         let missedVSyncCount: UInt64
         let displayTickIntervalP95Ms: Double
         let displayTickIntervalP99Ms: Double
@@ -74,6 +80,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let worstPresentationGapMs: Double
         let frameIntervalP95Ms: Double
         let frameIntervalP99Ms: Double
+        let frameIntervalMaxMs: Double
+        let displayTickIntervalMaxMs: Double
         let decodeHealthy: Bool
         let severeDecodeUnderrun: Bool
         let sourceTargetFPS: Int
@@ -135,6 +143,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var correctedStreamTimestampsSinceLastSnapshot: UInt64 = 0
         var displayLayerNotReadyCountSinceLastSnapshot: UInt64 = 0
         var repeatedFrameCountSinceLastSnapshot: UInt64 = 0
+        var displayTickNoFrameCountSinceLastSnapshot: UInt64 = 0
+        var frameArrivalFallbackCountSinceLastSnapshot: UInt64 = 0
         var missedVSyncCountSinceLastSnapshot: UInt64 = 0
         var presentationStallCountSinceLastSnapshot: UInt64 = 0
         var worstPresentationGapMsSinceLastSnapshot: Double = 0
@@ -202,6 +212,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let frame = MirageRenderFrame(
             pixelBuffer: pixelBuffer,
             contentRect: contentRect,
+            presentationMetadata: MirageRenderFramePresentationMetadata(
+                pixelBuffer: pixelBuffer,
+                contentRect: contentRect
+            ),
             cursor: cursor,
             decodeTime: decodeTime,
             presentationTime: presentationTime,
@@ -301,7 +315,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func hasFrameForPresentation(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> Bool {
         guard let state = streamStateIfPresent(for: streamID) else { return false }
         state.lock.lock()
-        let hasFrame = state.pendingFrames.contains { $0.cursor.isAfter(submittedCursor) }
+        let hasFrame = state.pendingFrames.last?.cursor.isAfter(submittedCursor) ?? false
         state.lock.unlock()
         return hasFrame
     }
@@ -325,6 +339,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func pendingFrameCount(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> Int {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
         state.lock.lock()
+        guard state.pendingFrames.last?.cursor.isAfter(submittedCursor) == true else {
+            state.lock.unlock()
+            return 0
+        }
         let count = state.pendingFrames.reduce(into: 0) { result, frame in
             if frame.cursor.isAfter(submittedCursor) {
                 result += 1
@@ -409,6 +427,20 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         if state.lastSubmittedSequence > 0 {
             state.repeatedFrameCountSinceLastSnapshot &+= 1
         }
+        state.lock.unlock()
+    }
+
+    func noteDisplayTickWithoutFrame(for streamID: StreamID) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.displayTickNoFrameCountSinceLastSnapshot &+= 1
+        state.lock.unlock()
+    }
+
+    func noteFrameArrivalFallback(for streamID: StreamID) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.frameArrivalFallbackCountSinceLastSnapshot &+= 1
         state.lock.unlock()
     }
 
@@ -563,7 +595,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 layerEnqueueFPS: 0,
                 uniqueLayerEnqueueFPS: 0,
                 pendingFrameCount: 0,
+                unsubmittedPendingFrameCount: 0,
+                retainedSubmittedFrameCount: 0,
                 pendingFrameAgeMs: 0,
+                oldestUnsubmittedAgeMs: 0,
+                newestUnsubmittedAgeMs: 0,
                 overwrittenPendingFrames: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
@@ -571,6 +607,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 correctedStreamTimestampCount: 0,
                 displayLayerNotReadyCount: 0,
                 repeatedFrameCount: 0,
+                displayTickNoFrameCount: 0,
+                frameArrivalFallbackCount: 0,
                 missedVSyncCount: 0,
                 displayTickIntervalP95Ms: 0,
                 displayTickIntervalP99Ms: 0,
@@ -579,6 +617,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 worstPresentationGapMs: 0,
                 frameIntervalP95Ms: 0,
                 frameIntervalP99Ms: 0,
+                frameIntervalMaxMs: 0,
+                displayTickIntervalMaxMs: 0,
                 decodeHealthy: true,
                 severeDecodeUnderrun: false,
                 sourceTargetFPS: 60,
@@ -622,7 +662,27 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let layerEnqueueFPS = Double(state.submittedSamples.count - state.submittedSampleStartIndex)
         let uniqueLayerEnqueueFPS = Double(state.uniqueSubmittedSamples.count - state.uniqueSubmittedSampleStartIndex)
         let pendingFrameCount = state.pendingFrames.count
+        let lastSubmittedCursor = MirageRenderCursor(
+            generation: state.generation,
+            sequence: state.lastSubmittedSequence
+        )
+        var oldestUnsubmittedDecodeTime: CFAbsoluteTime?
+        var newestUnsubmittedDecodeTime: CFAbsoluteTime?
+        let unsubmittedPendingFrameCount = state.pendingFrames.reduce(into: 0) { result, frame in
+            if frame.cursor.isAfter(lastSubmittedCursor) {
+                result += 1
+                if oldestUnsubmittedDecodeTime == nil {
+                    oldestUnsubmittedDecodeTime = frame.decodeTime
+                }
+                newestUnsubmittedDecodeTime = frame.decodeTime
+            }
+        }
+        let retainedSubmittedFrameCount = max(0, pendingFrameCount - unsubmittedPendingFrameCount)
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
+        let oldestUnsubmittedAgeMs = oldestUnsubmittedDecodeTime
+            .map { max(0, now - $0) * 1000 } ?? 0
+        let newestUnsubmittedAgeMs = newestUnsubmittedDecodeTime
+            .map { max(0, now - $0) * 1000 } ?? 0
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
@@ -630,17 +690,21 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let correctedStreamTimestampCount = state.correctedStreamTimestampsSinceLastSnapshot
         let displayLayerNotReadyCount = state.displayLayerNotReadyCountSinceLastSnapshot
         let repeatedFrameCount = state.repeatedFrameCountSinceLastSnapshot
+        let displayTickNoFrameCount = state.displayTickNoFrameCountSinceLastSnapshot
+        let frameArrivalFallbackCount = state.frameArrivalFallbackCountSinceLastSnapshot
         let missedVSyncCount = state.missedVSyncCountSinceLastSnapshot
         let presentationStallCount = state.presentationStallCountSinceLastSnapshot
         let worstPresentationGapMs = state.worstPresentationGapMsSinceLastSnapshot
         let intervalSamples = Array(state.frameIntervalSamples[state.frameIntervalSampleStartIndex...].map(\.intervalMs))
         let frameIntervalP95Ms = percentile(intervalSamples, percentile: 0.95)
         let frameIntervalP99Ms = percentile(intervalSamples, percentile: 0.99)
+        let frameIntervalMaxMs = intervalSamples.max() ?? 0
         let displayTickIntervalSamples = Array(
             state.displayTickIntervalSamples[state.displayTickIntervalSampleStartIndex...].map(\.intervalMs)
         )
         let displayTickIntervalP95Ms = percentile(displayTickIntervalSamples, percentile: 0.95)
         let displayTickIntervalP99Ms = percentile(displayTickIntervalSamples, percentile: 0.99)
+        let displayTickIntervalMaxMs = displayTickIntervalSamples.max() ?? 0
         let playoutDelayFrames = state.playoutDelayFrames
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
@@ -649,6 +713,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.correctedStreamTimestampsSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
         state.repeatedFrameCountSinceLastSnapshot = 0
+        state.displayTickNoFrameCountSinceLastSnapshot = 0
+        state.frameArrivalFallbackCountSinceLastSnapshot = 0
         state.missedVSyncCountSinceLastSnapshot = 0
         state.presentationStallCountSinceLastSnapshot = 0
         state.worstPresentationGapMsSinceLastSnapshot = 0
@@ -667,7 +733,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             layerEnqueueFPS: layerEnqueueFPS,
             uniqueLayerEnqueueFPS: uniqueLayerEnqueueFPS,
             pendingFrameCount: pendingFrameCount,
+            unsubmittedPendingFrameCount: unsubmittedPendingFrameCount,
+            retainedSubmittedFrameCount: retainedSubmittedFrameCount,
             pendingFrameAgeMs: pendingFrameAgeMs,
+            oldestUnsubmittedAgeMs: oldestUnsubmittedAgeMs,
+            newestUnsubmittedAgeMs: newestUnsubmittedAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
@@ -675,6 +745,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             correctedStreamTimestampCount: correctedStreamTimestampCount,
             displayLayerNotReadyCount: displayLayerNotReadyCount,
             repeatedFrameCount: repeatedFrameCount,
+            displayTickNoFrameCount: displayTickNoFrameCount,
+            frameArrivalFallbackCount: frameArrivalFallbackCount,
             missedVSyncCount: missedVSyncCount,
             displayTickIntervalP95Ms: displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: displayTickIntervalP99Ms,
@@ -683,6 +755,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             worstPresentationGapMs: worstPresentationGapMs,
             frameIntervalP95Ms: frameIntervalP95Ms,
             frameIntervalP99Ms: frameIntervalP99Ms,
+            frameIntervalMaxMs: frameIntervalMaxMs,
+            displayTickIntervalMaxMs: displayTickIntervalMaxMs,
             decodeHealthy: decodeHealthy,
             severeDecodeUnderrun: severeDecodeUnderrun,
             sourceTargetFPS: sourceTargetFPS,
@@ -919,6 +993,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.correctedStreamTimestampsSinceLastSnapshot = 0
         state.displayLayerNotReadyCountSinceLastSnapshot = 0
         state.repeatedFrameCountSinceLastSnapshot = 0
+        state.displayTickNoFrameCountSinceLastSnapshot = 0
+        state.frameArrivalFallbackCountSinceLastSnapshot = 0
         state.missedVSyncCountSinceLastSnapshot = 0
         state.presentationStallCountSinceLastSnapshot = 0
         state.worstPresentationGapMsSinceLastSnapshot = 0

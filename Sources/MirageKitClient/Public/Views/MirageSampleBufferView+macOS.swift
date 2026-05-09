@@ -11,6 +11,7 @@ import MirageKit
 #if os(macOS)
 import AVFoundation
 import AppKit
+import CoreGraphics
 import QuartzCore
 
 public class MirageSampleBufferView: NSView {
@@ -67,6 +68,7 @@ public class MirageSampleBufferView: NSView {
     private let preferencesObserver = MirageUserDefaultsObserver()
     private var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayClock: MirageMacDisplayClock?
+    private var presentationDisplayTickRelay: MirageMacDisplayTickRelay?
     private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
     private var screenChangeObserver: NSObjectProtocol?
 
@@ -196,15 +198,18 @@ public class MirageSampleBufferView: NSView {
         tickHandler: @escaping MirageSampleBufferPresentationPipeline.DisplayTickHandler
     ) {
         presentationDisplayTickHandler = tickHandler
+        let displayID = currentScreenDisplayID
         if let presentationDisplayClock {
-            presentationDisplayClock.updateTargetFPS(targetFPS)
+            presentationDisplayClock.updateTargetFPS(targetFPS, displayID: displayID)
         } else {
+            let relay = MirageMacDisplayTickRelay { [weak self] referenceTime in
+                self?.presentationDisplayTickHandler?(referenceTime)
+            }
             let clock = MirageMacDisplayClock()
+            presentationDisplayTickRelay = relay
             presentationDisplayClock = clock
-            clock.start(targetFPS: targetFPS) { [weak self] referenceTime in
-                Task { @MainActor [weak self] in
-                    self?.presentationDisplayTickHandler?(referenceTime)
-                }
+            clock.start(targetFPS: targetFPS, displayID: displayID) { [weak relay] referenceTime in
+                relay?.receive(referenceTime: referenceTime)
             }
         }
     }
@@ -212,11 +217,22 @@ public class MirageSampleBufferView: NSView {
     private func stopPresentationDisplayClock() {
         presentationDisplayClock?.stop()
         presentationDisplayClock = nil
+        presentationDisplayTickRelay?.cancel()
+        presentationDisplayTickRelay = nil
         presentationDisplayTickHandler = nil
     }
 
     private func updatePresentationDisplayClockFrameRate(targetFPS: Int) {
-        presentationDisplayClock?.updateTargetFPS(targetFPS)
+        presentationDisplayClock?.updateTargetFPS(targetFPS, displayID: currentScreenDisplayID)
+    }
+
+    private var currentScreenDisplayID: CGDirectDisplayID? {
+        guard let displayID = window?.screen?.deviceDescription[
+            NSDeviceDescriptionKey("NSScreenNumber")
+        ] as? NSNumber else {
+            return nil
+        }
+        return CGDirectDisplayID(displayID.uint32Value)
     }
 
     // MARK: - Preferences
@@ -244,6 +260,7 @@ public class MirageSampleBufferView: NSView {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.applyRenderPreferences()
+                self?.presentationPipeline.requestImmediateSubmission()
             }
         }
     }

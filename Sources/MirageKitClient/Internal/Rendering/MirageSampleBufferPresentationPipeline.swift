@@ -64,6 +64,11 @@ final class MirageSampleBufferPresentationPipeline {
     private let requestPlatformLayout: () -> Void
     private let platformName: String
 
+    private struct DisplayLayerLayoutState: Equatable {
+        var bounds: CGRect
+        var scale: CGFloat
+    }
+
     private var presenter: MirageSampleBufferPresenter!
     private var presentationScheduler: MirageRenderPresentationScheduler!
     private var displayLayerReadinessRetryTask: Task<Void, Never>?
@@ -71,6 +76,8 @@ final class MirageSampleBufferPresentationPipeline {
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
     private var lastReportedDrawableMetrics: MirageDrawableMetrics?
+    private var lastDisplayLayerLayoutState: DisplayLayerLayoutState?
+    private var displayClockActive = false
 
     private static let maxDrawableWidth: CGFloat = 5120
     private static let maxDrawableHeight: CGFloat = 2880
@@ -99,6 +106,9 @@ final class MirageSampleBufferPresentationPipeline {
             },
             hasPendingFrame: { [weak presenter = presenter] in
                 presenter?.hasPendingFrameForCurrentPresenter ?? false
+            },
+            pendingFrameCount: { [weak presenter = presenter] in
+                presenter?.pendingFrameCountForCurrentPresenter ?? 0
             },
             onDisplayLayerNotReady: { [weak self] in
                 self?.armDisplayLayerReadinessRetry()
@@ -178,14 +188,24 @@ final class MirageSampleBufferPresentationPipeline {
         scale: CGFloat,
         metricsContext: MirageDrawableMetricsContext = .empty
     ) {
-        displayLayer.frame = bounds
-        displayLayer.contentsScale = scale
+        let layoutState = DisplayLayerLayoutState(
+            bounds: bounds,
+            scale: scale
+        )
+        let layoutChanged = lastDisplayLayerLayoutState != layoutState
+        if layoutChanged {
+            displayLayer.frame = bounds
+            displayLayer.contentsScale = scale
+            lastDisplayLayerLayoutState = layoutState
+        }
         reportDrawableMetricsIfChanged(
             viewSize: bounds.size,
             scaleFactor: scale,
             metricsContext: metricsContext
         )
-        requestImmediateSubmission()
+        if layoutChanged {
+            requestImmediateSubmission()
+        }
     }
 
     func suspendRendering(clearCurrentFrame: Bool = true) {
@@ -242,6 +262,7 @@ final class MirageSampleBufferPresentationPipeline {
     }
 
     func requestReadinessRetry() {
+        guard !(displayClockActive && configuration.presentationTier == .activeLive) else { return }
         presentationScheduler.requestReadinessRetry(referenceTime: CACurrentMediaTime())
     }
 
@@ -329,11 +350,13 @@ final class MirageSampleBufferPresentationPipeline {
         startDisplayClock(localFPS) { [weak self] referenceTime in
             self?.presentationScheduler.handleDisplayTick(referenceTime: referenceTime)
         }
+        displayClockActive = true
         presentationScheduler.setDisplayClockActive(true)
     }
 
     private func stopPresentationDisplayClock() {
         stopDisplayClock()
+        displayClockActive = false
         presentationScheduler.setDisplayClockActive(false)
     }
 

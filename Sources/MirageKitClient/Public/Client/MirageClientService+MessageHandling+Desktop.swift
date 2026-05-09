@@ -259,6 +259,7 @@ extension MirageClientService {
             }
             if let previousStreamID, previousStreamID != streamID {
                 desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
+                lastAutomaticDesktopWorkloadReconfigurationSummary = nil
             }
             applyRenderLatencyMode(
                 to: streamID,
@@ -276,6 +277,7 @@ extension MirageClientService {
             )
             desktopStreamStartTimeoutTask?.cancel()
             desktopStreamStartTimeoutTask = nil
+            desktopStreamRestartAttempts = 0
             if desktopStreamRequestStartTime > 0 {
                 let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStreamRequestStartTime) * 1000)
                 MirageLogger

@@ -296,7 +296,19 @@ extension FrameReassembler {
 
         // Clean up old pending frames
         let timeoutResult = cleanupOldFramesLocked()
-        if timeoutResult.shouldEnterAwaitingKeyframe {
+        var resumedAfterPFrameGap = false
+        if timeoutResult.shouldAttemptPFrameGapResume {
+            let resumeResult = resumeAfterTimedOutPFrameGapLocked()
+            resumedAfterPFrameGap = resumeResult.didResume
+            if !resumeResult.frames.isEmpty {
+                completedFrames.append(contentsOf: resumeResult.frames)
+                completionHandler = completionHandler ?? onFrameComplete
+            }
+            if let resumeLossReason = resumeResult.frameLossReason {
+                frameLossReason = frameLossReason ?? resumeLossReason
+            }
+        }
+        if timeoutResult.shouldEnterAwaitingKeyframe, !resumedAfterPFrameGap {
             enterKeyframeOnlyModeLocked()
             MirageLogger.log(
                 .frameAssembly,
@@ -305,12 +317,12 @@ extension FrameReassembler {
         }
         if timeoutResult.timedOutPFrames + timeoutResult.timedOutKeyframes > 0 {
             shouldSignalFrameLoss = true
-            frameLossReason = frameLossReason ?? timeoutResult.frameLossReason
+            frameLossReason = frameLossReason ?? (resumedAfterPFrameGap ? .timeout : timeoutResult.frameLossReason)
         }
         if timeoutResult.missingExpectedPFrameGapTimedOut, !hasSignaledGapFrameLoss {
             shouldSignalFrameLoss = true
             hasSignaledGapFrameLoss = true
-            frameLossReason = frameLossReason ?? .forwardGapTimeout
+            frameLossReason = frameLossReason ?? (resumedAfterPFrameGap ? .timeout : .forwardGapTimeout)
         }
         if !awaitingKeyframe,
            shouldPromotePendingKeyframeLocked(now: packetReceivedAt) {
@@ -382,6 +394,7 @@ extension FrameReassembler {
         let staleKeyframes: UInt64
         let missingExpectedPFrameGapTimedOut: Bool
         let shouldEnterAwaitingKeyframe: Bool
+        let shouldAttemptPFrameGapResume: Bool
 
         var frameLossReason: FrameLossReason? {
             if missingExpectedPFrameGapTimedOut {
@@ -396,6 +409,12 @@ extension FrameReassembler {
         var shouldSignalFrameLoss: Bool {
             timedOutPFrames + timedOutKeyframes > 0 || missingExpectedPFrameGapTimedOut
         }
+    }
+
+    private struct PFrameGapResumeResult {
+        let frames: [CompletedFrame]
+        let frameLossReason: FrameLossReason?
+        let didResume: Bool
     }
 
     private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
@@ -665,12 +684,15 @@ extension FrameReassembler {
         }
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
 
-        // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
-        // times out, or when a buffered forward gap persists without the expected frame ever arriving.
+        // P-frame gaps first try to resume at a fresh complete frame. If there is
+        // nothing safe to submit, fall back to keyframe-only recovery.
+        let shouldAttemptPFrameGapResume = (
+            timedOutExpectedPFrame ||
+                missingExpectedPFrameGapTimedOut
+        ) && !awaitingKeyframe
         let shouldEnterAwaitingKeyframe = (
             timedOutKeyframeCount > 0 ||
-                timedOutExpectedPFrame ||
-                missingExpectedPFrameGapTimedOut
+                shouldAttemptPFrameGapResume
         ) && !awaitingKeyframe
 
         if missingExpectedPFrameGapTimedOut {
@@ -693,8 +715,52 @@ extension FrameReassembler {
             timedOutKeyframes: timedOutKeyframeCount,
             staleKeyframes: staleKeyframeCount,
             missingExpectedPFrameGapTimedOut: missingExpectedPFrameGapTimedOut,
-            shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe
+            shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe,
+            shouldAttemptPFrameGapResume: shouldAttemptPFrameGapResume
         )
+    }
+
+    private func resumeAfterTimedOutPFrameGapLocked() -> PFrameGapResumeResult {
+        guard hasDeliveredKeyframeAnchor, !awaitingKeyframe else {
+            return PFrameGapResumeResult(frames: [], frameLossReason: nil, didResume: false)
+        }
+
+        let expectedFrame = lastCompletedFrame &+ 1
+        guard let resumeFrameNumber = earliestCompleteForwardFrameNumberLocked(),
+              isFrameNewer(resumeFrameNumber, than: expectedFrame) || resumeFrameNumber == expectedFrame else {
+            return PFrameGapResumeResult(frames: [], frameLossReason: nil, didResume: false)
+        }
+
+        if isFrameNewer(resumeFrameNumber, than: expectedFrame) {
+            let skippedFrames = resumeFrameNumber &- expectedFrame
+            MirageLogger.log(
+                .frameAssembly,
+                "Skipping timed-out P-frame gap: expected=\(expectedFrame) resume=\(resumeFrameNumber) skippedFrames=\(skippedFrames)"
+            )
+        }
+
+        lastCompletedFrame = resumeFrameNumber &- 1
+        hasSignaledGapFrameLoss = false
+        let drainResult = drainDeliverableFramesLocked()
+        return PFrameGapResumeResult(
+            frames: drainResult.frames,
+            frameLossReason: drainResult.frameLossReason,
+            didResume: !drainResult.frames.isEmpty
+        )
+    }
+
+    private func earliestCompleteForwardFrameNumberLocked() -> UInt32? {
+        pendingFrames
+            .filter { entry in
+                isFrameNewer(entry.key, than: lastCompletedFrame) && entry.value.isComplete
+            }
+            .min(by: { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.value.receivedAt < rhs.value.receivedAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            })?
+            .key
     }
 
     private func enterKeyframeOnlyModeLocked() {

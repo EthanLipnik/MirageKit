@@ -117,6 +117,22 @@ public final class MirageClientService {
         }
     }
 
+    public struct DesktopStreamRestartRequest: Sendable, Equatable {
+        public let failedStreamID: StreamID
+        public let startupRequestID: UUID
+        public let attempt: Int
+
+        public init(
+            failedStreamID: StreamID,
+            startupRequestID: UUID,
+            attempt: Int
+        ) {
+            self.failedStreamID = failedStreamID
+            self.startupRequestID = startupRequestID
+            self.attempt = attempt
+        }
+    }
+
     public nonisolated static func foregroundStreamHealthProbeDisposition(
         initial: ForegroundStreamHealthSnapshot,
         final: ForegroundStreamHealthSnapshot
@@ -802,6 +818,18 @@ public final class MirageClientService {
     let maxPendingDecodedAudioDuration: Double = 0.5
     var audioSyncDropCount: UInt64 = 0
     var audioVideoGateActiveStreamIDs: Set<StreamID> = []
+    struct AudioStaleVideoGateState: Sendable {
+        var consecutiveDecisionCount: Int
+        var maxSnapshotAgeSeconds: CFAbsoluteTime
+    }
+    struct AudioStaleVideoDiagnostics: Sendable, Equatable {
+        var gateCount: UInt64 = 0
+        var softHoldCount: UInt64 = 0
+        var confirmedGateCount: UInt64 = 0
+        var maxSnapshotAgeSeconds: CFAbsoluteTime = 0
+    }
+    var audioStaleVideoGateStateByStreamID: [StreamID: AudioStaleVideoGateState] = [:]
+    var audioStaleVideoDiagnosticsByStreamID: [StreamID: AudioStaleVideoDiagnostics] = [:]
     var lastAudioSyncDropLogTime: CFAbsoluteTime = 0
     var lastAudioSyncAheadLogTime: CFAbsoluteTime = 0
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
@@ -1220,6 +1248,22 @@ public final class MirageClientService {
                 .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP95Ms) } ?? .null,
             "client.primaryStream.receivedFrameIntervalP99Ms": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP99Ms) } ?? .null,
+            "client.primaryStream.frameIntervalMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientFrameIntervalMaxMs) } ?? .null,
+            "client.primaryStream.displayTickIntervalMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientDisplayTickIntervalMaxMs) } ?? .null,
+            "client.primaryStream.oldestUnsubmittedAgeMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientOldestUnsubmittedAgeMs) } ?? .null,
+            "client.primaryStream.newestUnsubmittedAgeMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientNewestUnsubmittedAgeMs) } ?? .null,
+            "client.primaryStream.audioStaleVideoGateCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoGateCount)) } ?? .null,
+            "client.primaryStream.audioStaleVideoSoftHoldCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoSoftHoldCount)) } ?? .null,
+            "client.primaryStream.audioStaleVideoConfirmedGateCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoConfirmedGateCount)) } ?? .null,
+            "client.primaryStream.audioStaleVideoMaxSnapshotAgeMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientAudioStaleVideoMaxSnapshotAgeMs) } ?? .null,
             "client.primaryStream.hostSendStartDelayMaxMs": primarySnapshot?.hostSendStartDelayMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostSendCompletionMaxMs": primarySnapshot?.hostSendCompletionMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostPacketPacerTotalSleepMs": primarySnapshot?.hostPacketPacerTotalSleepMs.map(LoomDiagnosticsValue.int) ?? .null,

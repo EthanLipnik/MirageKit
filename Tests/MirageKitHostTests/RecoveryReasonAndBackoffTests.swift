@@ -126,6 +126,39 @@ struct RecoveryReasonMappingTests {
         #expect(await context.softRecoveryCount == 0)
     }
 
+    @Test("Background pause resets host metrics baselines")
+    func backgroundPauseResetsHostMetricsBaselines() async {
+        let context = makeContext()
+        let oldStatsTime = CFAbsoluteTimeGetCurrent() - 120
+        await context.seedStreamingStatsForTesting(
+            encodedFrames: 120,
+            captureIngressFrames: 120,
+            lastStreamStatsLogTime: oldStatsTime,
+            lastPipelineStatsLogTime: oldStatsTime
+        )
+
+        await context.pauseForClientBackground()
+
+        let baseline = await context.streamingStatsBaselineForTesting()
+        #expect(baseline.encodedFrames == 0)
+        #expect(baseline.captureIngressFrames == 0)
+        #expect(baseline.lastStreamStatsLogTime > oldStatsTime)
+        #expect(baseline.lastPipelineStatsLogTime > oldStatsTime)
+    }
+
+    @Test("Paused streams ignore receiver media feedback")
+    func pausedStreamsIgnoreReceiverMediaFeedback() async {
+        let context = makeContext()
+        await context.setShouldEncodeFramesForTesting(true)
+        await context.recordReceiverMediaFeedback(makeFeedback(sequence: 1))
+        #expect(await context.realtimeMediaSession.latestFeedback?.sequence == 1)
+
+        await context.pauseForClientBackground()
+        await context.recordReceiverMediaFeedback(makeFeedback(sequence: 2))
+
+        #expect(await context.realtimeMediaSession.latestFeedback?.sequence == 1)
+    }
+
     private func makeContext() -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
@@ -139,6 +172,31 @@ struct RecoveryReasonMappingTests {
             windowID: 9,
             encoderConfig: encoderConfig,
             streamScale: 1.0
+        )
+    }
+
+    private func makeFeedback(sequence: UInt64) -> ReceiverMediaFeedbackMessage {
+        ReceiverMediaFeedbackMessage(
+            streamID: 9,
+            sequence: sequence,
+            sentAtUptime: 10,
+            targetFPS: 60,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 0,
+            jitterP99Ms: 0,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 60,
+            receivedFPS: 60,
+            rendererAcceptedFPS: 60,
+            rendererPresentedFPS: 60,
+            recoveryState: .idle
         )
     }
 }

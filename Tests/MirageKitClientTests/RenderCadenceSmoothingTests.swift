@@ -44,6 +44,36 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.playoutDelayFrames == 1)
     }
 
+    @Test("Render telemetry reports unsubmitted frame ages without dropping Smoothest playout")
+    func renderTelemetryReportsUnsubmittedFrameAgesWithoutDroppingSmoothestPlayout() {
+        let streamID: StreamID = 406
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 3,
+            presentationTime: CMTime(seconds: 3, preferredTimescale: 600),
+            for: streamID
+        )
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 4,
+            presentationTime: CMTime(seconds: 4, preferredTimescale: 600),
+            for: streamID
+        )
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID, now: 5)
+        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.unsubmittedPendingFrameCount == 2)
+        #expect(telemetry.oldestUnsubmittedAgeMs == 2_000)
+        #expect(telemetry.newestUnsubmittedAgeMs == 1_000)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+    }
+
     @Test("Lowest latency display tick takes the newest decoded frame")
     func lowestLatencyDisplayTickTakesNewestDecodedFrame() {
         let streamID: StreamID = 402
@@ -137,13 +167,40 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.noteDisplayTick(for: streamID)
         Thread.sleep(forTimeInterval: 0.05)
         MirageRenderStreamStore.shared.noteDisplayTick(for: streamID)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
         MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.displayTickFPS >= 2)
         #expect(telemetry.missedVSyncCount >= 1)
         #expect(telemetry.repeatedFrameCount == 1)
+        #expect(telemetry.displayTickNoFrameCount == 1)
         #expect(telemetry.displayTickIntervalP99Ms >= 40)
+        #expect(telemetry.displayTickIntervalMaxMs >= telemetry.displayTickIntervalP99Ms)
+    }
+
+    @Test("Render telemetry reports max submitted frame interval")
+    func renderTelemetryReportsMaxSubmittedFrameInterval() {
+        let streamID: StreamID = 407
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let generation = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: MirageRenderCursor(generation: generation, sequence: 1),
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+        Thread.sleep(forTimeInterval: 0.02)
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: MirageRenderCursor(generation: generation, sequence: 2),
+            mappedPresentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            for: streamID
+        )
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.frameIntervalMaxMs >= 15)
+        #expect(telemetry.frameIntervalMaxMs >= telemetry.frameIntervalP99Ms)
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {

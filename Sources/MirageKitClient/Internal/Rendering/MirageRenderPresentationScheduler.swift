@@ -22,13 +22,14 @@ final class MirageRenderPresentationScheduler {
     private let enqueueCoalescedPass: (@escaping @MainActor () -> Void) -> Void
     private let submit: @MainActor (CFTimeInterval) -> MirageRenderSubmissionResult
     private let hasPendingFrame: @MainActor () -> Bool
+    private let pendingFrameCount: @MainActor () -> Int
     private let onDisplayLayerNotReady: @MainActor () -> Void
 
     private var streamID: StreamID?
     private var presentationTier: StreamPresentationTier = .activeLive
     private var renderingSuspended = false
     private var displayClockActive = false
-    private var displayClockFramePending = false
+    private var activeLiveFrameArrivalCatchUpPending = false
     private var lastDisplayTickWallTime: CFTimeInterval = 0
 
     private var scheduledPassPending = false
@@ -48,12 +49,16 @@ final class MirageRenderPresentationScheduler {
         },
         submit: @escaping @MainActor (CFTimeInterval) -> MirageRenderSubmissionResult,
         hasPendingFrame: @escaping @MainActor () -> Bool = { false },
+        pendingFrameCount: (@MainActor () -> Int)? = nil,
         onDisplayLayerNotReady: @escaping @MainActor () -> Void = {}
     ) {
         self.referenceTimeProvider = referenceTimeProvider
         self.enqueueCoalescedPass = enqueueCoalescedPass
         self.submit = submit
         self.hasPendingFrame = hasPendingFrame
+        self.pendingFrameCount = pendingFrameCount ?? {
+            hasPendingFrame() ? 1 : 0
+        }
         self.onDisplayLayerNotReady = onDisplayLayerNotReady
     }
 
@@ -82,7 +87,7 @@ final class MirageRenderPresentationScheduler {
     func setDisplayClockActive(_ active: Bool) {
         guard displayClockActive != active else { return }
         displayClockActive = active
-        displayClockFramePending = false
+        activeLiveFrameArrivalCatchUpPending = false
         lastDisplayTickWallTime = 0
         if active {
             scheduledPassPending = false
@@ -97,7 +102,7 @@ final class MirageRenderPresentationScheduler {
         scheduledReferenceTime = nil
         runningPass = false
         pendingScheduledPass = false
-        displayClockFramePending = false
+        activeLiveFrameArrivalCatchUpPending = false
         lastDisplayTickWallTime = 0
     }
 
@@ -105,7 +110,6 @@ final class MirageRenderPresentationScheduler {
         guard !renderingSuspended else { return }
         if presentationTier == .activeLive {
             guard hasPendingFrame() else { return }
-            displayClockFramePending = true
             if !displayClockActive || lastDisplayTickWallTime == 0 {
                 _ = performPass(
                     referenceTime: referenceTime,
@@ -125,7 +129,9 @@ final class MirageRenderPresentationScheduler {
     func requestReadinessRetry(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
         if presentationTier == .activeLive {
-            displayClockFramePending = true
+            if !displayClockActive {
+                schedulePass(referenceTime: referenceTime)
+            }
             return
         }
         schedulePass(referenceTime: referenceTime)
@@ -135,7 +141,6 @@ final class MirageRenderPresentationScheduler {
         guard !renderingSuspended else { return }
 
         if presentationTier == .activeLive {
-            displayClockFramePending = true
             scheduleActiveLiveFallbackIfNeeded(referenceTime: referenceTime)
             return
         }
@@ -155,11 +160,19 @@ final class MirageRenderPresentationScheduler {
         guard streamID != nil else { return }
 
         lastDisplayTickWallTime = referenceTimeProvider()
-        _ = performPass(
+        let result = performPass(
             referenceTime: referenceTime,
             allowFollowUpSchedule: false,
             isDisplayTick: true
         )
+        switch result {
+        case .noPendingFrame:
+            activeLiveFrameArrivalCatchUpPending = true
+        case .submitted, .displayLayerNotReady:
+            activeLiveFrameArrivalCatchUpPending = false
+        case .blocked:
+            break
+        }
     }
 
     private var shouldUseCoalescedFrameArrivalSubmission: Bool {
@@ -172,30 +185,31 @@ final class MirageRenderPresentationScheduler {
 
     private func scheduleActiveLiveFallbackIfNeeded(referenceTime: CFTimeInterval) {
         guard displayClockActive else {
-            schedulePass(referenceTime: referenceTime)
+            scheduleFrameArrivalFallback(referenceTime: referenceTime)
             return
         }
-        let now = referenceTimeProvider()
-        guard lastDisplayTickWallTime == 0 ||
-            now - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
+        guard lastDisplayTickWallTime != 0 else {
+            scheduleFrameArrivalFallback(referenceTime: referenceTime)
             return
         }
-        schedulePass(referenceTime: referenceTime)
+
+        let availableFrameCount = pendingFrameCount()
+        guard availableFrameCount > 0 else { return }
+        guard activeLiveFrameArrivalCatchUpPending || availableFrameCount > 1 else { return }
+
+        activeLiveFrameArrivalCatchUpPending = false
+        scheduleFrameArrivalFallback(referenceTime: referenceTime)
     }
 
-    private var activeLiveFallbackThreshold: CFTimeInterval {
-        let targetFrameInterval = 1.0 / Double(max(1, targetFPS))
-        return min(0.050, max(1.0 / 120.0, targetFrameInterval * 1.25))
-    }
-
-    private func schedulePass(referenceTime: CFTimeInterval) {
+    @discardableResult
+    private func schedulePass(referenceTime: CFTimeInterval) -> Bool {
         if let scheduledReferenceTime {
             self.scheduledReferenceTime = max(scheduledReferenceTime, referenceTime)
         } else {
             scheduledReferenceTime = referenceTime
         }
 
-        guard !scheduledPassPending else { return }
+        guard !scheduledPassPending else { return false }
         scheduledPassPending = true
         let generation = scheduledPassGeneration
         enqueueCoalescedPass { [weak self] in
@@ -204,6 +218,12 @@ final class MirageRenderPresentationScheduler {
             self.scheduledPassPending = false
             self.runScheduledPass()
         }
+        return true
+    }
+
+    private func scheduleFrameArrivalFallback(referenceTime: CFTimeInterval) {
+        guard schedulePass(referenceTime: referenceTime) else { return }
+        noteFrameArrivalFallback()
     }
 
     private func runScheduledPass() {
@@ -235,11 +255,13 @@ final class MirageRenderPresentationScheduler {
         let submissionResult = submit(referenceTime)
         runningPass = false
         if submissionResult == .submitted {
-            displayClockFramePending = false
-        } else if isDisplayTick, submissionResult == .noPendingFrame, !displayClockFramePending {
+            activeLiveFrameArrivalCatchUpPending = false
+        }
+        if isDisplayTick, submissionResult == .noPendingFrame {
+            MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
             MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
         }
-        if submissionResult == .displayLayerNotReady {
+        if submissionResult == .displayLayerNotReady, shouldArmDisplayLayerReadinessRetry {
             onDisplayLayerNotReady()
         }
 
@@ -254,5 +276,14 @@ final class MirageRenderPresentationScheduler {
         }
         schedulePass(referenceTime: referenceTimeProvider())
         return submissionResult
+    }
+
+    private var shouldArmDisplayLayerReadinessRetry: Bool {
+        !(presentationTier == .activeLive && displayClockActive)
+    }
+
+    private func noteFrameArrivalFallback() {
+        guard let streamID else { return }
+        MirageRenderStreamStore.shared.noteFrameArrivalFallback(for: streamID)
     }
 }

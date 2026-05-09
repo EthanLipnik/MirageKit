@@ -248,11 +248,17 @@ public extension MirageClientService {
                     layerEnqueueFPS: metrics.layerEnqueueFPS,
                     uniqueLayerEnqueueFPS: metrics.uniqueLayerEnqueueFPS,
                     pendingFrameCount: metrics.pendingFrameCount,
+                    unsubmittedPendingFrameCount: metrics.unsubmittedPendingFrameCount,
+                    retainedSubmittedFrameCount: metrics.retainedSubmittedFrameCount,
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
+                    oldestUnsubmittedAgeMs: metrics.oldestUnsubmittedAgeMs,
+                    newestUnsubmittedAgeMs: metrics.newestUnsubmittedAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
                     lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
                     repeatedFrameCount: metrics.repeatedFrameCount,
+                    displayTickNoFrameCount: metrics.displayTickNoFrameCount,
+                    frameArrivalFallbackCount: metrics.frameArrivalFallbackCount,
                     missedVSyncCount: metrics.missedVSyncCount,
                     displayTickIntervalP95Ms: metrics.displayTickIntervalP95Ms,
                     displayTickIntervalP99Ms: metrics.displayTickIntervalP99Ms,
@@ -261,6 +267,8 @@ public extension MirageClientService {
                     worstPresentationGapMs: metrics.worstPresentationGapMs,
                     frameIntervalP95Ms: metrics.frameIntervalP95Ms,
                     frameIntervalP99Ms: metrics.frameIntervalP99Ms,
+                    frameIntervalMaxMs: metrics.frameIntervalMaxMs,
+                    displayTickIntervalMaxMs: metrics.displayTickIntervalMaxMs,
                     decodeHealthy: metrics.decodeHealthy
                 )
                 metricsStore.updateClientTimingDiagnostics(
@@ -268,6 +276,18 @@ public extension MirageClientService {
                     coalescedBeforeSubmitCount: metrics.coalescedBeforeSubmitCount,
                     duplicateRemoteTimestampCount: metrics.duplicateRemoteTimestampCount,
                     correctedStreamTimestampCount: metrics.correctedStreamTimestampCount
+                )
+                metricsStore.updateClientPresentationDiagnostics(
+                    streamID: capturedStreamID,
+                    renderStoreClearCount: metrics.renderStoreClearCount,
+                    renderGenerationBumpCount: metrics.renderGenerationBumpCount,
+                    renderMemoryTrimClearCount: metrics.renderMemoryTrimClearCount,
+                    presenterTimingResetCount: metrics.presenterTimingResetCount,
+                    displayLayerLivenessResetCount: metrics.displayLayerLivenessResetCount,
+                    presentationRecoveryRequestCount: metrics.presentationRecoveryRequestCount,
+                    presentationRecoveryHandlerDispatchCount: metrics.presentationRecoveryHandlerDispatchCount,
+                    lastRenderGenerationBumpReason: metrics.lastRenderGenerationBumpReason,
+                    lastPresentationRecoveryOutcome: metrics.lastPresentationRecoveryOutcome
                 )
                 metricsStore.updateClientDecoderTelemetry(
                     streamID: capturedStreamID,
@@ -700,6 +720,7 @@ public extension MirageClientService {
         activeJitterHoldMs = 0
 
         if let controller = controllersByStream.removeValue(forKey: streamID) {
+            await controller.setMediaFeedbackSuspended(true)
             await controller.stop()
         }
 
@@ -749,6 +770,7 @@ public extension MirageClientService {
             desktopStreamAllowsClientResize = true
             desktopStreamMode = nil
             desktopCursorPresentation = nil
+            lastAutomaticDesktopWorkloadReconfigurationSummary = nil
         }
         desktopDimensionTokenByStream.removeValue(forKey: streamID)
         clearStartupAttempt(for: streamID)
@@ -776,6 +798,7 @@ public extension MirageClientService {
         activeStreamCodecs.removeValue(forKey: streamID)
 
         if let controller = controllersByStream.removeValue(forKey: streamID) {
+            await controller.setMediaFeedbackSuspended(true)
             await controller.stop()
         }
 

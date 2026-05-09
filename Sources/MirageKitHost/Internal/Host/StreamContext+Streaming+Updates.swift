@@ -553,19 +553,21 @@ extension StreamContext {
         guard shouldEncodeFrames else { return }
         shouldEncodeFrames = false
         frameInbox.clear()
+        resetStreamingStatsBaseline()
         await packetSender?.resetQueue(reason: "client background pause")
         MirageLogger.stream("Stream \(streamID) paused for client background")
     }
 
     func resumeAfterClientForeground() async {
         guard !shouldEncodeFrames else { return }
+        shouldEncodeFrames = true
+        resetStreamingStatsBaseline()
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
         if let encoder {
             await encoder.resetFrameNumber()
             await encoder.forceKeyframe()
         }
-        shouldEncodeFrames = true
         MirageLogger.stream("Stream \(streamID) resumed after client foreground")
     }
 

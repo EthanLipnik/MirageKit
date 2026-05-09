@@ -340,6 +340,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         maximumTargetFrameRate: Int = 60,
         minimumHealthyFrameRate: Int? = nil,
         adaptivePriority: MirageAdaptiveQualityPriority = .preserveResolutionAndBitrate,
+        preferredMaximumTier: MirageAutomaticDesktopWorkloadTier? = nil,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Action {
         guard !resizeCriticalSectionActive else {
@@ -368,6 +369,32 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                 return .none
             }
 
+            if Self.shouldRestoreReducedResolutionDuringClientPressure(
+                snapshot: snapshot,
+                currentTier: currentTier,
+                preferredMaximumTier: preferredMaximumTier,
+                adaptivePriority: adaptivePriority
+            ) {
+                pipelinePressureSampleCount = 0
+                presentationCollapseSampleCount = 0
+                promotionSampleCount += 1
+                guard promotionSampleCount >= Self.requiredPromotionSamples,
+                      cooldownElapsed(now: now),
+                      let targetTier = Self.nextHigherTier(
+                          after: currentTier,
+                          maximumTargetFrameRate: maximumTargetFrameRate,
+                          preferredMaximumTier: preferredMaximumTier
+                      ) else {
+                    return .none
+                }
+                promotionSampleCount = 0
+                lastReconfigurationAt = now
+                return .reconfigure(
+                    target: targetTier,
+                    reason: "presentation-bound resolution restoration"
+                )
+            }
+
             promotionSampleCount = 0
             let isSevereClientPresentationCollapse = Self.isSevereClientPresentationCollapse(
                 snapshot: snapshot,
@@ -391,8 +418,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                       pipelinePixelRate: observedPixelRate,
                       minimumTargetFrameRate: minimumTargetFrameRate,
                       maximumTargetFrameRate: maximumTargetFrameRate,
-                      adaptivePriority: adaptivePriority,
-                      allowResolutionReduction: hasSustainedSevereClientPresentationCollapse
+                      adaptivePriority: adaptivePriority
                   ) else {
                 return .none
             }
@@ -415,7 +441,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                   cooldownElapsed(now: now),
                   let targetTier = Self.nextHigherTier(
                       after: currentTier,
-                      maximumTargetFrameRate: maximumTargetFrameRate
+                      maximumTargetFrameRate: maximumTargetFrameRate,
+                      preferredMaximumTier: preferredMaximumTier
                   ) else {
                 return .none
             }
@@ -526,8 +553,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         pipelinePixelRate: Double,
         minimumTargetFrameRate: Int,
         maximumTargetFrameRate: Int,
-        adaptivePriority: MirageAdaptiveQualityPriority,
-        allowResolutionReduction: Bool
+        adaptivePriority: MirageAdaptiveQualityPriority
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
         let normalizedMaximumTargetFrameRate = max(
@@ -553,7 +579,7 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             return frameRateTier
         }
 
-        if adaptivePriority == .preserveResolutionAndBitrate && !allowResolutionReduction {
+        if adaptivePriority == .preserveResolutionAndBitrate {
             return nil
         }
 
@@ -585,6 +611,34 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             currentTier: currentTier,
             minimumTargetFrameRate: normalizedMinimumTargetFrameRate
         )
+    }
+
+    private static func shouldRestoreReducedResolutionDuringClientPressure(
+        snapshot: MirageClientMetricsSnapshot?,
+        currentTier: MirageAutomaticDesktopWorkloadTier,
+        preferredMaximumTier: MirageAutomaticDesktopWorkloadTier?,
+        adaptivePriority: MirageAdaptiveQualityPriority
+    ) -> Bool {
+        guard adaptivePriority == .preserveResolutionAndBitrate,
+              let snapshot,
+              let preferredMaximumTier,
+              snapshot.bottleneckKind == .presentationBound else {
+            return false
+        }
+
+        let currentPixels = pixelCount(currentTier.encodedPixelSize)
+        let preferredPixels = pixelCount(preferredMaximumTier.encodedPixelSize)
+        guard currentPixels < preferredPixels * 0.97 else { return false }
+
+        let targetFPS = Double(max(1, currentTier.targetFrameRate))
+        let hostCadence = minPositive(
+            snapshot.hostCaptureFPS,
+            snapshot.hostEncodeAttemptFPS,
+            snapshot.hostEncodedFPS
+        ) ?? 0
+        guard hostCadence >= targetFPS * 0.90 else { return false }
+        guard snapshot.decodeHealthy, snapshot.decodedFPS >= targetFPS * 0.90 else { return false }
+        return true
     }
 
     private static func sameResolutionReducedFrameRateTier(
@@ -697,9 +751,14 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         values.compactMap { $0 }.filter { $0 > 0 }.min()
     }
 
+    private static func pixelCount(_ size: CGSize) -> Double {
+        Double(max(1, Int(size.width))) * Double(max(1, Int(size.height)))
+    }
+
     private static func nextHigherTier(
         after currentTier: MirageAutomaticDesktopWorkloadTier,
-        maximumTargetFrameRate: Int
+        maximumTargetFrameRate: Int,
+        preferredMaximumTier: MirageAutomaticDesktopWorkloadTier? = nil
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let normalizedMaximumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
         if let sameResolutionTier = sameResolutionFrameRatePromotionTier(
@@ -709,9 +768,27 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             return sameResolutionTier
         }
 
-        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
-            $0.targetFrameRate <= normalizedMaximumTargetFrameRate
+        let preferredMaximumTier = preferredMaximumTier.map {
+            MirageAutomaticDesktopWorkloadTier(
+                encodedPixelSize: $0.encodedPixelSize,
+                targetFrameRate: min($0.targetFrameRate, normalizedMaximumTargetFrameRate)
+            )
         }
+        let maximumPixelRate = preferredMaximumTier?.pixelRate ?? Double.greatestFiniteMagnitude
+        let tiers = (MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers + [preferredMaximumTier].compactMap { $0 })
+            .filter {
+                $0.targetFrameRate <= normalizedMaximumTargetFrameRate &&
+                    $0.pixelRate <= maximumPixelRate
+            }
+            .uniqued()
+
+        if let preferredMaximumTier,
+           currentTier.targetFrameRate == preferredMaximumTier.targetFrameRate,
+           currentTier.pixelRate < preferredMaximumTier.pixelRate,
+           tiers.allSatisfy({ $0.pixelRate <= currentTier.pixelRate || $0.pixelRate >= preferredMaximumTier.pixelRate }) {
+            return preferredMaximumTier
+        }
+
         if let sameFrameRateTier = tiers
             .filter({
                 $0.targetFrameRate == currentTier.targetFrameRate &&
@@ -741,5 +818,15 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             encodedPixelSize: currentTier.encodedPixelSize,
             targetFrameRate: frameRate
         )
+    }
+}
+
+private extension Array where Element == MirageAutomaticDesktopWorkloadTier {
+    func uniqued() -> [MirageAutomaticDesktopWorkloadTier] {
+        var result: [MirageAutomaticDesktopWorkloadTier] = []
+        for tier in self where !result.contains(tier) {
+            result.append(tier)
+        }
+        return result
     }
 }

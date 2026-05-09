@@ -96,6 +96,20 @@ extension MirageHostInputController {
         for sample in batch.samples {
             let point = screenPoint(sample.location, in: bounds)
             if Self.shouldWarpDesktopPointerEvent(type) {
+                if Self.shouldLogDesktopPointerWarpDiagnostic(point: point, bounds: bounds) {
+                    let currentCursorPosition = Self.desktopInjectionCursorPosition(
+                        fromCocoaScreenPosition: NSEvent.mouseLocation,
+                        primaryDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height
+                    )
+                    Self.logDesktopPointerWarpDiagnostic(
+                        source: "desktop-pointer-batch phase=\(batch.phase)",
+                        type: type,
+                        normalizedLocation: sample.location,
+                        point: point,
+                        currentCursorPosition: currentCursorPosition,
+                        bounds: bounds
+                    )
+                }
                 CGWarpMouseCursorPosition(point)
             }
             postTabletPointerSample(sample, batch: batch, type: type, at: point)

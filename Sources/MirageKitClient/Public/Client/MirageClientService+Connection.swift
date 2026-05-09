@@ -290,6 +290,7 @@ extension MirageClientService {
     /// but keeps virtual displays and stream infrastructure alive so that
     /// `resumeStreaming()` can restart frames immediately with a keyframe.
     public func pauseStreaming(backgroundLeaseDuration: TimeInterval? = nil) {
+        setReceiverMediaFeedbackSuspendedForActiveStreams(true)
         if let backgroundLeaseDuration {
             let lease = ClientBackgroundLeaseMessage(durationSeconds: backgroundLeaseDuration)
             _ = sendControlMessageBestEffort(.streamPauseAll, content: lease)
@@ -306,8 +307,19 @@ extension MirageClientService {
     /// Resume all streams after a pause.  The host forces a keyframe so
     /// the decoder can immediately begin presenting frames again.
     public func resumeStreaming() {
+        setReceiverMediaFeedbackSuspendedForActiveStreams(false)
         sendControlMessageBestEffort(ControlMessage(type: .streamResumeAll))
         MirageLogger.client("Sent streamResumeAll to host")
+    }
+
+    private func setReceiverMediaFeedbackSuspendedForActiveStreams(_ suspended: Bool) {
+        let controllers = Array(controllersByStream.values)
+        guard !controllers.isEmpty else { return }
+        Task {
+            for controller in controllers {
+                await controller.setMediaFeedbackSuspended(suspended)
+            }
+        }
     }
 
     public func disconnect() async {

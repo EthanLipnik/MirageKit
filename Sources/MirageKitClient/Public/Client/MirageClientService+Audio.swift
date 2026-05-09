@@ -14,9 +14,16 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    private static let maxAudioVideoSyncSnapshotAgeSeconds: CFAbsoluteTime = 0.250
-    private static let maxAudioVideoHoldSeconds: Double = 0.080
-    private static let liveAudioMaxBehindNs: UInt64 = 500_000_000
+    private nonisolated static let maxAudioVideoSyncSnapshotAgeSeconds: CFAbsoluteTime = 0.250
+    private nonisolated static let hardAudioVideoSyncSnapshotAgeSeconds: CFAbsoluteTime = 0.500
+    private nonisolated static let staleVideoConfirmedDecisionCount = 2
+    private nonisolated static let maxAudioVideoHoldSeconds: Double = 0.080
+    private nonisolated static let liveAudioMaxBehindNs: UInt64 = 500_000_000
+
+    private struct LiveAudioVideoSyncState {
+        let videoState: LiveAudioSyncPolicy.VideoState
+        let staleSnapshotAgeSeconds: CFAbsoluteTime?
+    }
 
     func stopAudioConnection() {
         _ = advanceAudioStreamConfigurationGeneration()
@@ -27,6 +34,7 @@ extension MirageClientService {
         resetPendingDecodedAudioFrames()
         setActiveAudioStreamIDForFiltering(nil)
         audioVideoGateActiveStreamIDs.removeAll()
+        resetAudioStaleVideoGateState()
         setAudioDecodeTargetChannelCountForPipeline(2)
         if let audioPlaybackController = audioPlaybackControllerIfInitialized {
             audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
@@ -54,6 +62,7 @@ extension MirageClientService {
             resetPendingDecodedAudioFrames()
             setActiveAudioStreamIDForFiltering(nil)
             audioVideoGateActiveStreamIDs.remove(streamID)
+            resetAudioStaleVideoGateState(for: streamID)
             setAudioDecodeTargetChannelCountForPipeline(2)
             await audioPacketIngressQueue.reset()
             if let audioPlaybackController = audioPlaybackControllerIfInitialized {
@@ -232,6 +241,7 @@ extension MirageClientService {
             activeAudioStreamMessage = nil
             resetPendingDecodedAudioFrames(for: stopped.streamID)
             audioVideoGateActiveStreamIDs.remove(stopped.streamID)
+            resetAudioStaleVideoGateState(for: stopped.streamID)
             if audioRegisteredStreamID == stopped.streamID {
                 audioRegisteredStreamID = nil
             }
@@ -286,7 +296,9 @@ extension MirageClientService {
             nextFrame: decision.frames.first,
             delay: decision.runtimeExtraDelaySeconds
         )
-        flushPendingDecodedAudioFrames(for: streamID, into: audioPlaybackController)
+        if decision.reason != "stale-video-presentation-soft" {
+            flushPendingDecodedAudioFrames(for: streamID, into: audioPlaybackController)
+        }
         for decodedFrame in decision.frames {
             audioPlaybackController.enqueue(decodedFrame)
         }
@@ -364,31 +376,58 @@ extension MirageClientService {
         for frames: [DecodedPCMFrame],
         streamID: StreamID
     ) -> LiveAudioSyncPolicy.Decision {
-        LiveAudioSyncPolicy.decide(
+        let syncState = liveAudioVideoSyncState(for: streamID)
+        let decision = LiveAudioSyncPolicy.decide(
             frames: frames,
-            videoState: liveAudioVideoState(for: streamID),
+            videoState: syncState.videoState,
             maxBehindNs: Self.liveAudioMaxBehindNs,
             liveTailDurationSeconds: LiveAudioSyncPolicy.defaultLiveTailDurationSeconds,
             maxHoldSeconds: Self.maxAudioVideoHoldSeconds
         )
+        return decisionAfterStaleVideoGateHysteresis(
+            decision,
+            syncState: syncState,
+            streamID: streamID
+        )
     }
 
-    private func liveAudioVideoState(for streamID: StreamID) -> LiveAudioSyncPolicy.VideoState {
-        if let timestampNs = freshVideoTimestampNs(for: streamID) {
-            return .fresh(timestampNs: timestampNs)
+    private func liveAudioVideoSyncState(for streamID: StreamID) -> LiveAudioVideoSyncState {
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        if snapshot.hasSubmission {
+            let ageSeconds = CFAbsoluteTimeGetCurrent() - snapshot.submittedTime
+            if ageSeconds >= 0,
+               ageSeconds <= Self.maxAudioVideoSyncSnapshotAgeSeconds,
+               let timestampNs = Self.nanoseconds(from: snapshot.remotePresentationTime) {
+                return LiveAudioVideoSyncState(
+                    videoState: .fresh(timestampNs: timestampNs),
+                    staleSnapshotAgeSeconds: nil
+                )
+            }
+            if streamHasPresentedVideoFrame(streamID) {
+                return LiveAudioVideoSyncState(
+                    videoState: .staleAfterPresentation,
+                    staleSnapshotAgeSeconds: max(0, ageSeconds)
+                )
+            }
         }
 
         if streamHasPresentedVideoFrame(streamID) {
-            return .staleAfterPresentation
+            return LiveAudioVideoSyncState(
+                videoState: .staleAfterPresentation,
+                staleSnapshotAgeSeconds: nil
+            )
         }
 
         if activeMediaStreams["video/\(streamID)"] != nil ||
             sessionStore.sessionByStreamID(streamID) != nil ||
             sessionStore.sessionByMediaStreamID(streamID) != nil {
-            return .waitingForFirstFrame
+            return LiveAudioVideoSyncState(
+                videoState: .waitingForFirstFrame,
+                staleSnapshotAgeSeconds: nil
+            )
         }
 
-        return .unavailable
+        return LiveAudioVideoSyncState(videoState: .unavailable, staleSnapshotAgeSeconds: nil)
     }
 
     private func freshVideoTimestampNs(for streamID: StreamID) -> UInt64? {
@@ -410,6 +449,114 @@ extension MirageClientService {
             return true
         }
         return MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).hasSubmission
+    }
+
+    private func decisionAfterStaleVideoGateHysteresis(
+        _ decision: LiveAudioSyncPolicy.Decision,
+        syncState: LiveAudioVideoSyncState,
+        streamID: StreamID
+    ) -> LiveAudioSyncPolicy.Decision {
+        guard decision.shouldGatePlayback,
+              decision.reason == "stale-video-presentation" else {
+            audioStaleVideoGateStateByStreamID.removeValue(forKey: streamID)
+            return decision
+        }
+
+        var gateState = audioStaleVideoGateStateByStreamID[streamID] ?? AudioStaleVideoGateState(
+            consecutiveDecisionCount: 0,
+            maxSnapshotAgeSeconds: 0
+        )
+        gateState.consecutiveDecisionCount += 1
+        if let staleSnapshotAgeSeconds = syncState.staleSnapshotAgeSeconds {
+            gateState.maxSnapshotAgeSeconds = max(
+                gateState.maxSnapshotAgeSeconds,
+                staleSnapshotAgeSeconds
+            )
+        }
+        audioStaleVideoGateStateByStreamID[streamID] = gateState
+
+        var diagnostics = audioStaleVideoDiagnosticsByStreamID[streamID] ?? AudioStaleVideoDiagnostics()
+        diagnostics.maxSnapshotAgeSeconds = max(
+            diagnostics.maxSnapshotAgeSeconds,
+            gateState.maxSnapshotAgeSeconds
+        )
+        let shouldConfirmGate = Self.shouldConfirmStaleVideoGate(
+            consecutiveDecisionCount: gateState.consecutiveDecisionCount,
+            staleSnapshotAgeSeconds: syncState.staleSnapshotAgeSeconds
+        )
+        if shouldConfirmGate {
+            diagnostics.gateCount &+= 1
+            diagnostics.confirmedGateCount &+= 1
+            audioStaleVideoDiagnosticsByStreamID[streamID] = diagnostics
+            updateAudioStaleVideoDiagnosticsSnapshot(for: streamID, diagnostics: diagnostics)
+            return decision
+        }
+
+        diagnostics.softHoldCount &+= 1
+        audioStaleVideoDiagnosticsByStreamID[streamID] = diagnostics
+        updateAudioStaleVideoDiagnosticsSnapshot(for: streamID, diagnostics: diagnostics)
+        return Self.audioDecisionAfterStaleVideoHysteresis(
+            decision,
+            confirmGate: false
+        )
+    }
+
+    nonisolated static func shouldConfirmStaleVideoGate(
+        consecutiveDecisionCount: Int,
+        staleSnapshotAgeSeconds: CFAbsoluteTime?
+    ) -> Bool {
+        if let staleSnapshotAgeSeconds,
+           staleSnapshotAgeSeconds >= hardAudioVideoSyncSnapshotAgeSeconds {
+            return true
+        }
+        return consecutiveDecisionCount >= staleVideoConfirmedDecisionCount
+    }
+
+    nonisolated static func audioDecisionAfterStaleVideoHysteresis(
+        _ decision: LiveAudioSyncPolicy.Decision,
+        confirmGate: Bool
+    ) -> LiveAudioSyncPolicy.Decision {
+        guard decision.shouldGatePlayback,
+              decision.reason == "stale-video-presentation",
+              !confirmGate else {
+            return decision
+        }
+        return LiveAudioSyncPolicy.Decision(
+            frames: decision.frames,
+            droppedCount: decision.droppedCount,
+            shouldGatePlayback: false,
+            runtimeExtraDelaySeconds: 0,
+            reason: "stale-video-presentation-soft"
+        )
+    }
+
+    private func resetAudioStaleVideoGateState(for streamID: StreamID? = nil) {
+        if let streamID {
+            audioStaleVideoGateStateByStreamID.removeValue(forKey: streamID)
+            audioStaleVideoDiagnosticsByStreamID.removeValue(forKey: streamID)
+            updateAudioStaleVideoDiagnosticsSnapshot(for: streamID, diagnostics: AudioStaleVideoDiagnostics())
+        } else {
+            let streamIDs = Set(audioStaleVideoDiagnosticsByStreamID.keys)
+                .union(audioStaleVideoGateStateByStreamID.keys)
+            audioStaleVideoGateStateByStreamID.removeAll()
+            audioStaleVideoDiagnosticsByStreamID.removeAll()
+            for streamID in streamIDs {
+                updateAudioStaleVideoDiagnosticsSnapshot(for: streamID, diagnostics: AudioStaleVideoDiagnostics())
+            }
+        }
+    }
+
+    private func updateAudioStaleVideoDiagnosticsSnapshot(
+        for streamID: StreamID,
+        diagnostics: AudioStaleVideoDiagnostics
+    ) {
+        metricsStore.updateClientAudioSyncDiagnostics(
+            streamID: streamID,
+            staleVideoGateCount: diagnostics.gateCount,
+            staleVideoSoftHoldCount: diagnostics.softHoldCount,
+            staleVideoConfirmedGateCount: diagnostics.confirmedGateCount,
+            staleVideoMaxSnapshotAgeMs: diagnostics.maxSnapshotAgeSeconds * 1000
+        )
     }
 
     private func applyAudioLiveSyncDiagnostics(
