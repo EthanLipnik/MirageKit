@@ -76,22 +76,26 @@ struct RenderCadenceSmoothingTests {
         let streamID: StreamID = 403
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let cursor = MirageRenderCursor(
+            generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+            sequence: 1
+        )
 
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 1,
+            cursor: cursor,
             mappedPresentationTime: .zero,
             for: streamID
         )
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 1,
+            cursor: cursor,
             mappedPresentationTime: .zero,
             for: streamID
         )
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.submittedFPS >= 2)
-        #expect(telemetry.uniqueSubmittedFPS >= 1)
-        #expect(telemetry.uniqueSubmittedFPS < telemetry.submittedFPS)
+        #expect(telemetry.layerEnqueueFPS >= 2)
+        #expect(telemetry.uniqueLayerEnqueueFPS >= 1)
+        #expect(telemetry.uniqueLayerEnqueueFPS < telemetry.layerEnqueueFPS)
     }
 
     @Test("Taking the only pending frame does not repeat on underflow")
@@ -123,7 +127,10 @@ struct RenderCadenceSmoothingTests {
 
         MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 1,
+            cursor: MirageRenderCursor(
+                generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+                sequence: 1
+            ),
             mappedPresentationTime: .zero,
             for: streamID
         )

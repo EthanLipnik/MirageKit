@@ -377,12 +377,33 @@ extension MirageClientService {
     )
     async throws -> Bool {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        guard desktopStreamID == streamID else { return false }
-        guard pendingLocalDesktopStopStreamID != streamID else { return false }
-        guard !startupCriticalSectionActive, !hasActivePostResizeTransition else { return false }
-        guard let session = sessionStore.sessionByStreamID(streamID),
-              session.hasPresentedFrame,
+        guard desktopStreamID == streamID else {
+            lastAutomaticDesktopWorkloadReconfigurationSummary =
+                "deferred stream=\(streamID) reason=not-desktop-stream target=\(target.logLabel)"
+            return false
+        }
+        guard pendingLocalDesktopStopStreamID != streamID else {
+            lastAutomaticDesktopWorkloadReconfigurationSummary =
+                "deferred stream=\(streamID) reason=pending-stop target=\(target.logLabel)"
+            return false
+        }
+        guard !startupCriticalSectionActive, !hasActivePostResizeTransition else {
+            lastAutomaticDesktopWorkloadReconfigurationSummary =
+                "deferred stream=\(streamID) reason=critical-section target=\(target.logLabel) " +
+                "startup=\(startupCriticalSectionActive) resizeTransition=\(hasActivePostResizeTransition)"
+            return false
+        }
+        guard let session = sessionStore.sessionByStreamID(streamID) else {
+            lastAutomaticDesktopWorkloadReconfigurationSummary =
+                "deferred stream=\(streamID) reason=session-missing target=\(target.logLabel)"
+            return false
+        }
+        guard session.hasPresentedFrame,
               session.clientRecoveryStatus == .idle else {
+            lastAutomaticDesktopWorkloadReconfigurationSummary =
+                "deferred stream=\(streamID) reason=session-not-ready target=\(target.logLabel) " +
+                "hasPresentedFrame=\(session.hasPresentedFrame) " +
+                "recovery=\(String(describing: session.clientRecoveryStatus))"
             return false
         }
 
@@ -413,10 +434,17 @@ extension MirageClientService {
 
         guard decision.shouldChangeFrameRate || decision.shouldResize else {
             if needsResize && !allowsAutomaticResolutionResize {
+                lastAutomaticDesktopWorkloadReconfigurationSummary =
+                    "deferred stream=\(streamID) reason=resize-not-allowed target=\(effectiveTarget.logLabel) " +
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
                         "target \(effectiveTarget.logLabel) requires resize but mode does not allow automatic resize"
                 )
+            } else {
+                lastAutomaticDesktopWorkloadReconfigurationSummary =
+                    "deferred stream=\(streamID) reason=no-change target=\(effectiveTarget.logLabel) " +
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
             }
             return false
         }
@@ -451,6 +479,10 @@ extension MirageClientService {
         MirageLogger.client(
             "Requested automatic desktop workload reconfiguration for stream \(streamID): \(effectiveTarget.logLabel)"
         )
+        lastAutomaticDesktopWorkloadReconfigurationSummary =
+            "requested stream=\(streamID) target=\(effectiveTarget.logLabel) " +
+            "frameRate=\(decision.shouldChangeFrameRate) resize=\(decision.shouldResize) " +
+            "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
         return true
     }
 
@@ -490,7 +522,7 @@ extension MirageClientService {
         mode: MirageDesktopStreamMode?,
         allowsClientResize: Bool
     ) -> Bool {
-        mode != .unified && allowsClientResize
+        allowsClientResize
     }
 
     struct AutomaticDesktopWorkloadReconfigurationDecision: Equatable {
@@ -503,12 +535,6 @@ extension MirageClientService {
         needsResize: Bool,
         allowsAutomaticResolutionResize: Bool
     ) -> AutomaticDesktopWorkloadReconfigurationDecision {
-        guard !needsResize || allowsAutomaticResolutionResize else {
-            return AutomaticDesktopWorkloadReconfigurationDecision(
-                shouldChangeFrameRate: false,
-                shouldResize: false
-            )
-        }
         return AutomaticDesktopWorkloadReconfigurationDecision(
             shouldChangeFrameRate: needsFrameRateChange,
             shouldResize: needsResize && allowsAutomaticResolutionResize

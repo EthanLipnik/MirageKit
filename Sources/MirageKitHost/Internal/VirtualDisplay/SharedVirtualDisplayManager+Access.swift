@@ -34,6 +34,58 @@ extension SharedVirtualDisplayManager {
         sharedDisplay?.displayID
     }
 
+    func ownedMirageDisplayIDs() -> Set<CGDirectDisplayID> {
+        var displayIDs = Set<CGDirectDisplayID>()
+        if let sharedDisplay {
+            displayIDs.insert(sharedDisplay.displayID)
+        }
+        if let appStreamDisplay {
+            displayIDs.insert(appStreamDisplay.displayID)
+        }
+        for display in dedicatedDisplaysByStreamID.values {
+            displayIDs.insert(display.displayID)
+        }
+        return displayIDs
+    }
+
+    func refreshResidualMirageDisplayTracking() -> [CGDirectDisplayID] {
+        let onlineMirageDisplayIDs = CGVirtualDisplayBridge.onlineMirageDisplayIDs()
+        let ownedDisplayIDs = ownedMirageDisplayIDs()
+        let residualDisplayIDs = onlineMirageDisplayIDs
+            .filter { !ownedDisplayIDs.contains($0) }
+            .sorted()
+        orphanedDisplayIDs = Set(residualDisplayIDs)
+        if !residualDisplayIDs.isEmpty {
+            MirageLogger.host(
+                "Residual Mirage display(s) online outside the active lease: \(residualDisplayIDs)"
+            )
+        }
+        return residualDisplayIDs
+    }
+
+    func assertNoResidualMirageDisplaysBeforeCreation() throws {
+        let onlineMirageDisplayIDs = CGVirtualDisplayBridge.onlineMirageDisplayIDs()
+        let ownedDisplayIDs = ownedMirageDisplayIDs()
+        switch residualMirageDisplayCreationDecision(
+            onlineDisplayIDs: onlineMirageDisplayIDs,
+            ownedDisplayIDs: ownedDisplayIDs,
+            isMirageDisplay: { _ in true }
+        ) {
+        case .allow:
+            orphanedDisplayIDs.removeAll()
+        case let .block(displayIDs):
+            orphanedDisplayIDs = Set(displayIDs)
+            for displayID in displayIDs {
+                CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
+            }
+            MirageLogger.error(
+                .host,
+                "Blocking Mirage virtual display creation because residual display(s) remain online: \(displayIDs)"
+            )
+            throw SharedDisplayError.residualMirageDisplaysOnline(displayIDs)
+        }
+    }
+
     /// Get the shared display space ID
     func getSpaceID() -> CGSSpaceID? {
         sharedDisplay?.spaceID

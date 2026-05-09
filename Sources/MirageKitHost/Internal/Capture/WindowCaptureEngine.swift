@@ -414,6 +414,29 @@ actor WindowCaptureEngine {
         return frame
     }
 
+    func captureSyntheticDisplayStartupFrame() async -> CapturedFrame? {
+        guard captureMode == .display,
+              let config = captureSessionConfig else {
+            return nil
+        }
+
+        let width = max(1, currentWidth)
+        let height = max(1, currentHeight)
+        let frame = DisplayStartupFrameSeeder.makeSyntheticCapturedFrame(
+            targetWidth: width,
+            targetHeight: height,
+            pixelFormatType: pixelFormatType,
+            colorSpace: configuration.colorSpace,
+            frameRate: currentFrameRate
+        )
+        if frame != nil {
+            MirageLogger.capture(
+                "Display startup synthetic seed created for display \(config.displayID) at \(width)x\(height)"
+            )
+        }
+        return frame
+    }
+
     nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
         Task(priority: .userInitiated) {
             await self.markKeyframeRequested(reason: reason)

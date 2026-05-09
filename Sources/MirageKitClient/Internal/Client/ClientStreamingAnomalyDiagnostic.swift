@@ -18,10 +18,8 @@ struct ClientStreamingAnomalySample: Sendable {
     let receivedFrameIntervalP99Ms: Double
     let displayTickFPS: Double
     let submitAttemptFPS: Double
-    let layerAcceptedFPS: Double
-    let presentedFPS: Double
-    let submittedFPS: Double
-    let uniqueSubmittedFPS: Double
+    let layerEnqueueFPS: Double
+    let uniqueLayerEnqueueFPS: Double
     let pendingFrameCount: Int
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
@@ -64,10 +62,8 @@ struct ClientStreamingAnomalySample: Sendable {
         receivedFrameIntervalP99Ms: Double = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
-        layerAcceptedFPS: Double = 0,
-        presentedFPS: Double = 0,
-        submittedFPS: Double,
-        uniqueSubmittedFPS: Double,
+        layerEnqueueFPS: Double,
+        uniqueLayerEnqueueFPS: Double,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
@@ -109,10 +105,8 @@ struct ClientStreamingAnomalySample: Sendable {
         self.receivedFrameIntervalP99Ms = receivedFrameIntervalP99Ms
         self.displayTickFPS = displayTickFPS
         self.submitAttemptFPS = submitAttemptFPS
-        self.layerAcceptedFPS = layerAcceptedFPS
-        self.presentedFPS = presentedFPS
-        self.submittedFPS = submittedFPS
-        self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.layerEnqueueFPS = layerEnqueueFPS
+        self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
@@ -155,10 +149,8 @@ struct ClientStreamingAnomalySample: Sendable {
             clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
             clientDisplayTickFPS: displayTickFPS,
             clientSubmitAttemptFPS: submitAttemptFPS,
-            clientLayerAcceptedFPS: layerAcceptedFPS,
-            clientPresentedFPS: presentedFPS,
-            submittedFPS: submittedFPS,
-            uniqueSubmittedFPS: uniqueSubmittedFPS,
+            layerEnqueueFPS: layerEnqueueFPS,
+            uniqueLayerEnqueueFPS: uniqueLayerEnqueueFPS,
             pendingFrameCount: pendingFrameCount,
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
@@ -293,9 +285,9 @@ func clientStreamingAnomalyDiagnostic(
         "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
         "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
-        "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
-        "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
-        "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
+        "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps " +
+        "layerEnqueueFPS=\(formattedFPS(sample.layerEnqueueFPS))fps " +
+        "uniqueLayerEnqueueFPS=\(formattedFPS(sample.uniqueLayerEnqueueFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
@@ -362,12 +354,20 @@ private func resolvedAnomalyBottleneckKind(
         return .decodeBound
     }
 
+    let staleLayerEnqueueLoop = sample.layerEnqueueFPS >= targetFPS * 0.75 &&
+        sample.uniqueLayerEnqueueFPS < max(1.0, targetFPS * 0.10) &&
+        sample.pendingFrameCount > 0 &&
+        sample.pendingFrameAgeMs >= pendingAgeThresholdMs
+    if staleLayerEnqueueLoop {
+        return .presentationBound
+    }
+
     let decodeKeepsUp = sample.decodeHealthy &&
         sample.decodedFPS >= targetFPS * 0.75 &&
         (sample.receivedFPS <= 0 || sample.decodedFPS + decodeGapGrace >= sample.receivedFPS)
     let submissionLaggingDecode =
-        sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
-        sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
+        sample.layerEnqueueFPS + presentationGapGrace < sample.decodedFPS ||
+        sample.uniqueLayerEnqueueFPS + presentationGapGrace < sample.decodedFPS
     let presentationBackpressure = sample.overwrittenPendingFrames > 0 ||
         sample.lateFrameDrops > 0 ||
         sample.displayLayerNotReadyCount > 0 ||
@@ -379,7 +379,7 @@ private func resolvedAnomalyBottleneckKind(
         sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
     if decodeKeepsUp && (
         submissionLaggingDecode && presentationBackpressure ||
-            severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90
+            severeUnevenPresentationCadence && sample.layerEnqueueFPS >= targetFPS * 0.90
     ) {
         return .presentationBound
     }

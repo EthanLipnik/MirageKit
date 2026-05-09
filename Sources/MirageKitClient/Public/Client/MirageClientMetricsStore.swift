@@ -17,10 +17,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReceivedFrameIntervalP99Ms: Double
     public var clientDisplayTickFPS: Double
     public var clientSubmitAttemptFPS: Double
-    public var clientLayerAcceptedFPS: Double
-    public var clientPresentedFPS: Double
-    public var submittedFPS: Double
-    public var uniqueSubmittedFPS: Double
+    public var layerEnqueueFPS: Double
+    public var uniqueLayerEnqueueFPS: Double
     public var pendingFrameCount: Int
     public var clientPendingFrameAgeMs: Double
     public var clientOverwrittenPendingFrames: UInt64
@@ -143,6 +141,26 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTransportStalePacketDrops: UInt64? { hostStalePacketDrops }
     public var hostTransportGenerationAbortDrops: UInt64? { hostGenerationAbortDrops }
     public var hostTransportNonKeyframeHoldDrops: UInt64? { hostNonKeyframeHoldDrops }
+    @available(*, deprecated, renamed: "layerEnqueueFPS")
+    public var submittedFPS: Double {
+        get { layerEnqueueFPS }
+        set { layerEnqueueFPS = newValue }
+    }
+    @available(*, deprecated, renamed: "uniqueLayerEnqueueFPS")
+    public var uniqueSubmittedFPS: Double {
+        get { uniqueLayerEnqueueFPS }
+        set { uniqueLayerEnqueueFPS = newValue }
+    }
+    @available(*, deprecated, renamed: "layerEnqueueFPS")
+    public var clientLayerAcceptedFPS: Double {
+        get { layerEnqueueFPS }
+        set { layerEnqueueFPS = newValue }
+    }
+    @available(*, deprecated, renamed: "uniqueLayerEnqueueFPS")
+    public var clientPresentedFPS: Double {
+        get { uniqueLayerEnqueueFPS }
+        set { uniqueLayerEnqueueFPS = newValue }
+    }
 
     public init(
         decodedFPS: Double = 0,
@@ -152,10 +170,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReceivedFrameIntervalP99Ms: Double = 0,
         clientDisplayTickFPS: Double = 0,
         clientSubmitAttemptFPS: Double = 0,
-        clientLayerAcceptedFPS: Double = 0,
-        clientPresentedFPS: Double = 0,
-        submittedFPS: Double = 0,
-        uniqueSubmittedFPS: Double = 0,
+        layerEnqueueFPS: Double = 0,
+        uniqueLayerEnqueueFPS: Double = 0,
         pendingFrameCount: Int = 0,
         clientPendingFrameAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
@@ -219,10 +235,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
         self.clientDisplayTickFPS = clientDisplayTickFPS
         self.clientSubmitAttemptFPS = clientSubmitAttemptFPS
-        self.clientLayerAcceptedFPS = clientLayerAcceptedFPS
-        self.clientPresentedFPS = clientPresentedFPS
-        self.submittedFPS = submittedFPS
-        self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.layerEnqueueFPS = layerEnqueueFPS
+        self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
         self.pendingFrameCount = pendingFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
@@ -338,10 +352,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         reassemblerBudgetEvictions: UInt64 = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
-        layerAcceptedFPS: Double = 0,
-        presentedFPS: Double = 0,
-        submittedFPS: Double,
-        uniqueSubmittedFPS: Double,
+        layerEnqueueFPS: Double,
+        uniqueLayerEnqueueFPS: Double,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
@@ -367,10 +379,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientReceivedFrameIntervalP99Ms = max(0, receivedFrameIntervalP99Ms)
         snapshot.clientDisplayTickFPS = max(0, displayTickFPS)
         snapshot.clientSubmitAttemptFPS = max(0, submitAttemptFPS)
-        snapshot.clientLayerAcceptedFPS = max(0, layerAcceptedFPS)
-        snapshot.clientPresentedFPS = max(0, presentedFPS)
-        snapshot.submittedFPS = submittedFPS
-        snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
+        snapshot.layerEnqueueFPS = max(0, layerEnqueueFPS)
+        snapshot.uniqueLayerEnqueueFPS = max(0, uniqueLayerEnqueueFPS)
         snapshot.pendingFrameCount = max(0, pendingFrameCount)
         snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
         snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames

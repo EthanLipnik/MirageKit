@@ -79,6 +79,8 @@ func aspectFitPixelSize(contentSize: CGSize, containerSize: CGSize) -> CGSize {
 }
 
 private let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
+private let desktopSyntheticStartupRecoveryAttemptInterval: Duration = .milliseconds(3_250)
+private let desktopSyntheticStartupRecoveryMaxAttempts = 2
 private let desktopLowestLatencyFixedQualityBitrateCapBps = 150_000_000
 
 extension MirageHostService {
@@ -400,6 +402,14 @@ extension MirageHostService {
             virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
                 reason: "desktop_stream_start"
             )
+            if mode == .unified {
+                let preCreationDisplayIDs = currentOnlineDisplayIDsForMirroringStability()
+                    .filter { !CGVirtualDisplayBridge.isMirageDisplay($0) }
+                if !preCreationDisplayIDs.isEmpty {
+                    captureDisplaySpaceSnapshot(for: preCreationDisplayIDs, overwriteExisting: false)
+                    mergeDisplayMirroringSnapshot(for: preCreationDisplayIDs)
+                }
+            }
 
             // Acquire the virtual display at the requested display geometry. Encoder
             // resolution caps are applied through stream scale without changing it.
@@ -479,7 +489,8 @@ extension MirageHostService {
                     let captureDisplay = try await findSCDisplayWithRetry(
                         maxAttempts: 5,
                         delayMs: 40,
-                        startupBudget: startupBudget
+                        startupBudget: startupBudget,
+                        expectedPixelResolution: context.resolution
                     )
                     logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
                     try await ensureDesktopStreamSetupCanContinue(
@@ -977,6 +988,7 @@ extension MirageHostService {
 
         // Start streaming the display with direct Loom send ownership in StreamPacketSender.
         let firstSuccessfulVideoPacketSent = Locked(false)
+        var usedSyntheticDesktopStartupFrame = false
         do {
             let startDesktopDisplay: () async throws -> Void = {
                 try await streamContext.startDesktopDisplay(
@@ -1027,79 +1039,95 @@ extension MirageHostService {
                 try await startDesktopDisplay()
             }
 
-        if mode == .unified || mode == .secondary {
-            var recoveryAttempted = false
-            var audioReadinessFallbackAttempted = false
-            while true {
-                var readiness = await streamContext.waitForDisplayStartupReadiness(
-                    timeout: desktopStartupCaptureReadinessWindow
-                )
-                let capturedStartupSeedFrame: Bool
-                if readiness == .noScreenSamples {
-                    capturedStartupSeedFrame = await streamContext.seedDisplayStartupFrameIfNeeded()
-                    if !capturedStartupSeedFrame {
-                        readiness = await streamContext.waitForDisplayStartupReadiness(
-                            timeout: .milliseconds(250)
-                        )
-                    }
-                } else {
-                    capturedStartupSeedFrame = false
-                }
-                let hasCachedStartupFrame = await streamContext.hasCachedStartupFrame()
-                let hasObservedStartupSample = await streamContext.hasObservedDisplayStartupSample()
-                switch desktopStartupCaptureRecoveryDecision(
-                    readiness: readiness,
-                    recoveryAttempted: recoveryAttempted,
-                    hasCachedStartupFrame: hasCachedStartupFrame,
-                    hasObservedStartupSample: hasObservedStartupSample
-                ) {
-                case .proceed:
+            if mode == .unified || mode == .secondary {
+                var recoveryAttempted = false
+                var audioReadinessFallbackAttempted = false
+                while true {
+                    var readiness = await streamContext.waitForDisplayStartupReadiness(
+                        timeout: desktopStartupCaptureReadinessWindow
+                    )
+                    let capturedStartupSeedFrame: Bool
                     if readiness == .noScreenSamples {
-                        MirageLogger.host(
-                            "Desktop start: proceeding without a live startup frame " +
-                                "(cachedSeed=\(capturedStartupSeedFrame || hasCachedStartupFrame), " +
-                                "observedSample=\(hasObservedStartupSample))"
-                        )
+                        capturedStartupSeedFrame = await streamContext.seedDisplayStartupFrameIfNeeded()
+                        if !capturedStartupSeedFrame {
+                            readiness = await streamContext.waitForDisplayStartupReadiness(
+                                timeout: .milliseconds(250)
+                            )
+                        }
                     } else {
+                        capturedStartupSeedFrame = false
+                    }
+                    let hasCachedStartupFrame = await streamContext.hasCachedStartupFrame()
+                    let hasObservedStartupSample = await streamContext.hasObservedDisplayStartupSample()
+                    switch desktopStartupCaptureRecoveryDecision(
+                        readiness: readiness,
+                        recoveryAttempted: recoveryAttempted,
+                        hasCachedStartupFrame: hasCachedStartupFrame
+                    ) {
+                    case .proceed:
+                        if readiness == .noScreenSamples {
+                            MirageLogger.host(
+                                "Desktop start: proceeding without a live startup frame " +
+                                    "(cachedSeed=\(capturedStartupSeedFrame || hasCachedStartupFrame), " +
+                                    "observedSample=\(hasObservedStartupSample))"
+                            )
+                        } else {
+                            MirageLogger.host(
+                                "Desktop start: capture readiness satisfied (\(readiness.rawValue))"
+                            )
+                        }
+                        break
+                    case .restartCapture:
+                        recoveryAttempted = true
                         MirageLogger.host(
-                            "Desktop start: capture readiness satisfied (\(readiness.rawValue))"
+                            "Desktop start: capture readiness \(readiness.rawValue); restarting display capture once"
+                        )
+                        await streamContext.restartDisplayCaptureForStartupRecovery(
+                            reason: "startup_capture_readiness_\(readiness.rawValue)"
+                        )
+                        continue
+                    case .fail:
+                        if shouldSeedSyntheticDesktopStartupFrame(
+                            readiness: readiness,
+                            recoveryAttempted: recoveryAttempted,
+                            hasCachedStartupFrame: hasCachedStartupFrame
+                        ) {
+                            let seededSyntheticStartupFrame = await streamContext.seedSyntheticDisplayStartupFrameIfNeeded(
+                                reason: "startup_capture_readiness_\(readiness.rawValue)"
+                            )
+                            if seededSyntheticStartupFrame {
+                                usedSyntheticDesktopStartupFrame = true
+                                MirageLogger.host(
+                                    "Desktop start: live and screenshot startup frames unavailable after restart; " +
+                                        "using synthetic startup frame"
+                                )
+                                continue
+                            }
+                        }
+                        if effectiveAudioConfiguration.enabled, !audioReadinessFallbackAttempted {
+                            audioReadinessFallbackAttempted = true
+                            effectiveAudioConfiguration.enabled = false
+                            audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
+                            MirageLogger.host(
+                                "Desktop start: capture readiness \(readiness.rawValue); retrying startup readiness without audio"
+                            )
+                            await stopAudioPipeline(for: clientContext.client.id, reason: .error)
+                            await closeAudioTransportIfNeeded(for: clientContext.client.id)
+                            await streamContext.setCapturedAudioHandler(nil)
+                            await streamContext.restartDisplayCaptureForStartupRecovery(
+                                reason: "startup_capture_readiness_audio_fallback_\(readiness.rawValue)"
+                            )
+                            recoveryAttempted = false
+                            continue
+                        }
+                        throw MirageError.protocolError(
+                            "\(mode.displayName) desktop startup failed waiting for first display sample (\(readiness.rawValue))"
                         )
                     }
                     break
-                case .restartCapture:
-                    recoveryAttempted = true
-                    MirageLogger.host(
-                        "Desktop start: capture readiness \(readiness.rawValue); restarting display capture once"
-                    )
-                    await streamContext.restartDisplayCaptureForStartupRecovery(
-                        reason: "startup_capture_readiness_\(readiness.rawValue)"
-                    )
-                    continue
-                case .fail:
-                    if effectiveAudioConfiguration.enabled, !audioReadinessFallbackAttempted {
-                        audioReadinessFallbackAttempted = true
-                        effectiveAudioConfiguration.enabled = false
-                        audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
-                        MirageLogger.host(
-                            "Desktop start: capture readiness \(readiness.rawValue); retrying startup readiness without audio"
-                        )
-                        await stopAudioPipeline(for: clientContext.client.id, reason: .error)
-                        await closeAudioTransportIfNeeded(for: clientContext.client.id)
-                        await streamContext.setCapturedAudioHandler(nil)
-                        await streamContext.restartDisplayCaptureForStartupRecovery(
-                            reason: "startup_capture_readiness_audio_fallback_\(readiness.rawValue)"
-                        )
-                        recoveryAttempted = false
-                        continue
-                    }
-                    throw MirageError.protocolError(
-                        "\(mode.displayName) desktop startup failed waiting for first display sample (\(readiness.rawValue))"
-                    )
                 }
-                break
             }
-        }
-        logDesktopStartStep("capture and encoder started")
+            logDesktopStartStep("capture and encoder started")
         } catch {
             MirageLogger.error(
                 .host,
@@ -1172,7 +1200,64 @@ extension MirageHostService {
             streamID: streamID,
             requestedPixelResolution: captureResolution
         )
+        if usedSyntheticDesktopStartupFrame {
+            scheduleSyntheticDesktopStartupCaptureRecovery(
+                streamContext: streamContext,
+                streamID: streamID
+            )
+        }
         clearDesktopStartupMarkerOnExit = false
+    }
+
+    private func scheduleSyntheticDesktopStartupCaptureRecovery(
+        streamContext: StreamContext,
+        streamID: StreamID
+    ) {
+        Task { @MainActor [weak self, streamContext] in
+            for attempt in 1...desktopSyntheticStartupRecoveryMaxAttempts {
+                do {
+                    try await Task.sleep(for: desktopSyntheticStartupRecoveryAttemptInterval)
+                } catch {
+                    return
+                }
+
+                guard let self,
+                      self.desktopStreamID == streamID,
+                      self.desktopStreamContext != nil else {
+                    return
+                }
+                guard !(await streamContext.hasObservedDisplayStartupSample()) else {
+                    MirageLogger.host(
+                        "Desktop start: live display sample arrived after synthetic startup frame"
+                    )
+                    return
+                }
+
+                MirageLogger.host(
+                    "Desktop start: synthetic startup frame still waiting for live display sample; " +
+                        "restarting display capture attempt \(attempt)/\(desktopSyntheticStartupRecoveryMaxAttempts)"
+                )
+                await streamContext.restartDisplayCaptureForStartupRecovery(
+                    reason: "synthetic_startup_live_sample_recovery_\(attempt)"
+                )
+            }
+
+            do {
+                try await Task.sleep(for: desktopSyntheticStartupRecoveryAttemptInterval)
+            } catch {
+                return
+            }
+
+            guard let self,
+                  self.desktopStreamID == streamID,
+                  self.desktopStreamContext != nil,
+                  !(await streamContext.hasObservedDisplayStartupSample()) else {
+                return
+            }
+            MirageLogger.host(
+                "Desktop start: synthetic startup frame recovery exhausted; stream health monitoring will continue"
+            )
+        }
     }
 
     private func ensureDesktopStreamStartupCanContinue(
@@ -1488,7 +1573,8 @@ extension MirageHostService {
     func findSCDisplayWithRetry(
         maxAttempts: Int,
         delayMs: UInt64,
-        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil,
+        expectedPixelResolution: CGSize? = nil
     )
     async throws -> SCDisplayWrapper {
         _ = delayMs
@@ -1496,7 +1582,8 @@ extension MirageHostService {
         do {
             let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(
                 maxAttempts: resolvedAttempts,
-                startupBudget: startupBudget
+                startupBudget: startupBudget,
+                expectedPixelResolution: expectedPixelResolution
             )
             MirageLogger.host("Found SCDisplay using shared startup policy (attempt budget \(resolvedAttempts))")
             return scDisplay
@@ -1523,6 +1610,42 @@ extension MirageHostService {
         throw MirageError.protocolError("Failed to find main SCDisplay")
     }
 
+    func waitForDesktopTransitionCaptureReadiness(
+        context: StreamContext,
+        label: String,
+        timeout: Duration = .milliseconds(900)
+    )
+    async throws {
+        let readiness = await context.waitForDisplayStartupReadiness(timeout: timeout)
+        let hasCachedTransitionFrame = await context.hasCachedDesktopResizeFrame()
+        switch readiness {
+        case .usableFrameSeen, .idleFrameSeen:
+            MirageLogger.host(
+                "Desktop transition capture readiness satisfied for \(label): \(readiness.rawValue)"
+            )
+        case .noScreenSamples where hasCachedTransitionFrame:
+            MirageLogger.host(
+                "Desktop transition capture readiness using cached post-transition frame for \(label)"
+            )
+        case .blankOrSuspendedOnly, .noScreenSamples:
+            MirageLogger.error(
+                .host,
+                "Desktop transition capture readiness failed for \(label): \(readiness.rawValue)"
+            )
+            throw MirageError.protocolError(
+                "Desktop transition capture did not produce a usable frame (\(readiness.rawValue))"
+            )
+        }
+    }
+
+    func mainDisplayFallbackEligibility(
+        displayID: CGDirectDisplayID,
+        isVirtualDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isVirtualDisplay($0) }
+    )
+    -> Bool {
+        !isVirtualDisplay(displayID)
+    }
+
     func mainDisplayDesktopCaptureFallback(
         reason: String,
         maxAttempts: Int = 8,
@@ -1537,6 +1660,13 @@ extension MirageHostService {
     ) {
         let display = try await findMainSCDisplayWithRetry(maxAttempts: maxAttempts, delayMs: delayMs)
         let displayID = display.display.displayID
+        guard mainDisplayFallbackEligibility(displayID: displayID) else {
+            MirageLogger.error(
+                .host,
+                "Desktop main-display fallback rejected because display \(displayID) is virtual/headless (reason=\(reason))"
+            )
+            throw MirageError.protocolError("Main display fallback requires a physical display")
+        }
         let resolution = CGSize(
             width: CGFloat(display.display.width),
             height: CGFloat(display.display.height)
@@ -1606,6 +1736,20 @@ extension MirageHostService {
             snapshot[displayID] = CGDisplayMirrorsDisplay(displayID)
         }
         return snapshot
+    }
+
+    func mergeDisplayMirroringSnapshot(for displayIDs: [CGDirectDisplayID]) {
+        let snapshot = captureDisplayMirroringSnapshot(for: displayIDs)
+        var insertedCount = 0
+        for (displayID, mirroredDisplayID) in snapshot where desktopMirroringSnapshot[displayID] == nil {
+            desktopMirroringSnapshot[displayID] = mirroredDisplayID
+            insertedCount += 1
+        }
+        if insertedCount > 0 {
+            MirageLogger.host(
+                "Captured display mirroring snapshot for \(insertedCount) additional display(s); total=\(desktopMirroringSnapshot.count)"
+            )
+        }
     }
 
     @discardableResult
@@ -1876,20 +2020,14 @@ extension MirageHostService {
 
         let mirroredDisplayIDs = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
         if mirroredDisplayIDs.count == displaysToMirror.count {
-            if desktopMirroringSnapshot.isEmpty {
-                desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
-                MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
-            }
-            mirroredDesktopDisplayIDs = Set(displaysToMirror)
+            mergeDisplayMirroringSnapshot(for: displaysToMirror)
+            mirroredDesktopDisplayIDs.formUnion(displaysToMirror)
             MirageLogger.host("Display mirroring already enabled for \(displaysToMirror.count) displays")
             await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup_noop")
             return true
         }
 
-        if desktopMirroringSnapshot.isEmpty {
-            desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
-            MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
-        }
+        mergeDisplayMirroringSnapshot(for: displaysToMirror)
 
         MirageLogger.host("Setting up mirroring for \(displaysToMirror.count) displays")
 
@@ -1931,7 +2069,7 @@ extension MirageHostService {
                 return false
             }
 
-            mirroredDesktopDisplayIDs = successfullyMirrored
+            mirroredDesktopDisplayIDs.formUnion(successfullyMirrored)
             MirageLogger
                 .host(
                     "Display mirroring enabled for \(successfullyMirrored.count) displays → target display \(targetDisplayID)"
@@ -2021,10 +2159,7 @@ extension MirageHostService {
 
         captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: true)
 
-        if desktopMirroringSnapshot.isEmpty {
-            desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
-            MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
-        }
+        mergeDisplayMirroringSnapshot(for: displaysToMirror)
 
         let mirroredToTarget = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
         guard !mirroredToTarget.isEmpty else { return }
@@ -2065,8 +2200,13 @@ extension MirageHostService {
     /// Restore display mirroring to the pre-stream configuration.
     @discardableResult
     func disableDisplayMirroring(displayID: CGDirectDisplayID) async -> Bool {
-        guard !desktopMirroringSnapshot.isEmpty else {
-            MirageLogger.host("No display mirroring snapshot to restore")
+        var restoreTargets = desktopMirroringSnapshot
+        for mirroredDisplayID in mirroredDesktopDisplayIDs where restoreTargets[mirroredDisplayID] == nil {
+            restoreTargets[mirroredDisplayID] = kCGNullDirectDisplay
+        }
+
+        guard !restoreTargets.isEmpty else {
+            MirageLogger.host("No display mirroring snapshot or tracked mirrored displays to restore")
             mirroredDesktopDisplayIDs.removeAll()
             let restored = await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable_no_snapshot")
             if restored {
@@ -2076,12 +2216,12 @@ extension MirageHostService {
         }
 
         captureDisplaySpaceSnapshot(
-            for: desktopMirroringSnapshot.keys.sorted(),
+            for: restoreTargets.keys.sorted(),
             overwriteExisting: false
         )
 
         MirageLogger
-            .host("Restoring \(desktopMirroringSnapshot.count) displays from mirroring (virtual display \(displayID))")
+            .host("Restoring \(restoreTargets.count) displays from mirroring (virtual display \(displayID))")
 
         return await withHostDisplayMutation(kind: .displayMirroring) {
             var configRef: CGDisplayConfigRef?
@@ -2096,7 +2236,7 @@ extension MirageHostService {
             var onlineCount: UInt32 = 0
             CGGetOnlineDisplayList(16, &onlineIDs, &onlineCount)
             let onlineDisplays = Set(onlineIDs.prefix(Int(onlineCount)))
-            for (displayID, mirroredDisplayID) in desktopMirroringSnapshot {
+            for (displayID, mirroredDisplayID) in restoreTargets {
                 guard onlineDisplays.contains(displayID) else {
                     MirageLogger.host("Skipping mirroring restore for offline display \(displayID)")
                     continue

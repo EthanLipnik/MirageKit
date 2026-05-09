@@ -122,6 +122,10 @@ extension StreamContext {
 
     func handleCapturedFrameWhileStartupGated(_ frame: CapturedFrame) {
         recordCaptureIngress(frame)
+        if encodingSuspendedForResize {
+            cachedDesktopResizeFrame = frame
+            return
+        }
         guard startupFrameCachingEnabled else { return }
         cachedStartupFrame = frame
     }
@@ -185,6 +189,7 @@ extension StreamContext {
         backpressureActivatedAt = 0
         lastCapturedFrame = nil
         cachedStartupFrame = nil
+        cachedDesktopResizeFrame = nil
         lastCapturedFrameTime = 0
         lastCapturedDuration = .invalid
         lastEncodedPresentationTime = .invalid
@@ -1197,7 +1202,24 @@ extension StreamContext {
                 "event=capture_cadence_recovery action=recreate_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
             do {
-                _ = try await SharedVirtualDisplayManager.shared.recreateDisplayForCadenceRecovery(for: .desktopStream)
+                let result = try await SharedVirtualDisplayManager.shared.recreateDisplayForCadenceRecovery(for: .desktopStream)
+                guard result.generationChanged,
+                      let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() else {
+                    await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recreate no-generation-change")
+                    return
+                }
+                let captureDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(
+                    displayID: snapshot.displayID,
+                    maxAttempts: 6,
+                    expectedPixelResolution: snapshot.resolution
+                )
+                virtualDisplayContext = snapshot
+                updateWindowCaptureVirtualDisplayState(snapshot)
+                try await updateCaptureDisplay(captureDisplay, resolution: snapshot.resolution)
+                await scheduleCoalescedRecoveryKeyframe(
+                    reason: "Capture cadence virtual-display recreate",
+                    ignoreExistingInFlight: true
+                )
             } catch {
                 MirageLogger.error(.capture, error: error, message: "Capture cadence virtual-display recreate failed: ")
                 await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recreate fallback")

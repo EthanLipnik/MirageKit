@@ -85,7 +85,7 @@ extension MirageClientService {
         }
 
         if started.allowsClientResize {
-            beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
+            beginPostResizeTransition(streamID: streamID, scheduleTimeout: true)
         } else {
             sessionStore.clearPostResizeTransition(for: streamID)
         }
@@ -389,6 +389,12 @@ extension MirageClientService {
                 controllersByStream[streamID] != nil ||
                 registeredStreamIDs.contains(streamID)
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
+            if hadLocalDesktopState {
+                recordRetiredStreamDiagnosticsSummary(
+                    streamID: streamID,
+                    reason: "desktop:\(stopped.reason)"
+                )
+            }
 
             retiredDesktopSessionIDs.insert(stopped.desktopSessionID)
             desktopStreamID = nil

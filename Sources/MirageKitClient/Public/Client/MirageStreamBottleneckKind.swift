@@ -24,7 +24,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         case .encodeBound:
             "Encode-bound"
         case .hostCadenceLimited:
-            "Host cadence limited"
+            "Host source limited"
         case .networkBound:
             "Network-bound"
         case .decodeBound:
@@ -45,13 +45,13 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         case .encodeBound:
             "Capture is healthy, but host encode throughput is behind target."
         case .hostCadenceLimited:
-            "The host is capturing or encoding below the requested frame rate while transport pressure is clean."
+            "The host capture or encode pipeline is below the requested frame rate while transport pressure is clean."
         case .networkBound:
             "Transport pressure is dropping cadence before frames reach the client."
         case .decodeBound:
             "Frames reach the client faster than the decoder can sustain."
         case .presentationBound:
-            "Decode keeps up, but the client render path is not presenting the newest frames at target cadence."
+            "Decode keeps up, but the client render path is not enqueueing newest frames at target cadence."
         case .mixed:
             "More than one stage is limiting the stream at once."
         case .unknown:
@@ -68,8 +68,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
         let decodedFPS = max(0, snapshot.decodedFPS)
-        let submittedFPS = max(0, snapshot.submittedFPS)
-        let uniqueSubmittedFPS = max(0, snapshot.uniqueSubmittedFPS)
+        let layerEnqueueFPS = max(0, snapshot.layerEnqueueFPS)
+        let uniqueLayerEnqueueFPS = max(0, snapshot.uniqueLayerEnqueueFPS)
         let captureIngressFPS = max(0, snapshot.hostCaptureIngressFPS ?? 0)
         let captureFPS = max(0, snapshot.hostCaptureFPS ?? 0)
         let encodeAttemptFPS = max(0, snapshot.hostEncodeAttemptFPS ?? 0)
@@ -140,16 +140,16 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
-        let submissionLaggingDecode = (submittedFPS + presentationGapGrace < decodedFPS) ||
-            (uniqueSubmittedFPS + presentationGapGrace < decodedFPS)
+        let submissionLaggingDecode = (layerEnqueueFPS + presentationGapGrace < decodedFPS) ||
+            (uniqueLayerEnqueueFPS + presentationGapGrace < decodedFPS)
         let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
         let presentationBound = decodeKeepsUp && (
             submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
-                unevenPresentationCadence && submittedFPS < targetFPS * 0.97 ||
-                severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
+                unevenPresentationCadence && layerEnqueueFPS < targetFPS * 0.97 ||
+                severeUnevenPresentationCadence && layerEnqueueFPS >= targetFPS * 0.90
         )
 
         let hostCadenceLimited = !networkBound && (

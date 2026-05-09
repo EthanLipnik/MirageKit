@@ -25,19 +25,24 @@ enum DesktopStartupCaptureRecoveryDecision: Equatable {
 func desktopStartupCaptureRecoveryDecision(
     readiness: DisplayCaptureStartupReadiness,
     recoveryAttempted: Bool,
-    hasCachedStartupFrame: Bool = false,
-    hasObservedStartupSample: Bool = false
+    hasCachedStartupFrame: Bool = false
 ) -> DesktopStartupCaptureRecoveryDecision {
     switch readiness {
     case .usableFrameSeen, .idleFrameSeen:
         return .proceed
     case .noScreenSamples where hasCachedStartupFrame:
         return .proceed
-    case .noScreenSamples where hasObservedStartupSample:
-        return .proceed
     case .blankOrSuspendedOnly, .noScreenSamples:
         return recoveryAttempted ? .fail : .restartCapture
     }
+}
+
+func shouldSeedSyntheticDesktopStartupFrame(
+    readiness: DisplayCaptureStartupReadiness,
+    recoveryAttempted: Bool,
+    hasCachedStartupFrame: Bool
+) -> Bool {
+    readiness == .noScreenSamples && recoveryAttempted && !hasCachedStartupFrame
 }
 
 enum StartupFrameReleaseDisposition: Equatable {

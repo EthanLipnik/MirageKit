@@ -112,7 +112,11 @@ extension MirageHostService {
                 await disableDisplayMirroring(displayID: newContext.displayID)
             }
 
-            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+            let captureDisplay = try await findSCDisplayWithRetry(
+                maxAttempts: 6,
+                delayMs: 60,
+                expectedPixelResolution: newContext.resolution
+            )
             try await desktopContext.updateCaptureDisplay(
                 captureDisplay,
                 resolution: newContext.resolution

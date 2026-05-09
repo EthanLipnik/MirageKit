@@ -86,8 +86,9 @@ package struct MirageStreamGeometry: Sendable, Equatable {
             resolvedScale = min(clampedRequestedScale, maxScale)
         }
 
-        let encodedPixelSize = alignedEncodedSize(
-            CGSize(
+        let encodedPixelSize = aspectPreservingAlignedEncodedSize(
+            basePixelSize: normalizedBasePixelSize,
+            maxUnalignedSize: CGSize(
                 width: normalizedBasePixelSize.width * resolvedScale,
                 height: normalizedBasePixelSize.height * resolvedScale
             )
@@ -135,6 +136,55 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     private static func positiveEncoderLimit(_ value: Int?) -> CGFloat? {
         guard let value, value > 0 else { return nil }
         return CGFloat(value)
+    }
+
+    private static func aspectPreservingAlignedEncodedSize(
+        basePixelSize: CGSize,
+        maxUnalignedSize: CGSize
+    ) -> CGSize {
+        guard basePixelSize.width > 0,
+              basePixelSize.height > 0,
+              maxUnalignedSize.width > 0,
+              maxUnalignedSize.height > 0 else {
+            return .zero
+        }
+
+        let aspectRatio = basePixelSize.width / basePixelSize.height
+        let maxWidth = CGFloat(alignedEncodedDimension(maxUnalignedSize.width))
+        let maxHeight = CGFloat(alignedEncodedDimension(maxUnalignedSize.height))
+
+        let heightBound = alignedEncodedSize(
+            CGSize(width: maxHeight * aspectRatio, height: maxHeight)
+        )
+        let widthBound = alignedEncodedSize(
+            CGSize(width: maxWidth, height: maxWidth / aspectRatio)
+        )
+
+        let candidates = [heightBound, widthBound].filter { candidate in
+            candidate.width > 0 &&
+                candidate.height > 0 &&
+                candidate.width <= maxWidth &&
+                candidate.height <= maxHeight
+        }
+        guard !candidates.isEmpty else {
+            return CGSize(width: maxWidth, height: maxHeight)
+        }
+
+        return candidates.max { lhs, rhs in
+            let lhsError = aspectError(lhs, targetAspectRatio: aspectRatio)
+            let rhsError = aspectError(rhs, targetAspectRatio: aspectRatio)
+            if lhsError != rhsError {
+                return lhsError > rhsError
+            }
+            return lhs.width * lhs.height < rhs.width * rhs.height
+        } ?? candidates[0]
+    }
+
+    private static func aspectError(_ size: CGSize, targetAspectRatio: CGFloat) -> CGFloat {
+        guard size.width > 0, size.height > 0, targetAspectRatio > 0 else {
+            return .greatestFiniteMagnitude
+        }
+        return abs((size.width / size.height) - targetAspectRatio) / targetAspectRatio
     }
 
     private static func inferredDisplayScaleFactor(

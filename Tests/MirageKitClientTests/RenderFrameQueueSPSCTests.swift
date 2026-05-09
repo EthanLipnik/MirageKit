@@ -74,14 +74,15 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 303
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let generation = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
 
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 3,
+            cursor: MirageRenderCursor(generation: generation, sequence: 3),
             mappedPresentationTime: CMTime(seconds: 3, preferredTimescale: 600),
             for: streamID
         )
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 2,
+            cursor: MirageRenderCursor(generation: generation, sequence: 2),
             mappedPresentationTime: CMTime(seconds: 2, preferredTimescale: 600),
             for: streamID
         )
@@ -99,19 +100,21 @@ struct RenderFrameQueueSPSCTests {
 
         MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+        var latestCursor = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         for index in 0 ..< 3 {
-            _ = MirageRenderStreamStore.shared.enqueue(
+            let result = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: Double(index),
                 presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
+            latestCursor = result.cursor
         }
         MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
         MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 3,
+            cursor: latestCursor,
             mappedPresentationTime: CMTime(seconds: 3, preferredTimescale: 600),
             for: streamID
         )
@@ -119,10 +122,10 @@ struct RenderFrameQueueSPSCTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.decodeFPS >= 1)
         #expect(telemetry.submitAttemptFPS >= 1)
-        #expect(telemetry.layerAcceptedFPS >= 1)
-        #expect(telemetry.presentedFPS >= 1)
-        #expect(telemetry.submittedFPS >= 1)
-        #expect(telemetry.uniqueSubmittedFPS >= 1)
+        #expect(telemetry.layerEnqueueFPS >= 1)
+        #expect(telemetry.uniqueLayerEnqueueFPS >= 1)
+        #expect(telemetry.layerEnqueueFPS >= 1)
+        #expect(telemetry.uniqueLayerEnqueueFPS >= 1)
         #expect(telemetry.pendingFrameCount == 2)
         #expect(telemetry.overwrittenPendingFrames == 1)
         #expect(telemetry.displayLayerNotReadyCount == 1)
@@ -208,18 +211,21 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 308
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let generationBeforeTrim = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+        var cursors: [MirageRenderCursor] = []
 
         for index in 0 ..< 3 {
-            _ = MirageRenderStreamStore.shared.enqueue(
+            let result = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: Double(index),
                 presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
+            cursors.append(result.cursor)
         }
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: 2,
+            cursor: cursors[1],
             mappedPresentationTime: CMTime(seconds: 2, preferredTimescale: 600),
             for: streamID
         )
@@ -230,6 +236,7 @@ struct RenderFrameQueueSPSCTests {
         #expect(clearedCount == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
         #expect(snapshot.sequence == 2)
+        #expect(snapshot.generation == generationBeforeTrim)
     }
 
     @Test("Submitted pending frame remains visible for peer presenters")
@@ -248,17 +255,175 @@ struct RenderFrameQueueSPSCTests {
 
         let firstPresenterFrame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: firstPresenterFrame?.sequence ?? 0,
+            cursor: firstPresenterFrame?.cursor ?? MirageRenderStreamStore.shared.baselineCursor(for: streamID),
             mappedPresentationTime: .zero,
             for: streamID
         )
         let secondPresenterFrame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)
-        let peerPresenterFrame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: 0)
+        let peerPresenterFrame = MirageRenderStreamStore.shared.frameForPresentation(
+            for: streamID,
+            after: MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        )
 
         #expect(firstPresenterFrame?.sequence == 1)
         #expect(secondPresenterFrame?.sequence == 1)
         #expect(peerPresenterFrame?.sequence == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+    }
+
+    @Test("Stale-generation enqueue is rejected before assigning a render sequence")
+    func staleGenerationEnqueueIsRejectedBeforeAssigningSequence() {
+        let streamID: StreamID = 310
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let staleGeneration = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        let result = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            generation: staleGeneration,
+            for: streamID
+        )
+
+        #expect(result.didEnqueue == false)
+        #expect(result.sequence == 0)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+    }
+
+    @Test("Clear bumps render generation and newer generation progress can use lower sequence")
+    func clearBumpsGenerationAndLowerSequenceCountsAsProgress() {
+        let streamID: StreamID = 311
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let first = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: first.cursor,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+        let oldCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        let second = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            for: streamID
+        )
+        let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: oldCursor)
+
+        #expect(second.sequence == 1)
+        #expect(second.generation > oldCursor.generation)
+        #expect(frame?.cursor == second.cursor)
+    }
+
+    @Test("Stale submitted cursor is ignored after generation bump")
+    func staleSubmittedCursorIsIgnoredAfterGenerationBump() {
+        let streamID: StreamID = 312
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let result = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: result.cursor,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(snapshot.sequence == 0)
+        #expect(snapshot.generation > result.generation)
+    }
+
+    @Test("Actionable pending count excludes retained submitted frames")
+    func actionablePendingCountExcludesRetainedSubmittedFrames() {
+        let streamID: StreamID = 313
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let result = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: result.cursor,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: result.cursor) == 0)
+    }
+
+    @Test("Diagnostics retain cumulative render reset and recovery counters")
+    func diagnosticsRetainCumulativeRenderResetAndRecoveryCounters() {
+        final class Owner {}
+
+        let streamID: StreamID = 314
+        let owner = Owner()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {}
+        defer {
+            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+        _ = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+        MirageRenderStreamStore.shared.recordPresenterTimingReset(
+            for: streamID,
+            reason: "render-generation-boundary"
+        )
+        MirageRenderStreamStore.shared.recordDisplayLayerLivenessReset(
+            for: streamID,
+            reason: "not-ready-pending-frame"
+        )
+        let handled = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        _ = MirageRenderStreamStore.shared.bumpGeneration(for: streamID, reason: "host-epoch")
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        let diagnostics = MirageRenderStreamStore.shared.diagnosticsSnapshot(for: streamID)
+        #expect(handled == false)
+        #expect(diagnostics.clearCount == 1)
+        #expect(diagnostics.generationBumpCount == 2)
+        #expect(diagnostics.memoryTrimClearCount == 1)
+        #expect(diagnostics.presenterTimingResetCount == 1)
+        #expect(diagnostics.presenterTimingResetReasons == "render-generation-boundary:1")
+        #expect(diagnostics.displayLayerLivenessResetCount == 1)
+        #expect(diagnostics.displayLayerLivenessResetReasons == "not-ready-pending-frame:1")
+        #expect(diagnostics.presentationRecoveryRequestCount == 1)
+        #expect(diagnostics.presentationRecoveryHandlerDispatchCount == 0)
+        #expect(diagnostics.lastPresentationRecoveryOutcome == "noHandlers")
+        #expect(diagnostics.lastGenerationBumpReason == "clear")
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {

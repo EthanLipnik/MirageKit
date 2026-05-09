@@ -573,6 +573,7 @@ extension StreamContext {
         guard !encodingSuspendedForResize else { return }
         encodingSuspendedForResize = true
         shouldEncodeFrames = false
+        cachedDesktopResizeFrame = nil
         frameInbox.clear()
         resetPipelineStateForReconfiguration(reason: "desktop resize preflight pause")
         await packetSender?.resetQueue(reason: "desktop resize preflight pause")
@@ -584,6 +585,23 @@ extension StreamContext {
         encodingSuspendedForResize = false
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
+        let cachedDesktopResizeFrame = self.cachedDesktopResizeFrame
+        self.cachedDesktopResizeFrame = nil
+        var requiresExplicitDrainKick = frameInbox.hasPending()
+        if let cachedDesktopResizeFrame, !frameInbox.hasPending() {
+            let injectedFrame = CapturedFrame(
+                pixelBuffer: cachedDesktopResizeFrame.pixelBuffer,
+                presentationTime: cachedDesktopResizeFrame.presentationTime,
+                duration: cachedDesktopResizeFrame.duration,
+                captureTime: cachedDesktopResizeFrame.captureTime,
+                info: resolvedStartupFrameInjectionInfo(cachedDesktopResizeFrame.info)
+            )
+            _ = frameInbox.enqueue(injectedFrame)
+            requiresExplicitDrainKick = true
+            MirageLogger.stream(
+                "Queued cached post-resize frame for stream \(streamID) idle=\(cachedDesktopResizeFrame.info.isIdleFrame)"
+            )
+        }
         shouldEncodeFrames = true
         await scheduleCoalescedRecoveryKeyframe(
             reason: "Desktop resize resume",
@@ -591,6 +609,11 @@ extension StreamContext {
             ignoreExistingInFlight: true
         )
         MirageLogger.stream("Desktop resize completion: encoding resumed")
+        if requiresExplicitDrainKick {
+            Task(priority: .userInitiated) { await self.processPendingFrames() }
+        } else {
+            scheduleProcessingIfNeeded()
+        }
     }
 
     func allowEncodingAfterRegistration() async {
@@ -664,6 +687,7 @@ extension StreamContext {
         captureEngine = nil
         frameInbox.clear()
         cachedStartupFrame = nil
+        cachedDesktopResizeFrame = nil
         startupFrameCachingEnabled = false
 
         if useVirtualDisplay {

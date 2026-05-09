@@ -393,7 +393,7 @@ extension MirageClientService {
 
     private func freshVideoTimestampNs(for streamID: StreamID) -> UInt64? {
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        guard snapshot.sequence > 0 else { return nil }
+        guard snapshot.hasSubmission else { return nil }
         let ageSeconds = CFAbsoluteTimeGetCurrent() - snapshot.submittedTime
         guard ageSeconds >= 0,
               ageSeconds <= Self.maxAudioVideoSyncSnapshotAgeSeconds else {
@@ -409,7 +409,7 @@ extension MirageClientService {
         if sessionStore.sessionByMediaStreamID(streamID)?.hasPresentedFrame == true {
             return true
         }
-        return MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence > 0
+        return MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).hasSubmission
     }
 
     private func applyAudioLiveSyncDiagnostics(

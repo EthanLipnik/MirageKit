@@ -49,6 +49,20 @@ struct MirageStreamGeometryTests {
         #expect(geometry.encodedPixelSize == CGSize(width: 2048, height: 1536))
     }
 
+    @Test("Geometry preserves aspect when 1080p cap requires aligned dimensions")
+    func geometryPreservesAspectWhen1080pCapRequiresAlignedDimensions() {
+        let geometry = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: CGSize(width: 2752, height: 2064),
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 1920,
+            encoderMaxHeight: 1080
+        )
+
+        let aspect = geometry.encodedPixelSize.width / geometry.encodedPixelSize.height
+        #expect(geometry.encodedPixelSize == CGSize(width: 1424, height: 1072))
+        #expect(abs(aspect - (4.0 / 3.0)) < 0.005)
+    }
+
     @Test("Geometry honors explicit encoder limits even when default caps are disabled")
     func geometryHonorsExplicitEncoderLimitsWhenDefaultCapsAreDisabled() {
         let geometry = MirageStreamGeometry.resolveEncodedPlan(

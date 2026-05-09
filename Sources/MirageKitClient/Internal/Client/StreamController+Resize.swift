@@ -129,7 +129,7 @@ extension StreamController {
         MirageRenderStreamStore.shared.clear(for: streamID)
         MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         lastDecodedFrameTime = 0
-        lastPresentedSequenceObserved = 0
+        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         lastPresentedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = shouldAwaitNextPresentedFrame
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)

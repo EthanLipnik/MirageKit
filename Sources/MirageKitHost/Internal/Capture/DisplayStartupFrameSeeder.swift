@@ -68,8 +68,101 @@ enum DisplayStartupFrameSeeder {
         )
     }
 
+    static func makeSyntheticCapturedFrame(
+        targetWidth: Int,
+        targetHeight: Int,
+        pixelFormatType: OSType,
+        colorSpace: MirageColorSpace,
+        frameRate: Int
+    ) -> CapturedFrame? {
+        let width = max(1, targetWidth)
+        let height = max(1, targetHeight)
+        guard let sourceBuffer = makeBGRAPixelBuffer(
+            targetWidth: width,
+            targetHeight: height,
+            colorSpace: colorSpace
+        ) else {
+            return nil
+        }
+
+        let captureBuffer: CVPixelBuffer
+        if pixelFormatType == kCVPixelFormatType_32BGRA {
+            captureBuffer = sourceBuffer
+        } else {
+            guard let convertedBuffer = makePixelBuffer(
+                width: width,
+                height: height,
+                pixelFormatType: pixelFormatType
+            ) else {
+                return nil
+            }
+
+            guard transferImage(from: sourceBuffer, to: convertedBuffer) else {
+                return nil
+            }
+            captureBuffer = convertedBuffer
+        }
+
+        enforceCaptureColorAttachments(on: captureBuffer, colorSpace: colorSpace)
+
+        let timescale = CMTimeScale(max(1, frameRate))
+        return CapturedFrame(
+            pixelBuffer: captureBuffer,
+            presentationTime: .zero,
+            duration: CMTime(value: 1, timescale: timescale),
+            captureTime: CFAbsoluteTimeGetCurrent(),
+            info: CapturedFrameInfo(
+                contentRect: CGRect(x: 0, y: 0, width: width, height: height),
+                dirtyPercentage: 100,
+                isIdleFrame: false
+            )
+        )
+    }
+
     private static func makeBGRAPixelBuffer(
         from image: CGImage,
+        targetWidth: Int,
+        targetHeight: Int,
+        colorSpace: MirageColorSpace
+    ) -> CVPixelBuffer? {
+        guard let pixelBuffer = makeBGRAPixelBuffer(
+            targetWidth: targetWidth,
+            targetHeight: targetHeight,
+            colorSpace: colorSpace
+        ) else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+              let cgColorSpace = CGColorSpace(name: expectedColorAttachments(for: colorSpace).cgColorSpaceName) else {
+            return nil
+        }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue |
+            CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let context = CGContext(
+            data: baseAddress,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: cgColorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        enforceCaptureColorAttachments(on: pixelBuffer, colorSpace: colorSpace)
+        return pixelBuffer
+    }
+
+    private static func makeBGRAPixelBuffer(
         targetWidth: Int,
         targetHeight: Int,
         colorSpace: MirageColorSpace
@@ -108,8 +201,6 @@ enum DisplayStartupFrameSeeder {
 
         context.setFillColor(CGColor(gray: 0, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-        context.interpolationQuality = .high
-        context.draw(image, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
         enforceCaptureColorAttachments(on: pixelBuffer, colorSpace: colorSpace)
         return pixelBuffer
     }

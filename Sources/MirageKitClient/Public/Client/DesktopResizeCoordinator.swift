@@ -92,6 +92,7 @@ final class DesktopResizeCoordinator {
     @ObservationIgnored var displayResolutionTask: Task<Void, Never>?
     @ObservationIgnored var resizeHoldoffTask: Task<Void, Never>?
     @ObservationIgnored var presentationMaskTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored var activeTransitionTimeoutTask: Task<Void, Never>?
 
     func beginTransition(streamID: StreamID, transitionID: UUID, target: RequestGeometry) {
         activeTransition = ActiveTransition(streamID: streamID, transitionID: transitionID, target: target)
@@ -140,6 +141,8 @@ final class DesktopResizeCoordinator {
     }
 
     func finishTransition() {
+        activeTransitionTimeoutTask?.cancel()
+        activeTransitionTimeoutTask = nil
         activeTransition = nil
         if queuedTarget == nil {
             isResizing = false
@@ -148,6 +151,27 @@ final class DesktopResizeCoordinator {
             isResizing = true
             maskActive = true
         }
+    }
+
+    @discardableResult
+    func expireActiveTransition(streamID: StreamID, transitionID: UUID) -> Bool {
+        guard let activeTransition,
+              activeTransition.streamID == streamID,
+              activeTransition.transitionID == transitionID else {
+            return false
+        }
+
+        self.activeTransition = nil
+        activeTransitionTimeoutTask?.cancel()
+        activeTransitionTimeoutTask = nil
+        if queuedTarget == nil {
+            isResizing = false
+            maskActive = false
+        } else {
+            isResizing = true
+            maskActive = true
+        }
+        return true
     }
 
     func clearQueuedTargetsMatchingAcceptedStreamGeometry(
@@ -189,6 +213,8 @@ final class DesktopResizeCoordinator {
         resizeHoldoffTask = nil
         presentationMaskTimeoutTask?.cancel()
         presentationMaskTimeoutTask = nil
+        activeTransitionTimeoutTask?.cancel()
+        activeTransitionTimeoutTask = nil
     }
 
     func cancelPendingResizeDispatch() {
@@ -216,5 +242,7 @@ final class DesktopResizeCoordinator {
         queuedDispatchPolicy = nil
         self.lastSentTarget = preserveLastSentTarget ? lastSentTarget : nil
         activeTransition = nil
+        activeTransitionTimeoutTask?.cancel()
+        activeTransitionTimeoutTask = nil
     }
 }

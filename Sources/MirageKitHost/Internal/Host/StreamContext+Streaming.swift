@@ -82,6 +82,7 @@ extension StreamContext {
         shouldEncodeFrames = false
         startupFrameCachingEnabled = true
         cachedStartupFrame = nil
+        cachedDesktopResizeFrame = nil
         MirageLogger.stream("Waiting for UDP registration before encoding")
     }
 
@@ -268,6 +269,10 @@ extension StreamContext {
         cachedStartupFrame != nil
     }
 
+    func hasCachedDesktopResizeFrame() -> Bool {
+        cachedDesktopResizeFrame != nil
+    }
+
     func seedDisplayStartupFrameIfNeeded() async -> Bool {
         guard captureMode == .display,
               startupFrameCachingEnabled,
@@ -283,6 +288,25 @@ extension StreamContext {
         cachedStartupFrame = seededFrame
         MirageLogger.stream(
             "Cached screenshot startup frame for stream \(streamID) pending first live display sample"
+        )
+        return true
+    }
+
+    func seedSyntheticDisplayStartupFrameIfNeeded(reason: String) async -> Bool {
+        guard captureMode == .display,
+              startupFrameCachingEnabled,
+              cachedStartupFrame == nil,
+              let captureEngine else {
+            return cachedStartupFrame != nil
+        }
+
+        guard let syntheticFrame = await captureEngine.captureSyntheticDisplayStartupFrame() else {
+            return false
+        }
+
+        cachedStartupFrame = syntheticFrame
+        MirageLogger.stream(
+            "Cached synthetic startup frame for stream \(streamID) pending first live display sample reason=\(reason)"
         )
         return true
     }

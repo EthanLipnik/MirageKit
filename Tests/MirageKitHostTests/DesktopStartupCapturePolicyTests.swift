@@ -27,7 +27,7 @@ struct DesktopStartupCapturePolicyTests {
         )
     }
 
-    @Test("Blank or missing startup samples restart once then fail")
+    @Test("Blank or missing startup samples restart once before policy failure")
     func readinessFailureStatesRestartOnceThenFail() {
         #expect(
             desktopStartupCaptureRecoveryDecision(
@@ -55,7 +55,48 @@ struct DesktopStartupCapturePolicyTests {
         )
     }
 
-    @Test("Cached startup frame can satisfy missing startup samples")
+    @Test("Missing samples after restart can seed a synthetic cached startup frame")
+    func missingSamplesAfterRestartCanSeedSyntheticStartupFrame() {
+        #expect(shouldSeedSyntheticDesktopStartupFrame(
+            readiness: .noScreenSamples,
+            recoveryAttempted: true,
+            hasCachedStartupFrame: false
+        ))
+        #expect(!shouldSeedSyntheticDesktopStartupFrame(
+            readiness: .noScreenSamples,
+            recoveryAttempted: false,
+            hasCachedStartupFrame: false
+        ))
+        #expect(!shouldSeedSyntheticDesktopStartupFrame(
+            readiness: .noScreenSamples,
+            recoveryAttempted: true,
+            hasCachedStartupFrame: true
+        ))
+        #expect(
+            desktopStartupCaptureRecoveryDecision(
+                readiness: .noScreenSamples,
+                recoveryAttempted: true,
+                hasCachedStartupFrame: true
+            ) == .proceed
+        )
+    }
+
+    @Test("Blank or suspended samples do not request synthetic startup recovery")
+    func blankOrSuspendedSamplesDoNotRequestSyntheticStartupRecovery() {
+        #expect(!shouldSeedSyntheticDesktopStartupFrame(
+            readiness: .blankOrSuspendedOnly,
+            recoveryAttempted: true,
+            hasCachedStartupFrame: false
+        ))
+        #expect(
+            desktopStartupCaptureRecoveryDecision(
+                readiness: .blankOrSuspendedOnly,
+                recoveryAttempted: true
+            ) == .fail
+        )
+    }
+
+    @Test("Only cached startup frame can satisfy missing startup samples")
     func cachedStartupFrameCanSatisfyMissingStartupSamples() {
         #expect(
             desktopStartupCaptureRecoveryDecision(
@@ -67,9 +108,8 @@ struct DesktopStartupCapturePolicyTests {
         #expect(
             desktopStartupCaptureRecoveryDecision(
                 readiness: .noScreenSamples,
-                recoveryAttempted: true,
-                hasObservedStartupSample: true
-            ) == .proceed
+                recoveryAttempted: false
+            ) == .restartCapture
         )
     }
 

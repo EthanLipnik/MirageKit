@@ -44,9 +44,9 @@ struct ClientContext {
     }
 
     static func isLocalNetworkHost(_ host: String) -> Bool {
-        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = normalizedHostLiteral(host)
         if normalized.contains(".local") { return true }
-        if normalized.hasPrefix("fe80:") || normalized.hasPrefix("[fe80:") { return true }
+        if isLocalIPv6Host(normalized) { return true }
 
         guard let octets = parseIPv4Octets(from: normalized) else { return false }
         let first = octets[0]
@@ -57,6 +57,32 @@ struct ClientContext {
         if first == 172 && (16 ... 31).contains(second) { return true }
         if first == 169 && second == 254 { return true }
         return false
+    }
+
+    private static func normalizedHostLiteral(_ host: String) -> String {
+        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.hasPrefix("["),
+           let closingBracket = normalized.firstIndex(of: "]") {
+            return String(normalized[normalized.index(after: normalized.startIndex) ..< closingBracket])
+        }
+        return normalized
+    }
+
+    private static func isLocalIPv6Host(_ normalized: String) -> Bool {
+        guard normalized.contains(":") else { return false }
+        if normalized == "::1" { return true }
+
+        guard let firstHextet = normalized.split(
+            separator: ":",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        ).first,
+            let firstHextetValue = UInt16(firstHextet, radix: 16) else {
+            return false
+        }
+        let isLinkLocal = (firstHextetValue & 0xffc0) == 0xfe80
+        let isUniqueLocal = (firstHextetValue & 0xfe00) == 0xfc00
+        return isLinkLocal || isUniqueLocal
     }
 
     private static func parseIPv4Octets(from text: String) -> [UInt8]? {

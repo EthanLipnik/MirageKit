@@ -60,6 +60,33 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Prepare-for-resize invalidates pending render frames")
+    func prepareForResizeInvalidatesPendingRenderFrames() async {
+        let streamID: StreamID = 92
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        let initialGeneration = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+
+        await controller.prepareForResize(
+            codec: .hevc,
+            streamDimensions: (width: 1920, height: 1080)
+        )
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(MirageRenderStreamStore.shared.currentGeneration(for: streamID) > initialGeneration)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
     @Test("Prepare-for-resize preserves recovery counters")
     func prepareForResizePreservesRecoveryCounters() async {
         let controller = StreamController(streamID: 93, maxPayloadSize: 1200)
@@ -565,7 +592,7 @@ struct StreamControllerRecoveryTests {
 
         await controller.updatePresentationTier(.activeLive)
         await controller.recordDecodedFrame()
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        markSubmitted(streamID: streamID)
         await controller.markFirstFramePresented()
 
         #expect(await controller.lastPresentedProgressTime > 0)
@@ -612,7 +639,18 @@ struct StreamControllerRecoveryTests {
 
         await controller.updatePresentationTier(.activeLive)
         await controller.recordDecodedFrame()
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        let submittedFrame = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: submittedFrame.cursor,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
         await controller.markFirstFramePresented()
         await controller.forcePresentationStallForTesting(now: clock.now)
 
@@ -630,6 +668,62 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value == 0)
         let reassembler = await controller.getReassembler()
         #expect(!reassembler.isAwaitingKeyframe())
+
+        await controller.stop()
+    }
+
+    @Test("Freeze monitor does not treat retained submitted frame as presenter work")
+    func freezeMonitorIgnoresRetainedSubmittedFrameForPresenterRecovery() async throws {
+        let keyframeCounter = LockedCounter()
+        let presenterRecoveryCounter = LockedCounter()
+        let presenterOwner = NSObject()
+        let streamID: StreamID = 150
+        let clock = ManualTimeProvider(start: 8_500)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        let submittedFrame = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: submittedFrame.cursor,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+        await controller.markFirstFramePresented()
+        await controller.forcePresentationStallForTesting(now: clock.now)
+
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+
+        try await waitUntil("stale retained frame keyframe recovery", timeout: .seconds(3)) {
+            keyframeCounter.value >= 1
+        }
+        #expect(presenterRecoveryCounter.value == 0)
 
         await controller.stop()
     }
@@ -776,7 +870,7 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.lastPresentedProgressTime == 0)
         #expect(await controller.clientRecoveryStatus == .hardRecovery)
 
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        markSubmitted(streamID: streamID)
         var recoveredProgress = false
         let timeoutAt = ContinuousClock.now + .seconds(2)
         while ContinuousClock.now < timeoutAt {
@@ -840,7 +934,7 @@ struct StreamControllerRecoveryTests {
         tracker.recordSuccess(isKeyframe: true)
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
 
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        markSubmitted(streamID: streamID)
         let recoveredProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
         #expect(recoveredProgress)
         await controller.clearTransientRecoveryStateAfterPresentationProgress()
@@ -875,7 +969,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
         await controller.updatePresentationTier(.activeLive)
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        markSubmitted(streamID: streamID)
         await controller.markFirstFramePresented()
 
         await controller.requestRecovery(
@@ -963,7 +1057,7 @@ struct StreamControllerRecoveryTests {
         )
         #expect(await controller.startupHardRecoveryCount == 1)
 
-        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
+        markSubmitted(streamID: streamID)
         await controller.markFirstFramePresented()
 
         #expect(await controller.startupHardRecoveryCount == 0)
@@ -1267,6 +1361,17 @@ struct StreamControllerRecoveryTests {
             crc = (crc >> 8) ^ current
         }
         return crc ^ 0xFFFFFFFF
+    }
+
+    private func markSubmitted(streamID: StreamID, sequence: UInt64 = 1) {
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: MirageRenderCursor(
+                generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+                sequence: sequence
+            ),
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
     }
 }
 

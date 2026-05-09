@@ -74,29 +74,9 @@ extension SharedVirtualDisplayManager {
     )
     async throws -> DisplaySnapshot {
         try startupBudget?.checkAvailable()
-        // Force-destroy any orphaned displays from previous sessions before
-        // acquiring.  Orphans block virtual display creation until the OS
-        // reclaims them, which can take minutes after an unclean teardown.
-        if !orphanedDisplayIDs.isEmpty {
-            MirageLogger.host(
-                "Cleaning up \(orphanedDisplayIDs.count) orphaned display(s) before acquisition: \(orphanedDisplayIDs)"
-            )
-            var survivingOrphans: Set<CGDirectDisplayID> = []
-            for orphanID in orphanedDisplayIDs {
-                CGVirtualDisplayBridge.forceInvalidateOrphan(orphanID)
-                if CGVirtualDisplayBridge.isDisplayOnline(orphanID) {
-                    survivingOrphans.insert(orphanID)
-                }
-            }
-            orphanedDisplayIDs = survivingOrphans
-            if !survivingOrphans.isEmpty {
-                MirageLogger.host(
-                    "Virtual display orphan cleanup left \(survivingOrphans.count) display(s) online; keeping them tracked: \(survivingOrphans)"
-                )
-                let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(500) ?? 500
-                try? await Task.sleep(for: .milliseconds(boundedDelayMs))
-                try startupBudget?.checkAvailable()
-            }
+        let residualDisplayIDs = refreshResidualMirageDisplayTracking()
+        if !residualDisplayIDs.isEmpty, sharedDisplay == nil {
+            throw SharedDisplayError.residualMirageDisplaysOnline(residualDisplayIDs)
         }
 
         let requestedRate = refreshRate

@@ -137,9 +137,13 @@ struct DesktopVirtualDisplayStartupSession {
                 return .activation
             case .spaceNotFound:
                 return .spaceAssignment
-            case .noActiveDisplay, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound, .streamDisplayNotFound:
+            case .noActiveDisplay,
+                 .screenCaptureKitVisibilityDelayed,
+                 .scDisplayNotFound,
+                 .scDisplaySizeMismatch,
+                 .streamDisplayNotFound:
                 return .readiness
-            case .apiNotAvailable:
+            case .apiNotAvailable, .residualMirageDisplaysOnline:
                 return .nonRetryable
             }
         }

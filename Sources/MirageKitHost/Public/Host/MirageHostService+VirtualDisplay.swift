@@ -943,6 +943,10 @@ extension MirageHostService {
                             "\(encodedResolutionText) " +
                             "without display recreation (transition=\(transitionIDText), input bounds: \(inputBoundsText))"
                     )
+                try await waitForDesktopTransitionCaptureReadiness(
+                    context: desktopContext,
+                    label: "desktop_resize_stream_scale"
+                )
                 resizeCompletionContext = desktopContext
                 resizeOutcome = .resized
             } else {
@@ -1013,7 +1017,11 @@ extension MirageHostService {
                     shouldRestoreMirroring = false
                 }
 
-                let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+                let captureDisplay = try await findSCDisplayWithRetry(
+                    maxAttempts: 6,
+                    delayMs: 60,
+                    expectedPixelResolution: effectivePixelResolution
+                )
                 try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
                 guard let latestDesktopContext = desktopStreamContext else {
                     throw DesktopResizeTransactionAbort.streamNoLongerActive
@@ -1032,6 +1040,10 @@ extension MirageHostService {
                     streamID: streamID,
                     displaySnapshot: postResizeSnapshot,
                     context: latestDesktopContext
+                )
+                try await waitForDesktopTransitionCaptureReadiness(
+                    context: latestDesktopContext,
+                    label: "desktop_resize_display_reset"
                 )
 
                 let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
@@ -1254,10 +1266,18 @@ extension MirageHostService {
             encoderMaxHeight: encoderMaxHeight
         )
 
-        let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+        let captureDisplay = try await findSCDisplayWithRetry(
+            maxAttempts: 6,
+            delayMs: 60,
+            expectedPixelResolution: restoredSnapshot.resolution
+        )
         try await context.hardResetDesktopDisplayCapture(
             displayWrapper: captureDisplay,
             resolution: restoredSnapshot.resolution
+        )
+        try await waitForDesktopTransitionCaptureReadiness(
+            context: context,
+            label: "desktop_resize_rollback"
         )
         if captureDisplay.display.displayID != restoredSnapshot.displayID {
             MirageLogger
@@ -1352,6 +1372,10 @@ extension MirageHostService {
         try await context.hardResetDesktopDisplayCapture(
             displayWrapper: fallback.display,
             resolution: fallback.resolution
+        )
+        try await waitForDesktopTransitionCaptureReadiness(
+            context: context,
+            label: "desktop_resize_main_display_fallback"
         )
 
         let inputGeometry = updateDesktopInputGeometry(

@@ -16,7 +16,7 @@ struct AudioPlaybackControllerInitializationTests {
     @MainActor
     @Test("Incoming audio format preparation initializes playback ahead of the first frame")
     func incomingFormatPreparationInitializesPlaybackGraph() async {
-        let controller = AudioPlaybackController()
+        let controller = AudioPlaybackController(automaticallyStartsPlayer: false)
 
         #expect(!controller.hasInitializedPlaybackGraphForTesting())
         #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
@@ -79,7 +79,11 @@ struct AudioPlaybackControllerInitializationTests {
     @MainActor
     @Test("Pending startup audio is capped before playback starts")
     func pendingStartupAudioIsCappedBeforePlaybackStarts() {
-        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.25)
+        let controller = AudioPlaybackController(
+            startupBufferSeconds: 10,
+            maxQueuedSeconds: 0.25,
+            automaticallyStartsPlayer: false
+        )
 
         for index in 0 ..< 10 {
             controller.enqueue(makeDecodedFrame(timestampNs: UInt64(index)))
@@ -92,7 +96,11 @@ struct AudioPlaybackControllerInitializationTests {
     @MainActor
     @Test("Format changes discard superseded pending startup frames")
     func formatChangesDiscardSupersededPendingStartupFrames() {
-        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
+        let controller = AudioPlaybackController(
+            startupBufferSeconds: 10,
+            maxQueuedSeconds: 0.5,
+            automaticallyStartsPlayer: false
+        )
 
         controller.enqueue(makeDecodedFrame(sampleRate: 48_000, timestampNs: 1))
         controller.enqueue(makeDecodedFrame(sampleRate: 44_100, timestampNs: 2))
@@ -104,7 +112,11 @@ struct AudioPlaybackControllerInitializationTests {
     @MainActor
     @Test("Buffered audio discard clears pending startup frames")
     func bufferedAudioDiscardClearsPendingStartupFrames() {
-        let controller = AudioPlaybackController(startupBufferSeconds: 10, maxQueuedSeconds: 0.5)
+        let controller = AudioPlaybackController(
+            startupBufferSeconds: 10,
+            maxQueuedSeconds: 0.5,
+            automaticallyStartsPlayer: false
+        )
 
         controller.enqueue(makeDecodedFrame(timestampNs: 1))
         controller.enqueue(makeDecodedFrame(timestampNs: 2))
@@ -119,7 +131,7 @@ struct AudioPlaybackControllerInitializationTests {
     @MainActor
     @Test("Playback recovery tears down initialized graph")
     func playbackRecoveryTearsDownInitializedGraph() async {
-        let controller = AudioPlaybackController()
+        let controller = AudioPlaybackController(automaticallyStartsPlayer: false)
 
         #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
         #expect(controller.hasInitializedPlaybackGraphForTesting())

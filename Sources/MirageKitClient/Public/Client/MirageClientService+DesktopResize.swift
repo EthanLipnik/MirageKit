@@ -104,7 +104,10 @@ extension MirageClientService {
         }
 
         if let session = sessionStore.sessionByStreamID(streamID),
-           session.clientRecoveryStatus != .idle {
+           shouldDeferDesktopResizeForClientRecovery(
+               session.clientRecoveryStatus,
+               streamID: streamID
+           ) {
             coordinator.queueLatestTarget(target, dispatchPolicy: dispatchPolicy)
             scheduleDesktopResizePresentationMaskTimeout(streamID: streamID)
             MirageLogger.client(
@@ -209,7 +212,10 @@ extension MirageClientService {
             return
         }
         if let session = sessionStore.sessionByStreamID(streamID),
-           session.clientRecoveryStatus != .idle {
+           shouldDeferDesktopResizeForClientRecovery(
+               session.clientRecoveryStatus,
+               streamID: streamID
+           ) {
             scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
             return
         }
@@ -237,9 +243,15 @@ extension MirageClientService {
                 encoderMaxWidth: target.encoderMaxWidth,
                 encoderMaxHeight: target.encoderMaxHeight
             )
+            scheduleDesktopResizeActiveTransitionTimeout(
+                streamID: streamID,
+                transitionID: transitionID
+            )
         } catch {
             if coordinator.activeTransition?.transitionID == transitionID {
                 coordinator.activeTransition = nil
+                coordinator.activeTransitionTimeoutTask?.cancel()
+                coordinator.activeTransitionTimeoutTask = nil
             }
             coordinator.queueLatestTarget(
                 target,
@@ -253,6 +265,19 @@ extension MirageClientService {
                 message: "Failed to send desktop resize transition: "
             )
         }
+    }
+
+    private func shouldDeferDesktopResizeForClientRecovery(
+        _ status: MirageStreamClientRecoveryStatus,
+        streamID: StreamID
+    )
+    -> Bool {
+        if status == .idle { return false }
+        if status == .postResizeAwaitingFirstFrame,
+           !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
+            return false
+        }
+        return true
     }
 
     func handleDesktopPresentationReady(streamID: StreamID) {
@@ -316,6 +341,32 @@ extension MirageClientService {
         MirageLogger.client("Post-resize transition cleared for stream \(streamID) (\(reason))")
         if dispatchQueuedResize {
             handleDesktopPresentationReady(streamID: streamID)
+        }
+    }
+
+    private func scheduleDesktopResizeActiveTransitionTimeout(
+        streamID: StreamID,
+        transitionID: UUID
+    ) {
+        let coordinator = desktopResizeCoordinator
+        coordinator.activeTransitionTimeoutTask?.cancel()
+        coordinator.activeTransitionTimeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: self?.desktopPostResizeTransitionTimeout ?? .seconds(10))
+            } catch {
+                return
+            }
+            guard let self, self.desktopStreamID == streamID else { return }
+            guard self.desktopResizeCoordinator.expireActiveTransition(
+                streamID: streamID,
+                transitionID: transitionID
+            ) else {
+                return
+            }
+            MirageLogger.client(
+                "Desktop resize transition expired for stream \(streamID), transition=\(transitionID.uuidString)"
+            )
+            self.scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
         }
     }
 

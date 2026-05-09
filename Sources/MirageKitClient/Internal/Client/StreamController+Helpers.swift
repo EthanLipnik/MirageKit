@@ -103,10 +103,8 @@ extension StreamController {
                 receivedFrameIntervalP99Ms: frameMetrics.receivedFrameIntervalP99Ms,
                 displayTickFPS: renderTelemetry.displayTickFPS,
                 submitAttemptFPS: renderTelemetry.submitAttemptFPS,
-                layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
-                presentedFPS: renderTelemetry.presentedFPS,
-                submittedFPS: renderTelemetry.submittedFPS,
-                uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
+                layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
+                uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS,
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
@@ -244,16 +242,16 @@ extension StreamController {
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         let referenceNow = now ?? currentTime()
 
-        if snapshot.sequence > lastPresentedSequenceObserved {
-            lastPresentedSequenceObserved = snapshot.sequence
+        if snapshot.cursor.isAfter(lastPresentedCursorObserved) {
+            lastPresentedCursorObserved = snapshot.cursor
             lastPresentedProgressTime = snapshot.submittedTime > 0 ? snapshot.submittedTime : referenceNow
             presentationProgressRequiresSequenceAdvance = false
             return true
         }
 
         if lastPresentedProgressTime == 0 {
-            if snapshot.submittedTime > 0 {
-                lastPresentedSequenceObserved = max(lastPresentedSequenceObserved, snapshot.sequence)
+            if snapshot.hasSubmission {
+                lastPresentedCursorObserved = snapshot.cursor
                 lastPresentedProgressTime = snapshot.submittedTime
                 presentationProgressRequiresSequenceAdvance = false
                 return true
@@ -372,7 +370,7 @@ extension StreamController {
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         awaitingFirstPresentedFrame = true
         firstPresentedFrameAwaitMode = mode
-        firstPresentedFrameBaselineSequence = snapshot.sequence
+        firstPresentedFrameBaselineCursor = snapshot.cursor
         firstPresentedFrameWaitReason = reason
         firstPresentedFrameWaitStartTime = currentTime()
         firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
@@ -386,7 +384,8 @@ extension StreamController {
 
         MirageLogger
             .client(
-                "Waiting for first presented frame (\(reason)) for stream \(streamID), baseline sequence \(snapshot.sequence)"
+                "Waiting for first presented frame (\(reason)) for stream \(streamID), baseline cursor " +
+                    "\(snapshot.generation):\(snapshot.sequence)"
             )
         startFirstPresentedFrameMonitorIfNeeded()
     }
@@ -396,7 +395,7 @@ extension StreamController {
         firstPresentedFrameTask = nil
         awaitingFirstPresentedFrame = false
         firstPresentedFrameAwaitMode = .startup
-        firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameBaselineCursor = .zero
         firstPresentedFrameWaitReason = nil
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
@@ -428,7 +427,7 @@ extension StreamController {
         let waitStart = firstPresentedFrameWaitStartTime
 
         awaitingFirstPresentedFrame = false
-        firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameBaselineCursor = .zero
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
@@ -485,14 +484,14 @@ extension StreamController {
             guard awaitingFirstPresentedFrame else { return }
 
             let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-            if snapshot.sequence > firstPresentedFrameBaselineSequence {
+            if snapshot.cursor.isAfter(firstPresentedFrameBaselineCursor) {
                 await markFirstFramePresented()
                 return
             }
 
             let now = currentTime()
-            maybeLogFirstPresentedFrameWait(now: now, latestSequence: snapshot.sequence)
-            await maybeTriggerBootstrapFirstFrameRecovery(now: now, latestSequence: snapshot.sequence)
+            maybeLogFirstPresentedFrameWait(now: now, latestCursor: snapshot.cursor)
+            await maybeTriggerBootstrapFirstFrameRecovery(now: now, latestCursor: snapshot.cursor)
 
             do {
                 try await Task.sleep(for: Self.firstPresentedFramePollInterval)
@@ -502,7 +501,7 @@ extension StreamController {
         }
     }
 
-    private func maybeLogFirstPresentedFrameWait(now: CFAbsoluteTime, latestSequence: UInt64) {
+    private func maybeLogFirstPresentedFrameWait(now: CFAbsoluteTime, latestCursor: MirageRenderCursor) {
         guard awaitingFirstPresentedFrame else { return }
         guard firstPresentedFrameWaitStartTime > 0 else { return }
         guard now - firstPresentedFrameLastWaitLogTime >= Self.firstPresentedFrameWaitLogInterval else { return }
@@ -515,14 +514,15 @@ extension StreamController {
         MirageLogger
             .client(
                 "Still waiting for first presented frame (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
-                    "baseline=\(firstPresentedFrameBaselineSequence), latest=\(latestSequence), " +
+                    "baseline=\(firstPresentedFrameBaselineCursor.generation):\(firstPresentedFrameBaselineCursor.sequence), " +
+                    "latest=\(latestCursor.generation):\(latestCursor.sequence), " +
                     "pendingFrames=\(pendingDepth), awaitingKeyframe=\(awaitingKeyframe))"
             )
     }
 
     private func maybeTriggerBootstrapFirstFrameRecovery(
         now: CFAbsoluteTime,
-        latestSequence: UInt64
+        latestCursor: MirageRenderCursor
     ) async {
         guard awaitingFirstPresentedFrame,
               firstPresentedFrameWaitStartTime > 0 else { return }
@@ -540,11 +540,11 @@ extension StreamController {
             return
         }
 
-        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: latestCursor)
         if Self.shouldAttemptRendererRecoveryBeforeBootstrapReset(
             pendingFrameCount: pendingFrameCount,
-            submittedSequence: latestSequence,
-            baselineSequence: firstPresentedFrameBaselineSequence,
+            submittedCursor: latestCursor,
+            baselineCursor: firstPresentedFrameBaselineCursor,
             rendererRecoveryAttempts: firstPresentedFrameRendererRecoveryAttemptCount
         ) {
             firstPresentedFrameRendererRecoveryAttemptCount &+= 1
@@ -570,7 +570,7 @@ extension StreamController {
             startupStallKind = "reassembler awaiting keyframe"
         } else if !hasPackets {
             startupStallKind = "no startup packets received"
-        } else if latestSequence <= firstPresentedFrameBaselineSequence {
+        } else if !latestCursor.isAfter(firstPresentedFrameBaselineCursor) {
             startupStallKind = "no presented frame progress"
         } else {
             startupStallKind = "startup presentation stalled"
@@ -582,8 +582,8 @@ extension StreamController {
         let recoveryAction = Self.bootstrapFirstFrameRecoveryAction(
             hasPackets: hasPackets,
             awaitingKeyframe: awaitingKeyframe,
-            latestSequence: latestSequence,
-            baselineSequence: firstPresentedFrameBaselineSequence
+            latestCursor: latestCursor,
+            baselineCursor: firstPresentedFrameBaselineCursor
         )
 
         if firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold ||
@@ -771,18 +771,18 @@ extension StreamController {
               hasPresentedFirstFrame,
               memoryBudgetRecoveryTask == nil else { return }
 
-        let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
+        let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
         memoryBudgetRecoveryTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: Self.memoryBudgetRecoveryDelay)
             } catch {
                 return
             }
-            await self?.requestMemoryBudgetRecoveryIfStillStalled(baselineSequence: baselineSequence)
+            await self?.requestMemoryBudgetRecoveryIfStillStalled(baselineCursor: baselineCursor)
         }
     }
 
-    private func requestMemoryBudgetRecoveryIfStillStalled(baselineSequence: UInt64) async {
+    private func requestMemoryBudgetRecoveryIfStillStalled(baselineCursor: MirageRenderCursor) async {
         memoryBudgetRecoveryTask = nil
         guard !isStopping,
               presentationTier == .activeLive,
@@ -791,8 +791,8 @@ extension StreamController {
 
         let now = currentTime()
         syncPresentationProgressFromFrameStore(now: now)
-        let currentSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
-        guard currentSequence <= baselineSequence else { return }
+        let currentCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        guard !currentCursor.isAfter(baselineCursor) else { return }
 
         if let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
            now - pendingKeyframeProgress.lastProgressTime < Self.keyframeProgressFreshThreshold(
@@ -1189,11 +1189,15 @@ extension StreamController {
         guard lastPresentedProgressTime > 0,
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
 
-        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
-        if pendingFrameCount > 0,
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let actionablePendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(
+            for: streamID,
+            after: submittedCursor
+        )
+        if actionablePendingFrameCount > 0,
            await maybeTriggerRenderSubmissionRecovery(
                now: now,
-               pendingFrameCount: pendingFrameCount
+               pendingFrameCount: actionablePendingFrameCount
            ) {
             return
         }

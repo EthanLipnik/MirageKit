@@ -361,6 +361,73 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(anchor == display24)
     }
 
+    @Test("Headless-only Mirage display skips separation configuration when already at origin")
+    func headlessOnlyMirageDisplaySkipsSeparationConfigurationAtOrigin() {
+        let display35: CGDirectDisplayID = 35
+
+        #expect(
+            shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35],
+                isHeadless: true,
+                virtualDisplayBounds: CGRect(x: 0, y: 0, width: 3000, height: 1688),
+                mirrorSource: kCGNullDirectDisplay
+            )
+        )
+    }
+
+    @Test("Headless-only separation skip requires valid unmirrored origin display")
+    func headlessOnlySeparationSkipRequiresValidUnmirroredOriginDisplay() {
+        let display35: CGDirectDisplayID = 35
+        let display37: CGDirectDisplayID = 37
+
+        #expect(
+            !shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35],
+                isHeadless: false,
+                virtualDisplayBounds: CGRect(x: 0, y: 0, width: 3000, height: 1688),
+                mirrorSource: kCGNullDirectDisplay
+            )
+        )
+        #expect(
+            !shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35, display37],
+                isHeadless: true,
+                virtualDisplayBounds: CGRect(x: 0, y: 0, width: 3000, height: 1688),
+                mirrorSource: kCGNullDirectDisplay
+            )
+        )
+        #expect(
+            !shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35],
+                isHeadless: true,
+                virtualDisplayBounds: CGRect(x: 10, y: 0, width: 3000, height: 1688),
+                mirrorSource: kCGNullDirectDisplay
+            )
+        )
+        #expect(
+            !shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35],
+                isHeadless: true,
+                virtualDisplayBounds: CGRect(x: 0, y: 0, width: 3000, height: 1688),
+                mirrorSource: display37
+            )
+        )
+        #expect(
+            !shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
+                virtualDisplayID: display35,
+                displays: [display35],
+                isHeadless: true,
+                virtualDisplayBounds: CGRect(x: 0, y: 0, width: 0, height: 1688),
+                mirrorSource: kCGNullDirectDisplay
+            )
+        )
+    }
+
     @Test("Desktop mirroring excludes only the target Mirage display")
     func desktopMirroringExcludesOnlyMirageDisplays() {
         let display1: CGDirectDisplayID = 1
@@ -424,6 +491,33 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .waitForResidualMirageDisplays([staleMirageDisplay23]))
     }
 
+    @Test("Residual Mirage display policy blocks unowned online displays")
+    func residualMirageDisplayPolicyBlocksUnownedOnlineDisplays() {
+        let ownedMirageDisplay24: CGDirectDisplayID = 24
+        let residualMirageDisplay25: CGDirectDisplayID = 25
+
+        let decision = residualMirageDisplayCreationDecision(
+            onlineDisplayIDs: [3, residualMirageDisplay25, ownedMirageDisplay24],
+            ownedDisplayIDs: [ownedMirageDisplay24],
+            isMirageDisplay: { $0 == residualMirageDisplay25 || $0 == ownedMirageDisplay24 }
+        )
+
+        #expect(decision == .block([residualMirageDisplay25]))
+    }
+
+    @Test("Residual Mirage display policy allows owned Mirage displays")
+    func residualMirageDisplayPolicyAllowsOwnedDisplays() {
+        let ownedMirageDisplay24: CGDirectDisplayID = 24
+
+        let decision = residualMirageDisplayCreationDecision(
+            onlineDisplayIDs: [3, ownedMirageDisplay24],
+            ownedDisplayIDs: [ownedMirageDisplay24],
+            isMirageDisplay: { $0 == ownedMirageDisplay24 }
+        )
+
+        #expect(decision == .allow)
+    }
+
     @Test("Physical fallback mirroring ignores residual Mirage displays")
     func physicalFallbackMirroringIgnoresResidualMirageDisplays() {
         let staleMirageDisplay23: CGDirectDisplayID = 23
@@ -459,6 +553,22 @@ struct DesktopResizeTransactionPolicyTests {
             decision == .waitForExpectedMode(
                 observed: observedResolution,
                 expected: expectedResolution
+            )
+        )
+    }
+
+    @Test("SCDisplay size validation accepts tolerance and rejects stale dimensions")
+    func scDisplaySizeValidationChecksExpectedResolution() {
+        #expect(
+            SharedVirtualDisplayManager.scDisplayResolutionMatches(
+                observed: CGSize(width: 2720.5, height: 2032),
+                expected: CGSize(width: 2720, height: 2032)
+            )
+        )
+        #expect(
+            !SharedVirtualDisplayManager.scDisplayResolutionMatches(
+                observed: CGSize(width: 1360, height: 1016),
+                expected: CGSize(width: 2720, height: 2032)
             )
         )
     }

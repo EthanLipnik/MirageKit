@@ -245,10 +245,8 @@ public extension MirageClientService {
                     reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
                     displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
-                    layerAcceptedFPS: metrics.layerAcceptedFPS,
-                    presentedFPS: metrics.presentedFPS,
-                    submittedFPS: metrics.submittedFPS,
-                    uniqueSubmittedFPS: metrics.uniqueSubmittedFPS,
+                    layerEnqueueFPS: metrics.layerEnqueueFPS,
+                    uniqueLayerEnqueueFPS: metrics.uniqueLayerEnqueueFPS,
                     pendingFrameCount: metrics.pendingFrameCount,
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
@@ -628,6 +626,7 @@ public extension MirageClientService {
     }
 
     private func forceStopWindowStreamLocally(streamID: StreamID) async {
+        recordRetiredStreamDiagnosticsSummary(streamID: streamID, reason: "window:local")
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
@@ -684,6 +683,12 @@ public extension MirageClientService {
             controllersByStream[streamID] != nil ||
             registeredStreamIDs.contains(streamID)
 
+        if hadLocalState {
+            recordRetiredStreamDiagnosticsSummary(
+                streamID: streamID,
+                reason: "desktop:\(notifyStopReason.map(String.init(describing:)) ?? "local")"
+            )
+        }
         MirageRenderStreamStore.shared.clear(for: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
         renderLatencyModeByStream.removeValue(forKey: streamID)

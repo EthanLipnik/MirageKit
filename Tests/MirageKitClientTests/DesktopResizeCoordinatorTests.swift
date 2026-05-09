@@ -157,6 +157,31 @@ struct DesktopResizeCoordinatorTests {
         #expect(!coordinator.maskActive)
     }
 
+    @Test("Active transition timeout drops stale transition and keeps latest queued target")
+    func activeTransitionTimeoutDropsStaleTransition() {
+        let coordinator = DesktopResizeCoordinator()
+        let transitionID = UUID()
+        let activeTarget = target()
+        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
+        coordinator.beginTransition(
+            streamID: 23,
+            transitionID: transitionID,
+            target: activeTarget
+        )
+        coordinator.queueLatestTarget(queuedTarget)
+
+        let didExpire = coordinator.expireActiveTransition(
+            streamID: 23,
+            transitionID: transitionID
+        )
+
+        #expect(didExpire)
+        #expect(coordinator.activeTransition == nil)
+        #expect(coordinator.queuedTarget == queuedTarget)
+        #expect(coordinator.isResizing)
+        #expect(coordinator.maskActive)
+    }
+
     @Test("Clear-all-state drops transition and queued targets")
     func clearAllStateDropsTransitionAndQueuedTargets() {
         let coordinator = DesktopResizeCoordinator()

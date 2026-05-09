@@ -115,6 +115,8 @@ actor SharedVirtualDisplayManager {
         case spaceNotFound(CGDirectDisplayID)
         case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
         case scDisplayNotFound(CGDirectDisplayID)
+        case scDisplaySizeMismatch(displayID: CGDirectDisplayID, observed: CGSize, expected: CGSize)
+        case residualMirageDisplaysOnline([CGDirectDisplayID])
 
         var errorDescription: String? {
             switch self {
@@ -132,6 +134,10 @@ actor SharedVirtualDisplayManager {
                 "ScreenCaptureKit did not surface virtual display \(displayID) before the startup deadline"
             case let .scDisplayNotFound(displayID):
                 "SCDisplay not found for virtual display \(displayID)"
+            case let .scDisplaySizeMismatch(displayID, observed, expected):
+                "SCDisplay \(displayID) reported \(Int(observed.width))x\(Int(observed.height)) but Mirage expected \(Int(expected.width))x\(Int(expected.height))"
+            case let .residualMirageDisplaysOnline(displayIDs):
+                "Residual Mirage virtual display(s) still online: \(displayIDs)"
             }
         }
     }

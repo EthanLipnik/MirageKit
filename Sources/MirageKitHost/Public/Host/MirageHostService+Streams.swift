@@ -107,7 +107,14 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
         switch sharedDisplayError {
         case .creationFailed:
             return .virtualDisplayCreationFailed
-        case .apiNotAvailable, .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
+        case .apiNotAvailable,
+             .noActiveDisplay,
+             .streamDisplayNotFound,
+             .spaceNotFound,
+             .screenCaptureKitVisibilityDelayed,
+             .scDisplayNotFound,
+             .scDisplaySizeMismatch,
+             .residualMirageDisplaysOnline:
             return .virtualDisplayUnavailable
         }
     }

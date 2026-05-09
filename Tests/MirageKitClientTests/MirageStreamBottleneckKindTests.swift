@@ -45,8 +45,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.receivedFPS = 42
         snapshot.decodedFPS = 42
-        snapshot.submittedFPS = 42
-        snapshot.uniqueSubmittedFPS = 42
+        snapshot.layerEnqueueFPS = 42
+        snapshot.uniqueLayerEnqueueFPS = 42
         snapshot.hostSendQueueBytes = 1_200_000
         snapshot.hostSendStartDelayAverageMs = 3
 
@@ -77,8 +77,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.receivedFPS = 8
         snapshot.decodedFPS = 8
-        snapshot.submittedFPS = 8
-        snapshot.uniqueSubmittedFPS = 8
+        snapshot.layerEnqueueFPS = 8
+        snapshot.uniqueLayerEnqueueFPS = 8
 
         #expect(snapshot.bottleneckKind != .networkBound)
     }
@@ -96,8 +96,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.decodeHealthy = false
         snapshot.decodedFPS = 38
-        snapshot.submittedFPS = 38
-        snapshot.uniqueSubmittedFPS = 38
+        snapshot.layerEnqueueFPS = 38
+        snapshot.uniqueLayerEnqueueFPS = 38
 
         #expect(snapshot.bottleneckKind == .decodeBound)
     }
@@ -105,8 +105,8 @@ struct MirageStreamBottleneckKindTests {
     @Test("Presentation-bound classification prefers render backpressure with healthy decode")
     func presentationBoundClassificationPrefersRenderBackpressure() {
         var snapshot = baselineSnapshot()
-        snapshot.submittedFPS = 44
-        snapshot.uniqueSubmittedFPS = 44
+        snapshot.layerEnqueueFPS = 44
+        snapshot.uniqueLayerEnqueueFPS = 44
         snapshot.clientPendingFrameAgeMs = 28
         snapshot.clientOverwrittenPendingFrames = 3
 
@@ -116,8 +116,8 @@ struct MirageStreamBottleneckKindTests {
     @Test("Presentation-bound classification uses uneven submit cadence")
     func presentationBoundClassificationUsesUnevenSubmitCadence() {
         var snapshot = baselineSnapshot()
-        snapshot.submittedFPS = 56
-        snapshot.uniqueSubmittedFPS = 56
+        snapshot.layerEnqueueFPS = 56
+        snapshot.uniqueLayerEnqueueFPS = 56
         snapshot.clientFrameIntervalP99Ms = 55
         snapshot.clientWorstPresentationGapMs = 95
 
@@ -127,11 +127,23 @@ struct MirageStreamBottleneckKindTests {
     @Test("Presentation-bound classification catches severe cadence spikes near target FPS")
     func presentationBoundClassificationCatchesSevereCadenceSpikesNearTargetFPS() {
         var snapshot = baselineSnapshot()
-        snapshot.submittedFPS = 59
-        snapshot.uniqueSubmittedFPS = 59
+        snapshot.layerEnqueueFPS = 59
+        snapshot.uniqueLayerEnqueueFPS = 59
         snapshot.clientFrameIntervalP99Ms = 151
 
         #expect(snapshot.bottleneckKind == .presentationBound)
+    }
+
+    @Test("Legacy submitted FPS aliases map to layer enqueue telemetry")
+    func legacySubmittedFPSAliasesMapToLayerEnqueueTelemetry() {
+        var snapshot = baselineSnapshot()
+        snapshot.submittedFPS = 42
+        snapshot.uniqueSubmittedFPS = 39
+
+        #expect(snapshot.layerEnqueueFPS == 42)
+        #expect(snapshot.uniqueLayerEnqueueFPS == 39)
+        #expect(snapshot.clientLayerAcceptedFPS == 42)
+        #expect(snapshot.clientPresentedFPS == 39)
     }
 
     @Test("Mixed classification reports multiple active constraints")
@@ -141,8 +153,8 @@ struct MirageStreamBottleneckKindTests {
         snapshot.hostCaptureFPS = 42
         snapshot.hostEncodeAttemptFPS = 42
         snapshot.hostEncodedFPS = 42
-        snapshot.submittedFPS = 44
-        snapshot.uniqueSubmittedFPS = 44
+        snapshot.layerEnqueueFPS = 44
+        snapshot.uniqueLayerEnqueueFPS = 44
         snapshot.clientDisplayLayerNotReadyCount = 2
 
         #expect(snapshot.bottleneckKind == .mixed)
@@ -152,8 +164,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
-            submittedFPS: 60,
-            uniqueSubmittedFPS: 60,
+            layerEnqueueFPS: 60,
+            uniqueLayerEnqueueFPS: 60,
             pendingFrameCount: 0,
             decodeHealthy: true,
             hostEncodedFPS: 60,

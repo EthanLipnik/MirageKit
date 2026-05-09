@@ -236,9 +236,23 @@ extension MirageHostService {
     async {
         desktopDisplayTopologyRefreshTask = nil
         guard streamID == desktopStreamID,
-              !desktopUsesHostResolution,
-              activeDesktopResizeRequest == nil,
-              !desktopSharedDisplayTransitionInFlight,
+              !desktopUsesHostResolution else {
+            return
+        }
+
+        if activeDesktopResizeRequest != nil || desktopSharedDisplayTransitionInFlight {
+            MirageLogger.host(
+                "Desktop display topology refresh deferred during active display transition (reason=\(reason))"
+            )
+            scheduleDesktopDisplayTopologyRefresh(
+                streamID: streamID,
+                virtualResolution: requestedVirtualResolution,
+                reason: "\(reason)_deferred"
+            )
+            return
+        }
+
+        guard
               let desktopContext = desktopStreamContext,
               let desktopSessionID,
               let clientContext = desktopStreamClientContext else {
@@ -297,7 +311,11 @@ extension MirageHostService {
             }
 
             await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
-            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 8, delayMs: 60)
+            let captureDisplay = try await findSCDisplayWithRetry(
+                maxAttempts: 8,
+                delayMs: 60,
+                expectedPixelResolution: virtualResolution
+            )
             guard isDesktopDisplayTopologyRefreshStillActive(
                 streamID: streamID,
                 clientSessionID: clientContext.sessionID
@@ -311,6 +329,10 @@ extension MirageHostService {
             try await desktopContext.hardResetDesktopDisplayCapture(
                 displayWrapper: captureDisplay,
                 resolution: virtualResolution
+            )
+            try await waitForDesktopTransitionCaptureReadiness(
+                context: desktopContext,
+                label: "desktop_topology_refresh"
             )
             guard isDesktopDisplayTopologyRefreshStillActive(
                 streamID: streamID,
@@ -465,10 +487,18 @@ extension MirageHostService {
                 sharedVirtualDisplayScaleFactor = max(1.0, snapshot.scaleFactor)
             }
             await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
-            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+            let captureDisplay = try await findSCDisplayWithRetry(
+                maxAttempts: 6,
+                delayMs: 60,
+                expectedPixelResolution: virtualResolution
+            )
             try await desktopContext.hardResetDesktopDisplayCapture(
                 displayWrapper: captureDisplay,
                 resolution: virtualResolution
+            )
+            try await waitForDesktopTransitionCaptureReadiness(
+                context: desktopContext,
+                label: "desktop_unmanaged_resolution_change"
             )
             updateDesktopInputGeometry(
                 streamID: streamID,

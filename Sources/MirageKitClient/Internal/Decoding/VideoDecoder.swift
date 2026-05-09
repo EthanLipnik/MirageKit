@@ -12,6 +12,15 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
+struct MirageVideoDecodeFrameContext: Sendable, Equatable {
+    let renderGeneration: UInt64
+    let queueEpoch: UInt64
+    let hostEpoch: UInt16
+    let dimensionToken: UInt16
+    let frameNumber: UInt32
+    let remotePresentationTime: CMTime
+}
+
 /// Hardware-accelerated video decoder using VideoToolbox (HEVC or ProRes)
 actor VideoDecoder {
     var decompressionSession: VTDecompressionSession?
@@ -42,7 +51,7 @@ actor VideoDecoder {
     var memoryPool: CMMemoryPool?
 
     var isDecoding = false
-    var decodedFrameHandler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?
+    var decodedFrameHandler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?
 
     /// Thread-safe error tracker for decode callbacks
     var errorTracker: DecodeErrorTracker?
@@ -55,8 +64,10 @@ actor VideoDecoder {
 
     /// Bounded in-flight decode submissions to avoid decoder saturation spirals.
     var decodeSubmissionLimit: Int = 1
-    var inFlightDecodeSubmissions: Int = 0
-    var decodeSubmissionWaiters: [CheckedContinuation<Void, Never>] = []
+    var decodeSubmissionGeneration: UInt64 = 0
+    var activeDecodeSubmissionLeases: Set<UInt64> = []
+    var decodeSubmissionWaiters: [DecodeSubmissionWaiter] = []
+    var nextDecodeSubmissionLeaseID: UInt64 = 0
 
     /// Handler called when video dimensions change - used to reset reassembler
     var onDimensionChange: (@Sendable () -> Void)?
@@ -221,7 +232,7 @@ extension VideoDecoder {
 
 /// Info passed through the decode callback
 final class DecodeInfo: @unchecked Sendable {
-    let handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?
+    let handler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?
     let contentRect: CGRect
     let isKeyframe: Bool
     let errorTracker: DecodeErrorTracker?
@@ -230,12 +241,13 @@ final class DecodeInfo: @unchecked Sendable {
     let callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?
     let sessionGeneration: UInt64
     let colorDepth: MirageStreamColorDepth
+    let frameContext: MirageVideoDecodeFrameContext
     let onCompletion: (@Sendable () -> Void)?
     let releaseBuffer: (@Sendable () -> Void)?
     let data: Data
 
     init(
-        handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?,
+        handler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?,
         contentRect: CGRect,
         isKeyframe: Bool,
         errorTracker: DecodeErrorTracker?,
@@ -244,6 +256,7 @@ final class DecodeInfo: @unchecked Sendable {
         callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?,
         sessionGeneration: UInt64,
         colorDepth: MirageStreamColorDepth,
+        frameContext: MirageVideoDecodeFrameContext,
         onCompletion: (@Sendable () -> Void)?,
         releaseBuffer: (@Sendable () -> Void)?,
         data: Data
@@ -257,6 +270,7 @@ final class DecodeInfo: @unchecked Sendable {
         self.callbackFailureLogLimiter = callbackFailureLogLimiter
         self.sessionGeneration = sessionGeneration
         self.colorDepth = colorDepth
+        self.frameContext = frameContext
         self.onCompletion = onCompletion
         self.releaseBuffer = releaseBuffer
         self.data = data
@@ -449,8 +463,18 @@ final class FrameReassembler: @unchecked Sendable {
     /// Disabled until the stream provides an explicit token contract.
     var dimensionTokenValidationEnabled: Bool = false
 
-    /// Frame completion callback: (streamID, frameData, isKeyframe, frameNumber, timestamp, contentRect, release)
-    var onFrameComplete: (@Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void)?
+    /// Frame completion callback: (streamID, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, release)
+    var onFrameComplete: (@Sendable (
+        StreamID,
+        Data,
+        Bool,
+        UInt32,
+        UInt64,
+        UInt16,
+        UInt16,
+        CGRect,
+        @escaping @Sendable () -> Void
+    ) -> Void)?
 
     // MARK: - Diagnostic counters
 
@@ -482,6 +506,8 @@ final class FrameReassembler: @unchecked Sendable {
         let fecBlockSize: Int
         var isKeyframe: Bool
         let timestamp: UInt64
+        let epoch: UInt16
+        let dimensionToken: UInt16
         let receivedAt: Date
         var lastProgressAt: Date
         let contentRect: CGRect
@@ -502,6 +528,8 @@ final class FrameReassembler: @unchecked Sendable {
             fecBlockSize: Int,
             isKeyframe: Bool,
             timestamp: UInt64,
+            epoch: UInt16,
+            dimensionToken: UInt16,
             receivedAt: Date,
             lastProgressAt: Date,
             contentRect: CGRect,
@@ -518,6 +546,8 @@ final class FrameReassembler: @unchecked Sendable {
             self.fecBlockSize = fecBlockSize
             self.isKeyframe = isKeyframe
             self.timestamp = timestamp
+            self.epoch = epoch
+            self.dimensionToken = dimensionToken
             self.receivedAt = receivedAt
             self.lastProgressAt = lastProgressAt
             self.contentRect = contentRect

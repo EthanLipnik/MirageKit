@@ -37,7 +37,14 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return false
-            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
+            case .residualMirageDisplaysOnline:
+                return false
+            case .noActiveDisplay,
+                 .streamDisplayNotFound,
+                 .spaceNotFound,
+                 .screenCaptureKitVisibilityDelayed,
+                 .scDisplayNotFound,
+                 .scDisplaySizeMismatch:
                 return true
             }
         }
@@ -98,7 +105,14 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return true
-            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
+            case .residualMirageDisplaysOnline:
+                return true
+            case .noActiveDisplay,
+                 .streamDisplayNotFound,
+                 .spaceNotFound,
+                 .screenCaptureKitVisibilityDelayed,
+                 .scDisplayNotFound,
+                 .scDisplaySizeMismatch:
                 return false
             }
         }

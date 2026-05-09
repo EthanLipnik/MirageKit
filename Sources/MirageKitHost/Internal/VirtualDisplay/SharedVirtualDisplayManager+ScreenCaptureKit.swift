@@ -20,14 +20,16 @@ extension SharedVirtualDisplayManager {
     /// Find the SCDisplay corresponding to the shared virtual display
     func findSCDisplay(
         maxAttempts: Int = 8,
-        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil,
+        expectedPixelResolution: CGSize? = nil
     )
     async throws -> SCDisplayWrapper {
         guard let displayID = sharedDisplay?.displayID else { throw SharedDisplayError.noActiveDisplay }
         return try await findSCDisplay(
             displayID: displayID,
             maxAttempts: maxAttempts,
-            startupBudget: startupBudget
+            startupBudget: startupBudget,
+            expectedPixelResolution: expectedPixelResolution ?? sharedDisplay?.resolution
         )
     }
 
@@ -35,11 +37,13 @@ extension SharedVirtualDisplayManager {
     func findSCDisplay(
         displayID: CGDirectDisplayID,
         maxAttempts: Int = 8,
-        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil,
+        expectedPixelResolution: CGSize? = nil
     )
     async throws -> SCDisplayWrapper {
         var attempt = 0
         var delayMs = 120
+        var lastObservedResolution: CGSize?
 
         while attempt < maxAttempts {
             try startupBudget?.checkAvailable()
@@ -49,6 +53,39 @@ extension SharedVirtualDisplayManager {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
                 if let scDisplay = content.displays.first(where: { $0.displayID == displayID }) {
+                    let observedResolution = CGSize(
+                        width: CGFloat(scDisplay.width),
+                        height: CGFloat(scDisplay.height)
+                    )
+                    if let expectedPixelResolution,
+                       !Self.scDisplayResolutionMatches(
+                           observed: observedResolution,
+                           expected: expectedPixelResolution
+                       ) {
+                        lastObservedResolution = observedResolution
+                        if attempt < maxAttempts {
+                            MirageLogger.host(
+                                "SCDisplay \(displayID) surfaced with stale size " +
+                                    "\(Int(observedResolution.width))x\(Int(observedResolution.height)); " +
+                                    "expected \(Int(expectedPixelResolution.width))x\(Int(expectedPixelResolution.height)) " +
+                                    "(attempt \(attempt)/\(maxAttempts)); retrying in \(delayMs)ms"
+                            )
+                            let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(delayMs) ?? delayMs
+                            try? await Task.sleep(for: .milliseconds(boundedDelayMs))
+                            delayMs = min(1000, Int(Double(delayMs) * 1.6))
+                            continue
+                        }
+                        MirageLogger.host(
+                            "SCDisplay \(displayID) size mismatch after \(maxAttempts) attempts: " +
+                                "observed \(Int(observedResolution.width))x\(Int(observedResolution.height)), " +
+                                "expected \(Int(expectedPixelResolution.width))x\(Int(expectedPixelResolution.height))"
+                        )
+                        throw SharedDisplayError.scDisplaySizeMismatch(
+                            displayID: displayID,
+                            observed: observedResolution,
+                            expected: expectedPixelResolution
+                        )
+                    }
                     MirageLogger
                         .host(
                             "Found SCDisplay \(displayID): \(scDisplay.width)x\(scDisplay.height) (attempt \(attempt)/\(maxAttempts))"
@@ -87,7 +124,24 @@ extension SharedVirtualDisplayManager {
             }
         }
 
+        if let expectedPixelResolution, let lastObservedResolution {
+            throw SharedDisplayError.scDisplaySizeMismatch(
+                displayID: displayID,
+                observed: lastObservedResolution,
+                expected: expectedPixelResolution
+            )
+        }
         throw SharedDisplayError.scDisplayNotFound(displayID)
+    }
+
+    static func scDisplayResolutionMatches(
+        observed: CGSize,
+        expected: CGSize,
+        tolerance: CGFloat = 1.0
+    )
+    -> Bool {
+        abs(observed.width - expected.width) <= tolerance &&
+            abs(observed.height - expected.height) <= tolerance
     }
 
     /// Find the SCDisplay for the main display (used for login display streaming).

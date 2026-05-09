@@ -622,7 +622,7 @@ public struct MirageReceiverHealthController: Sendable {
         let clientStarvationStress = clientKeyframeStarved && (
             snapshot.receivedFPS < targetFPS * Self.clientStarvationStressRatio ||
                 snapshot.decodedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.submittedFPS < targetFPS * Self.clientStarvationStressRatio ||
+                snapshot.layerEnqueueFPS < targetFPS * Self.clientStarvationStressRatio ||
                 snapshot.clientDroppedFrames > 0 ||
                 !snapshot.decodeHealthy
         )

@@ -223,6 +223,10 @@ extension MirageClientService {
         streamID: StreamID,
         notifyStopReason: MirageCustomStreamStoppedMessage.Reason?
     ) async {
+        recordRetiredStreamDiagnosticsSummary(
+            streamID: streamID,
+            reason: "custom:\(notifyStopReason.map(String.init(describing:)) ?? "local")"
+        )
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         customStreamDescriptorsByStreamID.removeValue(forKey: streamID)

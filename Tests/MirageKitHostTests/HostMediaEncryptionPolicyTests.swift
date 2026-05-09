@@ -24,11 +24,45 @@ struct HostMediaEncryptionPolicyTests {
         #expect(ClientContext.isLocalNetworkHost("169.254.1.9"))
         #expect(ClientContext.isLocalNetworkHost("studio-mac.local"))
         #expect(ClientContext.isLocalNetworkHost("fe80::1"))
+        #expect(ClientContext.isLocalNetworkHost("febf::1"))
+        #expect(ClientContext.isLocalNetworkHost("fc00::1"))
+        #expect(ClientContext.isLocalNetworkHost("[fd12:3456:789a::1]"))
+        #expect(ClientContext.isLocalNetworkHost("fdef:e323:a0d0:4808:10f5:943f:184a:3599"))
 
         #expect(!ClientContext.isLocalNetworkHost("172.32.0.1"))
         #expect(!ClientContext.isLocalNetworkHost("8.8.8.8"))
+        #expect(!ClientContext.isLocalNetworkHost("fec0::1"))
+        #expect(!ClientContext.isLocalNetworkHost("fdzz::1"))
         #expect(!ClientContext.isLocalNetworkHost("2001:4860:4860::8888"))
         #expect(!ClientContext.isLocalNetworkHost("example.com"))
+    }
+
+    @Test("Unique local IPv6 over Wi-Fi is classified as peer-to-peer")
+    func uniqueLocalIPv6OverWiFiIsPeerToPeer() {
+        let remoteEndpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host("fdef:e323:a0d0:4808:10f5:943f:184a:3599"),
+            port: NWEndpoint.Port(rawValue: 55300) ?? .any
+        )
+        let pathSnapshot = LoomSessionNetworkPathSnapshot(
+            status: .satisfied,
+            interfaceNames: ["en0"],
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            usesWiFi: true,
+            usesWiredEthernet: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            localEndpoint: nil,
+            remoteEndpoint: remoteEndpoint
+        )
+
+        #expect(ClientContext.isPeerToPeerConnection(
+            remoteEndpoint: remoteEndpoint,
+            pathSnapshot: pathSnapshot
+        ))
     }
 
     @MainActor

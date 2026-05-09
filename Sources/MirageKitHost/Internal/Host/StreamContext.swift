@@ -105,6 +105,7 @@ actor StreamContext {
     var syntheticIntervalCount: UInt64 = 0
     var lastCapturedFrame: CapturedFrame?
     var cachedStartupFrame: CapturedFrame?
+    var cachedDesktopResizeFrame: CapturedFrame?
     var lastCapturedDuration: CMTime = .invalid
     var lastEncodedPresentationTime: CMTime = .invalid
     var lastSyntheticFrameTime: CFAbsoluteTime = 0

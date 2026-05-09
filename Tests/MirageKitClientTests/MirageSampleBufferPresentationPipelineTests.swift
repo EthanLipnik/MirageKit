@@ -78,8 +78,8 @@ struct MirageSampleBufferPresentationPipelineTests {
         #expect(stopCount == 0)
     }
 
-    @Test("Presenter rebases sequence state after render-store clear")
-    func presenterRebasesSequenceStateAfterRenderStoreClear() {
+    @Test("Presenter resets timing after render-store generation boundary")
+    func presenterResetsTimingAfterRenderStoreGenerationBoundary() {
         let streamID: StreamID = 245
         let layer = AVSampleBufferDisplayLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
@@ -110,6 +110,32 @@ struct MirageSampleBufferPresentationPipelineTests {
         )
 
         #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+    }
+
+    @Test("Presenter submits retained frame once for a presenter cursor")
+    func presenterSubmitsRetainedFrameOnceForPresenterCursor() {
+        let streamID: StreamID = 246
+        let layer = AVSampleBufferDisplayLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let presenter = MirageSampleBufferPresenter(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            presenter.setStreamID(nil)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        presenter.setStreamID(streamID)
+        MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: 1,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .noPendingFrame)
     }
 
     private func makePipeline(

@@ -25,6 +25,8 @@ extension FrameReassembler {
         Bool,
         UInt32,
         UInt64,
+        UInt16,
+        UInt16,
         CGRect,
         @escaping @Sendable () -> Void
     )
@@ -43,7 +45,7 @@ extension FrameReassembler {
         @escaping @Sendable () -> Void
     )
         -> Void) {
-        setFrameHandler { streamID, data, isKeyframe, _, timestamp, contentRect, release in
+        setFrameHandler { streamID, data, isKeyframe, _, timestamp, _, _, contentRect, release in
             handler(streamID, data, isKeyframe, timestamp, contentRect, release)
         }
     }
@@ -75,7 +77,17 @@ extension FrameReassembler {
 
     func processPacket(_ data: Data, header: FrameHeader) {
         var completedFrames: [CompletedFrame] = []
-        var completionHandler: (@Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void)
+        var completionHandler: (@Sendable (
+            StreamID,
+            Data,
+            Bool,
+            UInt32,
+            UInt64,
+            UInt16,
+            UInt16,
+            CGRect,
+            @escaping @Sendable () -> Void
+        )
             -> Void)?
         var shouldSignalFrameLoss = false
         var frameLossReason: FrameLossReason?
@@ -190,6 +202,8 @@ extension FrameReassembler {
                 fecBlockSize: Int(header.fecBlockSize),
                 isKeyframe: isKeyframePacket,
                 timestamp: header.timestamp,
+                epoch: header.epoch,
+                dimensionToken: header.dimensionToken,
                 receivedAt: packetReceivedAt,
                 lastProgressAt: packetReceivedAt,
                 contentRect: header.contentRect,
@@ -331,6 +345,8 @@ extension FrameReassembler {
                     completedFrame.isKeyframe,
                     completedFrame.frameNumber,
                     completedFrame.timestamp,
+                    completedFrame.epoch,
+                    completedFrame.dimensionToken,
                     completedFrame.contentRect,
                     completedFrame.releaseBuffer
                 )
@@ -343,6 +359,8 @@ extension FrameReassembler {
         let isKeyframe: Bool
         let frameNumber: UInt32
         let timestamp: UInt64
+        let epoch: UInt16
+        let dimensionToken: UInt16
         let contentRect: CGRect
         let releaseBuffer: @Sendable () -> Void
     }
@@ -480,6 +498,8 @@ extension FrameReassembler {
                     isKeyframe: frame.isKeyframe,
                     frameNumber: frameNumber,
                     timestamp: frame.timestamp,
+                    epoch: frame.epoch,
+                    dimensionToken: frame.dimensionToken,
                     contentRect: frame.contentRect,
                     releaseBuffer: releaseBuffer
                 ),

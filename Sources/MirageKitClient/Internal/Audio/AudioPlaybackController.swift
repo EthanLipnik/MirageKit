@@ -41,9 +41,18 @@ public final class AudioPlaybackController {
         }
     }
 
+    private static var defaultAutomaticallyStartsPlayer: Bool {
+        let isRunningTests = Bundle.main.bundlePath.contains(".xctest") ||
+            CommandLine.arguments.contains { argument in
+                argument.contains(".xctest") || argument.contains("swiftpm-testing-helper")
+            }
+        return !isRunningTests
+    }
+
     private let startupBufferSeconds: Double
     private let maxQueuedSeconds: Double
     private let maxRuntimeExtraDelaySeconds: Double = 0.080
+    private let automaticallyStartsPlayer: Bool
 
     private var playbackGraph: PlaybackGraph?
 
@@ -65,9 +74,14 @@ public final class AudioPlaybackController {
     nonisolated(unsafe) private var audioSessionObserverTokens: [NSObjectProtocol] = []
     private var lastQueueDepthLogTime: CFAbsoluteTime = 0
 
-    init(startupBufferSeconds: Double = 0, maxQueuedSeconds: Double = 0.350) {
+    init(
+        startupBufferSeconds: Double = 0,
+        maxQueuedSeconds: Double = 0.350,
+        automaticallyStartsPlayer: Bool? = nil
+    ) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
         self.maxQueuedSeconds = max(0.2, maxQueuedSeconds)
+        self.automaticallyStartsPlayer = automaticallyStartsPlayer ?? Self.defaultAutomaticallyStartsPlayer
         installAudioSessionRecoveryObservers()
     }
 
@@ -560,6 +574,7 @@ public final class AudioPlaybackController {
             }
         }
         let playerNode = playbackGraph.playerNode
+        guard automaticallyStartsPlayer else { return }
         if !playerNode.isPlaying { playerNode.play() }
     }
 

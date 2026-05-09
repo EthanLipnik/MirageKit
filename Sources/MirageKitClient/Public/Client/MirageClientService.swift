@@ -79,6 +79,22 @@ public final class MirageClientService {
         }
     }
 
+    struct RetiredStreamDiagnosticsSummary: Sendable {
+        let streamID: StreamID
+        let reason: String
+        let retiredAt: CFAbsoluteTime
+        let renderGeneration: UInt64
+        let renderSequence: UInt64
+        let layerEnqueueFPS: Double?
+        let uniqueLayerEnqueueFPS: Double?
+        let pendingFrameCount: Int?
+        let renderStoreClearCount: UInt64
+        let presenterTimingResetCount: UInt64
+        let displayLayerLivenessResetCount: UInt64
+        let presentationRecoveryRequestCount: UInt64
+        let lastPresentationRecoveryOutcome: String?
+    }
+
     public enum AdaptiveFallbackMode: Equatable, Sendable {
         case disabled
         case adaptive
@@ -725,6 +741,9 @@ public final class MirageClientService {
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []
     var streamStartupFirstPacketReceived: Set<StreamID> = []
+    var retiredStreamDiagnosticsSummaries: [RetiredStreamDiagnosticsSummary] = []
+    let retiredStreamDiagnosticsSummaryLimit: Int = 4
+    public internal(set) var lastAutomaticDesktopWorkloadReconfigurationSummary: String?
 
     // MARK: - Quality Test State
 
@@ -978,8 +997,42 @@ public final class MirageClientService {
         }
     }
 
+    func recordRetiredStreamDiagnosticsSummary(streamID: StreamID, reason: String) {
+        let renderSubmissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let renderDiagnostics = MirageRenderStreamStore.shared.diagnosticsSnapshot(for: streamID)
+        let metricsSnapshot = metricsStore.snapshot(for: streamID)
+        let summary = RetiredStreamDiagnosticsSummary(
+            streamID: streamID,
+            reason: reason,
+            retiredAt: CFAbsoluteTimeGetCurrent(),
+            renderGeneration: renderSubmissionSnapshot.generation,
+            renderSequence: renderSubmissionSnapshot.sequence,
+            layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS,
+            uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS,
+            pendingFrameCount: metricsSnapshot?.pendingFrameCount,
+            renderStoreClearCount: renderDiagnostics.clearCount,
+            presenterTimingResetCount: renderDiagnostics.presenterTimingResetCount,
+            displayLayerLivenessResetCount: renderDiagnostics.displayLayerLivenessResetCount,
+            presentationRecoveryRequestCount: renderDiagnostics.presentationRecoveryRequestCount,
+            lastPresentationRecoveryOutcome: renderDiagnostics.lastPresentationRecoveryOutcome
+        )
+        retiredStreamDiagnosticsSummaries.append(summary)
+        if retiredStreamDiagnosticsSummaries.count > retiredStreamDiagnosticsSummaryLimit {
+            retiredStreamDiagnosticsSummaries.removeFirst(
+                retiredStreamDiagnosticsSummaries.count - retiredStreamDiagnosticsSummaryLimit
+            )
+        }
+    }
+
     private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
         let primarySnapshot = diagnosticsPrimaryStreamSnapshot()
+        let primaryStreamID = diagnosticsPrimaryStreamID()
+        let renderSubmissionSnapshot = primaryStreamID.map {
+            MirageRenderStreamStore.shared.submissionSnapshot(for: $0)
+        }
+        let renderDiagnosticsSnapshot = primaryStreamID.map {
+            MirageRenderStreamStore.shared.diagnosticsSnapshot(for: $0)
+        }
         let processPhysicalFootprintBytes = Self.processPhysicalFootprintBytes()
         return [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
@@ -1001,7 +1054,39 @@ public final class MirageClientService {
                 .map(LoomDiagnosticsValue.int) ?? .null,
             "client.runtimeWorkloadFallbackReason": runtimeWorkloadSafetyLastFallbackReason.map(LoomDiagnosticsValue.string) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
-            "client.primaryStreamID": diagnosticsPrimaryStreamID().map { .int(Int($0)) } ?? .null,
+            "client.primaryStreamID": primaryStreamID.map { .int(Int($0)) } ?? .null,
+            "client.primaryStream.renderGeneration": renderSubmissionSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.generation)) } ?? .null,
+            "client.primaryStream.renderSequence": renderSubmissionSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.sequence)) } ?? .null,
+            "client.primaryStream.layerEnqueueFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.layerEnqueueFPS) } ?? .null,
+            "client.primaryStream.uniqueLayerEnqueueFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.uniqueLayerEnqueueFPS) } ?? .null,
+            "client.primaryStream.renderStoreClearCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clearCount)) } ?? .null,
+            "client.primaryStream.renderGenerationBumpCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.generationBumpCount)) } ?? .null,
+            "client.primaryStream.renderMemoryTrimClearCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.memoryTrimClearCount)) } ?? .null,
+            "client.primaryStream.presenterTimingResetCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presenterTimingResetCount)) } ?? .null,
+            "client.primaryStream.presenterTimingResetReasons": renderDiagnosticsSnapshot?
+                .presenterTimingResetReasons.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.primaryStream.displayLayerLivenessResetCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.displayLayerLivenessResetCount)) } ?? .null,
+            "client.primaryStream.displayLayerLivenessResetReasons": renderDiagnosticsSnapshot?
+                .displayLayerLivenessResetReasons.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.primaryStream.presentationRecoveryRequestCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presentationRecoveryRequestCount)) } ?? .null,
+            "client.primaryStream.presentationRecoveryHandlerDispatchCount": renderDiagnosticsSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presentationRecoveryHandlerDispatchCount)) } ?? .null,
+            "client.primaryStream.lastRenderGenerationBumpReason": renderDiagnosticsSnapshot?
+                .lastGenerationBumpReason.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.primaryStream.lastPresentationRecoveryOutcome": renderDiagnosticsSnapshot?
+                .lastPresentationRecoveryOutcome.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.lastRetiredStreamSummaries": retiredStreamDiagnosticsSummaryText()
+                .map(LoomDiagnosticsValue.string) ?? .null,
             "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,
             "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
                 primarySnapshot?.clientUsingHardwareDecoder
@@ -1055,6 +1140,36 @@ public final class MirageClientService {
     private func diagnosticsPrimaryStreamSnapshot() -> MirageClientMetricsSnapshot? {
         guard let streamID = diagnosticsPrimaryStreamID() else { return nil }
         return metricsStore.snapshot(for: streamID)
+    }
+
+    private func retiredStreamDiagnosticsSummaryText() -> String? {
+        guard !retiredStreamDiagnosticsSummaries.isEmpty else { return nil }
+        let now = CFAbsoluteTimeGetCurrent()
+        return retiredStreamDiagnosticsSummaries
+            .suffix(retiredStreamDiagnosticsSummaryLimit)
+            .map { summary in
+                let ageSeconds = max(0, now - summary.retiredAt)
+                let layerEnqueueFPS = summary.layerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
+                let uniqueLayerEnqueueFPS = summary.uniqueLayerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
+                let pending = summary.pendingFrameCount.map(String.init) ?? "nil"
+                let outcome = summary.lastPresentationRecoveryOutcome ?? "nil"
+                return [
+                    "stream=\(summary.streamID)",
+                    "reason=\(summary.reason)",
+                    "ageSeconds=\(String(format: "%.1f", ageSeconds))",
+                    "renderGeneration=\(summary.renderGeneration)",
+                    "renderSequence=\(summary.renderSequence)",
+                    "layerEnqueueFPS=\(layerEnqueueFPS)",
+                    "uniqueLayerEnqueueFPS=\(uniqueLayerEnqueueFPS)",
+                    "pending=\(pending)",
+                    "clears=\(summary.renderStoreClearCount)",
+                    "presenterTimingResets=\(summary.presenterTimingResetCount)",
+                    "displayLayerLivenessResets=\(summary.displayLayerLivenessResetCount)",
+                    "recoveryRequests=\(summary.presentationRecoveryRequestCount)",
+                    "lastRecoveryOutcome=\(outcome)"
+                ].joined(separator: ",")
+            }
+            .joined(separator: " | ")
     }
 
     private func diagnosticsHardwareAccelerationState(_ enabled: Bool?) -> LoomDiagnosticsValue {

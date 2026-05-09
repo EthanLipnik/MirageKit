@@ -10,22 +10,44 @@ import CoreVideo
 import Foundation
 import MirageKit
 
+struct FrameQueueTicket: Sendable, Equatable {
+    let pipelineGeneration: UInt64
+    let queueEpoch: UInt64
+    let order: UInt64
+}
+
 private final class FrameEnqueueOrderAllocator: @unchecked Sendable {
     private let lock = NSLock()
     private var nextOrder: UInt64 = 0
+    private var queueEpoch: UInt64 = 0
 
-    func allocate() -> UInt64 {
+    func allocate(pipelineGeneration: UInt64) -> FrameQueueTicket {
         lock.lock()
-        let order = nextOrder
+        let ticket = FrameQueueTicket(
+            pipelineGeneration: pipelineGeneration,
+            queueEpoch: queueEpoch,
+            order: nextOrder
+        )
         nextOrder &+= 1
         lock.unlock()
-        return order
+        return ticket
     }
 
-    func reset() {
+    @discardableResult
+    func reset() -> UInt64 {
         lock.lock()
+        queueEpoch &+= 1
         nextOrder = 0
+        let epoch = queueEpoch
         lock.unlock()
+        return epoch
+    }
+
+    func currentQueueEpoch() -> UInt64 {
+        lock.lock()
+        let epoch = queueEpoch
+        lock.unlock()
+        return epoch
     }
 }
 
@@ -144,7 +166,22 @@ actor StreamController {
         let presentationTime: CMTime
         let isKeyframe: Bool
         let contentRect: CGRect
+        let renderGeneration: UInt64
+        let hostEpoch: UInt16
+        let dimensionToken: UInt16
+        let queueTicket: FrameQueueTicket
         let releaseBuffer: @Sendable () -> Void
+
+        var decodeContext: MirageVideoDecodeFrameContext {
+            MirageVideoDecodeFrameContext(
+                renderGeneration: renderGeneration,
+                queueEpoch: queueTicket.queueEpoch,
+                hostEpoch: hostEpoch,
+                dimensionToken: dimensionToken,
+                frameNumber: frameNumber,
+                remotePresentationTime: remotePresentationTime
+            )
+        }
     }
 
     struct ClientFrameMetrics: Sendable {
@@ -156,10 +193,8 @@ actor StreamController {
         let droppedFrames: UInt64
         let displayTickFPS: Double
         let submitAttemptFPS: Double
-        let layerAcceptedFPS: Double
-        let presentedFPS: Double
-        let submittedFPS: Double
-        let uniqueSubmittedFPS: Double
+        let layerEnqueueFPS: Double
+        let uniqueLayerEnqueueFPS: Double
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
@@ -193,7 +228,6 @@ actor StreamController {
     /// The stream this controller manages
     let streamID: StreamID
     nonisolated let diagnosticsBuffer = MirageStreamingDiagnosticsBuffer()
-    nonisolated let decodeFrameTimingCache = DecodeFrameTimingCache()
 
     /// HEVC decoder for this stream
     let decoder: VideoDecoder
@@ -281,24 +315,24 @@ actor StreamController {
     nonisolated static func bootstrapFirstFrameRecoveryAction(
         hasPackets: Bool,
         awaitingKeyframe: Bool,
-        latestSequence: UInt64,
-        baselineSequence: UInt64
+        latestCursor: MirageRenderCursor,
+        baselineCursor: MirageRenderCursor
     ) -> BootstrapFirstFrameRecoveryAction {
         guard hasPackets else { return .hardRecovery }
-        guard latestSequence > baselineSequence || awaitingKeyframe else { return .hardRecovery }
+        guard latestCursor.isAfter(baselineCursor) || awaitingKeyframe else { return .hardRecovery }
         return awaitingKeyframe ? .requestKeyframe : .hardRecovery
     }
 
     nonisolated static func shouldAttemptRendererRecoveryBeforeBootstrapReset(
         pendingFrameCount: Int,
-        submittedSequence: UInt64,
-        baselineSequence: UInt64,
+        submittedCursor: MirageRenderCursor,
+        baselineCursor: MirageRenderCursor,
         rendererRecoveryAttempts: Int
     )
     -> Bool {
         pendingFrameCount > 0 &&
-            submittedSequence == 0 &&
-            baselineSequence == 0 &&
+            !submittedCursor.hasSubmittedFrame &&
+            !baselineCursor.hasSubmittedFrame &&
             rendererRecoveryAttempts == 0
     }
 
@@ -358,8 +392,8 @@ actor StreamController {
     var awaitingFirstPresentedFrame = false
     /// Startup watchdog vs recovery watchdog mode for the first-frame awaiter.
     var firstPresentedFrameAwaitMode: FirstPresentedFrameAwaitMode = .startup
-    /// Last presented sequence at the moment first-frame presentation waiting was armed.
-    var firstPresentedFrameBaselineSequence: UInt64 = 0
+    /// Last render cursor at the moment first-frame presentation waiting was armed.
+    var firstPresentedFrameBaselineCursor: MirageRenderCursor = .zero
     /// Human-readable label describing why the first-frame wait was armed.
     var firstPresentedFrameWaitReason: String?
     /// Start time for first-frame presentation wait latency logs.
@@ -383,6 +417,7 @@ actor StreamController {
     var nextExpectedEnqueueOrder: UInt64 = 0
     private let enqueueOrderAllocator = FrameEnqueueOrderAllocator()
     var framePipelineGeneration: UInt64 = 0
+    var lastRenderHostEpoch: UInt16?
 
     /// Continuation resumed when the decode task is waiting for a frame.
     var dequeueContinuation: CheckedContinuation<FrameData?, Never>?
@@ -440,7 +475,7 @@ actor StreamController {
     // and no quality improvement justified the complexity.
 
     var lastDecodedFrameTime: CFAbsoluteTime = 0
-    var lastPresentedSequenceObserved: UInt64 = 0
+    var lastPresentedCursorObserved: MirageRenderCursor = .zero
     var lastPresentedProgressTime: CFAbsoluteTime = 0
     var lastFreezeRecoveryTime: CFAbsoluteTime = 0
     var consecutiveFreezeRecoveries: Int = 0
@@ -584,7 +619,7 @@ actor StreamController {
         isRunning = true
         await GlobalDecodeBudgetController.shared.register(streamID: streamID, tier: presentationTier)
         lastDecodedFrameTime = 0
-        lastPresentedSequenceObserved = 0
+        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         lastPresentedProgressTime = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
@@ -599,7 +634,7 @@ actor StreamController {
         await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
         let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        lastPresentedSequenceObserved = submissionSnapshot.sequence
+        lastPresentedCursorObserved = submissionSnapshot.cursor
         lastPresentedProgressTime = submissionSnapshot.submittedTime
 
         // Set up error recovery - request keyframe when decode errors exceed threshold
@@ -626,19 +661,29 @@ actor StreamController {
 
         // Set up frame handler
         let metricsTracker = metricsTracker
-        await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
+        await decoder.startDecoding { [weak self] (
+            pixelBuffer: CVPixelBuffer,
+            presentationTime: CMTime,
+            contentRect: CGRect,
+            context: MirageVideoDecodeFrameContext
+        ) in
             let decodeTime = CFAbsoluteTimeGetCurrent()
-            let timingEntry = self?.decodeFrameTimingCache.remove(streamPresentationTime: presentationTime)
             let handledByUpscaler = false
             if !handledByUpscaler {
-                _ = MirageRenderStreamStore.shared.enqueue(
+                let enqueueResult = MirageRenderStreamStore.shared.enqueue(
                     pixelBuffer: pixelBuffer,
                     contentRect: contentRect,
                     decodeTime: decodeTime,
                     presentationTime: presentationTime,
-                    remotePresentationTime: timingEntry?.remotePresentationTime ?? .invalid,
+                    remotePresentationTime: context.remotePresentationTime,
+                    generation: context.renderGeneration,
+                    hostEpoch: context.hostEpoch,
+                    dimensionToken: context.dimensionToken,
+                    frameNumber: context.frameNumber,
+                    queueEpoch: context.queueEpoch,
                     for: capturedStreamID
                 )
+                guard enqueueResult.didEnqueue else { return }
             }
 
             let decodedFrameRecord = metricsTracker.recordDecodedFrame(now: decodeTime)
@@ -676,7 +721,7 @@ actor StreamController {
         consecutiveDecodeErrors = 0
         lastDecodeErrorSignature = nil
         lastDecodeErrorLogTime = 0
-        lastPresentedSequenceObserved = 0
+        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         lastPresentedProgressTime = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
@@ -700,13 +745,16 @@ actor StreamController {
             while !Task.isCancelled {
                 guard let frame = await dequeueFrame() else { break }
                 defer { frame.releaseBuffer() }
-                let lease = await decodeBudgetController.acquire(streamID: self.streamID)
+                guard let lease = await decodeBudgetController.acquire(streamID: self.streamID) else {
+                    continue
+                }
                 do {
                     try await capturedDecoder.decodeFrame(
                         frame.data,
                         presentationTime: frame.presentationTime,
                         isKeyframe: frame.isKeyframe,
-                        contentRect: frame.contentRect
+                        contentRect: frame.contentRect,
+                        context: frame.decodeContext
                     )
                     await recordDecodeSuccessIfNeeded()
                 } catch {
@@ -721,8 +769,17 @@ actor StreamController {
         let diagnosticsBuffer = diagnosticsBuffer
         let enqueueOrderAllocator = enqueueOrderAllocator
         let reassemblerStreamID = streamID
-        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt32, UInt64, CGRect, @escaping @Sendable () -> Void)
-            -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, contentRect, releaseBuffer in
+        let reassemblerHandler: @Sendable (
+            StreamID,
+            Data,
+            Bool,
+            UInt32,
+            UInt64,
+            UInt16,
+            UInt16,
+            CGRect,
+            @escaping @Sendable () -> Void
+        ) -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, releaseBuffer in
                 let receivedRecord = metricsTracker.recordReceivedFrame()
                 diagnosticsBuffer.recordFrameArrivalGap(
                     streamID: reassemblerStreamID,
@@ -730,7 +787,7 @@ actor StreamController {
                     frameSizeBytes: frameData.count,
                     isKeyframe: isKeyframe
                 )
-                let enqueueOrder = enqueueOrderAllocator.allocate()
+                let ticket = enqueueOrderAllocator.allocate(pipelineGeneration: activePipelineGeneration)
 
                 Task {
                     guard let self else {
@@ -742,10 +799,11 @@ actor StreamController {
                         frameNumber: frameNumber,
                         remoteTimestamp: timestamp,
                         isKeyframe: isKeyframe,
+                        hostEpoch: epoch,
+                        dimensionToken: dimensionToken,
                         contentRect: contentRect,
                         releaseBuffer: releaseBuffer,
-                        enqueueOrder: enqueueOrder,
-                        pipelineGeneration: activePipelineGeneration
+                        ticket: ticket
                     )
                 }
             }
@@ -973,17 +1031,20 @@ actor StreamController {
         frameNumber: UInt32,
         remoteTimestamp: UInt64,
         isKeyframe: Bool,
+        hostEpoch: UInt16,
+        dimensionToken: UInt16,
         contentRect: CGRect,
         releaseBuffer: @escaping @Sendable () -> Void,
-        enqueueOrder: UInt64,
-        pipelineGeneration: UInt64
+        ticket: FrameQueueTicket
     )
     async {
-        guard pipelineGeneration == framePipelineGeneration else {
+        guard ticket.pipelineGeneration == framePipelineGeneration,
+              ticket.queueEpoch == enqueueOrderAllocator.currentQueueEpoch() else {
             releaseBuffer()
             return
         }
 
+        let renderGeneration = renderGenerationForDecodedFrame(hostEpoch: hostEpoch)
         let remotePresentationTime = CMTime(value: CMTimeValue(remoteTimestamp), timescale: 1_000_000_000)
         let timing = streamCadenceClock.timing(
             frameNumber: frameNumber,
@@ -995,11 +1056,6 @@ actor StreamController {
             duplicateRemoteTimestamp: timing.duplicateRemoteTimestamp,
             correctedStreamTimestamp: timing.correctedStreamTimestamp
         )
-        decodeFrameTimingCache.insert(
-            streamPresentationTime: timing.streamPresentationTime,
-            frameNumber: frameNumber,
-            remotePresentationTime: remotePresentationTime
-        )
         let frame = FrameData(
             data: data,
             frameNumber: frameNumber,
@@ -1007,31 +1063,44 @@ actor StreamController {
             presentationTime: timing.streamPresentationTime,
             isKeyframe: isKeyframe,
             contentRect: contentRect,
+            renderGeneration: renderGeneration,
+            hostEpoch: hostEpoch,
+            dimensionToken: dimensionToken,
+            queueTicket: ticket,
             releaseBuffer: releaseBuffer
         )
-        await enqueueFrame(
-            frame,
-            enqueueOrder: enqueueOrder,
-            pipelineGeneration: pipelineGeneration
-        )
+        await enqueueFrame(frame)
     }
 
-    private func enqueueFrame(
-        _ frame: FrameData,
-        enqueueOrder: UInt64,
-        pipelineGeneration: UInt64
-    )
+    private func enqueueFrame(_ frame: FrameData)
     async {
-        guard pipelineGeneration == framePipelineGeneration else {
+        guard frame.queueTicket.pipelineGeneration == framePipelineGeneration,
+              frame.queueTicket.queueEpoch == enqueueOrderAllocator.currentQueueEpoch() else {
             frame.releaseBuffer()
             return
         }
 
-        pendingOrderedFrames[enqueueOrder] = frame
+        pendingOrderedFrames[frame.queueTicket.order] = frame
         while let nextFrame = pendingOrderedFrames.removeValue(forKey: nextExpectedEnqueueOrder) {
             nextExpectedEnqueueOrder &+= 1
             await enqueueFrameInOrder(nextFrame)
         }
+    }
+
+    private func renderGenerationForDecodedFrame(hostEpoch: UInt16) -> UInt64 {
+        if let lastRenderHostEpoch, lastRenderHostEpoch != hostEpoch {
+            self.lastRenderHostEpoch = hostEpoch
+            streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
+            return MirageRenderStreamStore.shared.bumpGeneration(
+                for: streamID,
+                reason: "host-epoch-change"
+            )
+        }
+
+        if lastRenderHostEpoch == nil {
+            lastRenderHostEpoch = hostEpoch
+        }
+        return MirageRenderStreamStore.shared.currentGeneration(for: streamID)
     }
 
     private func enqueueFrameInOrder(_ frame: FrameData) async {
@@ -1095,7 +1164,6 @@ actor StreamController {
         }
         let queued = queuedFrames.drain()
         let pending = Array(pendingOrderedFrames.values)
-        decodeFrameTimingCache.clear()
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0
         enqueueOrderAllocator.reset()
@@ -1307,8 +1375,8 @@ actor StreamController {
             presentationBacklogFrames: presentationBacklogFrames,
             decodedFPS: frameSnapshot.decodedFPS,
             receivedFPS: frameSnapshot.receivedFPS,
-            rendererAcceptedFPS: renderTelemetry.layerAcceptedFPS,
-            rendererPresentedFPS: renderTelemetry.uniqueSubmittedFPS,
+            rendererAcceptedFPS: renderTelemetry.layerEnqueueFPS,
+            rendererPresentedFPS: renderTelemetry.uniqueLayerEnqueueFPS,
             recoveryState: Self.mediaFeedbackRecoveryState(for: clientRecoveryStatus)
         )
         realtimeMediaSession.recordFeedback(feedback)
@@ -1343,10 +1411,8 @@ actor StreamController {
             droppedFrames: droppedFrames,
             displayTickFPS: renderTelemetry.displayTickFPS,
             submitAttemptFPS: renderTelemetry.submitAttemptFPS,
-            layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
-            presentedFPS: renderTelemetry.presentedFPS,
-            submittedFPS: renderTelemetry.submittedFPS,
-            uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
+            layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
+            uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,

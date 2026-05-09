@@ -20,8 +20,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "decode-submission",
                 decodedFPS: 88,
                 receivedFPS: 120,
-                submittedFPS: 88,
-                uniqueSubmittedFPS: 88,
+                layerEnqueueFPS: 88,
+                uniqueLayerEnqueueFPS: 88,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 8,
                 overwrittenPendingFrames: 0,
@@ -55,8 +55,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 trigger: "decode-submission",
                 decodedFPS: 29,
                 receivedFPS: 29,
-                submittedFPS: 29,
-                uniqueSubmittedFPS: 29,
+                layerEnqueueFPS: 29,
+                uniqueLayerEnqueueFPS: 29,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
@@ -93,10 +93,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 decodedFPS: 120,
                 receivedFPS: 120,
                 submitAttemptFPS: 120,
-                layerAcceptedFPS: 72,
-                presentedFPS: 72,
-                submittedFPS: 72,
-                uniqueSubmittedFPS: 72,
+                layerEnqueueFPS: 72,
+                uniqueLayerEnqueueFPS: 72,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 28,
                 overwrittenPendingFrames: 4,
@@ -119,10 +117,47 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.bottleneckKind == .presentationBound)
         #expect(diagnostic.label == "presentation-bound")
         #expect(diagnostic.message.contains("submitAttempt=120.0fps"))
-        #expect(diagnostic.message.contains("layerAccepted=72.0fps"))
-        #expect(diagnostic.message.contains("presentationAlias=72.0fps"))
+        #expect(diagnostic.message.contains("layerEnqueueFPS=72.0fps"))
+        #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=72.0fps"))
         #expect(diagnostic.message.contains("layerBackpressure=3"))
         #expect(diagnostic.message.contains("overwritten=4"))
+    }
+
+    @Test("Stale layer enqueue loop uses layer-enqueue diagnostic language")
+    func staleLayerEnqueueLoopUsesLayerEnqueueDiagnosticLanguage() {
+        let diagnostic = clientStreamingAnomalyDiagnostic(
+            sample: ClientStreamingAnomalySample(
+                streamID: 4,
+                trigger: "freeze-recovery-render-submission",
+                decodedFPS: 0,
+                receivedFPS: 0,
+                submitAttemptFPS: 60,
+                layerEnqueueFPS: 60,
+                uniqueLayerEnqueueFPS: 0,
+                pendingFrameCount: 1,
+                pendingFrameAgeMs: 1_433,
+                overwrittenPendingFrames: 0,
+                displayLayerNotReadyCount: 0,
+                decodeHealthy: false,
+                decodeSubmissionLimit: 2,
+                presentationTier: .activeLive,
+                reassemblerPendingFrameCount: 0,
+                reassemblerPendingKeyframeCount: 0,
+                decoderOutputPixelFormat: "420f",
+                usingHardwareDecoder: true,
+                targetFrameRate: 60,
+                hostMetrics: makeHostMetrics(
+                    targetFrameRate: 60,
+                    encodedFPS: 60,
+                    captureFPS: 60,
+                    encodeAttemptFPS: 60
+                )
+            )
+        )
+
+        #expect(diagnostic.bottleneckKind == .presentationBound)
+        #expect(diagnostic.message.contains("layerEnqueueFPS=60.0fps"))
+        #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=0.0fps"))
     }
 
     private func makeHostMetrics(

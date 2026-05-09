@@ -594,6 +594,8 @@ extension SharedVirtualDisplayManager {
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> ManagedDisplayContext {
+        try assertNoResidualMirageDisplaysBeforeCreation()
+
         if displayCounter == 0 {
             displayCounter = 1
         }

@@ -18,7 +18,9 @@ private struct SendableOpaquePointer: @unchecked Sendable {
 }
 
 extension VideoDecoder {
-    func startDecoding(onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect) -> Void) {
+    func startDecoding(
+        onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void
+    ) {
         decodedFrameHandler = onDecodedFrame
         isDecoding = true
     }
@@ -65,7 +67,13 @@ extension VideoDecoder {
         MirageLogger.decoder("Decoder reset for new session - awaiting fresh keyframe")
     }
 
-    func decodeFrame(_ data: Data, presentationTime: CMTime, isKeyframe: Bool, contentRect: CGRect) async throws {
+    func decodeFrame(
+        _ data: Data,
+        presentationTime: CMTime,
+        isKeyframe: Bool,
+        contentRect: CGRect,
+        context: MirageVideoDecodeFrameContext
+    ) async throws {
         guard isDecoding else { return }
 
         // CRITICAL: When awaiting dimension change, discard ALL P-frames.
@@ -147,17 +155,6 @@ extension VideoDecoder {
             return
         }
 
-        // Ensure session exists
-        if decompressionSession == nil { try createSession(formatDescription: formatDesc) }
-
-        guard let session = decompressionSession else {
-            throw MirageError.decodingError(NSError(
-                domain: "MirageKit",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "No decompression session"]
-            ))
-        }
-
         // Create block buffer with owned memory (VideoToolbox decodes asynchronously)
         // Using the memory pool allocator ensures CMBlockBuffer owns the memory and
         // reduces allocation churn across frames.
@@ -220,9 +217,32 @@ extension VideoDecoder {
 
         guard sampleStatus == noErr, let sampleBuffer else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(sampleStatus))) }
 
-        // Decode
+        guard let submissionLease = await acquireDecodeSubmissionSlot() else { return }
+        if Task.isCancelled {
+            releaseDecodeSubmissionSlot(submissionLease)
+            return
+        }
+
+        // Ensure the session is captured only after the generation-aware decode slot is held.
+        if decompressionSession == nil {
+            do {
+                try createSession(formatDescription: formatDesc)
+            } catch {
+                releaseDecodeSubmissionSlot(submissionLease)
+                throw error
+            }
+        }
+
+        guard let session = decompressionSession else {
+            releaseDecodeSubmissionSlot(submissionLease)
+            throw MirageError.decodingError(NSError(
+                domain: "MirageKit",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No decompression session"]
+            ))
+        }
+
         var flags: VTDecodeInfoFlags = []
-        await acquireDecodeSubmissionSlot()
         let sessionGeneration = decompressionSessionGeneration
 
         let decodeInfo = DecodeInfo(
@@ -235,9 +255,10 @@ extension VideoDecoder {
             callbackFailureLogLimiter: callbackFailureLogLimiter,
             sessionGeneration: sessionGeneration,
             colorDepth: preferredOutputColorDepth,
+            frameContext: context,
             onCompletion: { [weak self] in
                 guard let self else { return }
-                Task { await self.releaseDecodeSubmissionSlot() }
+                Task { await self.releaseDecodeSubmissionSlot(submissionLease) }
             },
             releaseBuffer: nil,
             data: frameData
@@ -317,7 +338,9 @@ extension VideoDecoder {
                 )
             }
             MirageColorAttachments.enforceOnPixelBuffer(pixelBuffer, colorSpace: info.colorDepth.colorSpace)
-            if info.handler != nil { info.handler?(pixelBuffer, presentationTime, info.contentRect) } else {
+            if info.handler != nil {
+                info.handler?(pixelBuffer, presentationTime, info.contentRect, info.frameContext)
+            } else {
                 MirageLogger.error(.decoder, "Warning: no frame handler set")
             }
             info.onCompletion?()
@@ -325,7 +348,7 @@ extension VideoDecoder {
 
         if decodeStatus != noErr {
             Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).release()
-            releaseDecodeSubmissionSlot()
+            releaseDecodeSubmissionSlot(submissionLease)
             throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
         }
     }

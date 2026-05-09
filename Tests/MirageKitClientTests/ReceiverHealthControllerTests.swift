@@ -281,8 +281,8 @@ struct ReceiverHealthControllerTests {
         networkSnapshot.hostEncodedFPS = 60
         networkSnapshot.receivedFPS = 8
         networkSnapshot.decodedFPS = 8
-        networkSnapshot.submittedFPS = 8
-        networkSnapshot.uniqueSubmittedFPS = 8
+        networkSnapshot.layerEnqueueFPS = 8
+        networkSnapshot.uniqueLayerEnqueueFPS = 8
 
         _ = controller.advance(
             snapshots: [networkSnapshot],
@@ -329,8 +329,8 @@ struct ReceiverHealthControllerTests {
         snapshot.hostEncodedFPS = 120
         snapshot.receivedFPS = 80
         snapshot.decodedFPS = 80
-        snapshot.submittedFPS = 80
-        snapshot.uniqueSubmittedFPS = 80
+        snapshot.layerEnqueueFPS = 80
+        snapshot.uniqueLayerEnqueueFPS = 80
 
         var action: MirageReceiverHealthController.Action = .none
         for time in [10.0, 12.0, 14.0] {
@@ -416,8 +416,8 @@ struct ReceiverHealthControllerTests {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
-            submittedFPS: 60,
-            uniqueSubmittedFPS: 60,
+            layerEnqueueFPS: 60,
+            uniqueLayerEnqueueFPS: 60,
             pendingFrameCount: 0,
             decodeHealthy: true,
             hostActiveQuality: activeQuality,
@@ -461,8 +461,8 @@ struct ReceiverHealthControllerTests {
     private func decodeStalledButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.decodedFPS = 0
-        snapshot.submittedFPS = 0
-        snapshot.uniqueSubmittedFPS = 0
+        snapshot.layerEnqueueFPS = 0
+        snapshot.uniqueLayerEnqueueFPS = 0
         snapshot.decodeHealthy = false
         return snapshot
     }
@@ -471,8 +471,8 @@ struct ReceiverHealthControllerTests {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.receivedFPS = 0
         snapshot.decodedFPS = 0
-        snapshot.submittedFPS = 0
-        snapshot.uniqueSubmittedFPS = 0
+        snapshot.layerEnqueueFPS = 0
+        snapshot.uniqueLayerEnqueueFPS = 0
         snapshot.decodeHealthy = false
         snapshot.clientReassemblerPendingKeyframeCount = 2
         snapshot.clientDroppedFrames = 1
@@ -487,15 +487,15 @@ struct ReceiverHealthControllerTests {
         snapshot.hostEncodedFPS = 43
         snapshot.receivedFPS = 43
         snapshot.decodedFPS = 43
-        snapshot.submittedFPS = 43
-        snapshot.uniqueSubmittedFPS = 43
+        snapshot.layerEnqueueFPS = 43
+        snapshot.uniqueLayerEnqueueFPS = 43
         return snapshot
     }
 
     private func presentationBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.submittedFPS = 43
-        snapshot.uniqueSubmittedFPS = 43
+        snapshot.layerEnqueueFPS = 43
+        snapshot.uniqueLayerEnqueueFPS = 43
         snapshot.clientOverwrittenPendingFrames = 2
         snapshot.clientDisplayLayerNotReadyCount = 1
         snapshot.clientPendingFrameAgeMs = 24

@@ -74,7 +74,7 @@ extension StreamController {
         lastStreamingAnomalyDiagnosticSignature = nil
         lastStreamingAnomalyDiagnosticTime = 0
         lastDecodedFrameTime = 0
-        lastPresentedSequenceObserved = 0
+        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         lastPresentedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
@@ -102,10 +102,11 @@ extension StreamController {
         reassembler.reset()
         streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
         clearQueuedFramesForRecovery()
+        MirageRenderStreamStore.shared.bumpGeneration(for: streamID, reason: "desktop resize")
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastDecodedFrameTime = 0
         lastPresentedProgressTime = 0
-        lastPresentedSequenceObserved = 0
+        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
@@ -266,10 +267,10 @@ extension StreamController {
 
     private func startTierPromotionProbe() async {
         await stopTierPromotionProbe()
-        let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
+        let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
         await setClientRecoveryStatus(.tierPromotionProbe)
         tierPromotionProbeTask = Task { [weak self] in
-            await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
+            await self?.runTierPromotionProbe(baselineCursor: baselineCursor)
         }
     }
 
@@ -281,7 +282,7 @@ extension StreamController {
         }
     }
 
-    private func runTierPromotionProbe(baselineSequence: UInt64) async {
+    private func runTierPromotionProbe(baselineCursor: MirageRenderCursor) async {
         defer { tierPromotionProbeTask = nil }
 
         do {
@@ -293,9 +294,11 @@ extension StreamController {
         guard presentationTier == .activeLive else { return }
 
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        if snapshot.sequence > baselineSequence {
+        if snapshot.cursor.isAfter(baselineCursor) {
             MirageLogger.client(
-                "Tier promotion probe progressed for stream \(streamID) (baseline=\(baselineSequence), latest=\(snapshot.sequence))"
+                "Tier promotion probe progressed for stream \(streamID) " +
+                    "(baseline=\(baselineCursor.generation):\(baselineCursor.sequence), " +
+                    "latest=\(snapshot.generation):\(snapshot.sequence))"
             )
             await setClientRecoveryStatus(.idle)
             return
