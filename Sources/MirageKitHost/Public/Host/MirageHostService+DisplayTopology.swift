@@ -75,6 +75,30 @@ func desktopVirtualResolutionChanged(
         abs(previousResolution.height - nextResolution.height) > tolerance
 }
 
+func desktopTopologyRefreshMatchesCommittedResize(
+    reason: String,
+    committedResizePixelResolution: CGSize?,
+    requestedVirtualResolution: CGSize?,
+    currentVirtualResolution: CGSize?,
+    tolerance: CGFloat = 1
+)
+-> Bool {
+    guard reason.contains("deferred"),
+          let committedResizePixelResolution = validDesktopVirtualResolution(committedResizePixelResolution) else {
+        return false
+    }
+
+    let candidateResolution = validDesktopVirtualResolution(currentVirtualResolution) ??
+        validDesktopVirtualResolution(requestedVirtualResolution)
+    guard let candidateResolution else { return false }
+
+    return !desktopVirtualResolutionChanged(
+        from: committedResizePixelResolution,
+        to: candidateResolution,
+        tolerance: tolerance
+    )
+}
+
 struct DesktopInputGeometryRefreshResult: Equatable {
     let physicalBounds: CGRect
     let virtualResolution: CGSize?
@@ -264,6 +288,24 @@ extension MirageHostService {
             fallback: fallbackResolution
         ) else {
             await sendStreamScaleUpdate(streamID: streamID)
+            return
+        }
+        if desktopTopologyRefreshMatchesCommittedResize(
+            reason: reason,
+            committedResizePixelResolution: committedDesktopResizePixelResolution(),
+            requestedVirtualResolution: requestedVirtualResolution,
+            currentVirtualResolution: virtualResolution
+        ) {
+            let inputGeometry = updateDesktopInputGeometry(
+                streamID: streamID,
+                physicalBounds: refreshDesktopPrimaryPhysicalBounds(),
+                virtualResolution: virtualResolution
+            )
+            await sendStreamScaleUpdate(streamID: streamID)
+            MirageLogger.host(
+                "Desktop display topology refresh coalesced with committed resize " +
+                    "(reason=\(reason), input bounds: \(inputGeometry.inputBounds))"
+            )
             return
         }
 
@@ -519,6 +561,18 @@ extension MirageHostService {
             )
             return false
         }
+    }
+
+    private func committedDesktopResizePixelResolution() -> CGSize? {
+        guard case .committed(let request) = desktopResizeTransactionState else { return nil }
+        let displayScaleFactor = max(
+            1.0,
+            request.requestedDisplayScaleFactor ?? sharedVirtualDisplayScaleFactor
+        )
+        return MirageStreamGeometry.resolve(
+            logicalSize: request.logicalResolution,
+            displayScaleFactor: displayScaleFactor
+        ).displayPixelSize
     }
 }
 

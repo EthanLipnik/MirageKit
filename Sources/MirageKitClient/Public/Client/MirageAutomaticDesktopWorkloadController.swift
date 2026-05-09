@@ -369,13 +369,19 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             }
 
             promotionSampleCount = 0
-            if Self.isSevereClientPresentationCollapse(snapshot: snapshot, currentTier: currentTier) {
+            let isSevereClientPresentationCollapse = Self.isSevereClientPresentationCollapse(
+                snapshot: snapshot,
+                currentTier: currentTier
+            )
+            if isSevereClientPresentationCollapse {
                 presentationCollapseSampleCount += 1
             } else {
                 presentationCollapseSampleCount = 0
             }
             pipelinePressureSampleCount += 1
-            let requiredSamples = presentationCollapseSampleCount >= Self.requiredPresentationCollapseSamples
+            let hasSustainedSevereClientPresentationCollapse =
+                presentationCollapseSampleCount >= Self.requiredPresentationCollapseSamples
+            let requiredSamples = hasSustainedSevereClientPresentationCollapse
                 ? Self.requiredPresentationCollapseSamples
                 : Self.requiredPipelinePressureSamples
             guard pipelinePressureSampleCount >= requiredSamples,
@@ -385,7 +391,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                       pipelinePixelRate: observedPixelRate,
                       minimumTargetFrameRate: minimumTargetFrameRate,
                       maximumTargetFrameRate: maximumTargetFrameRate,
-                      adaptivePriority: adaptivePriority
+                      adaptivePriority: adaptivePriority,
+                      allowResolutionReduction: hasSustainedSevereClientPresentationCollapse
                   ) else {
                 return .none
             }
@@ -519,7 +526,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         pipelinePixelRate: Double,
         minimumTargetFrameRate: Int,
         maximumTargetFrameRate: Int,
-        adaptivePriority: MirageAdaptiveQualityPriority
+        adaptivePriority: MirageAdaptiveQualityPriority,
+        allowResolutionReduction: Bool
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
         let normalizedMaximumTargetFrameRate = max(
@@ -543,6 +551,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                minimumTargetFrameRate: normalizedMinimumTargetFrameRate
            ) {
             return frameRateTier
+        }
+
+        if adaptivePriority == .preserveResolutionAndBitrate && !allowResolutionReduction {
+            return nil
         }
 
         let currentPixels = max(
@@ -653,7 +665,6 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     )
     -> Bool {
         guard let snapshot else { return false }
-        guard currentTier.targetFrameRate >= 90 else { return false }
         guard snapshot.bottleneckKind == .presentationBound ||
             snapshot.bottleneckKind == .decodeBound ||
             snapshot.bottleneckKind == .mixed else {
@@ -701,11 +712,21 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
             $0.targetFrameRate <= normalizedMaximumTargetFrameRate
         }
-        guard let currentIndex = tiers.firstIndex(where: { $0 == currentTier }),
-              currentIndex > tiers.startIndex else {
-            return nil
+        if let sameFrameRateTier = tiers
+            .filter({
+                $0.targetFrameRate == currentTier.targetFrameRate &&
+                    $0.pixelRate > currentTier.pixelRate
+            })
+            .min(by: { $0.pixelRate < $1.pixelRate }) {
+            return sameFrameRateTier
         }
-        return tiers[tiers.index(before: currentIndex)]
+
+        return tiers
+            .filter({
+                $0.targetFrameRate >= currentTier.targetFrameRate &&
+                    $0.pixelRate > currentTier.pixelRate
+            })
+            .min(by: { $0.pixelRate < $1.pixelRate })
     }
 
     private static func sameResolutionFrameRatePromotionTier(

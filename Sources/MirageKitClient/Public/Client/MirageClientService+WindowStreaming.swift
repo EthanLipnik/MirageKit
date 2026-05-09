@@ -311,6 +311,11 @@ public extension MirageClientService {
                 Task {
                     await self?.handleTerminalStartupFailure(failure, for: capturedStreamID)
                 }
+            },
+            onTerminalLiveRecoveryFailure: { [weak self] failure in
+                Task {
+                    await self?.handleTerminalLiveRecoveryFailure(failure, for: capturedStreamID)
+                }
             }
         )
 
@@ -559,6 +564,46 @@ public extension MirageClientService {
         }
 
         delegate?.clientService(self, didEncounterError: error)
+    }
+
+    internal func handleTerminalLiveRecoveryFailure(
+        _ failure: StreamController.TerminalLiveRecoveryFailure,
+        for streamID: StreamID
+    ) async {
+        let waitReason = failure.waitReason ?? "unknown"
+        MirageLogger.error(
+            .client,
+            "Terminal live recovery failure for stream \(streamID): hardRecoveries=\(failure.hardRecoveryAttempts), " +
+                "reason=\(failure.reason.logLabel), waitReason=\(waitReason)"
+        )
+
+        if desktopStreamID == streamID {
+            if await restartDesktopStreamAfterTerminalLiveRecoveryFailure(failure, failedStreamID: streamID) {
+                return
+            }
+            delegate?.clientService(self, didEncounterError: MirageError.protocolError(failure.errorMessage))
+            return
+        }
+
+        if let session = activeStreams.first(where: { $0.id == streamID }) {
+            let bundleIdentifier = session.window.application?.bundleIdentifier
+            let recoveryFailure = LiveStreamRecoveryFailure(
+                streamID: streamID,
+                kind: .app(bundleIdentifier: bundleIdentifier),
+                reason: failure.reason.logLabel,
+                hardRecoveryAttempts: failure.hardRecoveryAttempts
+            )
+            onLiveStreamRecoveryFailed?(recoveryFailure)
+            return
+        }
+
+        let recoveryFailure = LiveStreamRecoveryFailure(
+            streamID: streamID,
+            kind: .window,
+            reason: failure.reason.logLabel,
+            hardRecoveryAttempts: failure.hardRecoveryAttempts
+        )
+        onLiveStreamRecoveryFailed?(recoveryFailure)
     }
 
     func cancelDesktopStreamStopTimeout() {

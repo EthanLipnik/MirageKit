@@ -418,28 +418,41 @@ extension MirageClientService {
             width: snapshot?.hostEncodedWidth ?? 0,
             height: snapshot?.hostEncodedHeight ?? 0
         )
-        let needsResize = !Self.approximatelyEqualEncodedSize(
+        let allowsAutomaticStreamScale = desktopCaptureSource != .mainDisplayFallback
+        let streamScalePlan = allowsAutomaticStreamScale
+            ? Self.automaticDesktopStreamScaleReconfigurationPlan(
+                targetEncodedPixelSize: effectiveTarget.encodedPixelSize,
+                baseDisplayPixelSize: desktopStreamResolution
+            )
+            : nil
+        let targetEncodedSize = streamScalePlan?.encodedPixelSize ?? effectiveTarget.encodedPixelSize
+        let needsStreamScaleChange = !Self.approximatelyEqualEncodedSize(
             currentEncodedSize,
-            effectiveTarget.encodedPixelSize
-        )
-        let allowsAutomaticResolutionResize = Self.allowsAutomaticDesktopResolutionResize(
-            mode: desktopStreamMode,
-            allowsClientResize: desktopStreamAllowsClientResize
+            targetEncodedSize
         )
         let decision = Self.automaticDesktopWorkloadReconfigurationDecision(
             needsFrameRateChange: needsFrameRateChange,
-            needsResize: needsResize,
-            allowsAutomaticResolutionResize: allowsAutomaticResolutionResize
+            needsStreamScaleChange: needsStreamScaleChange,
+            hasStreamScalePlan: streamScalePlan != nil
         )
 
-        guard decision.shouldChangeFrameRate || decision.shouldResize else {
-            if needsResize && !allowsAutomaticResolutionResize {
+        guard decision.shouldChangeFrameRate || decision.shouldChangeStreamScale else {
+            if needsStreamScaleChange && !allowsAutomaticStreamScale {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =
-                    "deferred stream=\(streamID) reason=resize-not-allowed target=\(effectiveTarget.logLabel) " +
+                    "deferred stream=\(streamID) reason=stream-scale-not-allowed target=\(effectiveTarget.logLabel) " +
                     "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
-                        "target \(effectiveTarget.logLabel) requires resize but mode does not allow automatic resize"
+                        "target \(effectiveTarget.logLabel) requires stream-scale update but host-resolution desktop " +
+                        "capture does not allow it"
+                )
+            } else if needsStreamScaleChange && streamScalePlan == nil {
+                lastAutomaticDesktopWorkloadReconfigurationSummary =
+                    "deferred stream=\(streamID) reason=display-size-missing target=\(effectiveTarget.logLabel) " +
+                    "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
+                MirageLogger.client(
+                    "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
+                        "target \(effectiveTarget.logLabel) requires stream-scale update but desktop display size is missing"
                 )
             } else {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =
@@ -449,31 +462,16 @@ extension MirageClientService {
             return false
         }
 
+        try await sendStreamEncoderSettingsChange(
+            streamID: streamID,
+            streamScale: decision.shouldChangeStreamScale ? streamScalePlan?.streamScale : nil,
+            targetFrameRate: decision.shouldChangeFrameRate ? effectiveTarget.targetFrameRate : nil
+        )
+
         if decision.shouldChangeFrameRate {
-            try await sendStreamEncoderSettingsChange(
-                streamID: streamID,
-                targetFrameRate: effectiveTarget.targetFrameRate
-            )
             refreshRateOverridesByStream[streamID] = effectiveTarget.targetFrameRate
             refreshRateMismatchCounts.removeValue(forKey: streamID)
             refreshRateFallbackTargets.removeValue(forKey: streamID)
-        }
-
-        if decision.shouldResize {
-            let logicalResolution = automaticDesktopLogicalResolution(
-                forEncodedPixelSize: effectiveTarget.encodedPixelSize
-            )
-            let resizeTarget = desktopResizeTarget(
-                for: logicalResolution,
-                maxDrawableSize: effectiveTarget.encodedPixelSize
-            )
-            queueDesktopResize(
-                streamID: streamID,
-                target: resizeTarget,
-                hasPresentedFrame: session.hasPresentedFrame,
-                useHostResolution: false,
-                dispatchPolicy: .immediate
-            )
         }
 
         MirageLogger.client(
@@ -481,36 +479,10 @@ extension MirageClientService {
         )
         lastAutomaticDesktopWorkloadReconfigurationSummary =
             "requested stream=\(streamID) target=\(effectiveTarget.logLabel) " +
-            "frameRate=\(decision.shouldChangeFrameRate) resize=\(decision.shouldResize) " +
+            "frameRate=\(decision.shouldChangeFrameRate) streamScale=\(decision.shouldChangeStreamScale) " +
+            "scale=\(streamScalePlan.map { String(format: "%.3f", $0.streamScale) } ?? "nil") " +
             "current=\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))@\(currentFrameRate)"
         return true
-    }
-
-    private func automaticDesktopLogicalResolution(forEncodedPixelSize encodedPixelSize: CGSize) -> CGSize {
-        let displayScaleFactor = platformDisplayScaleFactor(explicitScaleFactor: nil)
-        let sourceSize = desktopStreamPresentationResolution ?? desktopStreamResolution ?? getMainDisplayResolution()
-        let sourceAspect = sourceSize.width > 0 && sourceSize.height > 0 ?
-            sourceSize.width / sourceSize.height :
-            encodedPixelSize.width / max(1, encodedPixelSize.height)
-        let targetAspect = encodedPixelSize.width / max(1, encodedPixelSize.height)
-        let fittedPixelSize: CGSize
-        if targetAspect > sourceAspect {
-            fittedPixelSize = CGSize(
-                width: encodedPixelSize.height * sourceAspect,
-                height: encodedPixelSize.height
-            )
-        } else {
-            fittedPixelSize = CGSize(
-                width: encodedPixelSize.width,
-                height: encodedPixelSize.width / max(0.001, sourceAspect)
-            )
-        }
-        return MirageStreamGeometry.normalizedLogicalSize(
-            CGSize(
-                width: fittedPixelSize.width / displayScaleFactor,
-                height: fittedPixelSize.height / displayScaleFactor
-            )
-        )
     }
 
     private nonisolated static func approximatelyEqualEncodedSize(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
@@ -518,26 +490,52 @@ extension MirageClientService {
         return abs(lhs.width - rhs.width) <= 16 && abs(lhs.height - rhs.height) <= 16
     }
 
-    nonisolated static func allowsAutomaticDesktopResolutionResize(
-        mode: MirageDesktopStreamMode?,
-        allowsClientResize: Bool
-    ) -> Bool {
-        allowsClientResize
+    struct AutomaticDesktopStreamScalePlan: Equatable {
+        let streamScale: CGFloat
+        let encodedPixelSize: CGSize
+    }
+
+    nonisolated static func automaticDesktopStreamScaleReconfigurationPlan(
+        targetEncodedPixelSize: CGSize,
+        baseDisplayPixelSize: CGSize?
+    ) -> AutomaticDesktopStreamScalePlan? {
+        guard let baseDisplayPixelSize,
+              baseDisplayPixelSize.width > 0,
+              baseDisplayPixelSize.height > 0,
+              targetEncodedPixelSize.width > 0,
+              targetEncodedPixelSize.height > 0 else {
+            return nil
+        }
+
+        let basePixelSize = MirageStreamGeometry.alignedEncodedSize(baseDisplayPixelSize)
+        let targetPixelSize = MirageStreamGeometry.alignedEncodedSize(targetEncodedPixelSize)
+        let widthScale = targetPixelSize.width / basePixelSize.width
+        let heightScale = targetPixelSize.height / basePixelSize.height
+        let streamScale = MirageStreamGeometry.clampStreamScale(min(1.0, widthScale, heightScale))
+        let resolvedPlan = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: basePixelSize,
+            requestedStreamScale: streamScale,
+            disableResolutionCap: true
+        )
+        return AutomaticDesktopStreamScalePlan(
+            streamScale: resolvedPlan.resolvedStreamScale,
+            encodedPixelSize: resolvedPlan.encodedPixelSize
+        )
     }
 
     struct AutomaticDesktopWorkloadReconfigurationDecision: Equatable {
         let shouldChangeFrameRate: Bool
-        let shouldResize: Bool
+        let shouldChangeStreamScale: Bool
     }
 
     nonisolated static func automaticDesktopWorkloadReconfigurationDecision(
         needsFrameRateChange: Bool,
-        needsResize: Bool,
-        allowsAutomaticResolutionResize: Bool
+        needsStreamScaleChange: Bool,
+        hasStreamScalePlan: Bool
     ) -> AutomaticDesktopWorkloadReconfigurationDecision {
         return AutomaticDesktopWorkloadReconfigurationDecision(
             shouldChangeFrameRate: needsFrameRateChange,
-            shouldResize: needsResize && allowsAutomaticResolutionResize
+            shouldChangeStreamScale: needsStreamScaleChange && hasStreamScalePlan
         )
     }
 

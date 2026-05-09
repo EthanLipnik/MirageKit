@@ -124,8 +124,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
-    @Test("Client presentation deficit preserves 60fps while lowering resolution")
-    func clientPresentationDeficitPreserves60FPSWhileLoweringResolution() {
+    @Test("Client presentation deficit at 60fps preserve priority holds resolution")
+    func clientPresentationDeficitAt60FPSPreservePriorityHoldsResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -146,13 +146,43 @@ struct AutomaticDesktopWorkloadControllerTests {
             minimumTargetFrameRate: 60
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
+        #expect(action == .none)
+    }
+
+    @Test("Sustained severe 60fps client collapse can reduce encoded size")
+    func sustainedSevere60FPSClientCollapseCanReduceEncodedSize() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 3840,
+            height: 2160,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+        snapshot.decodedFPS = 60
+        snapshot.layerEnqueueFPS = 28
+        snapshot.uniqueLayerEnqueueFPS = 28
+        snapshot.clientOverwrittenPendingFrames = 4
+        snapshot.clientDisplayLayerNotReadyCount = 3
+        snapshot.clientPendingFrameAgeMs = 72
+
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<3 {
+            action = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: 60,
+                now: CFAbsoluteTime(sample)
+            )
+        }
+
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected severe client collapse reconfiguration")
             return
         }
         #expect(target.targetFrameRate == 60)
         #expect(target.encodedPixelSize.width < 3840)
         #expect(target.encodedPixelSize.height < 2160)
+        #expect(reason.contains("client layer enqueue collapse"))
     }
 
     @Test("Clean variable ProMotion cadence above floor does not reconfigure")
@@ -370,8 +400,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.encodedPixelSize.height < 2064)
     }
 
-    @Test("Severe client presentation cadence spikes downshift even near target FPS")
-    func severeClientPresentationCadenceSpikesDownshiftEvenNearTargetFPS() {
+    @Test("Presentation cadence spikes near 60fps do not downshift preserve priority")
+    func presentationCadenceSpikesNear60FPSDoNotDownshiftPreservePriority() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -389,13 +419,7 @@ struct AutomaticDesktopWorkloadControllerTests {
             minimumTargetFrameRate: 60
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(action == .none)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")
@@ -459,6 +483,37 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.targetFrameRate == 90)
     }
 
+    @Test("Sustained clean custom 60fps downscale promotes toward a higher tier")
+    func sustainedCleanCustom60FPSDownscalePromotesTowardHigherTier() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        let snapshot = pipelineBoundSnapshot(
+            width: 2080,
+            height: 1200,
+            targetFrameRate: 60,
+            cadenceFPS: 60
+        )
+
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<12 {
+            let sampleAction = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: 60,
+                maximumTargetFrameRate: 60,
+                now: CFAbsoluteTime(sample)
+            )
+            if sampleAction != .none {
+                action = sampleAction
+            }
+        }
+
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected custom-tier workload promotion")
+            return
+        }
+        #expect(target == .qhd60)
+    }
+
     @Test("Automatic 60fps floor prevents silent downgrade to 30fps")
     func automatic60FPSFloorPreventsSilentDowngradeTo30FPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
@@ -482,22 +537,35 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.targetFrameRate == 60)
     }
 
-    @Test("Frame-rate reconfiguration still applies when resize is unavailable")
-    func frameRateReconfigurationStillAppliesWhenResizeIsUnavailable() {
+    @Test("Frame-rate reconfiguration still applies when stream scale plan is unavailable")
+    func frameRateReconfigurationStillAppliesWhenStreamScalePlanIsUnavailable() {
         let decision = MirageClientService.automaticDesktopWorkloadReconfigurationDecision(
             needsFrameRateChange: true,
-            needsResize: true,
-            allowsAutomaticResolutionResize: false
+            needsStreamScaleChange: true,
+            hasStreamScalePlan: false
         )
 
         #expect(decision.shouldChangeFrameRate)
-        #expect(!decision.shouldResize)
+        #expect(!decision.shouldChangeStreamScale)
     }
 
-    @Test("Unified desktop streams can resize when the stream allows client resize")
-    func unifiedDesktopStreamsCanResizeWhenStreamAllowsClientResize() {
-        #expect(MirageClientService.allowsAutomaticDesktopResolutionResize(mode: .unified, allowsClientResize: true))
-        #expect(!MirageClientService.allowsAutomaticDesktopResolutionResize(mode: .unified, allowsClientResize: false))
+    @Test("Automatic desktop workload computes stream scale without changing display size")
+    func automaticDesktopWorkloadComputesStreamScaleWithoutChangingDisplaySize() {
+        let downscale = MirageClientService.automaticDesktopStreamScaleReconfigurationPlan(
+            targetEncodedPixelSize: CGSize(width: 2096, height: 1200),
+            baseDisplayPixelSize: CGSize(width: 2448, height: 1408)
+        )
+        #expect(downscale?.streamScale != nil)
+        #expect((downscale?.streamScale ?? 1) < 1)
+        #expect((downscale?.encodedPixelSize.width ?? 0) <= 2096)
+        #expect((downscale?.encodedPixelSize.height ?? 0) <= 1200)
+
+        let fullQuality = MirageClientService.automaticDesktopStreamScaleReconfigurationPlan(
+            targetEncodedPixelSize: CGSize(width: 2560, height: 1440),
+            baseDisplayPixelSize: CGSize(width: 2448, height: 1408)
+        )
+        #expect(fullQuality?.streamScale == 1.0)
+        #expect(fullQuality?.encodedPixelSize == CGSize(width: 2448, height: 1408))
     }
 
     private func pipelineBoundSnapshot(

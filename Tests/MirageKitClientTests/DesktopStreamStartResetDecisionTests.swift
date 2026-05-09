@@ -269,6 +269,67 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Same-geometry desktop token advance resets stream without post-resize gating")
+    func sameGeometryDesktopTokenAdvanceResetsStreamWithoutPostResizeGating() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 32
+        let desktopSessionID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 2448, height: 1408)
+        service.desktopStreamPresentationResolution = CGSize(width: 2448, height: 1408)
+        service.controllersByStream[streamID] = controller
+        service.desktopDimensionTokenByStream[streamID] = 4
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2448,
+            height: 1408,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 5,
+            acceptedMediaMaxPacketSize: 1400,
+            presentationWidth: 2448,
+            presentationHeight: 1408
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 2448, height: 1408))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 5)
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        if let activeController = service.controllersByStream[streamID] {
+            await activeController.stop()
+        } else {
+            await controller.stop()
+        }
+    }
+
+    @Test("Desktop stream start geometry comparison distinguishes scale-only updates")
+    func desktopStreamStartGeometryComparisonDistinguishesScaleOnlyUpdates() {
+        #expect(
+            !desktopStreamStartGeometryChanged(
+                previousDisplaySize: CGSize(width: 2448, height: 1408),
+                previousPresentationSize: CGSize(width: 2448, height: 1408),
+                nextDisplaySize: CGSize(width: 2448, height: 1408),
+                nextPresentationSize: CGSize(width: 2448, height: 1408)
+            )
+        )
+        #expect(
+            desktopStreamStartGeometryChanged(
+                previousDisplaySize: CGSize(width: 2448, height: 1408),
+                previousPresentationSize: CGSize(width: 2448, height: 1408),
+                nextDisplaySize: CGSize(width: 2080, height: 1184),
+                nextPresentationSize: CGSize(width: 2080, height: 1184)
+            )
+        )
+    }
+
+    @MainActor
     @Test("Accepted desktop startup preserves requested geometry before first frame metrics")
     func acceptedDesktopStartupPreservesRequestedGeometryBeforeFirstFrameMetrics() async throws {
         let service = MirageClientService()

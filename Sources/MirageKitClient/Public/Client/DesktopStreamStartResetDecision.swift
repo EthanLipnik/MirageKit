@@ -78,3 +78,19 @@ func desktopStreamStartResetDecision(
 
     return .reuseController
 }
+
+func desktopStreamStartGeometryChanged(
+    previousDisplaySize: CGSize?,
+    previousPresentationSize: CGSize?,
+    nextDisplaySize: CGSize,
+    nextPresentationSize: CGSize,
+    tolerance: CGFloat = 1
+)
+-> Bool {
+    guard let previousDisplaySize else { return true }
+    let previousPresentationSize = previousPresentationSize ?? previousDisplaySize
+    return abs(previousDisplaySize.width - nextDisplaySize.width) > tolerance ||
+        abs(previousDisplaySize.height - nextDisplaySize.height) > tolerance ||
+        abs(previousPresentationSize.width - nextPresentationSize.width) > tolerance ||
+        abs(previousPresentationSize.height - nextPresentationSize.height) > tolerance
+}

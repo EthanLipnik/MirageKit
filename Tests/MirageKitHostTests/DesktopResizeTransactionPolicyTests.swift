@@ -164,6 +164,34 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .rebind)
     }
 
+    @Test("Deferred topology refresh matching committed resize is coalesced")
+    func deferredTopologyRefreshMatchingCommittedResizeIsCoalesced() {
+        #expect(
+            desktopTopologyRefreshMatchesCommittedResize(
+                reason: "screen_parameters_changed_deferred",
+                committedResizePixelResolution: CGSize(width: 2448, height: 1408),
+                requestedVirtualResolution: CGSize(width: 2448, height: 1408),
+                currentVirtualResolution: CGSize(width: 2448, height: 1408)
+            )
+        )
+        #expect(
+            !desktopTopologyRefreshMatchesCommittedResize(
+                reason: "screen_parameters_changed",
+                committedResizePixelResolution: CGSize(width: 2448, height: 1408),
+                requestedVirtualResolution: CGSize(width: 2448, height: 1408),
+                currentVirtualResolution: CGSize(width: 2448, height: 1408)
+            )
+        )
+        #expect(
+            !desktopTopologyRefreshMatchesCommittedResize(
+                reason: "screen_parameters_changed_deferred",
+                committedResizePixelResolution: CGSize(width: 2448, height: 1408),
+                requestedVirtualResolution: CGSize(width: 2080, height: 1184),
+                currentVirtualResolution: CGSize(width: 2080, height: 1184)
+            )
+        )
+    }
+
     @Test("Desktop mirroring restore aborts when stream is inactive")
     func desktopMirroringRestoreAbortsWhenStreamIsInactive() {
         let decision = desktopMirroringRestoreContinuationDecision(

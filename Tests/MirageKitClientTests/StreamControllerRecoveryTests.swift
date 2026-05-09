@@ -934,9 +934,19 @@ struct StreamControllerRecoveryTests {
         tracker.recordSuccess(isKeyframe: true)
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
 
-        markSubmitted(streamID: streamID)
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 1)
         let recoveredProgress = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
         #expect(recoveredProgress)
+        await controller.clearTransientRecoveryStateAfterPresentationProgress()
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 2)
+        _ = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 3)
+        _ = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
         await controller.clearTransientRecoveryStateAfterPresentationProgress()
         #expect(await controller.clientRecoveryStatus == .idle)
 
@@ -1036,6 +1046,100 @@ struct StreamControllerRecoveryTests {
         #expect(failure.waitReason == "initial-startup")
 
         await controller.stop()
+    }
+
+    @Test("Activation recovery requires stable decoded and presented frames before clearing")
+    func activationRecoveryRequiresStableDecodedAndPresentedFramesBeforeClearing() async throws {
+        let streamID: StreamID = 166
+        let clock = ManualTimeProvider(start: 6_000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.updatePresentationTier(.activeLive)
+        markSubmitted(streamID: streamID)
+        await controller.markFirstFramePresented()
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "application-activation-recovery"
+        )
+
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 1)
+        _ = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        await controller.clearTransientRecoveryStateAfterPresentationProgress()
+        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 2)
+        _ = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        await controller.recordDecodedFrame()
+        markSubmitted(streamID: streamID, sequence: 3)
+        _ = await controller.syncPresentationProgressFromFrameStore(now: clock.now)
+        await controller.clearTransientRecoveryStateAfterPresentationProgress()
+
+        #expect(await controller.clientRecoveryStatus == .idle)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Repeated established hard recovery escalates to terminal live failure")
+    func repeatedEstablishedHardRecoveryEscalatesToTerminalLiveFailure() async throws {
+        let streamID: StreamID = 167
+        let clock = ManualTimeProvider(start: 7_000)
+        let failures = LockedTerminalLiveRecoveryFailure()
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: nil,
+            onResizeEvent: nil,
+            onTerminalLiveRecoveryFailure: { failure in
+                failures.record(failure)
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        markSubmitted(streamID: streamID)
+        await controller.markFirstFramePresented()
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "application-activation-recovery"
+        )
+
+        clock.advance(by: StreamController.hardRecoveryMinimumInterval + 0.1)
+        await controller.requestRecovery(
+            reason: .decodeErrorThreshold,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "decode-error-hard-reset"
+        )
+
+        try await waitUntil("terminal live recovery failure callback") {
+            failures.value != nil
+        }
+
+        let failure = try #require(failures.value)
+        #expect(failure.reason == .decodeErrorThreshold)
+        #expect(failure.hardRecoveryAttempts == StreamController.liveRecoveryHardRecoveryLimit)
+        #expect(failure.waitReason == "decode-error-hard-reset")
+        #expect(await controller.hasTriggeredTerminalLiveRecoveryFailure)
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("First-frame presentation clears startup hard recovery budget")
@@ -1403,6 +1507,23 @@ private final class LockedTerminalStartupFailure: @unchecked Sendable {
     }
 
     func record(_ failure: StreamController.TerminalStartupFailure) {
+        lock.lock()
+        storage = failure
+        lock.unlock()
+    }
+}
+
+private final class LockedTerminalLiveRecoveryFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: StreamController.TerminalLiveRecoveryFailure?
+
+    var value: StreamController.TerminalLiveRecoveryFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func record(_ failure: StreamController.TerminalLiveRecoveryFailure) {
         lock.lock()
         storage = failure
         lock.unlock()

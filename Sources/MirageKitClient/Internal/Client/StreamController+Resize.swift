@@ -85,6 +85,7 @@ extension StreamController {
             return
         }
         guard !hasTriggeredTerminalStartupFailure else { return }
+        guard !hasTriggeredTerminalLiveRecoveryFailure else { return }
         let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
         let shouldAwaitNextPresentedFrame = shouldRestartStartupBootstrap || awaitFirstPresentedFrame
         let now = currentTime()
@@ -119,6 +120,13 @@ extension StreamController {
                 return
             }
             startupHardRecoveryCount += 1
+        } else if await recordLiveRecoveryHardRecoveryAttemptIfNeeded(
+            reason: reason,
+            awaitFirstPresentedFrame: shouldAwaitNextPresentedFrame,
+            waitReason: firstPresentedFrameWaitReason,
+            now: now
+        ) {
+            return
         }
         lastHardRecoveryStartTime = now
 
@@ -128,6 +136,7 @@ extension StreamController {
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageRenderStreamStore.shared.clear(for: streamID)
         MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        armRecoveryStabilizationTracking(baseline: MirageRenderStreamStore.shared.baselineCursor(for: streamID))
         lastDecodedFrameTime = 0
         lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         lastPresentedProgressTime = 0

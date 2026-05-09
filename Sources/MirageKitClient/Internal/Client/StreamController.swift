@@ -120,6 +120,20 @@ actor StreamController {
         }
     }
 
+    struct TerminalLiveRecoveryFailure: Sendable, Equatable {
+        let reason: RecoveryReason
+        let hardRecoveryAttempts: Int
+        let waitReason: String?
+        let decodedFPS: Double
+        let receivedFPS: Double
+        let layerEnqueueFPS: Double
+        let uniqueLayerEnqueueFPS: Double
+
+        var errorMessage: String {
+            "Stream failed to recover stable presentation after bounded live recovery."
+        }
+    }
+
     nonisolated static func freezeRecoveryDecision(
         keyframeStarved: Bool,
         packetStarved: Bool,
@@ -300,6 +314,11 @@ actor StreamController {
     static let firstPresentedFrameHardRecoveryThreshold: Int = 2
     /// Maximum number of startup hard recoveries before the stream is failed terminally.
     static let startupHardRecoveryLimit: Int = 1
+    static let liveRecoveryHardRecoveryWindow: CFAbsoluteTime = 20.0
+    static let liveRecoveryHardRecoveryLimit: Int = 2
+    static let recoveryStabilizationDecodedFrameThreshold: Int = 3
+    static let recoveryStabilizationPresentedFrameThreshold: Int = 3
+    static let recoveryStabilizationLogInterval: CFAbsoluteTime = 0.5
 
     nonisolated static func firstPresentedFrameBootstrapRecoveryGrace(
         for mode: FirstPresentedFrameAwaitMode
@@ -410,6 +429,11 @@ actor StreamController {
     var startupHardRecoveryCount: Int = 0
     /// True after the controller has concluded startup recovery cannot succeed.
     var hasTriggeredTerminalStartupFailure = false
+    var liveRecoveryHardRecoveryTimestamps: [CFAbsoluteTime] = []
+    var hasTriggeredTerminalLiveRecoveryFailure = false
+    var recoveryStabilizationBaselineCursor: MirageRenderCursor = .zero
+    var recoveryStabilizationDecodedFrameCount: Int = 0
+    var lastRecoveryStabilizationLogTime: CFAbsoluteTime = 0
     /// Bounded queue of frames waiting to be decoded.
     var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
     /// Frames received from callback tasks before their ordered enqueue slot is ready.
@@ -515,6 +539,8 @@ actor StreamController {
     private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
     /// Called when bounded startup recovery is exhausted before the first frame is presented.
     private(set) var onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)?
+    /// Called when bounded live recovery is exhausted after an established stream regresses.
+    private(set) var onTerminalLiveRecoveryFailure: (@MainActor @Sendable (TerminalLiveRecoveryFailure) -> Void)?
 
     /// Last recovery status delivered to the app layer.
     var clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle
@@ -531,7 +557,8 @@ actor StreamController {
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
-        onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
+        onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil,
+        onTerminalLiveRecoveryFailure: (@MainActor @Sendable (TerminalLiveRecoveryFailure) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -544,6 +571,7 @@ actor StreamController {
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
         self.onTerminalStartupFailure = onTerminalStartupFailure
+        self.onTerminalLiveRecoveryFailure = onTerminalLiveRecoveryFailure
     }
 
     func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
@@ -630,6 +658,9 @@ actor StreamController {
         realtimeMediaSession = RealtimeMediaSession(streamID: streamID, targetFrameRate: decodeSchedulerTargetFPS)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
+        liveRecoveryHardRecoveryTimestamps.removeAll(keepingCapacity: false)
+        hasTriggeredTerminalLiveRecoveryFailure = false
+        resetRecoveryStabilizationTracking()
         cancelMemoryBudgetRecoveryTask()
         await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
@@ -756,7 +787,6 @@ actor StreamController {
                         contentRect: frame.contentRect,
                         context: frame.decodeContext
                     )
-                    await recordDecodeSuccessIfNeeded()
                 } catch {
                     await recordDecodeFailure(error)
                 }
@@ -829,7 +859,7 @@ actor StreamController {
         frameProcessingTask = nil
     }
 
-    private func recordDecodeSuccessIfNeeded() {
+    func recordDecodeSuccessIfNeeded() {
         guard isRunning, !isStopping else {
             lastBackgroundDecodeErrorSignature = nil
             lastBackgroundDecodeErrorLogTime = 0
@@ -855,6 +885,7 @@ actor StreamController {
     private func recordDecodeFailure(_ error: Error) async {
         guard isRunning, !isStopping else { return }
         guard !hasTriggeredTerminalStartupFailure else { return }
+        guard !hasTriggeredTerminalLiveRecoveryFailure else { return }
 
         if Self.shouldSuppressDecodeFailureRecovery(
             isApplicationForeground: await applicationForegroundProvider()
@@ -1260,6 +1291,7 @@ actor StreamController {
         onStallEvent = nil
         onRecoveryStatusChanged = nil
         onTerminalStartupFailure = nil
+        onTerminalLiveRecoveryFailure = nil
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
@@ -1274,6 +1306,9 @@ actor StreamController {
         realtimeMediaSession = RealtimeMediaSession(streamID: streamID, targetFrameRate: decodeSchedulerTargetFPS)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
+        liveRecoveryHardRecoveryTimestamps.removeAll(keepingCapacity: false)
+        hasTriggeredTerminalLiveRecoveryFailure = false
+        resetRecoveryStabilizationTracking()
         latestHostMetricsMessage = nil
         latestHostCadencePressureSample = nil
         latestRenderTelemetrySnapshot = nil

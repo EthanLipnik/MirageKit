@@ -243,6 +243,9 @@ extension StreamController {
             await stopTierPromotionProbe()
             reassembler.enterKeyframeOnlyMode()
             await setClientRecoveryStatus(.keyframeRecovery)
+            armRecoveryStabilizationTracking(
+                baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+            )
             await startKeyframeRecoveryLoopIfNeeded()
             MirageLogger.client(
                 "Tier promotion forcing keyframe for stream \(streamID) (reason: \(tierPromotionReasonText(reason)))"
@@ -269,6 +272,7 @@ extension StreamController {
         await stopTierPromotionProbe()
         let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
         await setClientRecoveryStatus(.tierPromotionProbe)
+        armRecoveryStabilizationTracking(baseline: baselineCursor)
         tierPromotionProbeTask = Task { [weak self] in
             await self?.runTierPromotionProbe(baselineCursor: baselineCursor)
         }

@@ -281,6 +281,65 @@ extension StreamController {
         }
     }
 
+    func resetRecoveryStabilizationTracking() {
+        recoveryStabilizationBaselineCursor = .zero
+        recoveryStabilizationDecodedFrameCount = 0
+        lastRecoveryStabilizationLogTime = 0
+    }
+
+    func armRecoveryStabilizationTracking(baseline: MirageRenderCursor) {
+        recoveryStabilizationBaselineCursor = baseline
+        recoveryStabilizationDecodedFrameCount = 0
+        lastRecoveryStabilizationLogTime = 0
+    }
+
+    func recordRecoveryStabilizationDecodedFrameIfNeeded() {
+        guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
+        recoveryStabilizationDecodedFrameCount = min(
+            Self.recoveryStabilizationDecodedFrameThreshold,
+            recoveryStabilizationDecodedFrameCount + 1
+        )
+    }
+
+    func hasStableRecoveryPresentationProgress() -> Bool {
+        guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return true }
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let presentedFrameCount = Self.recoveryPresentedFrameCount(
+            baseline: recoveryStabilizationBaselineCursor,
+            latest: submittedCursor
+        )
+        return recoveryStabilizationDecodedFrameCount >= Self.recoveryStabilizationDecodedFrameThreshold &&
+            presentedFrameCount >= Self.recoveryStabilizationPresentedFrameThreshold
+    }
+
+    func logRecoveryStabilizationWaitIfNeeded() {
+        let now = currentTime()
+        guard now - lastRecoveryStabilizationLogTime >= Self.recoveryStabilizationLogInterval else { return }
+        lastRecoveryStabilizationLogTime = now
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let presentedFrameCount = Self.recoveryPresentedFrameCount(
+            baseline: recoveryStabilizationBaselineCursor,
+            latest: submittedCursor
+        )
+        MirageLogger.client(
+            "Presentation progress observed for stream \(streamID), waiting for recovery stabilization " +
+                "(decoded=\(recoveryStabilizationDecodedFrameCount)/\(Self.recoveryStabilizationDecodedFrameThreshold), " +
+                "presented=\(presentedFrameCount)/\(Self.recoveryStabilizationPresentedFrameThreshold), " +
+                "status=\(String(describing: clientRecoveryStatus)))"
+        )
+    }
+
+    nonisolated static func recoveryPresentedFrameCount(
+        baseline: MirageRenderCursor,
+        latest: MirageRenderCursor
+    ) -> Int {
+        guard latest.isAfter(baseline) else { return 0 }
+        if latest.generation == baseline.generation {
+            return Int(min(UInt64(Int.max), latest.sequence - baseline.sequence))
+        }
+        return Int(min(UInt64(Int.max), latest.sequence))
+    }
+
     nonisolated static func shouldSuppressPostResizeDecodeErrorRecovery(
         awaitingFirstFrameAfterResize: Bool,
         graceDeadline: CFAbsoluteTime,
@@ -336,24 +395,31 @@ extension StreamController {
         cancelMemoryBudgetRecoveryTask()
         recoveryCoordinator.recordProgress()
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
+        guard hasStableRecoveryPresentationProgress() else {
+            logRecoveryStabilizationWaitIfNeeded()
+            return
+        }
 
         switch clientRecoveryStatus {
         case .keyframeRecovery:
             MirageLogger.client(
-                "Presentation progress resumed for stream \(streamID); ending keyframe recovery"
+                "Stable presentation progress resumed for stream \(streamID); ending keyframe recovery"
             )
             await stopKeyframeRecoveryLoop()
+            resetRecoveryStabilizationTracking()
         case .hardRecovery:
             MirageLogger.client(
-                "Presentation progress resumed for stream \(streamID); ending hard recovery"
+                "Stable presentation progress resumed for stream \(streamID); ending hard recovery"
             )
             presentationProgressRequiresSequenceAdvance = false
             await stopKeyframeRecoveryLoop()
+            resetRecoveryStabilizationTracking()
             await setClientRecoveryStatus(.idle)
         case .tierPromotionProbe:
             MirageLogger.client(
-                "Presentation progress resumed for stream \(streamID); ending tier-promotion probe"
+                "Stable presentation progress resumed for stream \(streamID); ending tier-promotion probe"
             )
+            resetRecoveryStabilizationTracking()
             await stopTierPromotionProbe()
         case .idle,
              .startup,
@@ -460,7 +526,13 @@ extension StreamController {
         syncPresentationProgressFromFrameStore(now: now)
         if awaitingFirstFrameAfterResize {
             await maybeCompletePostResizeRecovery()
+        } else if Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus),
+                  !hasStableRecoveryPresentationProgress() {
+            logRecoveryStabilizationWaitIfNeeded()
         } else {
+            if Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) {
+                resetRecoveryStabilizationTracking()
+            }
             await setClientRecoveryStatus(.idle)
         }
         guard shouldNotify, let handler = onFirstFramePresented else { return }
@@ -610,6 +682,8 @@ extension StreamController {
 
     func recordDecodedFrame() async {
         lastDecodedFrameTime = currentTime()
+        recordDecodeSuccessIfNeeded()
+        recordRecoveryStabilizationDecodedFrameIfNeeded()
         if !decodeRecoveryEscalationTimestamps.isEmpty {
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         }
@@ -867,6 +941,7 @@ extension StreamController {
 
     func handleDecodeErrorThresholdSignal() async {
         guard !hasTriggeredTerminalStartupFailure else { return }
+        guard !hasTriggeredTerminalLiveRecoveryFailure else { return }
         if awaitingFirstFrameAfterResize {
             resetPostResizeRecoveryTracking(clearResizeRecovery: false)
         }
@@ -950,6 +1025,72 @@ extension StreamController {
         }
     }
 
+    func recordLiveRecoveryHardRecoveryAttemptIfNeeded(
+        reason: RecoveryReason,
+        awaitFirstPresentedFrame: Bool,
+        waitReason: String?,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        guard awaitFirstPresentedFrame,
+              hasPresentedFirstFrame,
+              presentationTier == .activeLive else {
+            return false
+        }
+
+        let oldestAllowed = now - Self.liveRecoveryHardRecoveryWindow
+        liveRecoveryHardRecoveryTimestamps.removeAll { $0 < oldestAllowed }
+        liveRecoveryHardRecoveryTimestamps.append(now)
+        guard liveRecoveryHardRecoveryTimestamps.count >= Self.liveRecoveryHardRecoveryLimit else {
+            return false
+        }
+
+        await failLiveRecovery(reason: reason, waitReason: waitReason)
+        return true
+    }
+
+    func failLiveRecovery(reason: RecoveryReason, waitReason: String?) async {
+        guard !hasTriggeredTerminalLiveRecoveryFailure else { return }
+
+        let frameMetrics = metricsTracker.snapshot(now: currentTime())
+        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let failure = TerminalLiveRecoveryFailure(
+            reason: reason,
+            hardRecoveryAttempts: liveRecoveryHardRecoveryTimestamps.count,
+            waitReason: waitReason,
+            decodedFPS: frameMetrics.decodedFPS,
+            receivedFPS: frameMetrics.receivedFPS,
+            layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
+            uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS
+        )
+        let waitReason = failure.waitReason ?? "unknown"
+
+        hasTriggeredTerminalLiveRecoveryFailure = true
+        isRunning = false
+        stopFrameProcessingPipeline()
+        stopMetricsReporting()
+        stopFreezeMonitor()
+        await stopTierPromotionProbe()
+        await stopKeyframeRecoveryLoop()
+        stopFirstPresentedFrameMonitor()
+        resetRecoveryStabilizationTracking()
+        await setClientRecoveryStatus(.idle)
+
+        MirageLogger.error(
+            .client,
+            "Live recovery exhausted for stream \(streamID) after \(failure.hardRecoveryAttempts) hard recovery attempt(s) " +
+                "(reason=\(failure.reason.logLabel), waitReason=\(waitReason), " +
+                "decoded=\(String(format: "%.1f", failure.decodedFPS))fps, " +
+                "received=\(String(format: "%.1f", failure.receivedFPS))fps, " +
+                "layer=\(String(format: "%.1f", failure.layerEnqueueFPS))fps, " +
+                "unique=\(String(format: "%.1f", failure.uniqueLayerEnqueueFPS))fps)"
+        )
+
+        guard let onTerminalLiveRecoveryFailure else { return }
+        await MainActor.run {
+            onTerminalLiveRecoveryFailure(failure)
+        }
+    }
+
     func shouldAttemptPresentationAwaitDecodeErrorRecovery() -> Bool {
         awaitingFirstPresentedFrame
     }
@@ -1019,6 +1160,9 @@ extension StreamController {
            clientRecoveryStatus != .hardRecovery {
             await setClientRecoveryStatus(.keyframeRecovery)
         }
+        armRecoveryStabilizationTracking(
+            baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        )
         await clearResizeState()
         let postResizeRecoveryActive = capturedPostResizeRecoveryEpisodeID != nil &&
             !Self.isStalePostResizeSoftRecoveryRequest(

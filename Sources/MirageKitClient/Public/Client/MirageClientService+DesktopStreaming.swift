@@ -300,6 +300,40 @@ public extension MirageClientService {
         _ failure: StreamController.TerminalStartupFailure,
         failedStreamID: StreamID
     ) async -> Bool {
+        await restartDesktopStreamAfterLiveFailure(
+            failedStreamID: failedStreamID,
+            reasonLabel: failure.reason.logLabel,
+            logContext: "terminal startup failure"
+        )
+    }
+
+    internal func restartDesktopStreamAfterTerminalLiveRecoveryFailure(
+        _ failure: StreamController.TerminalLiveRecoveryFailure,
+        failedStreamID: StreamID
+    ) async -> Bool {
+        await restartDesktopStreamAfterLiveFailure(
+            failedStreamID: failedStreamID,
+            reasonLabel: failure.reason.logLabel,
+            logContext: "terminal live recovery failure"
+        )
+    }
+
+    func restartDesktopStreamAfterForegroundRecoveryFailure(
+        streamID failedStreamID: StreamID,
+        reason: String
+    ) async -> Bool {
+        await restartDesktopStreamAfterLiveFailure(
+            failedStreamID: failedStreamID,
+            reasonLabel: reason,
+            logContext: "foreground recovery probe failure"
+        )
+    }
+
+    private func restartDesktopStreamAfterLiveFailure(
+        failedStreamID: StreamID,
+        reasonLabel: String,
+        logContext: String
+    ) async -> Bool {
         guard canRestartDesktopStreamAfterTerminalStartupFailure(streamID: failedStreamID),
               let previousRequest = lastDesktopStreamStartRequest else {
             return false
@@ -312,9 +346,9 @@ public extension MirageClientService {
         }
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
-            "Restarting desktop stream in-session after terminal startup failure: " +
+            "Restarting desktop stream in-session after \(logContext): " +
                 "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
-                "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
+                "reason=\(reasonLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
                 "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
         )
 
@@ -350,11 +384,11 @@ public extension MirageClientService {
             heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
             scheduleDesktopStreamStartTimeout()
             MirageLogger.client(
-                "Desktop restart: request sent after terminal startup failure for stream \(failedStreamID)"
+                "Desktop restart: request sent after \(logContext) for stream \(failedStreamID)"
             )
             return true
         } catch {
-            MirageLogger.error(.client, error: error, message: "Desktop restart failed after terminal startup failure: ")
+            MirageLogger.error(.client, error: error, message: "Desktop restart failed after \(logContext): ")
             clearPendingDesktopStreamStartState()
             return false
         }

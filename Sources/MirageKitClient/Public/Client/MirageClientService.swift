@@ -45,6 +45,14 @@ public final class MirageClientService {
         public let latestPacketTime: CFAbsoluteTime
         public let submittedSequence: UInt64
         public let isAwaitingKeyframe: Bool
+        public let decodedFPS: Double
+        public let layerEnqueueFPS: Double
+        public let uniqueLayerEnqueueFPS: Double
+        public let decodeHealthy: Bool
+        public let severeDecodeUnderrun: Bool
+        public let clientRecoveryStatus: MirageStreamClientRecoveryStatus
+        public let hostTargetFrameRate: Int
+        public let hostEncodedFPS: Double
 
         public init(
             streamID: StreamID,
@@ -52,7 +60,15 @@ public final class MirageClientService {
             hasVideoMediaStream: Bool,
             latestPacketTime: CFAbsoluteTime,
             submittedSequence: UInt64,
-            isAwaitingKeyframe: Bool
+            isAwaitingKeyframe: Bool,
+            decodedFPS: Double = 0,
+            layerEnqueueFPS: Double = 0,
+            uniqueLayerEnqueueFPS: Double = 0,
+            decodeHealthy: Bool = true,
+            severeDecodeUnderrun: Bool = false,
+            clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
+            hostTargetFrameRate: Int = 0,
+            hostEncodedFPS: Double = 0
         ) {
             self.streamID = streamID
             self.hasController = hasController
@@ -60,7 +76,96 @@ public final class MirageClientService {
             self.latestPacketTime = latestPacketTime
             self.submittedSequence = submittedSequence
             self.isAwaitingKeyframe = isAwaitingKeyframe
+            self.decodedFPS = decodedFPS
+            self.layerEnqueueFPS = layerEnqueueFPS
+            self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
+            self.decodeHealthy = decodeHealthy
+            self.severeDecodeUnderrun = severeDecodeUnderrun
+            self.clientRecoveryStatus = clientRecoveryStatus
+            self.hostTargetFrameRate = hostTargetFrameRate
+            self.hostEncodedFPS = hostEncodedFPS
         }
+    }
+
+    public enum ForegroundStreamHealthProbeDisposition: Sendable, Equatable {
+        case healthy
+        case failed(reason: String)
+    }
+
+    public struct LiveStreamRecoveryFailure: Sendable, Equatable {
+        public enum StreamKind: Sendable, Equatable {
+            case desktop
+            case app(bundleIdentifier: String?)
+            case window
+        }
+
+        public let streamID: StreamID
+        public let kind: StreamKind
+        public let reason: String
+        public let hardRecoveryAttempts: Int
+
+        public init(
+            streamID: StreamID,
+            kind: StreamKind,
+            reason: String,
+            hardRecoveryAttempts: Int
+        ) {
+            self.streamID = streamID
+            self.kind = kind
+            self.reason = reason
+            self.hardRecoveryAttempts = hardRecoveryAttempts
+        }
+    }
+
+    public nonisolated static func foregroundStreamHealthProbeDisposition(
+        initial: ForegroundStreamHealthSnapshot,
+        final: ForegroundStreamHealthSnapshot
+    ) -> ForegroundStreamHealthProbeDisposition {
+        guard final.hasController, final.hasVideoMediaStream else {
+            return .failed(reason: "media pipeline disappeared during probe")
+        }
+
+        let packetAdvanced = final.latestPacketTime > initial.latestPacketTime
+        let submissionAdvanced = final.submittedSequence > initial.submittedSequence
+        guard packetAdvanced, submissionAdvanced else {
+            return .failed(reason: "media packets or frame submissions did not advance")
+        }
+        guard !final.isAwaitingKeyframe else {
+            return .failed(reason: "stream is still awaiting a keyframe")
+        }
+        guard final.clientRecoveryStatus == .idle else {
+            return .failed(reason: "client stream recovery is still active")
+        }
+        guard !Self.hasSevereForegroundDecodePresentationUnderrun(final) else {
+            return .failed(
+                reason: "client decode/presentation is still underrunning " +
+                    "(decoded=\(Self.formatForegroundFPS(final.decodedFPS))fps, " +
+                    "layer=\(Self.formatForegroundFPS(final.layerEnqueueFPS))fps, " +
+                    "unique=\(Self.formatForegroundFPS(final.uniqueLayerEnqueueFPS))fps, " +
+                    "host=\(Self.formatForegroundFPS(final.hostEncodedFPS))fps)"
+            )
+        }
+
+        return .healthy
+    }
+
+    private nonisolated static func hasSevereForegroundDecodePresentationUnderrun(
+        _ snapshot: ForegroundStreamHealthSnapshot
+    ) -> Bool {
+        let expectedFPS = max(snapshot.hostTargetFrameRate, Int(snapshot.hostEncodedFPS.rounded()))
+        guard expectedFPS >= 20 else { return false }
+        let minimumDecodedFPS = max(2.0, Double(expectedFPS) * 0.10)
+        let minimumPresentedFPS = 2.0
+        if snapshot.severeDecodeUnderrun, snapshot.uniqueLayerEnqueueFPS < minimumPresentedFPS {
+            return true
+        }
+        return snapshot.decodedFPS < minimumDecodedFPS ||
+            snapshot.layerEnqueueFPS < minimumPresentedFPS ||
+            snapshot.uniqueLayerEnqueueFPS < minimumPresentedFPS
+    }
+
+    private nonisolated static func formatForegroundFPS(_ value: Double) -> String {
+        String(format: "%.1f", value)
     }
 
     public struct DeferredControlRefreshRequirements: Sendable {
@@ -512,6 +617,9 @@ public final class MirageClientService {
 
     /// Callback when an app stream fails before any initial window becomes active.
     public var onAppStreamStartupFailed: ((AppStreamStartupFailure) -> Void)?
+
+    /// Callback when an established stream exhausts bounded live recovery.
+    public var onLiveStreamRecoveryFailed: ((LiveStreamRecoveryFailure) -> Void)?
 
     /// Callback when a generic custom stream starts.
     public var onCustomStreamStarted: ((MirageCustomStreamStartedMessage) -> Void)?

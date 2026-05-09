@@ -193,7 +193,15 @@ extension MirageClientService {
                 )
                 return
             }
-            let isResizeTokenAdvance = acceptanceDecision == .acceptResizeAdvance
+            let displaySize = CGSize(width: started.width, height: started.height)
+            let presentationSize = started.presentationSize
+            let isResizeTokenAdvance = acceptanceDecision == .acceptResizeAdvance &&
+                desktopStreamStartGeometryChanged(
+                    previousDisplaySize: isActiveDesktopSession ? desktopStreamResolution : nil,
+                    previousPresentationSize: isActiveDesktopSession ? desktopStreamPresentationResolution : nil,
+                    nextDisplaySize: displaySize,
+                    nextPresentationSize: presentationSize
+                )
             let resetDecision = desktopStreamStartResetDecision(
                 streamID: streamID,
                 previousStreamID: isActiveDesktopSession ? previousStreamID : nil,
@@ -230,9 +238,7 @@ extension MirageClientService {
             }
             desktopStreamID = streamID
             desktopSessionID = receivedDesktopSessionID
-            let displaySize = CGSize(width: started.width, height: started.height)
             desktopStreamResolution = displaySize
-            let presentationSize = started.presentationSize
             desktopStreamPresentationResolution = presentationSize
             desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
                 logicalResolution: presentationSize,

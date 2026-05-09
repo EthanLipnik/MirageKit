@@ -508,6 +508,9 @@ extension MirageClientService {
         let controller = controllersByStream[streamID]
         let reassembler = await controller?.getReassembler()
         let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let metricsSnapshot = metricsStore.snapshot(for: streamID)
+        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let clientRecoveryStatus = await controller?.clientRecoveryStatus ?? .idle
 
         return ForegroundStreamHealthSnapshot(
             streamID: streamID,
@@ -515,7 +518,15 @@ extension MirageClientService {
             hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
             latestPacketTime: reassembler?.latestPacketReceivedTime() ?? 0,
             submittedSequence: submissionSnapshot.sequence,
-            isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true
+            isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true,
+            decodedFPS: metricsSnapshot?.decodedFPS ?? renderTelemetry.decodeFPS,
+            layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS ?? renderTelemetry.layerEnqueueFPS,
+            uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS ?? renderTelemetry.uniqueLayerEnqueueFPS,
+            decodeHealthy: metricsSnapshot?.decodeHealthy ?? renderTelemetry.decodeHealthy,
+            severeDecodeUnderrun: renderTelemetry.severeDecodeUnderrun,
+            clientRecoveryStatus: clientRecoveryStatus,
+            hostTargetFrameRate: metricsSnapshot?.hostTargetFrameRate ?? renderTelemetry.targetFPS,
+            hostEncodedFPS: metricsSnapshot?.hostEncodedFPS ?? 0
         )
     }
 
@@ -640,9 +651,10 @@ extension MirageClientService {
         latestSubmittedSequence: UInt64,
         previousPacketTime: CFAbsoluteTime,
         latestPacketTime: CFAbsoluteTime,
-        awaitingKeyframe: Bool
+        awaitingKeyframe: Bool,
+        stableSubmittedFrameThreshold: UInt64 = UInt64(StreamController.recoveryStabilizationPresentedFrameThreshold)
     ) -> RecoveryKeyframeRetryDisposition {
-        if latestSubmittedSequence > baselineSubmittedSequence {
+        if latestSubmittedSequence >= baselineSubmittedSequence + stableSubmittedFrameThreshold {
             return .recovered
         }
         guard latestPacketTime > previousPacketTime else {
@@ -709,6 +721,11 @@ extension MirageClientService {
         if let clampedFrameRate {
             MirageLogger.client(
                 "Requesting encoder frame-rate update for stream \(streamID): \(clampedFrameRate)fps"
+            )
+        }
+        if let clampedScale {
+            MirageLogger.client(
+                "Requesting encoder stream-scale update for stream \(streamID): \(String(format: "%.3f", clampedScale))"
             )
         }
         try await sendControlMessage(.streamEncoderSettingsChange, content: request)
