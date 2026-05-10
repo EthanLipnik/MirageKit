@@ -24,6 +24,9 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
         let decodedFPS: Double
         let receivedFPS: Double
         let queueDroppedFrames: UInt64
+        let decodedWorstGapMs: Double
+        let decodedFrameIntervalP95Ms: Double
+        let decodedFrameIntervalP99Ms: Double
         let receivedWorstGapMs: Double
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
@@ -65,6 +68,7 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
         lock.lock()
         let decodedFPS = decodedSampler.snapshot(now: now)
         let receivedFPS = receivedSampler.snapshot(now: now)
+        let decodedCadence = decodedCadenceSampler.snapshot(now: now)
         let receivedCadence = receivedCadenceSampler.snapshot(now: now)
         let dropped = queueDroppedFrames
         lock.unlock()
@@ -72,6 +76,9 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
             decodedFPS: decodedFPS,
             receivedFPS: receivedFPS,
             queueDroppedFrames: dropped,
+            decodedWorstGapMs: decodedCadence.worstGapMs,
+            decodedFrameIntervalP95Ms: decodedCadence.p95Ms,
+            decodedFrameIntervalP99Ms: decodedCadence.p99Ms,
             receivedWorstGapMs: receivedCadence.worstGapMs,
             receivedFrameIntervalP95Ms: receivedCadence.p95Ms,
             receivedFrameIntervalP99Ms: receivedCadence.p99Ms

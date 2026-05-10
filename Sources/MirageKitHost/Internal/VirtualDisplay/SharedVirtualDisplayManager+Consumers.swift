@@ -17,8 +17,26 @@ enum SharedDisplayMissingUpdateDecision: Equatable {
     case recreateNow
 }
 
+enum DesktopResizeRecreateFailureDecision: Equatable {
+    case retryAfterResidualDisplayClears([CGDirectDisplayID])
+    case fail
+}
+
 func sharedDisplayMissingUpdateDecision(allowRecreation: Bool) -> SharedDisplayMissingUpdateDecision {
     allowRecreation ? .recreateNow : .requiresRecreation
+}
+
+func desktopResizeRecreateFailureDecision(error: any Error) -> DesktopResizeRecreateFailureDecision {
+    guard let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError else {
+        return .fail
+    }
+
+    switch sharedDisplayError {
+    case let .residualMirageDisplaysOnline(displayIDs):
+        return .retryAfterResidualDisplayClears(displayIDs)
+    default:
+        return .fail
+    }
 }
 
 extension SharedVirtualDisplayManager {
@@ -319,14 +337,13 @@ extension SharedVirtualDisplayManager {
                         "\(cachedTarget.pixelWidth)x\(cachedTarget.pixelHeight) px, " +
                         "\(cachedTarget.refreshRate)Hz, \(cachedTarget.colorSpace.displayName)"
                 )
-                sharedDisplay = try await recreateDisplay(
+                sharedDisplay = try await recreateDisplayForDesktopResize(
                     newResolution: CGSize(
                         width: cachedTarget.pixelWidth,
                         height: cachedTarget.pixelHeight
                     ),
                     refreshRate: cachedTarget.refreshRate,
                     colorSpace: cachedTarget.colorSpace,
-                    preferFastRecreate: false,
                     creationPolicy: .singleAttempt(hiDPI: cachedTarget.hiDPI)
                 )
                 if let updatedDisplay = sharedDisplay {
@@ -345,18 +362,17 @@ extension SharedVirtualDisplayManager {
         if consumer == .desktopStream {
             do {
                 MirageLogger.host("Desktop resize recreating shared display (guarded path)")
-                sharedDisplay = try await recreateDisplay(
+                sharedDisplay = try await recreateDisplayForDesktopResize(
                     newResolution: newResolution,
                     refreshRate: refreshRate,
-                    colorSpace: colorSpace,
-                    preferFastRecreate: false
+                    colorSpace: colorSpace
                 )
             } catch {
                 MirageLogger
                     .host(
                         "Desktop resize guarded recreate failed; retrying fast recreate path: \(error)"
                     )
-                sharedDisplay = try await recreateDisplay(
+                sharedDisplay = try await recreateDisplayForDesktopResize(
                     newResolution: newResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace,
@@ -380,6 +396,72 @@ extension SharedVirtualDisplayManager {
                 for: resizeRequest
             )
         }
+        return false
+    }
+
+    private func recreateDisplayForDesktopResize(
+        newResolution: CGSize,
+        refreshRate: Int,
+        colorSpace: MirageColorSpace,
+        preferFastRecreate: Bool = false,
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
+    )
+    async throws -> ManagedDisplayContext {
+        do {
+            return try await recreateDisplay(
+                newResolution: newResolution,
+                refreshRate: refreshRate,
+                colorSpace: colorSpace,
+                preferFastRecreate: preferFastRecreate,
+                creationPolicy: creationPolicy
+            )
+        } catch {
+            switch desktopResizeRecreateFailureDecision(error: error) {
+            case .fail:
+                throw error
+            case let .retryAfterResidualDisplayClears(displayIDs):
+                guard await waitForResidualMirageDisplaysToClear(
+                    initialDisplayIDs: displayIDs,
+                    timeoutMs: 2500
+                ) else {
+                    throw error
+                }
+                MirageLogger.host(
+                    "Residual Mirage display(s) cleared after desktop resize recreate wait; retrying " +
+                        "\(Int(newResolution.width))x\(Int(newResolution.height))@\(refreshRate)Hz"
+                )
+                return try await createDisplay(
+                    resolution: newResolution,
+                    refreshRate: refreshRate,
+                    colorSpace: colorSpace,
+                    creationPolicy: creationPolicy
+                )
+            }
+        }
+    }
+
+    private func waitForResidualMirageDisplaysToClear(
+        initialDisplayIDs: [CGDirectDisplayID],
+        timeoutMs: Int,
+        pollIntervalMs: Int = 100
+    )
+    async -> Bool {
+        var latestDisplayIDs = initialDisplayIDs
+        let deadline = Date().addingTimeInterval(Double(max(0, timeoutMs)) / 1000.0)
+
+        while !Task.isCancelled, Date() < deadline {
+            let residualDisplayIDs = refreshResidualMirageDisplayTracking()
+            if residualDisplayIDs.isEmpty {
+                return true
+            }
+
+            latestDisplayIDs = residualDisplayIDs
+            try? await Task.sleep(for: .milliseconds(max(1, pollIntervalMs)))
+        }
+
+        MirageLogger.host(
+            "Residual Mirage display(s) still online after desktop resize recreate wait: \(latestDisplayIDs)"
+        )
         return false
     }
 

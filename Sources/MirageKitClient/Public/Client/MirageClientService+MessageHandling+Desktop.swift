@@ -49,6 +49,12 @@ extension MirageClientService {
             return false
         }
 
+        let previousDisplaySize = desktopStreamResolution
+        let previousPresentationSize = desktopStreamPresentationResolution
+        let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+        let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(started.acceptedMediaMaxPacketSize)
+        let previousCodec = activeStreamCodecs[streamID]
+
         desktopStreamID = streamID
         let displaySize = CGSize(width: started.width, height: started.height)
         desktopStreamResolution = displaySize
@@ -81,6 +87,35 @@ extension MirageClientService {
             sessionStore.clearPostResizeTransition(for: streamID)
             desktopResizeCoordinator.finishTransition()
             scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
+            return true
+        }
+
+        let geometryChanged = desktopStreamStartGeometryChanged(
+            previousDisplaySize: previousDisplaySize,
+            previousPresentationSize: previousPresentationSize,
+            nextDisplaySize: displaySize,
+            nextPresentationSize: presentationSize
+        )
+        let packetSizeChanged = previousMediaMaxPacketSize != acceptedMediaMaxPacketSize
+        let codecChanged = previousCodec.map { $0 != started.codec } ?? false
+        if !geometryChanged, !packetSizeChanged, !codecChanged {
+            if let dimensionToken = started.dimensionToken,
+               let existingController = controllersByStream[streamID] {
+                let reassembler = await existingController.getReassembler()
+                reassembler.updateExpectedDimensionToken(dimensionToken)
+            }
+            sessionStore.clearPostResizeTransition(for: streamID)
+            await applyStreamCadenceTarget(
+                started.frameRate,
+                for: streamID,
+                reason: "desktop resize metadata refresh"
+            )
+            mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
+            desktopResizeCoordinator.finishTransition()
+            scheduleQueuedDesktopResizeIfNeeded(streamID: streamID)
+            MirageLogger.client(
+                "Desktop resize commit refreshed stream metadata without decoder reset for stream \(streamID)"
+            )
             return true
         }
 

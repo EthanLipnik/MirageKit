@@ -16,7 +16,10 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
 
     init(targetFPS: Int, playoutDelayFrames: Int) {
         self.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
-        self.playoutDelayFrames = max(0, min(2, playoutDelayFrames))
+        self.playoutDelayFrames = max(
+            0,
+            min(MirageRenderModePolicy.maximumSmoothestPlayoutDelayFrames, playoutDelayFrames)
+        )
     }
 
     var frameDurationSeconds: CFTimeInterval {

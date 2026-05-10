@@ -1179,14 +1179,41 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         attachments: [SCStreamFrameInfo: Any]?,
         captureTime: CFAbsoluteTime
     ) -> Double {
-        if let displayTimeSeconds = resolvedDisplayTimeSeconds(from: attachments) {
+        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        let lastAdmittedTimestamp = expectationLock.withLock {
+            lastCadenceAdmittedPresentationTime
+        }
+        return Self.resolvedCadenceTimestamp(
+            displayTimeSeconds: resolvedDisplayTimeSeconds(from: attachments),
+            presentationSeconds: presentationSeconds,
+            captureTime: captureTime,
+            lastAdmittedTimestamp: lastAdmittedTimestamp
+        )
+    }
+
+    nonisolated static func resolvedCadenceTimestamp(
+        displayTimeSeconds: Double?,
+        presentationSeconds: Double,
+        captureTime: CFAbsoluteTime,
+        lastAdmittedTimestamp: Double
+    ) -> Double {
+        if let displayTimeSeconds,
+           isValidCadenceTimestamp(displayTimeSeconds, after: lastAdmittedTimestamp) {
             return displayTimeSeconds
         }
-        let presentationSeconds = CMTimeGetSeconds(presentationTime)
-        if presentationSeconds.isFinite, presentationSeconds >= 0 {
+        if isValidCadenceTimestamp(presentationSeconds, after: lastAdmittedTimestamp) {
             return presentationSeconds
         }
         return captureTime
+    }
+
+    nonisolated private static func isValidCadenceTimestamp(
+        _ timestamp: Double,
+        after lastAdmittedTimestamp: Double
+    ) -> Bool {
+        guard timestamp.isFinite, timestamp >= 0 else { return false }
+        guard lastAdmittedTimestamp > 0 else { return true }
+        return timestamp > lastAdmittedTimestamp + 0.000_001
     }
 
     private func resolvedDisplayTimeSeconds(

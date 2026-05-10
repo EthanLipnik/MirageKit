@@ -61,6 +61,11 @@ extension MirageClientService {
             sessionStore.clearPostResizeTransition(for: streamID)
             return
         }
+        guard desktopStreamAllowsClientResize else {
+            coordinator.clearAllState()
+            sessionStore.clearPostResizeTransition(for: streamID)
+            return
+        }
 
         if useHostResolution || target == nil {
             coordinator.cancelPendingTasks()
@@ -194,6 +199,10 @@ extension MirageClientService {
 
         guard desktopStreamID == streamID else { return }
         guard pendingLocalDesktopStopStreamID != streamID else {
+            clearDesktopResizeState(streamID: streamID)
+            return
+        }
+        guard desktopStreamAllowsClientResize else {
             clearDesktopResizeState(streamID: streamID)
             return
         }

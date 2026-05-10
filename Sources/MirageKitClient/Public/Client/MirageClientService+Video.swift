@@ -131,10 +131,17 @@ extension MirageClientService {
         mediaStreamListenerTask?.cancel()
         mediaStreamListenerTask = nil
         cancelRecoveryKeyframeRetries()
+        for (label, stream) in activeMediaStreams where label.hasPrefix("video/") {
+            stream.clearIncomingBytesBatchHandler()
+        }
         for task in videoStreamReceiveTasks.values {
             task.cancel()
         }
         videoStreamReceiveTasks.removeAll()
+        for processor in videoPacketIngressProcessors.values {
+            processor.finish()
+        }
+        videoPacketIngressProcessors.removeAll()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         for task in qualityTestStreamReceiveTasks.values {
@@ -149,11 +156,21 @@ extension MirageClientService {
     /// Start receiving video packets from a Loom multiplexed stream.
     private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
+        videoPacketIngressProcessors[streamID]?.finish()
         let serviceBox = WeakSendableBox(self)
+        let ingressProcessor = ClientVideoPacketIngressProcessor(streamID: streamID) { data, streamID in
+            serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
+        }
+        videoPacketIngressProcessors[streamID] = ingressProcessor
+        stream.setIncomingBytesBatchHandler(
+            maxBatchSize: 32,
+            maxDelay: .milliseconds(1)
+        ) { [ingressProcessor] batch in
+            ingressProcessor.enqueue(batch)
+        }
         videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
-            for await data in stream.incomingBytes {
+            for await _ in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
-                serviceBox.value?.handleIncomingVideoData(data, expectedStreamID: streamID)
             }
             guard let service = serviceBox.value else { return }
             await service.finishVideoStreamReceiveLoop(streamID: streamID)
@@ -179,7 +196,7 @@ extension MirageClientService {
     }
 
     /// Process a single video packet received from a Loom stream.
-    private nonisolated func handleIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
+    nonisolated func processIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
         guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
             return
         }
@@ -300,7 +317,9 @@ extension MirageClientService {
     func stopVideoStreamReceive(for streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
         cancelRecoveryKeyframeRetry(for: streamID)
     }
 
@@ -345,6 +364,8 @@ extension MirageClientService {
 
     private func finishVideoStreamReceiveLoop(streamID: StreamID) {
         videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
+        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
     }
@@ -464,6 +485,19 @@ extension MirageClientService {
         _ = sendControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
     }
 
+    func receiverMediaFeedbackSender() -> @Sendable (ReceiverMediaFeedbackMessage) -> Void {
+        guard case .connected = connectionState,
+              let controlChannel else {
+            return { _ in }
+        }
+        return { feedback in
+            guard let message = try? ControlMessage(type: .receiverMediaFeedback, content: feedback) else {
+                return
+            }
+            controlChannel.sendBestEffort(message)
+        }
+    }
+
     func handleKeyframeRecoveryAck(_ message: ControlMessage) {
         guard let ack = try? message.decode(KeyframeRecoveryAckMessage.self),
               let controller = controllersByStream[ack.streamID] else {
@@ -517,11 +551,14 @@ extension MirageClientService {
             hasController: controller != nil,
             hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
             latestPacketTime: reassembler?.latestPacketReceivedTime() ?? 0,
-            submittedSequence: submissionSnapshot.sequence,
+            submittedSequence: submissionSnapshot.visibleSequence,
             isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true,
             decodedFPS: metricsSnapshot?.decodedFPS ?? renderTelemetry.decodeFPS,
             layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS ?? renderTelemetry.layerEnqueueFPS,
             uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS ?? renderTelemetry.uniqueLayerEnqueueFPS,
+            visibleFrameFPS: metricsSnapshot?.clientVisibleFrameFPS ?? renderTelemetry.visibleFrameFPS,
+            visibleFrameCadenceKnown: metricsSnapshot?.clientVisibleFrameCadenceKnown ??
+                renderTelemetry.visibleFrameCadenceKnown,
             decodeHealthy: metricsSnapshot?.decodeHealthy ?? renderTelemetry.decodeHealthy,
             severeDecodeUnderrun: renderTelemetry.severeDecodeUnderrun,
             clientRecoveryStatus: clientRecoveryStatus,

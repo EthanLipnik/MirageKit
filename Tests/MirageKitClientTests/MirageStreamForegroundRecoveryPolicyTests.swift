@@ -124,6 +124,8 @@ struct MirageStreamForegroundRecoveryPolicyTests {
             decodedFPS: 45,
             layerEnqueueFPS: 45,
             uniqueLayerEnqueueFPS: 45,
+            visibleFrameFPS: 45,
+            visibleFrameCadenceKnown: true,
             hostTargetFrameRate: 60,
             hostEncodedFPS: 60
         )
@@ -137,6 +139,8 @@ struct MirageStreamForegroundRecoveryPolicyTests {
             decodedFPS: 58,
             layerEnqueueFPS: 58,
             uniqueLayerEnqueueFPS: 58,
+            visibleFrameFPS: 58,
+            visibleFrameCadenceKnown: true,
             hostTargetFrameRate: 60,
             hostEncodedFPS: 60
         )

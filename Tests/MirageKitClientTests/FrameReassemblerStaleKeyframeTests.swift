@@ -300,8 +300,80 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe() == true)
     }
 
-    @Test("P-frame timeout resumes from fresh complete frame")
-    func pFrameTimeoutResumesFromFreshCompleteFrame() async throws {
+    @Test("Live P-frame gap stays buffered before hard timeout")
+    func livePFrameGapStaysBufferedBeforeHardTimeout() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        reassembler.setTargetFrameRate(60)
+        let deliveredFrames = LockedValue<[UInt32]>([])
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, frameNumber, _, _, _, _, release in
+            deliveredFrames.value = deliveredFrames.value + [frameNumber]
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        let incompletePFrame1 = Data(repeating: 0xAB, count: 1200)
+        reassembler.processPacket(
+            incompletePFrame1,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: incompletePFrame1,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
+        reassembler.processPacket(
+            pFrame2,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: pFrame2,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredFrames.value == [0])
+
+        try await Task.sleep(for: .milliseconds(70))
+
+        let pFrame3 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
+        reassembler.processPacket(
+            pFrame3,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 3,
+                payload: pFrame3,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredFrames.value == [0])
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+    }
+
+    @Test("P-frame timeout enters keyframe recovery instead of skipping dependencies")
+    func pFrameTimeoutEntersKeyframeRecoveryInsteadOfSkippingDependencies() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = LockedCounter()
         let lossCounter = LockedCounter()
@@ -368,13 +440,13 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 2)
+        #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe())
     }
 
-    @Test("Buffered forward gap without pending expected frame resumes at fresh complete frame")
-    func bufferedForwardGapWithoutExpectedFrameResumesAtFreshCompleteFrame() async throws {
+    @Test("Buffered forward gap without pending expected frame enters keyframe recovery")
+    func bufferedForwardGapWithoutExpectedFrameEntersKeyframeRecovery() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = LockedCounter()
         let lossCounter = LockedCounter()
@@ -429,9 +501,9 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 2)
+        #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe())
 
         let pFrame3 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
         reassembler.processPacket(
@@ -445,8 +517,8 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 2)
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe())
     }
 
     @Test("Newer keyframe progress fast-forwards a stalled P-frame gap")

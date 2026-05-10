@@ -397,8 +397,16 @@ extension MirageHostService {
     }
 
     private func handleReceiverMediaFeedbackMessage(_ message: ControlMessage) async {
-        guard let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self),
-              let context = streamsByID[feedback.streamID] else {
+        guard let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self) else {
+            receiverMediaFeedbackDiagnostics.withLock { $0.droppedCount &+= 1 }
+            return
+        }
+        await handleReceiverMediaFeedback(feedback)
+    }
+
+    func handleReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
+        guard let context = streamsByID[feedback.streamID] else {
+            receiverMediaFeedbackDiagnostics.withLock { $0.droppedCount &+= 1 }
             return
         }
         await context.recordReceiverMediaFeedback(feedback)

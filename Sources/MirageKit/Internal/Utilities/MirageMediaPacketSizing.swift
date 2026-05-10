@@ -8,6 +8,7 @@
 import Foundation
 
 package let mirageDirectLocalMaxPacketSize: Int = 1400
+package let mirageDirectWiFiMaxPacketSize: Int = 1320
 
 package func miragePreferredMediaMaxPacketSize(
     for pathKind: MirageNetworkPathKind?
@@ -15,6 +16,8 @@ package func miragePreferredMediaMaxPacketSize(
     switch pathKind {
     case .awdl, .wired:
         return mirageDirectLocalMaxPacketSize
+    case .wifi:
+        return mirageDirectWiFiMaxPacketSize
     default:
         return mirageDefaultMaxPacketSize
     }

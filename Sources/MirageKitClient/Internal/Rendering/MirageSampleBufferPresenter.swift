@@ -10,6 +10,7 @@
 import AVFoundation
 import CoreMedia
 import CoreVideo
+import Dispatch
 import Foundation
 import MirageKit
 
@@ -33,6 +34,8 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     static let displayLayerLivenessResetThresholdSeconds: CFTimeInterval = 0.75
 
     private weak var displayLayer: AVSampleBufferDisplayLayer?
+    private let sampleBufferRenderer: AVSampleBufferVideoRenderer
+    private let rendererReadinessQueue: DispatchQueue?
     private let pixelBufferCropper = MiragePixelBufferCropper()
 
     private var streamID: StreamID?
@@ -49,21 +52,26 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var loggedLayerFailure = false
     private var lastFrameSubmissionTime: CFTimeInterval = 0
     private var displayLayerNotReadyStartTime: CFTimeInterval = 0
+    private var rendererReadyCallbackArmed = false
     private(set) var currentContentReferenceSize: CGSize?
 
-    var onFrameAvailable: (() -> Void)?
-    var onPresentationRecoveryRequested: (() -> Void)?
+    var onFrameAvailable: (@Sendable () -> Void)?
+    var onPresentationRecoveryRequested: (@Sendable () -> Void)?
+    var onRendererReadyForMoreMediaData: (@Sendable () -> Void)?
 
-    init(displayLayer: AVSampleBufferDisplayLayer) {
+    init(displayLayer: AVSampleBufferDisplayLayer, rendererReadinessQueue: DispatchQueue? = nil) {
         self.displayLayer = displayLayer
+        sampleBufferRenderer = displayLayer.sampleBufferRenderer
+        self.rendererReadinessQueue = rendererReadinessQueue
     }
 
     deinit {
+        cancelRendererReadyCallback()
         unregisterFrameListener(for: listenerStreamID)
     }
 
     var hasDisplayLayerFailure: Bool {
-        displayLayer?.status == .failed
+        sampleBufferRenderer.status == .failed
     }
 
     var hasPendingFrameForCurrentPresenter: Bool {
@@ -91,7 +99,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     func setCadenceTarget(_ target: MirageStreamCadenceTarget) {
-        maxRenderFPS = target.sourceFPS
+        maxRenderFPS = target.displayFPS
         if let streamID {
             MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
         }
@@ -125,6 +133,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     func setRenderingSuspended(_ suspended: Bool, clearCurrentFrame: Bool) {
         renderingSuspended = suspended
         guard suspended else { return }
+        cancelRendererReadyCallback()
         guard clearCurrentFrame else { return }
         clearCurrentFrameState()
     }
@@ -140,8 +149,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func clearCurrentFrameState() {
-        guard let displayLayer else { return }
-        displayLayer.flushAndRemoveImage()
+        cancelRendererReadyCallback()
+        sampleBufferRenderer.flush()
+        flushDisplayLayerImageIfNeeded()
         applyLayerContentsRect(CGRect(x: 0, y: 0, width: 1, height: 1), to: displayLayer)
         currentContentReferenceSize = nil
         lastSubmittedCursor = baselineCursorForCurrentStream()
@@ -149,11 +159,66 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     @discardableResult
-    func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> MirageRenderSubmissionResult {
-        guard let streamID, let displayLayer else { return .blocked }
+    func submitPendingFrameIfPossible(
+        referenceTime: CFTimeInterval,
+        source: MirageRenderSubmissionSource = .scheduled
+    ) -> MirageRenderSubmissionResult {
+        guard let streamID else { return .blocked }
+        var submittedFrames = 0
+        let allowsMultipleFrames = MirageRenderStreamStore.shared.allowsMultipleFramePresentationPass(for: streamID)
+        defer {
+            MirageRenderStreamStore.shared.notePresentationPass(
+                for: streamID,
+                framesSubmitted: submittedFrames
+            )
+            if source == .rendererReady {
+                MirageRenderStreamStore.shared.noteRendererReadyDrainPass(
+                    for: streamID,
+                    submittedFrames: submittedFrames,
+                    rearmed: rendererReadyCallbackArmed
+                )
+            }
+        }
+
+        while true {
+            let result = submitNextPendingFrameIfPossible(
+                streamID: streamID,
+                referenceTime: referenceTime
+            )
+
+            switch result {
+            case .submitted:
+                submittedFrames += 1
+                guard allowsMultipleFrames else {
+                    return .submitted
+                }
+                guard !MirageRenderStreamStore.shared.shouldPreserveSmoothestPacingFrame(
+                    for: streamID,
+                    after: lastSubmittedCursor
+                ) else {
+                    return .submitted
+                }
+            case .noPendingFrame:
+                return submittedFrames > 0 ? .submitted : .noPendingFrame
+            case .displayLayerNotReady:
+                return .displayLayerNotReady
+            case .blocked:
+                return submittedFrames > 0 ? .submitted : .blocked
+            }
+        }
+    }
+
+    private struct MainThreadDisplayLayerReference: @unchecked Sendable {
+        let displayLayer: AVSampleBufferDisplayLayer
+    }
+
+    private func submitNextPendingFrameIfPossible(
+        streamID: StreamID,
+        referenceTime: CFTimeInterval
+    ) -> MirageRenderSubmissionResult {
         guard !renderingSuspended else { return .blocked }
         recoverDisplayLayerIfNeeded()
-        guard displayLayer.status != .failed else { return .blocked }
+        guard sampleBufferRenderer.status != .failed else { return .blocked }
 
         let now = CACurrentMediaTime()
         let submittedCursor = resolvedSubmittedCursor(for: streamID)
@@ -161,12 +226,16 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return .noPendingFrame
         }
 
+        MirageRenderStreamStore.shared.notePresentationEligibleFrame(for: streamID)
         MirageRenderStreamStore.shared.noteSubmitAttempt(for: streamID)
-        guard displayLayer.isReadyForMoreMediaData else {
+        guard sampleBufferRenderer.isReadyForMoreMediaData else {
             MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+            MirageRenderStreamStore.shared.noteSampleBufferRendererNotReady(for: streamID)
+            armRendererReadyCallback()
             recoverDisplayLayerLivenessIfNeeded(now: now, presenterHasPendingFrame: true)
             return .displayLayerNotReady
         }
+        cancelRendererReadyCallback()
         displayLayerNotReadyStartTime = 0
 
         guard let frame = MirageRenderStreamStore.shared.frameForPresentation(
@@ -187,16 +256,24 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         let presentationFrame = presentationPixelBuffer(for: frame)
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        let displayImmediately = MirageRenderStreamStore.shared.shouldDisplayFrameImmediately(
+            for: streamID,
+            cursor: frame.cursor
+        )
         guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
             from: presentationFrame.pixelBuffer,
             metadata: presentationFrame.metadata,
             timing: timing,
-            referenceTime: referenceTime
+            referenceTime: referenceTime,
+            displayImmediately: displayImmediately
         ) else {
             return .blocked
         }
 
-        displayLayer.enqueue(sampleBuffer)
+        sampleBufferRenderer.enqueue(sampleBuffer)
+        if displayImmediately {
+            MirageRenderStreamStore.shared.noteDisplayImmediateSubmission(for: streamID)
+        }
         lastSubmittedCursor = frame.cursor
         lastFrameSubmissionTime = CACurrentMediaTime()
         displayLayerNotReadyStartTime = 0
@@ -204,6 +281,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             cursor: frame.cursor,
             remotePresentationTime: frame.remotePresentationTime.isValid ? frame.remotePresentationTime : frame.presentationTime,
             mappedPresentationTime: mappedPresentationTime,
+            presentedFrameIdentity: MirageRenderStreamStore.PresentedFrameIdentity(frame: frame),
             for: streamID
         )
         return .submitted
@@ -238,7 +316,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         generation: UInt64,
         reason: String
     ) {
-        displayLayer?.flushAndRemoveImage()
+        cancelRendererReadyCallback()
+        sampleBufferRenderer.flush()
+        flushDisplayLayerImageIfNeeded()
         cachedFormatKey = nil
         cachedFormatDescription = nil
         lastSubmittedCursor = MirageRenderCursor(generation: generation, sequence: 0)
@@ -265,7 +345,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {
-        guard let displayLayer else { return }
         let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
         guard width > 0, height > 0 else {
@@ -292,28 +371,73 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func updateLayerContentRect(_ metadata: MirageRenderFramePresentationMetadata) {
-        guard let displayLayer else { return }
         currentContentReferenceSize = metadata.contentReferenceSize
         applyLayerContentsRect(metadata.normalizedContentRect, to: displayLayer)
     }
 
     private func resetLayerContentRect(to contentRect: CGRect) {
-        guard let displayLayer else { return }
         applyLayerContentsRect(CGRect(x: 0, y: 0, width: 1, height: 1), to: displayLayer)
         currentContentReferenceSize = contentRect.size
     }
 
-    private func applyLayerContentsRect(_ rect: CGRect, to displayLayer: AVSampleBufferDisplayLayer) {
+    private func applyLayerContentsRect(_ rect: CGRect, to displayLayer: AVSampleBufferDisplayLayer?) {
         guard lastAppliedContentsRect != rect else { return }
-        displayLayer.contentsRect = rect
+        guard let displayLayer else {
+            lastAppliedContentsRect = rect
+            return
+        }
+        let displayLayerReference = MainThreadDisplayLayerReference(displayLayer: displayLayer)
+        applyDisplayLayerMutation {
+            displayLayerReference.displayLayer.contentsRect = rect
+        }
         lastAppliedContentsRect = rect
+    }
+
+    private func flushDisplayLayerImageIfNeeded() {
+        guard let displayLayer else { return }
+        let displayLayerReference = MainThreadDisplayLayerReference(displayLayer: displayLayer)
+        applyDisplayLayerMutation {
+            displayLayerReference.displayLayer.flushAndRemoveImage()
+        }
+    }
+
+    private func applyDisplayLayerMutation(_ mutation: @escaping @Sendable () -> Void) {
+        if Thread.isMainThread {
+            mutation()
+        } else {
+            DispatchQueue.main.async(execute: mutation)
+        }
+    }
+
+    private func armRendererReadyCallback() {
+        guard !rendererReadyCallbackArmed else { return }
+        guard let rendererReadinessQueue else { return }
+        rendererReadyCallbackArmed = true
+        sampleBufferRenderer.requestMediaDataWhenReady(on: rendererReadinessQueue) { [weak self] in
+            self?.handleRendererReadyForMoreMediaData()
+        }
+    }
+
+    private func handleRendererReadyForMoreMediaData() {
+        guard rendererReadyCallbackArmed else { return }
+        guard sampleBufferRenderer.isReadyForMoreMediaData else { return }
+        rendererReadyCallbackArmed = false
+        sampleBufferRenderer.stopRequestingMediaData()
+        onRendererReadyForMoreMediaData?()
+    }
+
+    private func cancelRendererReadyCallback() {
+        guard rendererReadyCallbackArmed else { return }
+        rendererReadyCallbackArmed = false
+        sampleBufferRenderer.stopRequestingMediaData()
     }
 
     private func makeSampleBuffer(
         from pixelBuffer: CVPixelBuffer,
         metadata: MirageRenderFramePresentationMetadata?,
         timing: MirageRenderPresentationTiming,
-        referenceTime: CFTimeInterval
+        referenceTime: CFTimeInterval,
+        displayImmediately: Bool
     ) -> (sampleBuffer: CMSampleBuffer, mappedPresentationTime: CMTime)? {
         guard let formatDescription = formatDescription(for: pixelBuffer, metadata: metadata) else { return nil }
 
@@ -341,7 +465,22 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return nil
         }
 
+        if displayImmediately {
+            applyDisplayImmediatelyAttachment(to: sampleBuffer)
+        }
+
         return (sampleBuffer, samplePresentationTime)
+    }
+
+    private func applyDisplayImmediatelyAttachment(to sampleBuffer: CMSampleBuffer) {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: true
+        ) as? [NSMutableDictionary],
+            let attachment = attachments.first else {
+            return
+        }
+        attachment[kCMSampleAttachmentKey_DisplayImmediately] = kCFBooleanTrue
     }
 
     private func mappedPresentationTime(
@@ -423,24 +562,12 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         listenerStreamID = streamID
         MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: self) { [weak self] in
             guard let self else { return }
-            if Thread.isMainThread {
-                self.onFrameAvailable?()
-            } else {
-                Task { @MainActor [weak self] in
-                    self?.onFrameAvailable?()
-                }
-            }
+            self.onFrameAvailable?()
         }
         if onPresentationRecoveryRequested != nil {
             MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: self) { [weak self] in
                 guard let self else { return }
-                if Thread.isMainThread {
-                    self.onPresentationRecoveryRequested?()
-                } else {
-                    Task { @MainActor [weak self] in
-                        self?.onPresentationRecoveryRequested?()
-                    }
-                }
+                self.onPresentationRecoveryRequested?()
             }
         }
     }
@@ -489,16 +616,16 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func recoverDisplayLayerIfNeeded() {
-        guard let displayLayer, displayLayer.status == .failed else { return }
+        guard sampleBufferRenderer.status == .failed else { return }
         if !loggedLayerFailure {
-            if Self.isExpectedDisplayLayerFailure(displayLayer.error) {
-                let description = displayLayer.error?.localizedDescription ?? "unknown error"
+            if Self.isExpectedDisplayLayerFailure(sampleBufferRenderer.error) {
+                let description = sampleBufferRenderer.error?.localizedDescription ?? "unknown error"
                 MirageLogger.renderer("AVSampleBufferDisplayLayer interruption during teardown: \(description)")
             } else {
-                let description = displayLayer.error?.localizedDescription ?? "unknown error"
+                let description = sampleBufferRenderer.error?.localizedDescription ?? "unknown error"
                 MirageLogger.error(.renderer, "AVSampleBufferDisplayLayer failure: \(description)")
             }
-                loggedLayerFailure = true
+            loggedLayerFailure = true
         }
         if let streamID {
             MirageRenderStreamStore.shared.recordDisplayLayerLivenessReset(

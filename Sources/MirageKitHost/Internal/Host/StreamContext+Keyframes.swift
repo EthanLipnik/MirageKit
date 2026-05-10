@@ -123,6 +123,14 @@ extension StreamContext {
             qualityRaiseSuppressionUntil,
             CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
         )
+        if latencyMode == .smoothest, reason == .expiredDuringSend {
+            await applySmoothestSenderPressureRelief(reason: "\(label):\(reason.rawValue)")
+            MirageLogger.stream(
+                "\(label) deferred Smoothest recovery keyframe after frame \(frameNumber) (\(reason.rawValue)); awaiting receiver recovery signal"
+            )
+            return
+        }
+
         let queued = queueKeyframe(
             reason: label,
             checkInFlight: true,

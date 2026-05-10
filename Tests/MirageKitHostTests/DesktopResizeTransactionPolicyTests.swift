@@ -79,6 +79,24 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(sharedDisplayMissingUpdateDecision(allowRecreation: true) == .recreateNow)
     }
 
+    @Test("Desktop resize recreation retries when old Mirage display is still tearing down")
+    func desktopResizeRecreationRetriesForTransientResidualDisplay() {
+        let residualDisplayID: CGDirectDisplayID = 32
+        let error = SharedVirtualDisplayManager.SharedDisplayError.residualMirageDisplaysOnline([residualDisplayID])
+
+        #expect(
+            desktopResizeRecreateFailureDecision(error: error) ==
+                .retryAfterResidualDisplayClears([residualDisplayID])
+        )
+    }
+
+    @Test("Desktop resize recreation does not retry unrelated display errors")
+    func desktopResizeRecreationDoesNotRetryUnrelatedErrors() {
+        let error = SharedVirtualDisplayManager.SharedDisplayError.creationFailed("mode activation failed")
+
+        #expect(desktopResizeRecreateFailureDecision(error: error) == .fail)
+    }
+
     @Test("Resize transaction aborts when desktop stream is already inactive")
     func resizeTransactionAbortsWhenStreamIsInactive() {
         let decision = desktopResizeTransactionContinuationDecision(
@@ -115,7 +133,6 @@ struct DesktopResizeTransactionPolicyTests {
     @Test("Unified resize failure rolls back to last known good display")
     func unifiedResizeFailureRollsBackToLastKnownGoodDisplay() {
         let decision = desktopResizeFailureRecoveryPlan(
-            desktopStreamMode: .unified,
             hasPreResizeSnapshot: true
         )
 
@@ -125,21 +142,80 @@ struct DesktopResizeTransactionPolicyTests {
     @Test("Unified resize failure without rollback snapshot stops stream")
     func unifiedResizeFailureWithoutRollbackSnapshotStopsStream() {
         let decision = desktopResizeFailureRecoveryPlan(
-            desktopStreamMode: .unified,
             hasPreResizeSnapshot: false
         )
 
         #expect(decision == .stopStream)
     }
 
-    @Test("Secondary resize failure may fall back to main display")
-    func secondaryResizeFailureMayFallBackToMainDisplay() {
+    @Test("Secondary resize failure rolls back to last known good display")
+    func secondaryResizeFailureRollsBackToLastKnownGoodDisplay() {
         let decision = desktopResizeFailureRecoveryPlan(
-            desktopStreamMode: .secondary,
             hasPreResizeSnapshot: true
         )
 
-        #expect(decision == .mainDisplayFallback)
+        #expect(decision == .rollbackToLastKnownGood)
+    }
+
+    @Test("Client fit fallback keeps virtual display capture but disables client resizing")
+    func clientFitFallbackKeepsVirtualDisplayCaptureButDisablesClientResizing() {
+        #expect(
+            desktopResizeUsesClientFitPresentation(
+                captureSource: .virtualDisplay,
+                clientFitFallbackActive: true
+            )
+        )
+        #expect(
+            !desktopResizeAllowsClientResize(
+                captureSource: .virtualDisplay,
+                clientFitFallbackActive: true
+            )
+        )
+    }
+
+    @Test("Successful virtual display resize keeps client resizing enabled")
+    func successfulVirtualDisplayResizeKeepsClientResizingEnabled() {
+        #expect(
+            !desktopResizeUsesClientFitPresentation(
+                captureSource: .virtualDisplay,
+                clientFitFallbackActive: false
+            )
+        )
+        #expect(
+            desktopResizeAllowsClientResize(
+                captureSource: .virtualDisplay,
+                clientFitFallbackActive: false
+            )
+        )
+    }
+
+    @Test("Main display fallback still uses local fit and disables client resizing")
+    func mainDisplayFallbackStillUsesLocalFitAndDisablesClientResizing() {
+        #expect(
+            desktopResizeUsesClientFitPresentation(
+                captureSource: .mainDisplayFallback,
+                clientFitFallbackActive: false
+            )
+        )
+        #expect(
+            !desktopResizeAllowsClientResize(
+                captureSource: .mainDisplayFallback,
+                clientFitFallbackActive: false
+            )
+        )
+    }
+
+    @MainActor
+    @Test("New desktop session reset clears client-fit fallback state")
+    func newDesktopSessionResetClearsClientFitFallbackState() {
+        let service = MirageHostService()
+        service.desktopClientFitFallbackActive = true
+        service.desktopClientFitFallbackContainerResolution = CGSize(width: 1728, height: 1117)
+
+        service.resetDesktopClientFitFallbackState()
+
+        #expect(!service.desktopClientFitFallbackActive)
+        #expect(service.desktopClientFitFallbackContainerResolution == nil)
     }
 
     @Test("Generation-change rebind is suppressed during resize transaction")

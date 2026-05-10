@@ -68,8 +68,7 @@ public class MirageSampleBufferView: NSView {
     private let preferencesObserver = MirageUserDefaultsObserver()
     private var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayClock: MirageMacDisplayClock?
-    private var presentationDisplayTickRelay: MirageMacDisplayTickRelay?
-    private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
+    private let presentationDisplayTickHandlerBox = MirageDisplayTickHandlerBox()
     private var screenChangeObserver: NSObjectProtocol?
 
     private var displayLayer: AVSampleBufferDisplayLayer {
@@ -197,19 +196,16 @@ public class MirageSampleBufferView: NSView {
         targetFPS: Int,
         tickHandler: @escaping MirageSampleBufferPresentationPipeline.DisplayTickHandler
     ) {
-        presentationDisplayTickHandler = tickHandler
+        presentationDisplayTickHandlerBox.set(tickHandler)
         let displayID = currentScreenDisplayID
         if let presentationDisplayClock {
             presentationDisplayClock.updateTargetFPS(targetFPS, displayID: displayID)
         } else {
-            let relay = MirageMacDisplayTickRelay { [weak self] referenceTime in
-                self?.presentationDisplayTickHandler?(referenceTime)
-            }
             let clock = MirageMacDisplayClock()
-            presentationDisplayTickRelay = relay
             presentationDisplayClock = clock
-            clock.start(targetFPS: targetFPS, displayID: displayID) { [weak relay] referenceTime in
-                relay?.receive(referenceTime: referenceTime)
+            let handlerBox = presentationDisplayTickHandlerBox
+            clock.start(targetFPS: targetFPS, displayID: displayID) { referenceTime in
+                handlerBox.call(referenceTime)
             }
         }
     }
@@ -217,9 +213,7 @@ public class MirageSampleBufferView: NSView {
     private func stopPresentationDisplayClock() {
         presentationDisplayClock?.stop()
         presentationDisplayClock = nil
-        presentationDisplayTickRelay?.cancel()
-        presentationDisplayTickRelay = nil
-        presentationDisplayTickHandler = nil
+        presentationDisplayTickHandlerBox.set(nil)
     }
 
     private func updatePresentationDisplayClockFrameRate(targetFPS: Int) {
@@ -270,6 +264,25 @@ public class MirageSampleBufferView: NSView {
             NotificationCenter.default.removeObserver(observer)
             screenChangeObserver = nil
         }
+    }
+}
+
+private final class MirageDisplayTickHandlerBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
+
+    func set(_ handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func call(_ referenceTime: CFTimeInterval) {
+        let handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
+        lock.lock()
+        handler = self.handler
+        lock.unlock()
+        handler?(referenceTime)
     }
 }
 #endif

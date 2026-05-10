@@ -228,8 +228,15 @@ public struct MirageStreamContentView: View {
     }
 
     private var suppressesWindowDrivenResizeForLocalPresentation: Bool {
-        (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
-            (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
+        MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+            isDesktopStream: isDesktopStream,
+            useHostResolution: useHostResolution,
+            desktopCaptureSource: clientService.desktopCaptureSource,
+            desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
+            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            localKeyboardOcclusionActive: localKeyboardOcclusionActive
+        )
     }
 
     private var prefersLocalAspectFitPresentation: Bool {

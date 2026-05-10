@@ -88,7 +88,6 @@ enum DesktopResizeTransactionContinuationDecision: Equatable {
 
 enum DesktopResizeFailureRecoveryPlan: Equatable {
     case rollbackToLastKnownGood
-    case mainDisplayFallback
     case stopStream
 }
 
@@ -104,13 +103,23 @@ func desktopResizeTransactionContinuationDecision(
 }
 
 func desktopResizeFailureRecoveryPlan(
-    desktopStreamMode: MirageDesktopStreamMode,
     hasPreResizeSnapshot: Bool
 ) -> DesktopResizeFailureRecoveryPlan {
-    if desktopStreamMode == .unified {
-        return hasPreResizeSnapshot ? .rollbackToLastKnownGood : .stopStream
-    }
-    return .mainDisplayFallback
+    hasPreResizeSnapshot ? .rollbackToLastKnownGood : .stopStream
+}
+
+func desktopResizeUsesClientFitPresentation(
+    captureSource: MirageDesktopCaptureSource,
+    clientFitFallbackActive: Bool
+) -> Bool {
+    captureSource == .mainDisplayFallback || clientFitFallbackActive
+}
+
+func desktopResizeAllowsClientResize(
+    captureSource: MirageDesktopCaptureSource,
+    clientFitFallbackActive: Bool
+) -> Bool {
+    captureSource != .mainDisplayFallback && !clientFitFallbackActive
 }
 
 struct DesktopBackingScaleResolution: Equatable {
@@ -714,7 +723,10 @@ extension MirageHostService {
                 let displayResolution = await currentDesktopStartedResolution(
                     fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
                 )
-                let presentationResolution = displayResolution
+                let presentationResolution = desktopPresentationResolution(
+                    displayResolution: displayResolution,
+                    containerResolution: desktopClientFitFallbackContainerResolution ?? displayResolution
+                )
                 let message = await DesktopStreamStartedMessage(
                     streamID: streamID,
                     desktopSessionID: desktopSessionID,
@@ -726,7 +738,10 @@ extension MirageHostService {
                     dimensionToken: dimensionToken,
                     acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize(),
                     captureSource: desktopCaptureSource,
-                    allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+                    allowsClientResize: desktopResizeAllowsClientResize(
+                        captureSource: desktopCaptureSource,
+                        clientFitFallbackActive: desktopClientFitFallbackActive
+                    ),
                     presentationWidth: Int(presentationResolution.width.rounded()),
                     presentationHeight: Int(presentationResolution.height.rounded())
                 )
@@ -761,6 +776,11 @@ extension MirageHostService {
         queuedDesktopResizeRequest = nil
         desktopResizeTransactionState = .idle
         desktopPresentationGeneration = 0
+    }
+
+    func resetDesktopClientFitFallbackState() {
+        desktopClientFitFallbackActive = false
+        desktopClientFitFallbackContainerResolution = nil
     }
 
     private func enqueueDesktopResolutionChange(
@@ -813,6 +833,20 @@ extension MirageHostService {
     )
     async {
         guard streamID == desktopStreamID, let desktopContext = desktopStreamContext else { return }
+        if desktopClientFitFallbackActive {
+            MirageLogger.host(
+                "Desktop resize request ignored because client-fit fallback is active " +
+                    "(transition=\(request.transitionID?.uuidString ?? "nil"))"
+            )
+            await sendDesktopResizeCompletion(
+                streamID: streamID,
+                request: request,
+                context: desktopContext,
+                outcome: .rolledBack
+            )
+            desktopResizeTransactionState = .rolledBack(request)
+            return
+        }
         var virtualDisplaySetupGuardToken: UUID?
         defer {
             if let token = virtualDisplaySetupGuardToken {
@@ -1092,7 +1126,6 @@ extension MirageHostService {
             if streamID == desktopStreamID,
                let latestDesktopContext = desktopStreamContext {
                 switch desktopResizeFailureRecoveryPlan(
-                    desktopStreamMode: desktopStreamMode,
                     hasPreResizeSnapshot: preResizeSnapshot != nil
                 ) {
                 case .rollbackToLastKnownGood:
@@ -1111,6 +1144,7 @@ extension MirageHostService {
                             )
                             resizeCompletionContext = restoredContext
                             resizeOutcome = .rolledBack
+                            desktopClientFitFallbackActive = true
                             if shouldRestoreMirroring,
                                desktopResizeRequiresMirroringRestoreSuccess(desktopStreamMode: desktopStreamMode),
                                let restoredSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
@@ -1135,22 +1169,6 @@ extension MirageHostService {
                             shouldStopDesktopStreamWithError = true
                         }
                     } else {
-                        shouldStopDesktopStreamWithError = true
-                    }
-                case .mainDisplayFallback:
-                    do {
-                        let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
-                            streamID: streamID,
-                            request: request,
-                            context: latestDesktopContext,
-                            reason: "desktop_resize_failed"
-                        )
-                        resizeCompletionContext = fallbackContext
-                        resizeOutcome = .rolledBack
-                        shouldRestoreMirroring = false
-                    } catch {
-                        MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
-                        MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                         shouldStopDesktopStreamWithError = true
                     }
                 case .stopStream:
@@ -1330,67 +1348,6 @@ extension MirageHostService {
         }
     }
 
-    private func switchDesktopStreamToMainDisplayFallback(
-        streamID: StreamID,
-        request: DesktopResizeRequestState,
-        context: StreamContext,
-        reason: String
-    )
-    async throws -> StreamContext {
-        try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
-        let fallback = try await mainDisplayDesktopCaptureFallback(reason: reason)
-
-        if let sharedDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
-            await disableDisplayMirroring(displayID: sharedDisplayID)
-        } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
-            await disableDisplayMirroring(displayID: fallback.displayID)
-        }
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
-
-        desktopVirtualDisplayID = nil
-        desktopPrimaryPhysicalDisplayID = fallback.displayID
-        desktopPrimaryPhysicalBounds = fallback.bounds
-        desktopDisplayBounds = fallback.bounds
-        sharedVirtualDisplayGeneration = 0
-        sharedVirtualDisplayScaleFactor = fallback.scaleFactor
-        desktopUsesHostResolution = true
-        desktopCaptureSource = .mainDisplayFallback
-
-        if desktopStreamMode == .unified {
-            let mirroringConfigured = await setupDisplayMirroring(
-                targetDisplayID: fallback.displayID,
-                expectedPixelResolution: fallback.resolution,
-                requiresResidualMirageDisplaysClear: false
-            )
-            if !mirroringConfigured {
-                MirageLogger.host(
-                    "Desktop stream main display fallback continuing with incomplete display mirroring"
-                )
-            }
-        }
-
-        try await context.hardResetDesktopDisplayCapture(
-            displayWrapper: fallback.display,
-            resolution: fallback.resolution
-        )
-        try await waitForDesktopTransitionCaptureReadiness(
-            context: context,
-            label: "desktop_resize_main_display_fallback"
-        )
-
-        let inputGeometry = updateDesktopInputGeometry(
-            streamID: streamID,
-            physicalBounds: fallback.bounds,
-            virtualResolution: fallback.resolution
-        )
-        MirageLogger.host(
-            "Desktop stream switched to main display fallback for stream \(streamID): " +
-                "\(Int(fallback.resolution.width))x\(Int(fallback.resolution.height)) px " +
-                "(input bounds: \(inputGeometry.inputBounds))"
-        )
-        return context
-    }
-
     private func sendDesktopResizeCompletion(
         streamID: StreamID,
         request: DesktopResizeRequestState,
@@ -1409,18 +1366,22 @@ extension MirageHostService {
         let displayResolution = await currentDesktopStartedResolution(
             fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
         )
-        let presentationResolution: CGSize = if desktopCaptureSource == .mainDisplayFallback {
-            aspectFitPixelSize(
-                contentSize: displayResolution,
-                containerSize: virtualDisplayPixelResolution(
-                    for: request.logicalResolution,
-                    client: desktopStreamClientContext?.client,
-                    scaleFactorOverride: desktopRequestedScaleFactor
-                )
-            )
-        } else {
-            displayResolution
+        let requestedContainerResolution = virtualDisplayPixelResolution(
+            for: request.logicalResolution,
+            client: desktopStreamClientContext?.client,
+            scaleFactorOverride: request.requestedDisplayScaleFactor ?? desktopRequestedScaleFactor
+        )
+        if desktopClientFitFallbackActive {
+            desktopClientFitFallbackContainerResolution = requestedContainerResolution
         }
+        let presentationResolution = desktopPresentationResolution(
+            displayResolution: displayResolution,
+            containerResolution: desktopClientFitFallbackContainerResolution ?? requestedContainerResolution
+        )
+        let allowsClientResize = desktopResizeAllowsClientResize(
+            captureSource: desktopCaptureSource,
+            clientFitFallbackActive: desktopClientFitFallbackActive
+        )
         let updatedTargetFrameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
         let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
@@ -1440,7 +1401,7 @@ extension MirageHostService {
             transitionOutcome: outcome,
             desktopPresentationGeneration: desktopPresentationGeneration,
             captureSource: desktopCaptureSource,
-            allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+            allowsClientResize: allowsClientResize,
             presentationWidth: Int(presentationResolution.width.rounded()),
             presentationHeight: Int(presentationResolution.height.rounded())
         )
@@ -1450,7 +1411,24 @@ extension MirageHostService {
         }
         MirageLogger.host(
             "Sent desktop resize completion for stream \(streamID) " +
-                "(transition=\(request.transitionID?.uuidString ?? "nil"), outcome=\(outcome.rawValue))"
+                "(transition=\(request.transitionID?.uuidString ?? "nil"), " +
+                "outcome=\(outcome.rawValue), allowsClientResize=\(allowsClientResize))"
+        )
+    }
+
+    func desktopPresentationResolution(
+        displayResolution: CGSize,
+        containerResolution: CGSize
+    ) -> CGSize {
+        guard desktopResizeUsesClientFitPresentation(
+            captureSource: desktopCaptureSource,
+            clientFitFallbackActive: desktopClientFitFallbackActive
+        ) else {
+            return displayResolution
+        }
+        return aspectFitPixelSize(
+            contentSize: displayResolution,
+            containerSize: containerResolution
         )
     }
 

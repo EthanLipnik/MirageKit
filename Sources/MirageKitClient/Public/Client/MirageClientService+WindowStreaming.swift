@@ -183,11 +183,15 @@ public extension MirageClientService {
             let tier = sessionStore.presentationTier(for: streamID)
             await existingController.updateCadenceTarget(
                 sourceFPS: resolvedTargetFrameRate,
-                displayFPS: resolvedTargetFrameRate,
+                displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
                 latencyMode: renderLatencyModeByStream[streamID],
                 reason: "controller reset"
             )
-            await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
+            await existingController.updatePresentationTier(
+                tier,
+                targetFPS: resolvedTargetFrameRate,
+                displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
+            )
             decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
@@ -219,6 +223,7 @@ public extension MirageClientService {
         }
 
         let capturedStreamID = streamID
+        let mediaFeedbackSender = receiverMediaFeedbackSender()
         await controller.setCallbacks(
             onKeyframeNeeded: { [weak self] in
                 self?.sendKeyframeRequest(for: capturedStreamID)
@@ -234,19 +239,38 @@ public extension MirageClientService {
                     streamID: capturedStreamID,
                     decodedFPS: metrics.decodedFPS,
                     receivedFPS: metrics.receivedFPS,
+                    decodedWorstGapMs: metrics.decodedWorstGapMs,
+                    decodedFrameIntervalP95Ms: metrics.decodedFrameIntervalP95Ms,
+                    decodedFrameIntervalP99Ms: metrics.decodedFrameIntervalP99Ms,
                     receivedWorstGapMs: metrics.receivedWorstGapMs,
                     receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
                     receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
                     droppedFrames: metrics.droppedFrames,
+                    renderStoreEnqueueFPS: metrics.renderStoreEnqueueFPS,
                     reassemblerPendingFrameCount: metrics.reassemblerPendingFrameCount,
                     reassemblerPendingKeyframeCount: metrics.reassemblerPendingKeyframeCount,
                     reassemblerPendingBytes: metrics.reassemblerPendingBytes,
                     frameBufferPoolRetainedBytes: metrics.frameBufferPoolRetainedBytes,
                     reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
+                    displayLinkCallbackFPS: metrics.displayLinkCallbackFPS,
+                    displayTickWorkerFPS: metrics.displayTickWorkerFPS,
+                    displayTickMainRelayFPS: metrics.displayTickMainRelayFPS,
                     displayTickFPS: metrics.displayTickFPS,
+                    presentationPassFPS: metrics.presentationPassFPS,
+                    presentationEligibleFPS: metrics.presentationEligibleFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerEnqueueFPS: metrics.layerEnqueueFPS,
                     uniqueLayerEnqueueFPS: metrics.uniqueLayerEnqueueFPS,
+                    visibleFrameFPS: metrics.visibleFrameFPS,
+                    visibleFrameCadenceKnown: metrics.visibleFrameCadenceKnown,
+                    visiblePresentationStallCount: metrics.visiblePresentationStallCount,
+                    visibleWorstPresentationGapMs: metrics.visibleWorstPresentationGapMs,
+                    visibleFrameIntervalP95Ms: metrics.visibleFrameIntervalP95Ms,
+                    visibleFrameIntervalP99Ms: metrics.visibleFrameIntervalP99Ms,
+                    visibleFrameIntervalMaxMs: metrics.visibleFrameIntervalMaxMs,
+                    repeatedSourceFrameCount: metrics.repeatedSourceFrameCount,
+                    framesSubmittedPerPassAverage: metrics.framesSubmittedPerPassAverage,
+                    framesSubmittedPerPassMax: metrics.framesSubmittedPerPassMax,
                     pendingFrameCount: metrics.pendingFrameCount,
                     unsubmittedPendingFrameCount: metrics.unsubmittedPendingFrameCount,
                     retainedSubmittedFrameCount: metrics.retainedSubmittedFrameCount,
@@ -254,12 +278,26 @@ public extension MirageClientService {
                     oldestUnsubmittedAgeMs: metrics.oldestUnsubmittedAgeMs,
                     newestUnsubmittedAgeMs: metrics.newestUnsubmittedAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
+                    renderStoreOverwriteFPS: metrics.renderStoreOverwriteFPS,
+                    lowestLatencyFreshBacklogDrops: metrics.lowestLatencyFreshBacklogDrops,
                     lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
+                    sampleBufferRendererNotReadyCount: metrics.sampleBufferRendererNotReadyCount,
+                    displayImmediatelySubmittedCount: metrics.displayImmediatelySubmittedCount,
+                    rendererReadyDrainPassCount: metrics.rendererReadyDrainPassCount,
+                    rendererReadyDrainSubmittedCount: metrics.rendererReadyDrainSubmittedCount,
+                    rendererReadyRearmCount: metrics.rendererReadyRearmCount,
                     repeatedFrameCount: metrics.repeatedFrameCount,
                     displayTickNoFrameCount: metrics.displayTickNoFrameCount,
+                    tickNoEligibleFrameCount: metrics.tickNoEligibleFrameCount,
+                    frameArrivedAfterNoFrameTickCount: metrics.frameArrivedAfterNoFrameTickCount,
                     frameArrivalFallbackCount: metrics.frameArrivalFallbackCount,
+                    frameArrivalFallbackScheduledCount: metrics.frameArrivalFallbackScheduledCount,
+                    frameArrivalFallbackSubmittedCount: metrics.frameArrivalFallbackSubmittedCount,
+                    noFrameTickToFrameArrivalMaxMs: metrics.noFrameTickToFrameArrivalMaxMs,
                     missedVSyncCount: metrics.missedVSyncCount,
+                    smoothestOneFrameHoldCount: metrics.smoothestOneFrameHoldCount,
+                    displayCadenceBelowSourceCount: metrics.displayCadenceBelowSourceCount,
                     displayTickIntervalP95Ms: metrics.displayTickIntervalP95Ms,
                     displayTickIntervalP99Ms: metrics.displayTickIntervalP99Ms,
                     playoutDelayFrames: metrics.playoutDelayFrames,
@@ -269,6 +307,11 @@ public extension MirageClientService {
                     frameIntervalP99Ms: metrics.frameIntervalP99Ms,
                     frameIntervalMaxMs: metrics.frameIntervalMaxMs,
                     displayTickIntervalMaxMs: metrics.displayTickIntervalMaxMs,
+                    displayTickMainDelayMaxMs: metrics.displayTickMainDelayMaxMs,
+                    renderWorkerSubmitDelayMaxMs: metrics.renderWorkerSubmitDelayMaxMs,
+                    decodeBacklogFrames: metrics.decodeBacklogFrames,
+                    decodeSubmissionInFlightCount: metrics.decodeSubmissionInFlightCount,
+                    decodeSubmissionLimit: metrics.decodeSubmissionLimit,
                     decodeHealthy: metrics.decodeHealthy
                 )
                 metricsStore.updateClientTimingDiagnostics(
@@ -294,13 +337,34 @@ public extension MirageClientService {
                     outputPixelFormat: metrics.decoderOutputPixelFormat,
                     usingHardwareDecoder: metrics.usingHardwareDecoder
                 )
+                let ingressSnapshot = self.videoPacketIngressProcessors[capturedStreamID]?.snapshot()
+                metricsStore.updateClientVideoIngressMetrics(
+                    streamID: capturedStreamID,
+                    loomStreamDeliveryFPS: ingressSnapshot?.loomStreamDeliveryFPS ?? 0,
+                    loomStreamDeliveryGapMaxMs: ingressSnapshot?.loomStreamDeliveryIntervalMaxMs ?? 0,
+                    rawPacketIngressFPS: ingressSnapshot?.rawPacketIngressFPS ?? 0,
+                    incomingBatchFPS: ingressSnapshot?.incomingBatchFPS ?? 0,
+                    incomingBatchIntervalP95Ms: ingressSnapshot?.incomingBatchIntervalP95Ms ?? 0,
+                    incomingBatchIntervalP99Ms: ingressSnapshot?.incomingBatchIntervalP99Ms ?? 0,
+                    incomingBatchIntervalMaxMs: ingressSnapshot?.incomingBatchIntervalMaxMs ?? 0,
+                    incomingBatchMaxSize: ingressSnapshot?.incomingBatchMaxSize ?? 0,
+                    incomingBatchAverageSize: ingressSnapshot?.incomingBatchAverageSize ?? 0,
+                    queuedBatchCount: ingressSnapshot?.queuedBatchCount ?? 0,
+                    queuedPacketCount: ingressSnapshot?.queuedPacketCount ?? 0,
+                    queueAgeMaxMs: ingressSnapshot?.queueAgeMaxMs ?? 0,
+                    stalePacketDropCount: ingressSnapshot?.stalePacketDropCount ?? 0,
+                    processedPacketCount: ingressSnapshot?.processedPacketCount ?? 0,
+                    processorWakeDelayMaxMs: ingressSnapshot?.processorWakeDelayMaxMs ?? 0,
+                    acceptedMediaMaxPacketSize: self.mediaMaxPacketSizeByStream[capturedStreamID],
+                    mediaPayloadEncryptionEnabled: self.mediaPayloadEncryptionEnabled
+                )
                 if self.activeJitterHoldMs != metrics.activeJitterHoldMs {
                     self.activeJitterHoldMs = metrics.activeJitterHoldMs
                 }
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
-            onMediaFeedback: { [weak self] feedback in
-                self?.sendReceiverMediaFeedback(feedback)
+            onMediaFeedback: { feedback in
+                mediaFeedbackSender(feedback)
             },
             onFirstFrameDecoded: { [weak self] in
                 self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
@@ -341,7 +405,7 @@ public extension MirageClientService {
 
         await controller.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
             latencyMode: renderLatencyModeByStream[streamID],
             reason: "controller setup"
         )
@@ -354,7 +418,8 @@ public extension MirageClientService {
         await controller.start()
         await controller.updatePresentationTier(
             sessionStore.presentationTier(for: streamID),
-            targetFPS: resolvedTargetFrameRate
+            targetFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
         )
         await updateReassemblerSnapshot()
 
@@ -426,13 +491,14 @@ public extension MirageClientService {
         await existingController.beginPostResizeTransition()
         await existingController.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
             latencyMode: renderLatencyModeByStream[streamID],
             reason: "desktop resize"
         )
         await existingController.updatePresentationTier(
             sessionStore.presentationTier(for: streamID),
-            targetFPS: resolvedTargetFrameRate
+            targetFPS: resolvedTargetFrameRate,
+            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
         )
         decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
         mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
@@ -818,7 +884,11 @@ public extension MirageClientService {
     func applyStreamPresentationTier(_ tier: StreamPresentationTier, to streamID: StreamID) async {
         guard let controller = controllersByStream[streamID] else { return }
         let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
-        await controller.updatePresentationTier(tier, targetFPS: targetFrameRate)
+        await controller.updatePresentationTier(
+            tier,
+            targetFPS: targetFrameRate,
+            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: targetFrameRate)
+        )
     }
 
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
@@ -830,7 +900,7 @@ public extension MirageClientService {
             )
             await controller.updateCadenceTarget(
                 sourceFPS: targetFPS,
-                displayFPS: targetFPS,
+                displayFPS: resolvedDisplayCadenceFrameRate(for: policy.streamID, fallback: targetFPS),
                 latencyMode: renderLatencyModeByStream[policy.streamID],
                 reason: "host stream policy"
             )

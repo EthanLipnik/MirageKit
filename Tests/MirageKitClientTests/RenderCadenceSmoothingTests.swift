@@ -80,12 +80,13 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
+        let now = CFAbsoluteTimeGetCurrent()
 
         for index in 0 ..< 3 {
             _ = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: Double(index),
+                decodeTime: now + Double(index) * 0.001,
                 presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
@@ -128,6 +129,46 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.uniqueLayerEnqueueFPS < telemetry.layerEnqueueFPS)
     }
 
+    @Test("Repeated source frames do not create visible cadence")
+    func repeatedSourceFramesDoNotCreateVisibleCadence() {
+        let streamID: StreamID = 409
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let generation = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+        let firstCursor = MirageRenderCursor(generation: generation, sequence: 1)
+        let secondCursor = MirageRenderCursor(generation: generation, sequence: 2)
+
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: firstCursor,
+            mappedPresentationTime: .zero,
+            presentedFrameIdentity: MirageRenderStreamStore.PresentedFrameIdentity(
+                cursor: firstCursor,
+                hostEpoch: 1,
+                dimensionToken: 1,
+                frameNumber: 10
+            ),
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: secondCursor,
+            mappedPresentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            presentedFrameIdentity: MirageRenderStreamStore.PresentedFrameIdentity(
+                cursor: secondCursor,
+                hostEpoch: 1,
+                dimensionToken: 1,
+                frameNumber: 10
+            ),
+            for: streamID
+        )
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.uniqueLayerEnqueueFPS >= 2)
+        #expect(telemetry.visibleFrameCadenceKnown)
+        #expect(telemetry.visibleFrameFPS == 1)
+        #expect(telemetry.visibleFrameFPS < telemetry.uniqueLayerEnqueueFPS)
+        #expect(telemetry.repeatedSourceFrameCount == 1)
+    }
+
     @Test("Taking the only pending frame does not repeat on underflow")
     func underflowDoesNotRepeatPendingFrame() {
         let streamID: StreamID = 404
@@ -137,7 +178,7 @@ struct RenderCadenceSmoothingTests {
         _ = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
-            decodeTime: 1,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
             presentationTime: .zero,
             for: streamID
         )
@@ -175,6 +216,7 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.missedVSyncCount >= 1)
         #expect(telemetry.repeatedFrameCount == 1)
         #expect(telemetry.displayTickNoFrameCount == 1)
+        #expect(telemetry.tickNoEligibleFrameCount == 1)
         #expect(telemetry.displayTickIntervalP99Ms >= 40)
         #expect(telemetry.displayTickIntervalMaxMs >= telemetry.displayTickIntervalP99Ms)
     }
@@ -201,6 +243,41 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.frameIntervalMaxMs >= 15)
         #expect(telemetry.frameIntervalMaxMs >= telemetry.frameIntervalP99Ms)
+    }
+
+    @Test("Render telemetry reports display worker and renderer readiness diagnostics")
+    func renderTelemetryReportsDisplayWorkerAndRendererReadinessDiagnostics() {
+        let streamID: StreamID = 408
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        MirageRenderStreamStore.shared.noteDisplayLinkCallbacks(for: streamID, count: 3)
+        MirageRenderStreamStore.shared.noteDisplayTickWorker(for: streamID)
+        MirageRenderStreamStore.shared.noteDisplayTickMainRelay(for: streamID, delayMs: 42)
+        MirageRenderStreamStore.shared.noteRenderWorkerSubmitDelay(for: streamID, delayMs: 17)
+        MirageRenderStreamStore.shared.noteSampleBufferRendererNotReady(for: streamID)
+        MirageRenderStreamStore.shared.notePresentationPass(for: streamID, framesSubmitted: 2)
+        MirageRenderStreamStore.shared.notePresentationEligibleFrame(for: streamID)
+        MirageRenderStreamStore.shared.noteFrameArrivedAfterNoFrameTick(for: streamID, delayMs: 19)
+        MirageRenderStreamStore.shared.noteFrameArrivalFallback(for: streamID)
+        MirageRenderStreamStore.shared.noteFrameArrivalFallbackSubmitted(for: streamID)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.renderStoreEnqueueFPS == telemetry.decodeFPS)
+        #expect(telemetry.displayLinkCallbackFPS == 3)
+        #expect(telemetry.displayTickWorkerFPS == 1)
+        #expect(telemetry.displayTickMainRelayFPS == 1)
+        #expect(telemetry.presentationPassFPS == 1)
+        #expect(telemetry.framesSubmittedPerPassAverage == 2)
+        #expect(telemetry.framesSubmittedPerPassMax == 2)
+        #expect(telemetry.presentationEligibleFPS == 1)
+        #expect(telemetry.displayTickMainDelayMaxMs == 42)
+        #expect(telemetry.renderWorkerSubmitDelayMaxMs == 17)
+        #expect(telemetry.sampleBufferRendererNotReadyCount == 1)
+        #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
+        #expect(telemetry.frameArrivalFallbackScheduledCount == 1)
+        #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
+        #expect(telemetry.noFrameTickToFrameArrivalMaxMs == 19)
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {

@@ -291,6 +291,26 @@ struct DesktopResizeCoordinatorTests {
         #expect(!service.desktopResizeCoordinator.maskActive)
     }
 
+    @Test("Desktop resize requests are suppressed while host client-fit fallback is active")
+    func desktopResizeRequestsAreSuppressedWhileHostClientFitFallbackIsActive() {
+        let service = MirageClientService()
+        let streamID: StreamID = 371
+        service.desktopStreamAllowsClientResize = false
+        service.sessionStore.beginPostResizeTransition(for: streamID)
+
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: target(logicalWidth: 1512, logicalHeight: 982),
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+    }
+
     @Test("No-op desktop resize is suppressed even while client recovery is active")
     func noOpDesktopResizeIsSuppressedDuringClientRecovery() {
         let service = MirageClientService()

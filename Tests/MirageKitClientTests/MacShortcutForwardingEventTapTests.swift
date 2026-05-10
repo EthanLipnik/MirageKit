@@ -7,6 +7,7 @@
 
 #if os(macOS)
 @testable import MirageKitClient
+import ApplicationServices
 import MirageKit
 import Testing
 
@@ -46,6 +47,22 @@ struct MacShortcutForwardingEventTapTests {
             keyCode: 0x00,
             modifiers: [.shift]
         ))
+    }
+
+    @Test("Option Space is forwarded for app launcher shortcuts")
+    func optionSpaceIsForwardedForAppLauncherShortcuts() {
+        #expect(MacShortcutForwardingEventTap.shouldForwardShortcut(
+            keyCode: 0x31,
+            modifiers: [.option]
+        ))
+    }
+
+    @Test("HID tap is preferred before session tap")
+    func hidTapIsPreferredBeforeSessionTap() throws {
+        let locations = MacShortcutForwardingEventTap.eventTapLocations
+
+        #expect(try #require(locations.first) == .cghidEventTap)
+        #expect(locations.contains(.cgSessionEventTap))
     }
 }
 #endif

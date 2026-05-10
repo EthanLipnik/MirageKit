@@ -96,6 +96,30 @@ struct CaptureRatePolicyTests {
             ) != .zero
         )
     }
+
+    @Test("Virtual display SCK queue depth separates low latency from smoothest at 60 Hz")
+    func virtualDisplaySCKQueueDepthSeparatesLowLatencyFromSmoothestAt60Hz() {
+        #expect(
+            WindowCaptureEngine.resolveSCKQueueDepth(
+                width: 2752,
+                height: 2064,
+                frameRate: 60,
+                latencyMode: .lowestLatency,
+                overrideDepth: nil,
+                usesDisplayRefreshCadence: true
+            ) == 3
+        )
+        #expect(
+            WindowCaptureEngine.resolveSCKQueueDepth(
+                width: 2752,
+                height: 2064,
+                frameRate: 60,
+                latencyMode: .smoothest,
+                overrideDepth: nil,
+                usesDisplayRefreshCadence: true
+            ) == 8
+        )
+    }
 }
 
 
@@ -214,6 +238,30 @@ struct CaptureCadenceGateTests {
         #expect(decision.shouldDrop == false)
         #expect(decision.originPresentationTime == 10.0)
         #expect(decision.admittedSlotIndex == 5)
+    }
+
+    @Test("Repeated display-time cadence falls back to monotonic capture time")
+    func repeatedDisplayTimeCadenceFallsBackToMonotonicCaptureTime() {
+        let timestamp = CaptureStreamOutput.resolvedCadenceTimestamp(
+            displayTimeSeconds: 42.0,
+            presentationSeconds: 41.0,
+            captureTime: 100.0,
+            lastAdmittedTimestamp: 42.0
+        )
+
+        #expect(timestamp == 100.0)
+    }
+
+    @Test("Fresh display-time cadence remains preferred")
+    func freshDisplayTimeCadenceRemainsPreferred() {
+        let timestamp = CaptureStreamOutput.resolvedCadenceTimestamp(
+            displayTimeSeconds: 42.017,
+            presentationSeconds: 100.0,
+            captureTime: 200.0,
+            lastAdmittedTimestamp: 42.0
+        )
+
+        #expect(timestamp == 42.017)
     }
 }
 #endif

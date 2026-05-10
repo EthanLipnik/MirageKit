@@ -153,9 +153,6 @@ actor StreamContext {
     var freshnessBurstQueueResetCount: UInt64 = 0
     var freshnessBurstRecoveryKeyframeCount: UInt64 = 0
     var freshnessBurstCoalescedKeyframeCount: UInt64 = 0
-    var softFreshnessDrainActive = false
-    var softFreshnessDrainDeadline: CFAbsoluteTime = 0
-    var softFreshnessDrainCount: UInt64 = 0
     var latencyBurstActive = false
     var latencyBurstDrainsNewestFrames = false
     var latencyBurstCaptureQueueDepthOverride: Int?
@@ -405,22 +402,17 @@ actor StreamContext {
         let prefersSmoothness = latencyMode == .smoothest
         let latencySensitive = latencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
-        let usesDesktopLowLatency60HzBufferPolicy = Self.usesStandardDesktopLowLatency60HzBufferPolicy(
-            streamKind: streamKind,
-            frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: latencyMode
-        )
-        var bufferDepth = Self.frameBufferDepth(
+        let bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: latencyMode
         )
-        var minInFlight = Self.minInFlightFrames(
+        let minInFlight = Self.minInFlightFrames(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: latencyMode
         )
-        var inFlightCap = min(
+        let inFlightCap = min(
             bufferDepth,
             Self.inFlightCap(
                 useLowLatencyPipeline: useLowLatencyPipeline,
@@ -428,11 +420,6 @@ actor StreamContext {
                 latencyMode: latencyMode
             )
         )
-        if usesDesktopLowLatency60HzBufferPolicy {
-            bufferDepth = max(bufferDepth, 2)
-            minInFlight = max(minInFlight, 2)
-            inFlightCap = max(inFlightCap, 2)
-        }
         let resolvedInFlightCap = max(1, inFlightCap)
         let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)
         maxInFlightFramesCap = resolvedInFlightCap
@@ -570,30 +557,27 @@ actor StreamContext {
         }
     }
 
-    static func usesStandardDesktopLowLatency60HzBufferPolicy(
-        streamKind: VideoEncoder.StreamKind,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Bool {
-        streamKind == .desktop &&
-            latencyMode == .lowestLatency &&
-            frameRate == 60
+    static func lowLatencyPipelineInFlightLimit(frameRate: Int) -> Int {
+        return frameRate >= 120 ? 2 : 1
     }
 
-    static func lowLatencyPipelineInFlightLimit(
-        streamKind: VideoEncoder.StreamKind,
-        frameRate: Int,
+    nonisolated static func packetSendDeadline(
+        encodedAt: CFAbsoluteTime,
+        isKeyframe: Bool,
+        targetFrameRate: Int,
         latencyMode: MirageStreamLatencyMode
-    ) -> Int {
-        if usesStandardDesktopLowLatency60HzBufferPolicy(
-            streamKind: streamKind,
-            frameRate: frameRate,
-            latencyMode: latencyMode
-        ) {
-            return 2
+    ) -> CFAbsoluteTime {
+        guard !isKeyframe else { return .greatestFiniteMagnitude }
+        guard latencyMode == .lowestLatency else {
+            return StreamPacketSender.defaultSendDeadline(
+                encodedAt: encodedAt,
+                isKeyframe: isKeyframe,
+                targetFrameRate: targetFrameRate
+            )
         }
-        return frameRate >= 120 ? 2 : 1
+
+        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
+        return encodedAt + max(frameInterval * 2.0, 0.025)
     }
 
     func schedulePipelineStatsLog() {

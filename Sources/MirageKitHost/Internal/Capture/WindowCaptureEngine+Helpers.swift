@@ -41,14 +41,19 @@ extension WindowCaptureEngine {
 
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
-        if usesDisplayRefreshCadence, frameRate >= 60 {
-            return 8
-        }
         if frameRate >= 120 {
             // Native-refresh capture is where SCK is most sensitive to queue starvation.
             // Keep the stream queue at the platform-supported ceiling and use Mirage's
             // own pool/in-flight tuning to reduce downstream pressure instead.
             return 8
+        }
+        if usesDisplayRefreshCadence, frameRate >= 60 {
+            switch latencyMode {
+            case .lowestLatency:
+                return 3
+            case .smoothest:
+                return 8
+            }
         }
 
         var depth = 6

@@ -22,6 +22,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 receivedFPS: 120,
                 layerEnqueueFPS: 88,
                 uniqueLayerEnqueueFPS: 88,
+                visibleFrameFPS: 88,
+                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 8,
                 overwrittenPendingFrames: 0,
@@ -57,6 +59,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 receivedFPS: 29,
                 layerEnqueueFPS: 29,
                 uniqueLayerEnqueueFPS: 29,
+                visibleFrameFPS: 29,
+                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
@@ -95,6 +99,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 submitAttemptFPS: 120,
                 layerEnqueueFPS: 72,
                 uniqueLayerEnqueueFPS: 72,
+                visibleFrameFPS: 72,
+                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 28,
                 overwrittenPendingFrames: 4,
@@ -119,6 +125,7 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.message.contains("submitAttempt=120.0fps"))
         #expect(diagnostic.message.contains("layerEnqueueFPS=72.0fps"))
         #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=72.0fps"))
+        #expect(diagnostic.message.contains("visibleFrameFPS=72.0fps"))
         #expect(diagnostic.message.contains("layerBackpressure=3"))
         #expect(diagnostic.message.contains("overwritten=4"))
     }
@@ -134,6 +141,8 @@ struct ClientStreamingAnomalyDiagnosticTests {
                 submitAttemptFPS: 60,
                 layerEnqueueFPS: 60,
                 uniqueLayerEnqueueFPS: 0,
+                visibleFrameFPS: 0,
+                visibleFrameCadenceKnown: true,
                 pendingFrameCount: 1,
                 pendingFrameAgeMs: 1_433,
                 overwrittenPendingFrames: 0,
@@ -158,6 +167,7 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.bottleneckKind == .presentationBound)
         #expect(diagnostic.message.contains("layerEnqueueFPS=60.0fps"))
         #expect(diagnostic.message.contains("uniqueLayerEnqueueFPS=0.0fps"))
+        #expect(diagnostic.message.contains("visibleFrameFPS=0.0fps"))
     }
 
     private func makeHostMetrics(

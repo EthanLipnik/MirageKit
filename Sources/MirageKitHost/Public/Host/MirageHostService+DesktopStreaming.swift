@@ -268,6 +268,7 @@ extension MirageHostService {
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
         desktopCaptureSource = .virtualDisplay
+        resetDesktopClientFitFallbackState()
         self.desktopSessionID = desktopSessionID
         resetDesktopResizeTransactionState()
         await HostDesktopStreamTerminationTracker.shared.markDesktopDisplaySetupStarted(
@@ -1381,6 +1382,7 @@ extension MirageHostService {
         sharedVirtualDisplayScaleFactor = 1.0
         desktopUsesHostResolution = false
         desktopCaptureSource = .virtualDisplay
+        resetDesktopClientFitFallbackState()
         mirroredDesktopDisplayIDs.removeAll()
         if !deferDisplayTeardown {
             await finishDesktopSpaceRestoreAfterDisplayTeardown(reason: cleanupReason)
@@ -1519,6 +1521,7 @@ extension MirageHostService {
         desktopRequestedScaleFactor = nil
         desktopUsesHostResolution = false
         desktopCaptureSource = .virtualDisplay
+        resetDesktopClientFitFallbackState()
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .unified
         desktopCursorPresentation = .simulatedCursor

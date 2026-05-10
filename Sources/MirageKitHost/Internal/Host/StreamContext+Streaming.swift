@@ -175,6 +175,12 @@ extension StreamContext {
                     logPrefix: logPrefix,
                     generation: generation,
                     encodedAt: now,
+                    sendDeadline: Self.packetSendDeadline(
+                        encodedAt: now,
+                        isKeyframe: isKeyframe,
+                        targetFrameRate: self.currentFrameRate,
+                        latencyMode: self.latencyMode
+                    ),
                     targetFrameRate: self.currentFrameRate,
                     pacingOverride: pacingOverride
                 )

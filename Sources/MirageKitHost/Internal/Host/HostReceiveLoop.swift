@@ -48,7 +48,6 @@ final class HostReceiveLoop: @unchecked Sendable {
         .streamScaleChange,
         .streamRefreshRateChange,
         .streamEncoderSettingsChange,
-        .receiverMediaFeedback,
     ]
 
     private let receiveChunk: @Sendable (
@@ -62,6 +61,8 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     private let onInputMessage: @Sendable (ControlMessage) -> Void
     private let onPingMessage: @Sendable (ControlMessage) -> Void
+    private let onReceiverMediaFeedbackMessage: @Sendable (ControlMessage) -> Void
+    private let onReceiverMediaFeedbackCoalesced: @Sendable (UInt64) -> Void
     private let onLifecycleSignal: @Sendable (LifecycleSignal) -> Void
     private let dispatchControlMessage: @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void
     private let onTerminal: @Sendable (TerminalReason) -> Void
@@ -75,6 +76,8 @@ final class HostReceiveLoop: @unchecked Sendable {
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onReceiverMediaFeedbackMessage: @escaping @Sendable (ControlMessage) -> Void = { _ in },
+        onReceiverMediaFeedbackCoalesced: @escaping @Sendable (UInt64) -> Void = { _ in },
         onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
@@ -86,6 +89,8 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.onInputMessage = onInputMessage
         self.onPingMessage = onPingMessage
+        self.onReceiverMediaFeedbackMessage = onReceiverMediaFeedbackMessage
+        self.onReceiverMediaFeedbackCoalesced = onReceiverMediaFeedbackCoalesced
         self.onLifecycleSignal = onLifecycleSignal
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
@@ -105,6 +110,8 @@ final class HostReceiveLoop: @unchecked Sendable {
         ) -> Void,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onReceiverMediaFeedbackMessage: @escaping @Sendable (ControlMessage) -> Void = { _ in },
+        onReceiverMediaFeedbackCoalesced: @escaping @Sendable (UInt64) -> Void = { _ in },
         onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
@@ -117,6 +124,8 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.receiveChunk = receiveChunk
         self.onInputMessage = onInputMessage
         self.onPingMessage = onPingMessage
+        self.onReceiverMediaFeedbackMessage = onReceiverMediaFeedbackMessage
+        self.onReceiverMediaFeedbackCoalesced = onReceiverMediaFeedbackCoalesced
         self.onLifecycleSignal = onLifecycleSignal
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
@@ -216,6 +225,8 @@ final class HostReceiveLoop: @unchecked Sendable {
     private func parseBufferedMessages() {
         var immediateInputMessages: [ControlMessage] = []
         var pingMessages: [ControlMessage] = []
+        var receiverMediaFeedbackMessage: ControlMessage?
+        var receiverMediaFeedbackCoalescedCount: UInt64 = 0
         var violationReason: String?
 
         state.withLock { state in
@@ -232,6 +243,11 @@ final class HostReceiveLoop: @unchecked Sendable {
                         }
                     } else if message.type == .ping {
                         pingMessages.append(message)
+                    } else if message.type == .receiverMediaFeedback {
+                        if receiverMediaFeedbackMessage != nil {
+                            receiverMediaFeedbackCoalescedCount &+= 1
+                        }
+                        receiverMediaFeedbackMessage = message
                     } else if message.type == .pong {
                         continue
                     } else {
@@ -267,6 +283,13 @@ final class HostReceiveLoop: @unchecked Sendable {
 
         for message in pingMessages {
             onPingMessage(message)
+        }
+
+        if let receiverMediaFeedbackMessage {
+            if receiverMediaFeedbackCoalescedCount > 0 {
+                onReceiverMediaFeedbackCoalesced(receiverMediaFeedbackCoalescedCount)
+            }
+            onReceiverMediaFeedbackMessage(receiverMediaFeedbackMessage)
         }
     }
 

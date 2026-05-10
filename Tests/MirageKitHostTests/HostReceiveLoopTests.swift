@@ -449,6 +449,108 @@ struct HostReceiveLoopTests {
         }
     }
 
+    @Test("Receiver media feedback bypasses generic control dispatch and coalesces")
+    func receiverMediaFeedbackBypassesGenericControlDispatchAndCoalesces() async throws {
+        let feedbackA = ReceiverMediaFeedbackMessage(
+            streamID: 42,
+            sequence: 1,
+            sentAtUptime: 10,
+            targetFPS: 60,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 1,
+            jitterP99Ms: 2,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 60,
+            receivedFPS: 60,
+            rendererAcceptedFPS: 60,
+            rendererPresentedFPS: 60,
+            recoveryState: .idle
+        )
+        let feedbackB = ReceiverMediaFeedbackMessage(
+            streamID: 42,
+            sequence: 2,
+            sentAtUptime: 11,
+            targetFPS: 60,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 1,
+            jitterP99Ms: 2,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 60,
+            receivedFPS: 60,
+            rendererAcceptedFPS: 60,
+            rendererPresentedFPS: 60,
+            recoveryState: .idle
+        )
+        let messageA = try ControlMessage(type: .receiverMediaFeedback, content: feedbackA)
+        let messageB = try ControlMessage(type: .receiverMediaFeedback, content: feedbackB)
+        let keyframe = try ControlMessage(
+            type: .keyframeRequest,
+            content: KeyframeRequestMessage(streamID: 42)
+        )
+
+        var initialData = Data()
+        initialData.append(messageA.serialize())
+        initialData.append(messageB.serialize())
+        initialData.append(keyframe.serialize())
+
+        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let feedbackMessages = Locked<[ControlMessage]>([])
+        let coalescedCount = Locked<UInt64>(0)
+        let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "receiver-feedback-fast-path-test",
+            receiveChunk: { completion in
+                completion(nil, nil, true, nil)
+            },
+            onInputMessage: { _ in },
+            onPingMessage: { _ in },
+            onReceiverMediaFeedbackMessage: { message in
+                feedbackMessages.withLock { $0.append(message) }
+            },
+            onReceiverMediaFeedbackCoalesced: { count in
+                coalescedCount.withLock { $0 &+= count }
+            },
+            dispatchControlMessage: { message, completion in
+                dispatchedTypes.withLock { $0.append(message.type) }
+                completion()
+            },
+            onTerminal: { reason in
+                terminalReason.withLock { $0 = reason }
+            },
+            isFatalError: { _ in false }
+        )
+
+        loop.start(initialBuffer: initialData)
+
+        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(dispatchedTypes.read { $0 } == [.keyframeRequest])
+        #expect(coalescedCount.read { $0 } == 1)
+
+        let messages = feedbackMessages.read { $0 }
+        #expect(messages.count == 1)
+        let decoded = try messages[0].decode(ReceiverMediaFeedbackMessage.self)
+        #expect(decoded.sequence == 2)
+    }
+
     @Test("Invalid frame triggers protocol-violation terminal reason")
     func invalidFrameTriggersProtocolViolation() async throws {
         struct ReceiveEvent {

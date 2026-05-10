@@ -15,7 +15,7 @@ import CoreVideo
 import Testing
 
 @MainActor
-@Suite("Sample Buffer Presentation Pipeline")
+@Suite("Sample Buffer Presentation Pipeline", .serialized)
 struct MirageSampleBufferPresentationPipelineTests {
     @Test("Configuration drives aspect-fit video gravity")
     func configurationDrivesAspectFitVideoGravity() {
@@ -52,7 +52,7 @@ struct MirageSampleBufferPresentationPipelineTests {
     }
 
     @Test("Presentation recovery handler is registered for configured stream")
-    func presentationRecoveryHandlerIsRegisteredForConfiguredStream() {
+    func presentationRecoveryHandlerIsRegisteredForConfiguredStream() async throws {
         let streamID: StreamID = 244
         let layer = AVSampleBufferDisplayLayer()
         var startCount = 0
@@ -72,15 +72,16 @@ struct MirageSampleBufferPresentationPipelineTests {
         #expect(startCount == 1)
 
         let didRequestRecovery = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        try await Task.sleep(for: .milliseconds(20))
 
         #expect(didRequestRecovery)
-        #expect(startCount >= 2)
+        #expect(startCount == 1)
         #expect(stopCount == 0)
     }
 
     @Test("Presenter resets timing after render-store generation boundary")
     func presenterResetsTimingAfterRenderStoreGenerationBoundary() {
-        let streamID: StreamID = 245
+        let streamID: StreamID = 9245
         let layer = AVSampleBufferDisplayLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
         let presenter = MirageSampleBufferPresenter(displayLayer: layer)
@@ -91,10 +92,11 @@ struct MirageSampleBufferPresentationPipelineTests {
         }
 
         presenter.setStreamID(streamID)
+        let now = CFAbsoluteTimeGetCurrent()
         MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: CMTime(value: 1, timescale: 60),
             for: streamID
         )
@@ -104,7 +106,7 @@ struct MirageSampleBufferPresentationPipelineTests {
         MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
-            decodeTime: 2,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
             presentationTime: CMTime(value: 2, timescale: 60),
             for: streamID
         )
@@ -114,7 +116,7 @@ struct MirageSampleBufferPresentationPipelineTests {
 
     @Test("Presenter submits retained frame once for a presenter cursor")
     func presenterSubmitsRetainedFrameOnceForPresenterCursor() {
-        let streamID: StreamID = 246
+        let streamID: StreamID = 9246
         let layer = AVSampleBufferDisplayLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
         let presenter = MirageSampleBufferPresenter(displayLayer: layer)
@@ -125,10 +127,11 @@ struct MirageSampleBufferPresentationPipelineTests {
         }
 
         presenter.setStreamID(streamID)
+        let now = CFAbsoluteTimeGetCurrent()
         MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: CMTime(value: 1, timescale: 60),
             for: streamID
         )
@@ -138,11 +141,113 @@ struct MirageSampleBufferPresentationPipelineTests {
         #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .noPendingFrame)
     }
 
-    @Test("Repeated identical layout does not trigger duplicate immediate submission")
-    func repeatedIdenticalLayoutDoesNotTriggerDuplicateImmediateSubmission() {
-        let streamID: StreamID = 247
+    @Test("Lowest latency presenter submits latest frame only in one pass")
+    func lowestLatencyPresenterSubmitsLatestFrameOnlyInOnePass() {
+        let streamID: StreamID = 9249
         let layer = AVSampleBufferDisplayLayer()
-        let pipeline = makePipeline(displayLayer: layer)
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let presenter = MirageSampleBufferPresenter(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            presenter.setStreamID(nil)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60, latencyMode: .lowestLatency)
+        )
+        presenter.setStreamID(streamID)
+
+        let now = CFAbsoluteTimeGetCurrent()
+        var lastCursor = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        for index in 0 ..< 2 {
+            lastCursor = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+                decodeTime: now + Double(index) * 0.001,
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                for: streamID
+            ).cursor
+        }
+
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0, source: .rendererReady) == .submitted)
+
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(snapshot.cursor == lastCursor)
+        #expect(telemetry.presentationPassFPS >= 1)
+        #expect(telemetry.framesSubmittedPerPassAverage == 1)
+        #expect(telemetry.framesSubmittedPerPassMax == 1)
+        #expect(telemetry.uniqueLayerEnqueueFPS == 1)
+        #expect(telemetry.displayImmediatelySubmittedCount == 1)
+        #expect(telemetry.rendererReadyDrainPassCount == 1)
+        #expect(telemetry.rendererReadyDrainSubmittedCount == 1)
+    }
+
+    @Test("Smoothest presenter drains until one fresh frame remains")
+    func smoothestPresenterDrainsUntilOneFreshFrameRemains() {
+        let streamID: StreamID = 9250
+        let layer = AVSampleBufferDisplayLayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
+        let presenter = MirageSampleBufferPresenter(displayLayer: layer)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            presenter.setStreamID(nil)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60, latencyMode: .smoothest)
+        )
+        presenter.setStreamID(streamID)
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let first = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: now,
+            presentationTime: .zero,
+            for: streamID
+        )
+        let second = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: now + 0.001,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+        let third = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
+            decodeTime: now + 0.002,
+            presentationTime: CMTime(value: 2, timescale: 60),
+            for: streamID
+        )
+
+        #expect(presenter.submitPendingFrameIfPossible(referenceTime: 0) == .submitted)
+
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(snapshot.cursor == second.cursor)
+        #expect(first.sequence == 1)
+        #expect(third.sequence == 3)
+        #expect(MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: second.cursor))
+        #expect(telemetry.smoothestOneFrameHoldCount == 1)
+        #expect(telemetry.framesSubmittedPerPassMax == 2)
+        #expect(telemetry.displayImmediatelySubmittedCount == 1)
+    }
+
+    @Test("Repeated identical layout does not trigger duplicate immediate submission")
+    func repeatedIdenticalLayoutDoesNotTriggerDuplicateImmediateSubmission() async throws {
+        let streamID: StreamID = 9247
+        let layer = AVSampleBufferDisplayLayer()
+        var displayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
+        let pipeline = makePipeline(
+            displayLayer: layer,
+            startDisplayClock: { _, handler in
+                displayTickHandler = handler
+            }
+        )
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer {
             pipeline.applyConfiguration(configuration(streamID: nil))
@@ -150,22 +255,24 @@ struct MirageSampleBufferPresentationPipelineTests {
         }
 
         pipeline.applyConfiguration(configuration(streamID: streamID))
+        let now = CFAbsoluteTimeGetCurrent()
         let first = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: CMTime(value: 1, timescale: 60),
             for: streamID
         )
         pipeline.layoutDisplayLayer(bounds: CGRect(x: 0, y: 0, width: 8, height: 8), scale: 1)
+        displayTickHandler?(1)
 
-        let firstSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let firstSnapshot = try await waitForSubmission(streamID: streamID, cursor: first.cursor)
         #expect(firstSnapshot.cursor == first.cursor)
 
         let second = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 8, height: 8),
-            decodeTime: 2,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
             presentationTime: CMTime(value: 2, timescale: 60),
             for: streamID
         )
@@ -188,7 +295,7 @@ struct MirageSampleBufferPresentationPipelineTests {
 
     @Test("Presenter caches contentsRect and preserves rect reset behavior")
     func presenterCachesContentsRectAndPreservesRectResetBehavior() {
-        let streamID: StreamID = 248
+        let streamID: StreamID = 9248
         let layer = AVSampleBufferDisplayLayer()
         layer.bounds = CGRect(x: 0, y: 0, width: 8, height: 8)
         let presenter = MirageSampleBufferPresenter(displayLayer: layer)
@@ -199,10 +306,11 @@ struct MirageSampleBufferPresentationPipelineTests {
         }
 
         presenter.setStreamID(streamID)
+        let now = CFAbsoluteTimeGetCurrent()
         MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 0, y: 0, width: 4, height: 8),
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: CMTime(value: 1, timescale: 60),
             for: streamID
         )
@@ -212,7 +320,7 @@ struct MirageSampleBufferPresentationPipelineTests {
         MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: CGRect(x: 4, y: 0, width: 4, height: 8),
-            decodeTime: 2,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
             presentationTime: CMTime(value: 2, timescale: 60),
             for: streamID
         )
@@ -274,6 +382,22 @@ struct MirageSampleBufferPresentationPipelineTests {
             fatalError("Unable to allocate CVPixelBuffer for test")
         }
         return buffer
+    }
+
+    private func waitForSubmission(
+        streamID: StreamID,
+        cursor: MirageRenderCursor,
+        timeout: Duration = .seconds(1)
+    ) async throws -> MirageRenderStreamStore.SubmissionSnapshot {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+            if snapshot.cursor == cursor {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        return MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
     }
 }
 #endif

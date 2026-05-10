@@ -144,6 +144,73 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Rolled-back desktop resize with client fit fallback clears resize state")
+    func rolledBackDesktopResizeWithClientFitFallbackClearsResizeState() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 24
+        let transitionID = UUID()
+        let desktopSessionID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        let activeTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1728, height: 1117),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 3456,
+            encoderMaxHeight: 2234
+        )
+        let queuedTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1512, height: 982),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 3024,
+            encoderMaxHeight: 1964
+        )
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 3024, height: 1964)
+        service.desktopStreamPresentationResolution = CGSize(width: 3024, height: 1964)
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: transitionID,
+            target: activeTarget
+        )
+        service.desktopResizeCoordinator.queueLatestTarget(queuedTarget, dispatchPolicy: .settledWindowMetrics)
+        service.sessionStore.beginPostResizeTransition(for: streamID)
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 9,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: transitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .rolledBack,
+            captureSource: .virtualDisplay,
+            allowsClientResize: false,
+            presentationWidth: 1512,
+            presentationHeight: 982
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
+        #expect(service.desktopStreamPresentationResolution == CGSize(width: 1512, height: 982))
+        #expect(service.desktopCaptureSource == .virtualDisplay)
+        #expect(!service.desktopStreamAllowsClientResize)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        await controller.stop()
+    }
+
+    @MainActor
     @Test("Stale transition UUID with older generation is ignored")
     func staleTransitionUUIDWithOlderGenerationIsIgnored() async throws {
         let service = MirageClientService()

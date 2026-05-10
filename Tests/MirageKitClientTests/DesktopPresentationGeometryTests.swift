@@ -8,6 +8,7 @@
 #if os(macOS)
 @testable import MirageKitClient
 import CoreGraphics
+import MirageKit
 import Testing
 
 @Suite("Desktop Presentation Geometry")
@@ -90,6 +91,51 @@ struct DesktopPresentationGeometryTests {
 
         #expect(fillReference == nil)
         #expect(aspectFitReference == hostDisplaySize)
+    }
+
+    @Test("Desktop client-fit fallback suppresses resize and uses local aspect fit")
+    func desktopClientFitFallbackSuppressesResizeAndUsesLocalAspectFit() {
+        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+            isDesktopStream: true,
+            useHostResolution: false,
+            desktopCaptureSource: .virtualDisplay,
+            desktopStreamAllowsClientResize: false,
+            keyboardAvoidanceEnabled: false,
+            softwareKeyboardVisible: false,
+            localKeyboardOcclusionActive: false
+        )
+
+        #expect(suppressesResize)
+    }
+
+    @Test("Virtual desktop allows window-driven resize while host accepts client resize")
+    func virtualDesktopAllowsWindowDrivenResizeWhileHostAcceptsClientResize() {
+        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+            isDesktopStream: true,
+            useHostResolution: false,
+            desktopCaptureSource: .virtualDisplay,
+            desktopStreamAllowsClientResize: true,
+            keyboardAvoidanceEnabled: false,
+            softwareKeyboardVisible: false,
+            localKeyboardOcclusionActive: false
+        )
+
+        #expect(!suppressesResize)
+    }
+
+    @Test("Main display fallback suppresses window-driven resize")
+    func mainDisplayFallbackSuppressesWindowDrivenResize() {
+        let suppressesResize = MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
+            isDesktopStream: true,
+            useHostResolution: false,
+            desktopCaptureSource: .mainDisplayFallback,
+            desktopStreamAllowsClientResize: true,
+            keyboardAvoidanceEnabled: false,
+            softwareKeyboardVisible: false,
+            localKeyboardOcclusionActive: false
+        )
+
+        #expect(suppressesResize)
     }
 }
 #endif

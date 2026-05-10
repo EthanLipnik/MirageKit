@@ -321,6 +321,19 @@ extension MirageClientService {
         )
     }
 
+    func resolvedDisplayCadenceFrameRate(for streamID: StreamID, fallback: Int) -> Int {
+        if let override = refreshRateOverridesByStream[streamID], override > 0 {
+            return Self.runtimeWorkloadSafetyCappedFrameRate(
+                override,
+                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
+            )
+        }
+        return Self.runtimeWorkloadSafetyCappedFrameRate(
+            fallback,
+            cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
+        )
+    }
+
     func applyStreamCadenceTarget(
         _ frameRate: Int,
         for streamID: StreamID,
@@ -333,16 +346,17 @@ extension MirageClientService {
         )
         updateObservedFrameRate(targetFrameRate, for: streamID)
         let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+        let displayFrameRate = resolvedDisplayCadenceFrameRate(for: streamID, fallback: targetFrameRate)
         let target = MirageStreamCadenceTarget(
             sourceFPS: targetFrameRate,
-            displayFPS: targetFrameRate,
+            displayFPS: displayFrameRate,
             latencyMode: latencyMode
         )
         MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
         guard let controller = controllersByStream[streamID] else { return }
         await controller.updateCadenceTarget(
             sourceFPS: targetFrameRate,
-            displayFPS: targetFrameRate,
+            displayFPS: displayFrameRate,
             latencyMode: latencyMode,
             reason: reason
         )
@@ -418,7 +432,7 @@ extension MirageClientService {
             width: snapshot?.hostEncodedWidth ?? 0,
             height: snapshot?.hostEncodedHeight ?? 0
         )
-        let allowsAutomaticStreamScale = desktopCaptureSource != .mainDisplayFallback
+        let allowsAutomaticStreamScale = desktopCaptureSource != .mainDisplayFallback && desktopStreamAllowsClientResize
         let streamScalePlan = allowsAutomaticStreamScale
             ? Self.automaticDesktopStreamScaleReconfigurationPlan(
                 targetEncodedPixelSize: effectiveTarget.encodedPixelSize,
@@ -450,8 +464,8 @@ extension MirageClientService {
                     diagnosticSuffix
                 MirageLogger.client(
                     "Skipping automatic desktop workload reconfiguration for stream \(streamID): " +
-                        "target \(effectiveTarget.logLabel) requires stream-scale update but host-resolution desktop " +
-                        "capture does not allow it"
+                        "target \(effectiveTarget.logLabel) requires stream-scale update but the host " +
+                        "does not allow client-driven desktop resize"
                 )
             } else if needsStreamScaleChange && streamScalePlan == nil {
                 lastAutomaticDesktopWorkloadReconfigurationSummary =

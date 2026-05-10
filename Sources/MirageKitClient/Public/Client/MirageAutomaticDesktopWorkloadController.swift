@@ -185,13 +185,15 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS,
         ])
+        let clientPresentationCadence = snapshot.clientVisibleFrameCadenceKnown
+            ? max(0, snapshot.clientVisibleFrameFPS)
+            : 0
         let presentedCadence = minimumPositive([
             snapshot.hostCaptureFPS,
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS,
             snapshot.decodedFPS,
-            snapshot.layerEnqueueFPS,
-            snapshot.uniqueLayerEnqueueFPS,
+            clientPresentationCadence,
         ])
         let hostPipelinePixelRate = if let currentTier, let hostCadence {
             Double(max(1, Int(currentTier.encodedPixelSize.width))) *
@@ -271,22 +273,23 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
     ) -> Bool {
         let targetFPS = Double(max(1, minimumHealthyFrameRate))
         let frameBudgetMs = 1_000.0 / targetFPS
-        let clientCadence = minimumPositive([
-            snapshot.decodedFPS,
-            snapshot.layerEnqueueFPS,
-            snapshot.uniqueLayerEnqueueFPS,
-        ]) ?? 0
-        let belowHealthFloor = clientCadence > 0 && clientCadence < targetFPS * 0.90
+        let clientCadence = snapshot.clientVisibleFrameCadenceKnown ? max(0, snapshot.clientVisibleFrameFPS) : 0
+        let belowHealthFloor = !snapshot.clientVisibleFrameCadenceKnown ||
+            (clientCadence > 0 && clientCadence < targetFPS * 0.90)
         let decodeFailed = !snapshot.decodeHealthy &&
             (snapshot.receivedFPS > 0 || snapshot.decodedFPS > 0)
         let presentationStalled =
             snapshot.clientPresentationStallCount > 0 ||
-            snapshot.clientWorstPresentationGapMs >= max(120.0, frameBudgetMs * 6.0) ||
-            snapshot.clientFrameIntervalP99Ms >= max(80.0, frameBudgetMs * 4.0) ||
+            snapshot.clientVisiblePresentationStallCount > 0 ||
+            max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) >=
+                max(120.0, frameBudgetMs * 6.0) ||
+            max(snapshot.clientFrameIntervalP99Ms, snapshot.clientVisibleFrameIntervalP99Ms) >=
+                max(80.0, frameBudgetMs * 4.0) ||
             snapshot.clientDisplayTickIntervalP99Ms >= max(80.0, frameBudgetMs * 4.0) ||
             snapshot.clientPendingFrameAgeMs >= max(40.0, frameBudgetMs * 3.0) ||
             snapshot.clientOverwrittenPendingFrames >= 3 ||
-            snapshot.clientDisplayLayerNotReadyCount >= 2
+            snapshot.clientDisplayLayerNotReadyCount >= 2 ||
+            snapshot.clientRepeatedSourceFrameCount > 0
         return belowHealthFloor || decodeFailed || presentationStalled
     }
 
@@ -427,9 +430,9 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             presentationCollapseSampleCount = 0
             lastReconfigurationAt = now
             let reasonPrefix = requiredSamples == Self.requiredPresentationCollapseSamples
-                ? "client layer enqueue collapse"
+                ? "client presentation collapse"
                 : health.bottleneckKind.rawValue
-            let reason = "\(reasonPrefix), client enqueued \(Int(observedPixelRate)) px/s"
+            let reason = "\(reasonPrefix), client presented \(Int(observedPixelRate)) px/s"
             return .reconfigure(target: targetTier, reason: reason)
         }
 
@@ -638,6 +641,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         ) ?? 0
         guard hostCadence >= targetFPS * 0.90 else { return false }
         guard snapshot.decodeHealthy, snapshot.decodedFPS >= targetFPS * 0.90 else { return false }
+        guard snapshot.clientVisibleFrameCadenceKnown,
+              snapshot.clientVisibleFrameFPS >= targetFPS * 0.90 else {
+            return false
+        }
         return true
     }
 
@@ -731,10 +738,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS
         ) ?? 0
-        let clientCadence = minPositive(
-            snapshot.layerEnqueueFPS,
-            snapshot.uniqueLayerEnqueueFPS
-        ) ?? 0
+        guard snapshot.clientVisibleFrameCadenceKnown else { return false }
+        let clientCadence = max(0, snapshot.clientVisibleFrameFPS)
         guard hostCadence >= targetFPS * 0.85 else { return false }
         guard snapshot.decodedFPS >= targetFPS * 0.60 else { return false }
         guard clientCadence > 0, clientCadence <= targetFPS * 0.72 else { return false }
@@ -743,8 +748,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return snapshot.clientPendingFrameAgeMs >= max(28.0, frameBudgetMs * 3.0) ||
             snapshot.clientOverwrittenPendingFrames >= 3 ||
             snapshot.clientDisplayLayerNotReadyCount >= 2 ||
-            snapshot.clientFrameIntervalP99Ms >= max(36.0, frameBudgetMs * 4.0) ||
-            snapshot.clientWorstPresentationGapMs >= max(120.0, frameBudgetMs * 10.0)
+            max(snapshot.clientFrameIntervalP99Ms, snapshot.clientVisibleFrameIntervalP99Ms) >=
+                max(36.0, frameBudgetMs * 4.0) ||
+            max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) >=
+                max(120.0, frameBudgetMs * 10.0)
     }
 
     private static func minPositive(_ values: Double?...) -> Double? {

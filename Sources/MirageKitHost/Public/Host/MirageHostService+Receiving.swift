@@ -351,6 +351,23 @@ extension MirageHostService {
             onPingMessage: { _ in
                 clientContext.sendBestEffort(ControlMessage(type: .pong))
             },
+            onReceiverMediaFeedbackMessage: { [weak self] message in
+                guard let self else { return }
+                self.receiverMediaFeedbackDiagnostics.withLock { diagnostics in
+                    diagnostics.fastPathCount &+= 1
+                    diagnostics.logSuppressedCount &+= 1
+                }
+                guard let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self) else {
+                    self.receiverMediaFeedbackDiagnostics.withLock { $0.droppedCount &+= 1 }
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    await self?.handleReceiverMediaFeedback(feedback)
+                }
+            },
+            onReceiverMediaFeedbackCoalesced: { [weak self] count in
+                self?.receiverMediaFeedbackDiagnostics.withLock { $0.coalescedCount &+= count }
+            },
             onLifecycleSignal: { [weak self] signal in
                 Task { @MainActor [weak self] in
                     guard let self else { return }

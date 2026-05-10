@@ -193,7 +193,11 @@ extension StreamController {
         )
     }
 
-    func updatePresentationTier(_ tier: StreamPresentationTier, targetFPS: Int? = nil) async {
+    func updatePresentationTier(
+        _ tier: StreamPresentationTier,
+        targetFPS: Int? = nil,
+        displayFPS: Int? = nil
+    ) async {
         let previousTier = presentationTier
         presentationTier = tier
         await GlobalDecodeBudgetController.shared.updateTier(streamID: streamID, tier: tier)
@@ -207,7 +211,7 @@ extension StreamController {
         }
         await updateCadenceTarget(
             sourceFPS: resolvedTargetFPS,
-            displayFPS: resolvedTargetFPS,
+            displayFPS: displayFPS ?? streamCadenceTarget.displayFPS,
             latencyMode: streamCadenceTarget.latencyMode,
             reason: "presentation tier update"
         )
@@ -244,7 +248,7 @@ extension StreamController {
             reassembler.enterKeyframeOnlyMode()
             await setClientRecoveryStatus(.keyframeRecovery)
             armRecoveryStabilizationTracking(
-                baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+                baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
             )
             await startKeyframeRecoveryLoopIfNeeded()
             MirageLogger.client(
@@ -270,7 +274,7 @@ extension StreamController {
 
     private func startTierPromotionProbe() async {
         await stopTierPromotionProbe()
-        let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
         await setClientRecoveryStatus(.tierPromotionProbe)
         armRecoveryStabilizationTracking(baseline: baselineCursor)
         tierPromotionProbeTask = Task { [weak self] in
@@ -298,11 +302,11 @@ extension StreamController {
         guard presentationTier == .activeLive else { return }
 
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        if snapshot.cursor.isAfter(baselineCursor) {
+        if snapshot.visibleCursor.isAfter(baselineCursor) {
             MirageLogger.client(
                 "Tier promotion probe progressed for stream \(streamID) " +
                     "(baseline=\(baselineCursor.generation):\(baselineCursor.sequence), " +
-                    "latest=\(snapshot.generation):\(snapshot.sequence))"
+                    "latest=\(snapshot.visibleGeneration):\(snapshot.visibleSequence))"
             )
             await setClientRecoveryStatus(.idle)
             return

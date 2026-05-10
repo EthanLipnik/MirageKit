@@ -9,6 +9,23 @@ import CoreGraphics
 import MirageKit
 
 enum MirageStreamPresentationPolicy {
+    static func suppressesWindowDrivenResizeForLocalPresentation(
+        isDesktopStream: Bool,
+        useHostResolution: Bool,
+        desktopCaptureSource: MirageDesktopCaptureSource,
+        desktopStreamAllowsClientResize: Bool,
+        keyboardAvoidanceEnabled: Bool,
+        softwareKeyboardVisible: Bool,
+        localKeyboardOcclusionActive: Bool
+    )
+    -> Bool {
+        let suppressesDesktopResize = isDesktopStream &&
+            (useHostResolution || desktopCaptureSource == .mainDisplayFallback || !desktopStreamAllowsClientResize)
+        let suppressesForKeyboard = keyboardAvoidanceEnabled &&
+            (softwareKeyboardVisible || localKeyboardOcclusionActive)
+        return suppressesDesktopResize || suppressesForKeyboard
+    }
+
     static func localAspectFitReferenceSize(
         prefersLocalAspectFitPresentation: Bool,
         hostDisplayPointSize: CGSize?

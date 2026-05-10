@@ -136,6 +136,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.decodedFPS = 60
         snapshot.layerEnqueueFPS = 30
         snapshot.uniqueLayerEnqueueFPS = 30
+        snapshot.clientVisibleFrameFPS = 30
         snapshot.clientOverwrittenPendingFrames = 2
         snapshot.clientDisplayLayerNotReadyCount = 1
         snapshot.clientPendingFrameAgeMs = 24
@@ -161,6 +162,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.decodedFPS = 60
         snapshot.layerEnqueueFPS = 45
         snapshot.uniqueLayerEnqueueFPS = 45
+        snapshot.clientVisibleFrameFPS = 45
         snapshot.clientOverwrittenPendingFrames = 4
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 72
@@ -187,6 +189,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.decodedFPS = 60
         snapshot.layerEnqueueFPS = 28
         snapshot.uniqueLayerEnqueueFPS = 28
+        snapshot.clientVisibleFrameFPS = 28
         snapshot.clientOverwrittenPendingFrames = 4
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 72
@@ -209,7 +212,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.targetFrameRate == 60)
         #expect(target.encodedPixelSize.width < 3840)
         #expect(target.encodedPixelSize.height < 2160)
-        #expect(reason.contains("client layer enqueue collapse"))
+        #expect(reason.contains("client presentation collapse"))
     }
 
     @Test("Presentation-bound preserve priority restores reduced resolution toward desktop baseline")
@@ -219,11 +222,12 @@ struct AutomaticDesktopWorkloadControllerTests {
             width: 736,
             height: 416,
             targetFrameRate: 60,
-            cadenceFPS: 60
+            cadenceFPS: 65
         )
-        snapshot.decodedFPS = 60
-        snapshot.layerEnqueueFPS = 45
-        snapshot.uniqueLayerEnqueueFPS = 45
+        snapshot.decodedFPS = 65
+        snapshot.layerEnqueueFPS = 55
+        snapshot.uniqueLayerEnqueueFPS = 55
+        snapshot.clientVisibleFrameFPS = 55
         snapshot.clientOverwrittenPendingFrames = 4
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 72
@@ -285,6 +289,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 92
         snapshot.uniqueLayerEnqueueFPS = 92
+        snapshot.clientVisibleFrameFPS = 92
         snapshot.clientOverwrittenPendingFrames = 4
         snapshot.clientDisplayLayerNotReadyCount = 2
         snapshot.clientPendingFrameAgeMs = 24
@@ -315,6 +320,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 70
         snapshot.uniqueLayerEnqueueFPS = 70
+        snapshot.clientVisibleFrameFPS = 70
         snapshot.clientOverwrittenPendingFrames = 8
         snapshot.clientDisplayLayerNotReadyCount = 4
         snapshot.clientPendingFrameAgeMs = 42
@@ -347,6 +353,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 62
         snapshot.uniqueLayerEnqueueFPS = 62
+        snapshot.clientVisibleFrameFPS = 62
         snapshot.clientOverwrittenPendingFrames = 5
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 48
@@ -368,7 +375,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         }
         #expect(target.targetFrameRate == 60)
         #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
-        #expect(reason.contains("client layer enqueue collapse"))
+        #expect(reason.contains("client presentation collapse"))
     }
 
     @Test("Virtual-display source-bound ProMotion samples drop FPS before resizing")
@@ -414,6 +421,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 50
         snapshot.uniqueLayerEnqueueFPS = 50
+        snapshot.clientVisibleFrameFPS = 50
         snapshot.clientOverwrittenPendingFrames = 8
         snapshot.clientDisplayLayerNotReadyCount = 4
         snapshot.clientPendingFrameAgeMs = 42
@@ -446,6 +454,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 50
         snapshot.uniqueLayerEnqueueFPS = 50
+        snapshot.clientVisibleFrameFPS = 50
         snapshot.clientOverwrittenPendingFrames = 4
         snapshot.clientDisplayLayerNotReadyCount = 2
         snapshot.clientPendingFrameAgeMs = 48
@@ -479,6 +488,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         )
         snapshot.layerEnqueueFPS = 59
         snapshot.uniqueLayerEnqueueFPS = 59
+        snapshot.clientVisibleFrameFPS = 59
         snapshot.clientFrameIntervalP99Ms = 151
 
         let action = advanceThroughPipelinePressure(
@@ -654,6 +664,8 @@ struct AutomaticDesktopWorkloadControllerTests {
             receivedFPS: cadenceFPS,
             layerEnqueueFPS: cadenceFPS,
             uniqueLayerEnqueueFPS: cadenceFPS,
+            clientVisibleFrameFPS: cadenceFPS,
+            clientVisibleFrameCadenceKnown: true,
             decodeHealthy: true,
             hostEncodedFPS: cadenceFPS,
             hostActiveQuality: 0.70,

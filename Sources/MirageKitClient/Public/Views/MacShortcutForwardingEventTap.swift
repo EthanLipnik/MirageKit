@@ -42,24 +42,28 @@ final class MacShortcutForwardingEventTap {
             (1 << CGEventType.keyUp.rawValue) |
             (1 << CGEventType.flagsChanged.rawValue)
 
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            MirageLogger.client("Failed to create mac shortcut forwarding event tap")
+        for location in Self.eventTapLocations {
+            guard let tap = CGEvent.tapCreate(
+                tap: location,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: CGEventMask(mask),
+                callback: callback,
+                userInfo: Unmanaged.passUnretained(self).toOpaque()
+            ) else {
+                continue
+            }
+
+            eventTap = tap
+            eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+            if let eventTapSource {
+                CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+            }
+            CGEvent.tapEnable(tap: tap, enable: true)
             return
         }
 
-        eventTap = tap
-        eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        if let eventTapSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: tap, enable: true)
+        MirageLogger.client("Failed to create mac shortcut forwarding event tap")
     }
 
     func stop() {
@@ -86,7 +90,6 @@ final class MacShortcutForwardingEventTap {
             guard shouldForward() else { return Unmanaged.passUnretained(event) }
             return handleKeyDown(event)
         case .keyUp:
-            guard shouldForward() else { return Unmanaged.passUnretained(event) }
             return handleKeyUp(event)
         case .flagsChanged:
             if shouldForward() {
@@ -162,6 +165,10 @@ final class MacShortcutForwardingEventTap {
         return shortcutModifiers.contains(.command) ||
             shortcutModifiers.contains(.control) ||
             shortcutModifiers.contains(.option)
+    }
+
+    nonisolated static var eventTapLocations: [CGEventTapLocation] {
+        [.cghidEventTap, .cgSessionEventTap]
     }
 }
 

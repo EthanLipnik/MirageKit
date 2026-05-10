@@ -363,6 +363,8 @@ public final class MirageHostService {
     var desktopRequestedScaleFactor: CGFloat?
     var desktopUsesHostResolution: Bool = false
     var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
+    var desktopClientFitFallbackActive: Bool = false
+    var desktopClientFitFallbackContainerResolution: CGSize?
     var desktopStreamMode: MirageDesktopStreamMode = .unified
     var activeDesktopResizeRequest: DesktopResizeRequestState?
     var queuedDesktopResizeRequest: DesktopResizeRequestState?
@@ -586,6 +588,15 @@ public final class MirageHostService {
         var knownIconBundleIdentifiers: [String]
     }
 
+    struct ReceiverMediaFeedbackHostDiagnostics: Sendable, Equatable {
+        var fastPathCount: UInt64 = 0
+        var coalescedCount: UInt64 = 0
+        var droppedCount: UInt64 = 0
+        var logSuppressedCount: UInt64 = 0
+    }
+
+    nonisolated let receiverMediaFeedbackDiagnostics = Locked(ReceiverMediaFeedbackHostDiagnostics())
+
     public init(
         hostName: String? = nil,
         deviceID: UUID? = nil,
@@ -700,6 +711,18 @@ public final class MirageHostService {
             "host.activeStreamsCount": .int(activeStreams.count),
             "host.availableWindowsCount": .int(availableWindows.count),
             "host.desktopStreamActive": .bool(desktopStreamID != nil),
+            "host.receiverMediaFeedbackFastPathCount": .int(
+                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.fastPathCount))
+            ),
+            "host.receiverMediaFeedbackCoalescedCount": .int(
+                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.coalescedCount))
+            ),
+            "host.receiverMediaFeedbackDroppedCount": .int(
+                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.droppedCount))
+            ),
+            "host.receiverMediaFeedbackLogSuppressedCount": .int(
+                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.logSuppressedCount))
+            ),
 
             "host.desktopResizeInFlight": .bool(activeDesktopResizeRequest != nil),
             "host.desktopSharedDisplayTransitionInFlight": .bool(desktopSharedDisplayTransitionInFlight),

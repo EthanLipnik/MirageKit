@@ -70,6 +70,9 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let decodedFPS = max(0, snapshot.decodedFPS)
         let layerEnqueueFPS = max(0, snapshot.layerEnqueueFPS)
         let uniqueLayerEnqueueFPS = max(0, snapshot.uniqueLayerEnqueueFPS)
+        let visibleFrameFPS = max(0, snapshot.clientVisibleFrameFPS)
+        let hasVisibleFrameCadence = snapshot.clientVisibleFrameCadenceKnown
+        let presentationFPS = hasVisibleFrameCadence ? visibleFrameFPS : uniqueLayerEnqueueFPS
         let captureIngressFPS = max(0, snapshot.hostCaptureIngressFPS ?? 0)
         let captureFPS = max(0, snapshot.hostCaptureFPS ?? 0)
         let encodeAttemptFPS = max(0, snapshot.hostEncodeAttemptFPS ?? 0)
@@ -123,16 +126,26 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             (snapshot.hostCaptureLongFrameGapCount ?? 0) > 0 ||
             snapshot.hostCaptureVirtualDisplayTimingSuspect == true
         let unevenPresentationCadence =
-            snapshot.clientWorstPresentationGapMs >= max(80.0, targetFrameIntervalMs * 3.0) ||
-            snapshot.clientFrameIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0) ||
+            max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) >=
+                max(80.0, targetFrameIntervalMs * 3.0) ||
+            max(snapshot.clientFrameIntervalP99Ms, snapshot.clientVisibleFrameIntervalP99Ms) >=
+                max(40.0, targetFrameIntervalMs * 2.0) ||
             snapshot.clientDisplayTickIntervalP99Ms >= max(40.0, targetFrameIntervalMs * 2.0) ||
-            snapshot.clientMissedVSyncCount > 0
+            snapshot.clientMissedVSyncCount > 0 ||
+            snapshot.clientVisiblePresentationStallCount > 0
+        let unevenReceiveCadence =
+            snapshot.clientReceivedWorstGapMs >= max(80.0, targetFrameIntervalMs * 4.0) ||
+            snapshot.clientLoomStreamDeliveryGapMaxMs >= max(80.0, targetFrameIntervalMs * 4.0) ||
+            snapshot.clientIncomingMediaBatchIntervalMaxMs >= max(80.0, targetFrameIntervalMs * 4.0)
         let severeUnevenPresentationCadence =
-            snapshot.clientWorstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
-            snapshot.clientFrameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
+            max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) >=
+                max(180.0, targetFrameIntervalMs * 8.0) ||
+            max(snapshot.clientFrameIntervalP99Ms, snapshot.clientVisibleFrameIntervalP99Ms) >=
+                max(100.0, targetFrameIntervalMs * 6.0) ||
             snapshot.clientDisplayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
 
-        let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress
+        let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress ||
+            unevenReceiveCadence && hostEncodedFPS >= targetFPS * 0.75
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)
@@ -140,16 +153,22 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
-        let submissionLaggingDecode = (layerEnqueueFPS + presentationGapGrace < decodedFPS) ||
-            (uniqueLayerEnqueueFPS + presentationGapGrace < decodedFPS)
+        let submissionLaggingDecode = if hasVisibleFrameCadence {
+            presentationFPS + presentationGapGrace < decodedFPS
+        } else {
+            (layerEnqueueFPS + presentationGapGrace < decodedFPS) ||
+                (uniqueLayerEnqueueFPS + presentationGapGrace < decodedFPS)
+        }
         let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
-            snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
+            snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold ||
+            snapshot.clientRepeatedSourceFrameCount > 0
         let presentationBound = decodeKeepsUp && (
-            submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
-                unevenPresentationCadence && layerEnqueueFPS < targetFPS * 0.97 ||
-                severeUnevenPresentationCadence && layerEnqueueFPS >= targetFPS * 0.90
+            !hasVisibleFrameCadence && (uniqueLayerEnqueueFPS > 0 || layerEnqueueFPS > 0) ||
+                submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
+                unevenPresentationCadence && presentationFPS < targetFPS * 0.97 ||
+                severeUnevenPresentationCadence && presentationFPS >= targetFPS * 0.90
         )
 
         let hostCadenceLimited = !networkBound && (

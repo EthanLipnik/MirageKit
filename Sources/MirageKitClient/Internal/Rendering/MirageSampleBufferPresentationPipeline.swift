@@ -50,7 +50,7 @@ struct MirageDrawableMetricsContext: Equatable {
 
 @MainActor
 final class MirageSampleBufferPresentationPipeline {
-    typealias DisplayTickHandler = @MainActor (CFTimeInterval) -> Void
+    typealias DisplayTickHandler = @Sendable (CFTimeInterval) -> Void
     typealias StartDisplayClock = (Int, @escaping DisplayTickHandler) -> Void
 
     var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
@@ -69,9 +69,7 @@ final class MirageSampleBufferPresentationPipeline {
         var scale: CGFloat
     }
 
-    private var presenter: MirageSampleBufferPresenter!
-    private var presentationScheduler: MirageRenderPresentationScheduler!
-    private var displayLayerReadinessRetryTask: Task<Void, Never>?
+    private var presentationWorker: MirageSampleBufferPresentationWorker!
     private var configuration: MirageStreamRenderConfiguration = .empty
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
@@ -99,32 +97,11 @@ final class MirageSampleBufferPresentationPipeline {
         self.updateDisplayClockTargetFPS = updateDisplayClockTargetFPS
         self.requestPlatformLayout = requestPlatformLayout
 
-        presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
-        presentationScheduler = MirageRenderPresentationScheduler(
-            submit: { [weak presenter = presenter] referenceTime in
-                presenter?.submitPendingFrameIfPossible(referenceTime: referenceTime) ?? .blocked
-            },
-            hasPendingFrame: { [weak presenter = presenter] in
-                presenter?.hasPendingFrameForCurrentPresenter ?? false
-            },
-            pendingFrameCount: { [weak presenter = presenter] in
-                presenter?.pendingFrameCountForCurrentPresenter ?? 0
-            },
-            onDisplayLayerNotReady: { [weak self] in
-                self?.armDisplayLayerReadinessRetry()
-            }
+        presentationWorker = MirageSampleBufferPresentationWorker(
+            displayLayer: displayLayer,
+            platformName: platformName
         )
-        presentationScheduler.setPresentationTier(configuration.presentationTier)
-        presenter.onFrameAvailable = { [weak self] in
-            self?.handleFrameAvailable()
-        }
-        presenter.onPresentationRecoveryRequested = { [weak self] in
-            self?.recoverPresentationPipeline()
-        }
-    }
-
-    deinit {
-        displayLayerReadinessRetryTask?.cancel()
+        presentationWorker.setPresentationTier(configuration.presentationTier)
     }
 
     var streamID: StreamID? {
@@ -136,11 +113,11 @@ final class MirageSampleBufferPresentationPipeline {
     }
 
     var hasDisplayLayerFailure: Bool {
-        presenter.hasDisplayLayerFailure
+        presentationWorker.hasDisplayLayerFailure
     }
 
     var currentPresentationReferenceSize: CGSize? {
-        presenter.currentContentReferenceSize
+        presentationWorker.currentContentReferenceSize
     }
 
     func applyConfiguration(_ newConfiguration: MirageStreamRenderConfiguration) {
@@ -152,7 +129,7 @@ final class MirageSampleBufferPresentationPipeline {
         }
 
         if newConfiguration.contentRectOverride != previousConfiguration.contentRectOverride {
-            presenter.setContentRectOverride(newConfiguration.contentRectOverride)
+            presentationWorker.setContentRectOverride(newConfiguration.contentRectOverride)
         }
 
         if newConfiguration.maxDrawableSize != previousConfiguration.maxDrawableSize {
@@ -161,7 +138,7 @@ final class MirageSampleBufferPresentationPipeline {
         }
 
         if newConfiguration.presentationTier != previousConfiguration.presentationTier {
-            presentationScheduler.setPresentationTier(newConfiguration.presentationTier)
+            presentationWorker.setPresentationTier(newConfiguration.presentationTier)
             let requested = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
             applyDisplayRefreshRateLock(requested)
             updatePresentationDisplayClockFrameRate()
@@ -209,15 +186,12 @@ final class MirageSampleBufferPresentationPipeline {
     }
 
     func suspendRendering(clearCurrentFrame: Bool = true) {
-        stopDisplayLayerReadinessRetry()
         stopPresentationDisplayClock()
-        presenter.setRenderingSuspended(true, clearCurrentFrame: clearCurrentFrame)
-        presentationScheduler.setRenderingSuspended(true)
+        presentationWorker.setRenderingSuspended(true, clearCurrentFrame: clearCurrentFrame)
     }
 
     func resumeRendering() {
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
+        presentationWorker.setRenderingSuspended(false, clearCurrentFrame: false)
         startPresentationDisplayClockIfNeeded()
         requestImmediateSubmission()
     }
@@ -228,7 +202,7 @@ final class MirageSampleBufferPresentationPipeline {
 
     func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
         if resetPresentationState {
-            presenter.resetPresentationState()
+            presentationWorker.resetPresentationState()
         }
         resumeRendering()
     }
@@ -245,30 +219,25 @@ final class MirageSampleBufferPresentationPipeline {
     func applyResolvedRenderFPS(_ fps: Int) {
         let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
         maxRenderFPS = clamped
-        presenter.setTargetFPS(clamped)
+        presentationWorker.setTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
         onRefreshRateOverrideChange?(clamped)
     }
 
     func applyResolvedCadenceTarget(_ target: MirageStreamCadenceTarget) {
-        maxRenderFPS = MirageRenderModePolicy.normalizedTargetFPS(target.sourceFPS)
-        presenter.setCadenceTarget(target)
+        maxRenderFPS = MirageRenderModePolicy.normalizedTargetFPS(target.displayFPS)
+        presentationWorker.setCadenceTarget(target)
         applyDisplayRefreshRateLock(maxRenderFPS)
         onRefreshRateOverrideChange?(maxRenderFPS)
     }
 
     func requestImmediateSubmission() {
-        presentationScheduler.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
+        presentationWorker.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
     }
 
     func requestReadinessRetry() {
         guard !(displayClockActive && configuration.presentationTier == .activeLive) else { return }
-        presentationScheduler.requestReadinessRetry(referenceTime: CACurrentMediaTime())
-    }
-
-    func stopDisplayLayerReadinessRetry() {
-        displayLayerReadinessRetryTask?.cancel()
-        displayLayerReadinessRetryTask = nil
+        presentationWorker.requestReadinessRetry(referenceTime: CACurrentMediaTime())
     }
 
     // MARK: - Metrics
@@ -313,10 +282,8 @@ final class MirageSampleBufferPresentationPipeline {
     }
 
     private func bindStreamForPresentation(_ streamID: StreamID?) {
-        presenter.setStreamID(streamID)
-        presentationScheduler.setStreamID(streamID)
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
+        presentationWorker.setStreamID(streamID)
+        presentationWorker.setRenderingSuspended(false, clearCurrentFrame: false)
         if streamID == nil {
             stopPresentationDisplayClock()
         } else {
@@ -325,56 +292,29 @@ final class MirageSampleBufferPresentationPipeline {
         requestImmediateSubmission()
     }
 
-    private func recoverPresentationPipeline() {
-        let streamID = configuration.presentationStreamID
-        MirageLogger.renderer("Recovering \(platformName) presentation pipeline for stream \(streamID.map(String.init) ?? "none")")
-        presenter.setStreamID(streamID)
-        presentationScheduler.setStreamID(streamID)
-        presenter.resetPresentationState(preserveLoggedLayerFailure: true)
-        presentationScheduler.reset()
-        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        presentationScheduler.setRenderingSuspended(false)
-        startPresentationDisplayClockIfNeeded()
-        requestImmediateSubmission()
-    }
-
-    private func handleFrameAvailable() {
-        presentationScheduler.handleFrameAvailable(referenceTime: CACurrentMediaTime())
-    }
-
     private func startPresentationDisplayClockIfNeeded() {
         guard canStartDisplayClock() else { return }
         guard configuration.presentationStreamID != nil else { return }
         let localFPS = localPresentationFPS()
-        presentationScheduler.setTargetFPS(localFPS)
-        startDisplayClock(localFPS) { [weak self] referenceTime in
-            self?.presentationScheduler.handleDisplayTick(referenceTime: referenceTime)
+        presentationWorker.setTargetFPS(localFPS)
+        presentationWorker.setDisplayClockActive(true)
+        let worker = presentationWorker
+        startDisplayClock(localFPS) { referenceTime in
+            worker?.handleDisplayLinkTick(referenceTime: referenceTime)
         }
         displayClockActive = true
-        presentationScheduler.setDisplayClockActive(true)
     }
 
     private func stopPresentationDisplayClock() {
         stopDisplayClock()
         displayClockActive = false
-        presentationScheduler.setDisplayClockActive(false)
+        presentationWorker.setDisplayClockActive(false)
     }
 
     private func updatePresentationDisplayClockFrameRate() {
         let localFPS = localPresentationFPS()
-        presentationScheduler.setTargetFPS(localFPS)
+        presentationWorker.setTargetFPS(localFPS)
         updateDisplayClockTargetFPS(localFPS)
-    }
-
-    private func armDisplayLayerReadinessRetry() {
-        guard displayLayerReadinessRetryTask == nil else { return }
-        displayLayerReadinessRetryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(16))
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            displayLayerReadinessRetryTask = nil
-            requestReadinessRetry()
-        }
     }
 
     private func applyDisplayRefreshRateLock(_ fps: Int) {
@@ -382,7 +322,7 @@ final class MirageSampleBufferPresentationPipeline {
         let localFPS = localPresentationFPS(hostFPS: clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
-        presentationScheduler.setTargetFPS(localFPS)
+        presentationWorker.setTargetFPS(localFPS)
         updatePresentationDisplayClockFrameRate()
 
         guard changed else { return }

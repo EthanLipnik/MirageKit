@@ -92,16 +92,14 @@ extension StreamContext {
 
         guard senderFrameBudgetDelayOverrunCount >= senderFrameBudgetDelayOverrunThreshold else { return }
         senderFrameBudgetDelayOverrunCount = 0
-        if usesSoftSenderDelaySmoothing {
-            enterSoftFreshnessDrainIfNeeded(
-                frameBudgetMs: frameBudgetMs,
-                reason: "non-keyframe sender delay exceeded frame budget"
-            )
+        let reason = "non-keyframe sender delay exceeded frame budget"
+        if latencyMode == .smoothest {
+            await applySmoothestSenderPressureRelief(reason: reason)
             return
         }
         _ = await enterFreshnessBurstIfNeeded(
             queueBytes: queueBytes,
-            reason: "non-keyframe sender delay exceeded frame budget"
+            reason: reason
         )
     }
 
@@ -281,8 +279,6 @@ extension StreamContext {
         } else if backpressureActive {
             if queueBytesSnapshot <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytesSnapshot) }
         }
-        expireSoftFreshnessDrainIfNeeded()
-
         while inFlightCount < maxInFlightFrames {
             let queueBytesBeforeDrain = packetSender?.queuedBytesSnapshot() ?? 0
             let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
@@ -1304,9 +1300,7 @@ extension StreamContext {
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
             let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit(
-                streamKind: streamKind,
-                frameRate: currentFrameRate,
-                latencyMode: latencyMode
+                frameRate: currentFrameRate
             )
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {

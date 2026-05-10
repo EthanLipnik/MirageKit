@@ -398,6 +398,14 @@ extension MirageHostService {
             let displayResolution = await currentDesktopStartedResolution(
                 fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
             )
+            let presentationResolution = desktopPresentationResolution(
+                displayResolution: displayResolution,
+                containerResolution: desktopClientFitFallbackContainerResolution ?? displayResolution
+            )
+            let allowsClientResize = desktopResizeAllowsClientResize(
+                captureSource: desktopCaptureSource,
+                clientFitFallbackActive: desktopClientFitFallbackActive
+            )
             desktopPresentationGeneration &+= 1
             let message = DesktopStreamStartedMessage(
                 streamID: streamID,
@@ -414,9 +422,9 @@ extension MirageHostService {
                 transitionOutcome: .resized,
                 desktopPresentationGeneration: desktopPresentationGeneration,
                 captureSource: desktopCaptureSource,
-                allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
-                presentationWidth: Int(displayResolution.width.rounded()),
-                presentationHeight: Int(displayResolution.height.rounded())
+                allowsClientResize: allowsClientResize,
+                presentationWidth: Int(presentationResolution.width.rounded()),
+                presentationHeight: Int(presentationResolution.height.rounded())
             )
 
             if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {

@@ -47,6 +47,7 @@ struct MirageStreamBottleneckKindTests {
         snapshot.decodedFPS = 42
         snapshot.layerEnqueueFPS = 42
         snapshot.uniqueLayerEnqueueFPS = 42
+        snapshot.clientVisibleFrameFPS = 42
         snapshot.hostSendQueueBytes = 1_200_000
         snapshot.hostSendStartDelayAverageMs = 3
 
@@ -79,6 +80,7 @@ struct MirageStreamBottleneckKindTests {
         snapshot.decodedFPS = 8
         snapshot.layerEnqueueFPS = 8
         snapshot.uniqueLayerEnqueueFPS = 8
+        snapshot.clientVisibleFrameFPS = 8
 
         #expect(snapshot.bottleneckKind != .networkBound)
     }
@@ -98,6 +100,7 @@ struct MirageStreamBottleneckKindTests {
         snapshot.decodedFPS = 38
         snapshot.layerEnqueueFPS = 38
         snapshot.uniqueLayerEnqueueFPS = 38
+        snapshot.clientVisibleFrameFPS = 38
 
         #expect(snapshot.bottleneckKind == .decodeBound)
     }
@@ -107,6 +110,7 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.layerEnqueueFPS = 44
         snapshot.uniqueLayerEnqueueFPS = 44
+        snapshot.clientVisibleFrameFPS = 44
         snapshot.clientPendingFrameAgeMs = 28
         snapshot.clientOverwrittenPendingFrames = 3
 
@@ -118,6 +122,7 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.layerEnqueueFPS = 56
         snapshot.uniqueLayerEnqueueFPS = 56
+        snapshot.clientVisibleFrameFPS = 56
         snapshot.clientFrameIntervalP99Ms = 55
         snapshot.clientWorstPresentationGapMs = 95
 
@@ -129,6 +134,7 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.layerEnqueueFPS = 59
         snapshot.uniqueLayerEnqueueFPS = 59
+        snapshot.clientVisibleFrameFPS = 59
         snapshot.clientFrameIntervalP99Ms = 151
 
         #expect(snapshot.bottleneckKind == .presentationBound)
@@ -155,6 +161,7 @@ struct MirageStreamBottleneckKindTests {
         snapshot.hostEncodedFPS = 42
         snapshot.layerEnqueueFPS = 44
         snapshot.uniqueLayerEnqueueFPS = 44
+        snapshot.clientVisibleFrameFPS = 44
         snapshot.clientDisplayLayerNotReadyCount = 2
 
         #expect(snapshot.bottleneckKind == .mixed)
@@ -166,6 +173,8 @@ struct MirageStreamBottleneckKindTests {
             receivedFPS: 60,
             layerEnqueueFPS: 60,
             uniqueLayerEnqueueFPS: 60,
+            clientVisibleFrameFPS: 60,
+            clientVisibleFrameCadenceKnown: true,
             pendingFrameCount: 0,
             decodeHealthy: true,
             hostEncodedFPS: 60,

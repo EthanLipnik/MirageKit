@@ -48,6 +48,8 @@ public final class MirageClientService {
         public let decodedFPS: Double
         public let layerEnqueueFPS: Double
         public let uniqueLayerEnqueueFPS: Double
+        public let visibleFrameFPS: Double
+        public let visibleFrameCadenceKnown: Bool
         public let decodeHealthy: Bool
         public let severeDecodeUnderrun: Bool
         public let clientRecoveryStatus: MirageStreamClientRecoveryStatus
@@ -64,6 +66,8 @@ public final class MirageClientService {
             decodedFPS: Double = 0,
             layerEnqueueFPS: Double = 0,
             uniqueLayerEnqueueFPS: Double = 0,
+            visibleFrameFPS: Double = 0,
+            visibleFrameCadenceKnown: Bool = false,
             decodeHealthy: Bool = true,
             severeDecodeUnderrun: Bool = false,
             clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
@@ -79,6 +83,8 @@ public final class MirageClientService {
             self.decodedFPS = decodedFPS
             self.layerEnqueueFPS = layerEnqueueFPS
             self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
+            self.visibleFrameFPS = visibleFrameFPS
+            self.visibleFrameCadenceKnown = visibleFrameCadenceKnown
             self.decodeHealthy = decodeHealthy
             self.severeDecodeUnderrun = severeDecodeUnderrun
             self.clientRecoveryStatus = clientRecoveryStatus
@@ -158,6 +164,7 @@ public final class MirageClientService {
                     "(decoded=\(Self.formatForegroundFPS(final.decodedFPS))fps, " +
                     "layer=\(Self.formatForegroundFPS(final.layerEnqueueFPS))fps, " +
                     "unique=\(Self.formatForegroundFPS(final.uniqueLayerEnqueueFPS))fps, " +
+                    "visible=\(final.visibleFrameCadenceKnown ? Self.formatForegroundFPS(final.visibleFrameFPS) : "--")fps, " +
                     "host=\(Self.formatForegroundFPS(final.hostEncodedFPS))fps)"
             )
         }
@@ -172,12 +179,13 @@ public final class MirageClientService {
         guard expectedFPS >= 20 else { return false }
         let minimumDecodedFPS = max(2.0, Double(expectedFPS) * 0.10)
         let minimumPresentedFPS = 2.0
-        if snapshot.severeDecodeUnderrun, snapshot.uniqueLayerEnqueueFPS < minimumPresentedFPS {
+        let visibleFPS = snapshot.visibleFrameCadenceKnown ? snapshot.visibleFrameFPS : 0
+        if snapshot.severeDecodeUnderrun, visibleFPS < minimumPresentedFPS {
             return true
         }
         return snapshot.decodedFPS < minimumDecodedFPS ||
-            snapshot.layerEnqueueFPS < minimumPresentedFPS ||
-            snapshot.uniqueLayerEnqueueFPS < minimumPresentedFPS
+            !snapshot.visibleFrameCadenceKnown ||
+            visibleFPS < minimumPresentedFPS
     }
 
     private nonisolated static func formatForegroundFPS(_ value: Double) -> String {
@@ -208,6 +216,8 @@ public final class MirageClientService {
         let renderSequence: UInt64
         let layerEnqueueFPS: Double?
         let uniqueLayerEnqueueFPS: Double?
+        let visibleFrameFPS: Double?
+        let visibleFrameCadenceKnown: Bool?
         let pendingFrameCount: Int?
         let renderStoreClearCount: UInt64
         let presenterTimingResetCount: UInt64
@@ -806,6 +816,7 @@ public final class MirageClientService {
     @ObservationIgnored var mediaStreamListenerTask: Task<Void, Never>?
     var activeMediaStreams: [String: LoomMultiplexedStream] = [:]
     var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
+    var videoPacketIngressProcessors: [StreamID: ClientVideoPacketIngressProcessor] = [:]
     var audioStreamReceiveTask: Task<Void, Never>?
     var qualityTestStreamReceiveTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -1145,6 +1156,8 @@ public final class MirageClientService {
             renderSequence: renderSubmissionSnapshot.sequence,
             layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS,
             uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS,
+            visibleFrameFPS: metricsSnapshot?.clientVisibleFrameFPS,
+            visibleFrameCadenceKnown: metricsSnapshot?.clientVisibleFrameCadenceKnown,
             pendingFrameCount: metricsSnapshot?.pendingFrameCount,
             renderStoreClearCount: renderDiagnostics.clearCount,
             presenterTimingResetCount: renderDiagnostics.presenterTimingResetCount,
@@ -1195,10 +1208,16 @@ public final class MirageClientService {
                 .map { LoomDiagnosticsValue.int(Int(clamping: $0.generation)) } ?? .null,
             "client.primaryStream.renderSequence": renderSubmissionSnapshot
                 .map { LoomDiagnosticsValue.int(Int(clamping: $0.sequence)) } ?? .null,
+            "client.primaryStream.visibleRenderSequence": renderSubmissionSnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.visibleSequence)) } ?? .null,
             "client.primaryStream.layerEnqueueFPS": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.layerEnqueueFPS) } ?? .null,
             "client.primaryStream.uniqueLayerEnqueueFPS": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.uniqueLayerEnqueueFPS) } ?? .null,
+            "client.primaryStream.visibleFrameFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientVisibleFrameFPS) } ?? .null,
+            "client.primaryStream.visibleFrameCadenceKnown": primarySnapshot
+                .map { LoomDiagnosticsValue.bool($0.clientVisibleFrameCadenceKnown) } ?? .null,
             "client.primaryStream.renderStoreClearCount": renderDiagnosticsSnapshot
                 .map { LoomDiagnosticsValue.int(Int(clamping: $0.clearCount)) } ?? .null,
             "client.primaryStream.renderGenerationBumpCount": renderDiagnosticsSnapshot
@@ -1248,10 +1267,58 @@ public final class MirageClientService {
                 .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP95Ms) } ?? .null,
             "client.primaryStream.receivedFrameIntervalP99Ms": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP99Ms) } ?? .null,
+            "client.primaryStream.loomStreamDeliveryFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientLoomStreamDeliveryFPS) } ?? .null,
+            "client.primaryStream.loomStreamDeliveryGapMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientLoomStreamDeliveryGapMaxMs) } ?? .null,
+            "client.primaryStream.rawMediaPacketIngressFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientRawMediaPacketIngressFPS) } ?? .null,
+            "client.primaryStream.incomingMediaBatchFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchFPS) } ?? .null,
+            "client.primaryStream.incomingMediaBatchIntervalMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchIntervalMaxMs) } ?? .null,
+            "client.primaryStream.incomingMediaBatchMaxSize": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientIncomingMediaBatchMaxSize) } ?? .null,
+            "client.primaryStream.incomingMediaBatchAverageSize": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchAverageSize) } ?? .null,
+            "client.primaryStream.videoIngressQueuedBatchCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientVideoIngressQueuedBatchCount) } ?? .null,
+            "client.primaryStream.videoIngressQueuedPacketCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int($0.clientVideoIngressQueuedPacketCount) } ?? .null,
+            "client.primaryStream.videoIngressQueueAgeMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientVideoIngressQueueAgeMaxMs) } ?? .null,
+            "client.primaryStream.videoIngressProcessorWakeDelayMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientVideoIngressProcessorWakeDelayMaxMs) } ?? .null,
+            "client.primaryStream.videoIngressStalePacketDropCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientVideoIngressStalePacketDropCount)) } ?? .null,
+            "client.primaryStream.acceptedMediaMaxPacketSize": primarySnapshot?.clientAcceptedMediaMaxPacketSize
+                .map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.mediaPayloadEncryptionEnabled": primarySnapshot?.clientMediaPayloadEncryptionEnabled
+                .map(LoomDiagnosticsValue.bool) ?? .null,
+            "client.primaryStream.displayLinkCallbackFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientDisplayLinkCallbackFPS) } ?? .null,
+            "client.primaryStream.displayTickWorkerFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientDisplayTickWorkerFPS) } ?? .null,
+            "client.primaryStream.displayTickMainRelayFPS": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientDisplayTickMainRelayFPS) } ?? .null,
             "client.primaryStream.frameIntervalMaxMs": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.clientFrameIntervalMaxMs) } ?? .null,
             "client.primaryStream.displayTickIntervalMaxMs": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.clientDisplayTickIntervalMaxMs) } ?? .null,
+            "client.primaryStream.displayTickMainDelayMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientDisplayTickMainDelayMaxMs) } ?? .null,
+            "client.primaryStream.renderWorkerSubmitDelayMaxMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientRenderWorkerSubmitDelayMaxMs) } ?? .null,
+            "client.primaryStream.sampleBufferRendererNotReadyCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientSampleBufferRendererNotReadyCount)) } ?? .null,
+            "client.primaryStream.displayImmediatelySubmittedCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientDisplayImmediatelySubmittedCount)) } ?? .null,
+            "client.primaryStream.rendererReadyDrainPassCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyDrainPassCount)) } ?? .null,
+            "client.primaryStream.rendererReadyDrainSubmittedCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyDrainSubmittedCount)) } ?? .null,
+            "client.primaryStream.rendererReadyRearmCount": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyRearmCount)) } ?? .null,
             "client.primaryStream.oldestUnsubmittedAgeMs": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.clientOldestUnsubmittedAgeMs) } ?? .null,
             "client.primaryStream.newestUnsubmittedAgeMs": primarySnapshot
@@ -1303,6 +1370,9 @@ public final class MirageClientService {
                 let ageSeconds = max(0, now - summary.retiredAt)
                 let layerEnqueueFPS = summary.layerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
                 let uniqueLayerEnqueueFPS = summary.uniqueLayerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
+                let visibleFrameFPS = summary.visibleFrameCadenceKnown == true
+                    ? summary.visibleFrameFPS.map { String(format: "%.1f", $0) } ?? "nil"
+                    : "unknown"
                 let pending = summary.pendingFrameCount.map(String.init) ?? "nil"
                 let outcome = summary.lastPresentationRecoveryOutcome ?? "nil"
                 return [
@@ -1313,6 +1383,7 @@ public final class MirageClientService {
                     "renderSequence=\(summary.renderSequence)",
                     "layerEnqueueFPS=\(layerEnqueueFPS)",
                     "uniqueLayerEnqueueFPS=\(uniqueLayerEnqueueFPS)",
+                    "visibleFrameFPS=\(visibleFrameFPS)",
                     "pending=\(pending)",
                     "clears=\(summary.renderStoreClearCount)",
                     "presenterTimingResets=\(summary.presenterTimingResetCount)",

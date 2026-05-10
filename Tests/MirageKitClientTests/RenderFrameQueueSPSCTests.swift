@@ -45,6 +45,158 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
     }
 
+    @Test("Lowest latency replaces older pending frames with the newest frame")
+    func lowestLatencyReplacesOlderPendingFramesWithNewestFrame() {
+        let streamID: StreamID = 9010
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 10 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now + Double(index) * 0.001,
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                for: streamID
+            )
+        }
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 10)
+        #expect(telemetry.overwrittenPendingFrames == 9)
+        #expect(telemetry.renderStoreOverwriteFPS >= 9)
+        #expect(telemetry.lowestLatencyFreshBacklogDrops == 0)
+    }
+
+    @Test("Lowest latency drops a stale singleton instead of presenting it late")
+    func lowestLatencyDropsStaleSingletonInsteadOfPresentingItLate() {
+        let streamID: StreamID = 9011
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        Thread.sleep(forTimeInterval: 0.05)
+
+        let baseline = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: baseline)
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(frame == nil)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(telemetry.lowestLatencyFreshBacklogDrops == 1)
+        #expect(telemetry.lateFrameDrops == 1)
+    }
+
+    @Test("Smoothest preserves one fresh frame only while display cadence is healthy")
+    func smoothestPreservesOneFreshFrameOnlyWhileDisplayCadenceIsHealthy() {
+        let healthyStreamID: StreamID = 9012
+        let underfiringStreamID: StreamID = 9013
+        MirageRenderStreamStore.shared.clear(for: healthyStreamID)
+        MirageRenderStreamStore.shared.clear(for: underfiringStreamID)
+        defer {
+            MirageRenderStreamStore.shared.clear(for: healthyStreamID)
+            MirageRenderStreamStore.shared.clear(for: underfiringStreamID)
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: healthyStreamID,
+            target: MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60, latencyMode: .smoothest)
+        )
+        let healthyFirst = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: now,
+            presentationTime: .zero,
+            for: healthyStreamID
+        )
+        let healthySecond = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: now + 0.001,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: healthyStreamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: healthyFirst.cursor,
+            mappedPresentationTime: .zero,
+            for: healthyStreamID
+        )
+
+        #expect(
+            MirageRenderStreamStore.shared.shouldPreserveSmoothestPacingFrame(
+                for: healthyStreamID,
+                after: healthyFirst.cursor
+            )
+        )
+        #expect(
+            MirageRenderStreamStore.shared.hasFrameForPresentation(
+                for: healthyStreamID,
+                after: healthyFirst.cursor
+            )
+        )
+        #expect(healthySecond.sequence == 2)
+
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: underfiringStreamID,
+            target: MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 40, latencyMode: .smoothest)
+        )
+        let underfiringFirst = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: now,
+            presentationTime: .zero,
+            for: underfiringStreamID
+        )
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: now + 0.001,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: underfiringStreamID
+        )
+        MirageRenderStreamStore.shared.noteDisplayTick(for: underfiringStreamID)
+        Thread.sleep(forTimeInterval: 0.03)
+        MirageRenderStreamStore.shared.noteDisplayTick(for: underfiringStreamID)
+        MirageRenderStreamStore.shared.markSubmitted(
+            cursor: underfiringFirst.cursor,
+            mappedPresentationTime: .zero,
+            for: underfiringStreamID
+        )
+
+        #expect(
+            !MirageRenderStreamStore.shared.shouldPreserveSmoothestPacingFrame(
+                for: underfiringStreamID,
+                after: underfiringFirst.cursor
+            )
+        )
+
+        let underfiringTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: underfiringStreamID)
+        #expect(underfiringTelemetry.displayCadenceBelowSourceCount == 1)
+    }
+
     @Test("Taking pending frames preserves bounded playout delay")
     func takePendingFramesPreservesBoundedPlayoutDelay() {
         let streamID: StreamID = 302
@@ -215,12 +367,13 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         let generationBeforeTrim = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
         var cursors: [MirageRenderCursor] = []
+        let now = CFAbsoluteTimeGetCurrent()
 
         for index in 0 ..< 3 {
             let result = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: Double(index),
+                decodeTime: now + Double(index) * 0.001,
                 presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
@@ -246,11 +399,12 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 307
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let now = CFAbsoluteTimeGetCurrent()
 
         _ = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: .zero,
             for: streamID
         )
@@ -301,11 +455,12 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 311
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let now = CFAbsoluteTimeGetCurrent()
 
         let first = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: .zero,
             for: streamID
         )
@@ -320,7 +475,7 @@ struct RenderFrameQueueSPSCTests {
         let second = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
-            decodeTime: 2,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
             presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
             for: streamID
         )
@@ -362,11 +517,12 @@ struct RenderFrameQueueSPSCTests {
         let streamID: StreamID = 313
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let now = CFAbsoluteTimeGetCurrent()
 
         let result = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
-            decodeTime: 1,
+            decodeTime: now,
             presentationTime: .zero,
             for: streamID
         )
@@ -433,6 +589,120 @@ struct RenderFrameQueueSPSCTests {
         #expect(future.cursor.isAfter(second.cursor))
     }
 
+    @Test("Smoothest drains fresh upstream bursts in order")
+    func smoothestDrainsFreshUpstreamBurstsInOrder() {
+        let streamID: StreamID = 317
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        let freshDecodeTime = CFAbsoluteTimeGetCurrent() + 1
+        var cursors: [MirageRenderCursor] = []
+        for index in 0 ..< 6 {
+            let result = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: freshDecodeTime,
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                for: streamID
+            )
+            cursors.append(result.cursor)
+        }
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 6)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor == cursors.first)
+
+        var submittedCursor = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        for cursor in cursors {
+            let selected = MirageRenderStreamStore.shared.frameForPresentation(
+                for: streamID,
+                after: submittedCursor
+            )
+            #expect(selected?.cursor == cursor)
+            MirageRenderStreamStore.shared.markSubmitted(
+                cursor: cursor,
+                mappedPresentationTime: CMTime(seconds: Double(cursor.sequence), preferredTimescale: 60),
+                for: streamID
+            )
+            submittedCursor = cursor
+        }
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID, after: submittedCursor) == 0)
+    }
+
+    @Test("Smoothest keeps one playout frame after decoded output gaps")
+    func smoothestKeepsOnePlayoutFrameAfterDecodedOutputGaps() {
+        let streamID: StreamID = 318
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        let baseDecodeTime = CFAbsoluteTimeGetCurrent()
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: baseDecodeTime,
+            presentationTime: .zero,
+            for: streamID
+        )
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: baseDecodeTime + 0.105,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        #expect(timing.playoutDelayFrames == 1)
+
+        for index in 2 ..< 10 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: baseDecodeTime + 0.105 + (Double(index - 1) / 60.0),
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                for: streamID
+            )
+        }
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.pendingFrameCount <= 6)
+    }
+
+    @Test("Lowest latency ignores decoded output gaps and keeps latest only")
+    func lowestLatencyIgnoresDecodedOutputGapsAndKeepsLatestOnly() {
+        let streamID: StreamID = 319
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
+
+        let baseDecodeTime = CFAbsoluteTimeGetCurrent()
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: baseDecodeTime,
+            presentationTime: .zero,
+            for: streamID
+        )
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: baseDecodeTime + 0.105,
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        #expect(timing.playoutDelayFrames == 0)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
+    }
+
     @Test("Pending frame cursor fast path matches selection semantics")
     func pendingFrameCursorFastPathMatchesSelectionSemantics() {
         let streamID: StreamID = 315
@@ -490,6 +760,7 @@ struct RenderFrameQueueSPSCTests {
         #expect(!MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: retainedSecond.cursor))
 
         MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
         let newGenerationFrame = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
             contentRect: .zero,

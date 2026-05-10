@@ -284,6 +284,10 @@ public class MirageSampleBufferView: UIView {
 
     @objc private func handlePresentationDisplayLinkTick(_ displayLink: CADisplayLink) {
         let referenceTime = displayLink.targetTimestamp > 0 ? displayLink.targetTimestamp : CACurrentMediaTime()
+        if let streamID {
+            let delayMs = max(0, CACurrentMediaTime() - referenceTime) * 1000
+            MirageRenderStreamStore.shared.noteDisplayTickMainRelay(for: streamID, delayMs: delayMs)
+        }
         presentationDisplayTickHandler?(referenceTime)
     }
 }

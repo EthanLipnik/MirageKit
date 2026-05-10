@@ -102,12 +102,22 @@ extension StreamController {
                 receivedFrameIntervalP95Ms: frameMetrics.receivedFrameIntervalP95Ms,
                 receivedFrameIntervalP99Ms: frameMetrics.receivedFrameIntervalP99Ms,
                 displayTickFPS: renderTelemetry.displayTickFPS,
+                presentationPassFPS: renderTelemetry.presentationPassFPS,
                 submitAttemptFPS: renderTelemetry.submitAttemptFPS,
                 layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
                 uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS,
+                visibleFrameFPS: renderTelemetry.visibleFrameFPS,
+                visibleFrameCadenceKnown: renderTelemetry.visibleFrameCadenceKnown,
+                visibleFrameIntervalP99Ms: renderTelemetry.visibleFrameIntervalP99Ms,
+                visibleWorstPresentationGapMs: renderTelemetry.visibleWorstPresentationGapMs,
+                repeatedSourceFrameCount: renderTelemetry.repeatedSourceFrameCount,
+                framesSubmittedPerPassAverage: renderTelemetry.framesSubmittedPerPassAverage,
+                framesSubmittedPerPassMax: renderTelemetry.framesSubmittedPerPassMax,
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+                renderStoreOverwriteFPS: renderTelemetry.renderStoreOverwriteFPS,
+                lowestLatencyFreshBacklogDrops: renderTelemetry.lowestLatencyFreshBacklogDrops,
                 lateFrameDrops: renderTelemetry.lateFrameDrops,
                 coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
                 duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
@@ -115,6 +125,8 @@ extension StreamController {
                 displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
                 repeatedFrameCount: renderTelemetry.repeatedFrameCount,
                 missedVSyncCount: renderTelemetry.missedVSyncCount,
+                smoothestOneFrameHoldCount: renderTelemetry.smoothestOneFrameHoldCount,
+                displayCadenceBelowSourceCount: renderTelemetry.displayCadenceBelowSourceCount,
                 displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
                 displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
                 playoutDelayFrames: renderTelemetry.playoutDelayFrames,
@@ -242,17 +254,17 @@ extension StreamController {
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         let referenceNow = now ?? currentTime()
 
-        if snapshot.cursor.isAfter(lastPresentedCursorObserved) {
-            lastPresentedCursorObserved = snapshot.cursor
-            lastPresentedProgressTime = snapshot.submittedTime > 0 ? snapshot.submittedTime : referenceNow
+        if snapshot.visibleCursor.isAfter(lastPresentedCursorObserved) {
+            lastPresentedCursorObserved = snapshot.visibleCursor
+            lastPresentedProgressTime = snapshot.visibleSubmittedTime > 0 ? snapshot.visibleSubmittedTime : referenceNow
             presentationProgressRequiresSequenceAdvance = false
             return true
         }
 
         if lastPresentedProgressTime == 0 {
-            if snapshot.hasSubmission {
-                lastPresentedCursorObserved = snapshot.cursor
-                lastPresentedProgressTime = snapshot.submittedTime
+            if snapshot.hasVisibleFrame {
+                lastPresentedCursorObserved = snapshot.visibleCursor
+                lastPresentedProgressTime = snapshot.visibleSubmittedTime
                 presentationProgressRequiresSequenceAdvance = false
                 return true
             }
@@ -303,7 +315,7 @@ extension StreamController {
 
     func hasStableRecoveryPresentationProgress() -> Bool {
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return true }
-        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
         let presentedFrameCount = Self.recoveryPresentedFrameCount(
             baseline: recoveryStabilizationBaselineCursor,
             latest: submittedCursor
@@ -316,7 +328,7 @@ extension StreamController {
         let now = currentTime()
         guard now - lastRecoveryStabilizationLogTime >= Self.recoveryStabilizationLogInterval else { return }
         lastRecoveryStabilizationLogTime = now
-        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).cursor
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
         let presentedFrameCount = Self.recoveryPresentedFrameCount(
             baseline: recoveryStabilizationBaselineCursor,
             latest: submittedCursor
@@ -1060,7 +1072,9 @@ extension StreamController {
             decodedFPS: frameMetrics.decodedFPS,
             receivedFPS: frameMetrics.receivedFPS,
             layerEnqueueFPS: renderTelemetry.layerEnqueueFPS,
-            uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS
+            uniqueLayerEnqueueFPS: renderTelemetry.uniqueLayerEnqueueFPS,
+            visibleFrameFPS: renderTelemetry.visibleFrameFPS,
+            visibleFrameCadenceKnown: renderTelemetry.visibleFrameCadenceKnown
         )
         let waitReason = failure.waitReason ?? "unknown"
 
@@ -1082,7 +1096,8 @@ extension StreamController {
                 "decoded=\(String(format: "%.1f", failure.decodedFPS))fps, " +
                 "received=\(String(format: "%.1f", failure.receivedFPS))fps, " +
                 "layer=\(String(format: "%.1f", failure.layerEnqueueFPS))fps, " +
-                "unique=\(String(format: "%.1f", failure.uniqueLayerEnqueueFPS))fps)"
+                "unique=\(String(format: "%.1f", failure.uniqueLayerEnqueueFPS))fps, " +
+                "visible=\(failure.visibleFrameCadenceKnown ? String(format: "%.1f", failure.visibleFrameFPS) : "unknown")fps)"
         )
 
         guard let onTerminalLiveRecoveryFailure else { return }

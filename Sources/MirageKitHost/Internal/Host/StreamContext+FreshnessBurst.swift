@@ -72,44 +72,45 @@ extension StreamContext {
         return true
     }
 
-    var usesSoftSenderDelaySmoothing: Bool {
-        latencyMode == .smoothest
-    }
-
-    func enterSoftFreshnessDrainIfNeeded(frameBudgetMs: Double, reason: String) {
-        guard usesSoftSenderDelaySmoothing else { return }
-        guard !freshnessBurstActive, !latencyBurstActive else { return }
+    @discardableResult
+    func applySmoothestSenderPressureRelief(reason: String) async -> Bool {
+        guard latencyMode == .smoothest else { return false }
+        guard !freshnessBurstActive, !latencyBurstActive else { return false }
 
         let now = CFAbsoluteTimeGetCurrent()
-        let clearedBacklog = frameInbox.clear()
-        if clearedBacklog > 0 {
-            let droppedCount = UInt64(clearedBacklog)
-            captureDroppedIntervalCount += droppedCount
-            droppedFrameCount += droppedCount
+        qualityRaiseSuppressionUntil = max(
+            qualityRaiseSuppressionUntil,
+            now + qualityRaisePostSpikeCooldown
+        )
+        qualityCeiling = resolvedQualityCeiling()
+        if activeQuality > qualityCeiling {
+            activeQuality = qualityCeiling
         }
 
-        softFreshnessDrainActive = true
-        softFreshnessDrainDeadline = now + max(0.12, min(0.35, frameBudgetMs * 3.0 / 1000.0))
-        qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
-        softFreshnessDrainCount &+= 1
-        latencyBurstDrainsNewestFrames = true
-        scheduleProcessingIfNeeded()
-
-        MirageLogger.metrics(
-            "Soft freshness drain enter for stream \(streamID): " +
-                "reason=\(reason), clearedFrames=\(clearedBacklog), count=\(softFreshnessDrainCount)"
+        let keyframeCeiling = min(encoderConfig.keyframeQuality, qualityCeiling)
+        let nextQuality = max(
+            qualityFloor,
+            min(activeQuality - qualityDropStep, keyframeCeiling - qualityDropStep)
         )
-    }
+        qualityOverBudgetCount = 0
+        qualityUnderBudgetCount = 0
+        guard nextQuality < activeQuality else {
+            MirageLogger.metrics(
+                "Smoothest sender pressure relief held for stream \(streamID): " +
+                    "reason=\(reason), quality=\(activeQuality)"
+            )
+            return false
+        }
 
-    func expireSoftFreshnessDrainIfNeeded(at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
-        guard softFreshnessDrainActive else { return }
-        guard !freshnessBurstActive, !latencyBurstActive else { return }
-        guard now >= softFreshnessDrainDeadline else { return }
+        activeQuality = nextQuality
+        lastQualityAdjustmentTime = now
+        await encoder?.updateQuality(activeQuality)
 
-        softFreshnessDrainActive = false
-        softFreshnessDrainDeadline = 0
-        latencyBurstDrainsNewestFrames = false
-        MirageLogger.metrics("Soft freshness drain exit for stream \(streamID)")
+        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.metrics(
+            "Smoothest sender pressure quality down to \(qualityText) for stream \(streamID): reason=\(reason)"
+        )
+        return true
     }
 
     @discardableResult

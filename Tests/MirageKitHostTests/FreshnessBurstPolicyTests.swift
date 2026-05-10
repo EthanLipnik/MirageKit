@@ -182,13 +182,15 @@ struct FreshnessBurstPolicyTests {
         #expect(await context.senderFrameBudgetDelayOverrunCount == 0)
     }
 
-    @Test("Smoothest non-keyframe sender delay uses soft drain instead of recovery burst")
-    func smoothestNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
+    @Test("Smoothest non-keyframe sender delay lowers quality without newest drain")
+    func smoothestNonKeyframeSenderDelayLowersQualityWithoutNewestDrain() async {
         let context = makeContext(
             bitrate: 120_000_000,
             captureQueueDepth: 8,
             latencyMode: .smoothest
         )
+        let baselineQuality = await context.activeQuality
+        let baselineKeyframeQuality = await context.keyframeQuality(for: 0)
         let telemetry = makeSenderTelemetry(
             sendCompletionMaxMs: 55,
             nonKeyframeSendCompletionMaxMs: 55
@@ -206,13 +208,51 @@ struct FreshnessBurstPolicyTests {
         let burst = await context.freshnessBurstSnapshot()
         #expect(!burst.isActive)
         #expect(!burst.latencyBurstActive)
-        #expect(burst.newestFrameDrainEnabled)
+        #expect(!burst.newestFrameDrainEnabled)
         #expect(burst.entryCount == 0)
         #expect(burst.recoveryKeyframeCount == 0)
+        #expect(burst.activeQuality < baselineQuality)
+        #expect(await context.keyframeQuality(for: 0) < baselineKeyframeQuality)
+        #expect(await context.qualityRaiseSuppressionUntil > 0)
+    }
 
-        await context.expireSoftFreshnessDrainIfNeeded(at: CFAbsoluteTimeGetCurrent() + 1)
-        let expired = await context.freshnessBurstSnapshot()
-        #expect(!expired.newestFrameDrainEnabled)
+    @Test("Smoothest dependency sender drop waits for receiver recovery")
+    func smoothestDependencySenderDropWaitsForReceiverRecovery() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 8,
+            latencyMode: .smoothest
+        )
+        await context.configureRunningForSenderDropTest()
+        let baselineQuality = await context.activeQuality
+
+        await context.handlePacketSenderDependencyFrameDrop(
+            streamID: 88,
+            frameNumber: 1449,
+            reason: .expiredDuringSend
+        )
+
+        #expect(await context.pendingKeyframeReason == nil)
+        #expect(await context.activeQuality < baselineQuality)
+        #expect(context.lossModeDeadline == 0)
+    }
+
+    @Test("Lowest-latency dependency sender drop still queues recovery keyframe")
+    func lowestLatencyDependencySenderDropStillQueuesRecoveryKeyframe() async {
+        let context = makeContext(
+            bitrate: 120_000_000,
+            captureQueueDepth: 1
+        )
+        await context.configureRunningForSenderDropTest()
+
+        await context.handlePacketSenderDependencyFrameDrop(
+            streamID: 88,
+            frameNumber: 1449,
+            reason: .expiredDuringSend
+        )
+
+        #expect(await context.pendingKeyframeReason == "Packet sender dependency drop")
+        #expect(context.lossModeDeadline > 0)
     }
 
     private func makeContext(
@@ -269,6 +309,13 @@ struct FreshnessBurstPolicyTests {
             generationAbortDrops: 0,
             nonKeyframeHoldDrops: 0
         )
+    }
+}
+
+private extension StreamContext {
+    func configureRunningForSenderDropTest() {
+        isRunning = true
+        shouldEncodeFrames = true
     }
 }
 #endif
