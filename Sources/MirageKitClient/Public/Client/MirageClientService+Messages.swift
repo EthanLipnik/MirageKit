@@ -18,6 +18,7 @@ extension MirageClientService {
             .windowUpdate: { [weak self] in self?.handleWindowUpdate($0) },
             .streamStarted: { [weak self] in await self?.handleStreamStarted($0) },
             .streamStopped: { [weak self] in self?.handleStreamStopped($0) },
+            .streamEncoderSettingsChangeAck: { [weak self] in await self?.handleStreamEncoderSettingsChangeAck($0) },
             .streamMetricsUpdate: { [weak self] in self?.handleStreamMetricsUpdate($0) },
             .keyframeRecoveryAck: { [weak self] in self?.handleKeyframeRecoveryAck($0) },
             .error: { [weak self] in self?.handleErrorMessage($0) },

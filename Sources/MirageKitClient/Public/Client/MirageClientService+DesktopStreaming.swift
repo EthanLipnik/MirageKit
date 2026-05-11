@@ -339,6 +339,16 @@ public extension MirageClientService {
         guard hasFailedStreamActive || (!enforcesRestartLimit && desktopStreamID == nil) else {
             return nil
         }
+        if hasFailedStreamActive,
+           sessionStore.sessionByStreamID(failedStreamID)?.hasPresentedFrame == true {
+            let denialCount = metricsStore.recordTopologyMutationDenied(streamID: failedStreamID)
+            MirageLogger.client(
+                "Suppressing automatic desktop topology restart after \(logContext): " +
+                    "stream \(failedStreamID) has already presented a frame; " +
+                    "reason=\(reasonLabel), denials=\(denialCount)"
+            )
+            return nil
+        }
         guard !enforcesRestartLimit || desktopStreamRestartAttempts < desktopStreamRestartLimit else {
             return nil
         }

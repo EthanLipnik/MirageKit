@@ -341,6 +341,38 @@ extension StreamController {
         )
     }
 
+    func hasAnyRecoveryPresentationProgress() -> Bool {
+        guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return false }
+        if recoveryStabilizationDecodedFrameCount > 0 { return true }
+
+        let submittedCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
+        return Self.recoveryPresentedFrameCount(
+            baseline: recoveryStabilizationBaselineCursor,
+            latest: submittedCursor
+        ) > 0
+    }
+
+    func continueSoftRecoveryAfterPartialProgress(elapsedMs: Int) async -> Bool {
+        guard hasAnyRecoveryPresentationProgress() else { return false }
+        MirageLogger.client(
+            "Keyframe recovery made partial presentation progress for stream \(streamID); " +
+                "keeping decoder session alive and continuing soft recovery (elapsedMs=\(elapsedMs))"
+        )
+        await notifyPresentationRecoveryStall()
+        recoveryCoordinator.recordProgress()
+        keyframeRecoveryAttempt = 0
+        lastRecoveryRequestTime = 0
+        lastRecoveryRequestDispatchTime = 0
+        if clientRecoveryStatus != .postResizeAwaitingFirstFrame {
+            await setClientRecoveryStatus(.keyframeRecovery)
+        }
+        let didDispatch = await requestKeyframeRecovery(reason: .keyframeRecoveryLoop)
+        if didDispatch {
+            keyframeRecoveryAttempt = 1
+        }
+        return true
+    }
+
     nonisolated static func recoveryPresentedFrameCount(
         baseline: MirageRenderCursor,
         latest: MirageRenderCursor
@@ -530,6 +562,7 @@ extension StreamController {
         let shouldNotify = !hasPresentedFirstFrame || wasAwaitingFirstPresentation
         if !hasPresentedFirstFrame {
             hasPresentedFirstFrame = true
+            firstPresentedFrameTime = now
         }
         presentationProgressRequiresSequenceAdvance = false
         if !hasDecodedFirstFrame {
@@ -732,8 +765,21 @@ extension StreamController {
     }
 
     func recordQueueDrop() {
-        queueDropsSinceLastLog += 1
-        metricsTracker.recordQueueDrop()
+        recordQueueDrops(1)
+    }
+
+    func recordQueueDrops(_ count: Int) {
+        guard count > 0 else { return }
+        let dropCount = UInt64(count)
+        queueDropsSinceLastLog &+= dropCount
+        metricsTracker.recordQueueDrop(count: dropCount)
+    }
+
+    func notifyPresentationRecoveryStall() async {
+        let handler = onStallEvent
+        await MainActor.run {
+            handler?(.presentationRecovery)
+        }
     }
 
     func maybeLogDecodeBackpressure(queueDepth: Int) {
@@ -745,22 +791,8 @@ extension StreamController {
         lastBackpressureLogTime = now
         MirageLogger.client(
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "requesting keyframe recovery"
+                "performing freshness catch-up"
         )
-    }
-
-    func handleDecodeQueueEviction(frameNumber: UInt32) async {
-        guard isRunning, !isStopping else { return }
-        clearQueuedFramesForRecovery()
-        reassembler.enterKeyframeOnlyMode()
-        await decoder.beginRecoveryTracking()
-        if presentationTier == .activeLive {
-            await startKeyframeRecoveryLoopIfNeeded()
-        }
-        MirageLogger.client(
-            "Decode queue evicted dependent frame \(frameNumber) for stream \(streamID); requesting recovery keyframe"
-        )
-        await requestKeyframeRecovery(reason: .frameLoss)
     }
 
     func handleFrameLossSignal(
@@ -1048,8 +1080,23 @@ extension StreamController {
             return false
         }
 
-        await failLiveRecovery(reason: reason, waitReason: waitReason)
+        MirageLogger.client(
+            "Live recovery hard-reset budget reached for stream \(streamID); holding topology steady"
+        )
+        liveRecoveryHardRecoveryTimestamps.removeAll(keepingCapacity: false)
+        await requestKeyframeRecovery(reason: reason)
         return true
+    }
+
+    func isWithinStartupBurstRecoveryHoldoff(now: CFAbsoluteTime) -> Bool {
+        hasPresentedFirstFrame &&
+            firstPresentedFrameTime > 0 &&
+            now - firstPresentedFrameTime < Self.startupBurstRecoveryEscalationHoldoff
+    }
+
+    func shouldSuppressStartupBurstEscalation(now: CFAbsoluteTime) -> Bool {
+        isWithinStartupBurstRecoveryHoldoff(now: now) &&
+            recoveryCoordinator.lastHostAck?.accepted != false
     }
 
     func failLiveRecovery(reason: RecoveryReason, waitReason: String?) async {
@@ -1220,8 +1267,8 @@ extension StreamController {
     }
 
     private func runKeyframeRecoveryLoop() async {
-        let episodeStartedAt = currentTime()
-        let episodeDeadline = episodeStartedAt + Self.keyframeRecoveryEpisodeDeadline(
+        var episodeStartedAt = currentTime()
+        var episodeDeadline = episodeStartedAt + Self.keyframeRecoveryEpisodeDeadline(
             targetFPS: decodeSchedulerTargetFPS
         )
         defer { keyframeRecoveryTask = nil }
@@ -1233,9 +1280,17 @@ extension StreamController {
             let now = currentTime()
             if now >= episodeDeadline ||
                 keyframeRecoveryAttempt >= Self.activeRecoveryMaxKeyframeAttempts {
+                let elapsedMs = Int((now - episodeStartedAt) * 1000)
+                if await continueSoftRecoveryAfterPartialProgress(elapsedMs: elapsedMs) {
+                    episodeStartedAt = now
+                    episodeDeadline = now + Self.keyframeRecoveryEpisodeDeadline(
+                        targetFPS: decodeSchedulerTargetFPS
+                    )
+                    continue
+                }
                 MirageLogger.client(
                     "Keyframe recovery episode ended for stream \(streamID) " +
-                        "(attempts=\(keyframeRecoveryAttempt), elapsedMs=\(Int((now - episodeStartedAt) * 1000)))"
+                        "(attempts=\(keyframeRecoveryAttempt), elapsedMs=\(elapsedMs))"
                 )
                 await escalateKeyframeRecoveryAfterExhaustion(
                     episodeStartedAt: episodeStartedAt,
@@ -1283,6 +1338,14 @@ extension StreamController {
               presentationTier == .activeLive,
               reassembler.isAwaitingKeyframe(),
               clientRecoveryStatus != .hardRecovery else {
+            return
+        }
+        if shouldSuppressStartupBurstEscalation(now: now) {
+            MirageLogger.client(
+                "Keyframe recovery exhausted during startup burst holdoff for stream \(streamID); " +
+                    "holding topology steady"
+            )
+            await requestKeyframeRecovery(reason: .frameLoss)
             return
         }
 
@@ -1459,6 +1522,14 @@ extension StreamController {
                 decodedFPS: metricsSnapshot.decodedFPS,
                 receivedFPS: metricsSnapshot.receivedFPS
             )
+            if shouldSuppressStartupBurstEscalation(now: now) {
+                MirageLogger.client(
+                    "Presentation stall persisted during startup burst holdoff " +
+                        "(\(kind.rawValue), attempt \(attempt)) for stream \(streamID); requesting soft recovery"
+                )
+                await requestSoftRecovery(reason: .freezeTimeout)
+                return
+            }
             MirageLogger.client(
                 "Presentation stall persisted (\(kind.rawValue), attempt \(attempt)) for stream \(streamID); " +
                     "escalating to hard recovery"

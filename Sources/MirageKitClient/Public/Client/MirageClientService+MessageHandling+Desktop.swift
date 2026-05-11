@@ -260,12 +260,16 @@ extension MirageClientService {
             if previousDesktopSessionID != receivedDesktopSessionID {
                 sessionStore.resetFirstFrameReadiness(for: streamID)
                 desktopDimensionTokenByStream.removeValue(forKey: streamID)
+                clearPendingEncoderReconfiguration(for: streamID)
+                activeEncoderStreamScaleByStream.removeValue(forKey: streamID)
                 if let previousDesktopSessionID {
                     desktopPresentationGenerationBySessionID.removeValue(forKey: previousDesktopSessionID)
                 }
                 if let previousStreamID {
                     clearDesktopResizeState(streamID: previousStreamID, preserveLastSentTarget: true)
                     desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
+                    clearPendingEncoderReconfiguration(for: previousStreamID)
+                    activeEncoderStreamScaleByStream.removeValue(forKey: previousStreamID)
                 } else {
                     desktopResizeCoordinator.clearAllState(preserveLastSentTarget: true)
                 }
@@ -289,11 +293,16 @@ extension MirageClientService {
                 sessionStore.clearPostResizeTransition(for: streamID)
             }
             activeStreamCodecs[streamID] = started.codec
+            activeEncoderStreamScaleByStream[streamID] = activeEncoderStreamScaleByStream[streamID] ??
+                desktopResizeCoordinator.lastSentTarget?.requestedStreamScale ??
+                clampedStreamScale()
             if let dimensionToken {
                 desktopDimensionTokenByStream[streamID] = dimensionToken
             }
             if let previousStreamID, previousStreamID != streamID {
                 desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
+                clearPendingEncoderReconfiguration(for: previousStreamID)
+                activeEncoderStreamScaleByStream.removeValue(forKey: previousStreamID)
                 lastAutomaticDesktopWorkloadReconfigurationSummary = nil
             }
             applyRenderLatencyMode(
@@ -443,6 +452,8 @@ extension MirageClientService {
             desktopCursorPresentation = nil
             desktopPresentationGenerationBySessionID.removeValue(forKey: stopped.desktopSessionID)
             desktopDimensionTokenByStream.removeValue(forKey: streamID)
+            clearPendingEncoderReconfiguration(for: streamID)
+            activeEncoderStreamScaleByStream.removeValue(forKey: streamID)
             clearStartupAttempt(for: streamID)
             clearDesktopResizeState(streamID: streamID)
             metricsStore.clear(streamID: streamID)

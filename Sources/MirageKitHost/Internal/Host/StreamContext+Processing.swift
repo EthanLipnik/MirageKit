@@ -1148,6 +1148,7 @@ extension StreamContext {
             now: now,
             isDesktopDisplayStream: captureMode == .display && !isAppStream && virtualDisplayContext != nil,
             startupSettled: startupBaseTime == 0 || (startupRegistrationLogged && now - startupBaseTime >= 5.0),
+            receiverHasPresentedFrame: receiverHasPresentedFrame,
             isResizing: isResizing,
             isEncodingSuspendedForResize: encodingSuspendedForResize,
             targetFrameRate: currentFrameRate,

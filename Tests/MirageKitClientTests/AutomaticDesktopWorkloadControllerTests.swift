@@ -12,7 +12,7 @@ import Testing
 #if os(macOS)
 @Suite("Automatic Desktop Workload Controller")
 struct AutomaticDesktopWorkloadControllerTests {
-    @Test("Sustained 4K60 host pipeline pressure preserves 60fps by reducing resolution")
+    @Test("Sustained 4K60 host pipeline pressure preserves 60fps by reducing encoded pixels")
     func sustainedFourK60HostPipelinePressurePreserves60FPSByReducingResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         let snapshot = pipelineBoundSnapshot(
@@ -32,7 +32,9 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target == .qhd60)
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 3840)
+        #expect(target.encodedPixelSize.height < 2160)
     }
 
     @Test("Sustained 4K30 pipeline pressure drops resolution")
@@ -124,8 +126,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
-    @Test("Client presentation deficit at 60fps preserve priority holds resolution")
-    func clientPresentationDeficitAt60FPSPreservePriorityHoldsResolution() {
+    @Test("Client presentation deficit at 60fps preserve priority reduces encoded pixels")
+    func clientPresentationDeficitAt60FPSPreservePriorityReducesEncodedPixels() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -147,11 +149,18 @@ struct AutomaticDesktopWorkloadControllerTests {
             minimumTargetFrameRate: 60
         )
 
-        #expect(action == .none)
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected client-pressure workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 3840)
+        #expect(target.encodedPixelSize.height < 2160)
+        #expect(reason.contains("presentationBound"))
     }
 
-    @Test("Report-like 60fps presentation bound preserve priority holds resolution")
-    func reportLike60FPSPresentationBoundPreservePriorityHoldsResolution() {
+    @Test("Report-like 60fps presentation bound preserve priority reduces encoded pixels")
+    func reportLike60FPSPresentationBoundPreservePriorityReducesEncodedPixels() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2448,
@@ -174,7 +183,14 @@ struct AutomaticDesktopWorkloadControllerTests {
             adaptivePriority: .preserveResolutionAndBitrate
         )
 
-        #expect(action == .none)
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected report-like presentation-bound workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 2448)
+        #expect(target.encodedPixelSize.height < 1408)
+        #expect(reason.contains("presentationBound"))
     }
 
     @Test("Smoothness priority severe 60fps client collapse can reduce encoded size")
@@ -194,12 +210,11 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 72
 
-        let action = controller.advance(
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
             snapshot: snapshot,
-            resizeCriticalSectionActive: false,
             minimumTargetFrameRate: 60,
-            adaptivePriority: .prioritizeSmoothness,
-            now: 0
+            adaptivePriority: .prioritizeSmoothness
         )
 
         guard case .reconfigure(let target, let reason) = action else {
@@ -275,8 +290,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(action == .none)
     }
 
-    @Test("ProMotion presentation deficit drops FPS before resizing with fidelity priority")
-    func proMotionPresentationDeficitDropsFPSBeforeResizingWithFidelityPriority() {
+    @Test("ProMotion presentation deficit reduces encoded pixels before lowering FPS")
+    func proMotionPresentationDeficitReducesEncodedPixelsBeforeLoweringFPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -302,8 +317,87 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
+    }
+
+    @Test("Adaptive streaming controller emits an encoder-only workload vector")
+    func adaptiveStreamingControllerEmitsEncoderOnlyWorkloadVector() {
+        var controller = MirageAdaptiveStreamingController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 120,
+            cadenceFPS: 118
+        )
+        snapshot.layerEnqueueFPS = 70
+        snapshot.uniqueLayerEnqueueFPS = 70
+        snapshot.clientVisibleFrameFPS = 70
+        snapshot.clientOverwrittenPendingFrames = 8
+        snapshot.clientDisplayLayerNotReadyCount = 4
+        snapshot.clientPendingFrameAgeMs = 42
+
+        var action: MirageAdaptiveStreamingController.Action = .none
+        for sample in 0..<8 {
+            let sampleAction = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                minimumTargetFrameRate: 60,
+                maximumTargetFrameRate: 120,
+                now: CFAbsoluteTime(sample)
+            )
+            if sampleAction != .none {
+                action = sampleAction
+            }
+        }
+
+        guard case .reconfigure(let vector, _) = action else {
+            Issue.record("Expected adaptive streaming workload vector")
+            return
+        }
+        #expect(vector.phase == .encoderOnlyRelief)
+        #expect(vector.trigger == .clientPresentationPressure)
+        #expect(vector.targetFrameRate == 120)
+        #expect(vector.encodedPixelRatio < 1)
+        #expect(vector.qualityMultiplier < 1)
+    }
+
+    @Test("Adaptive streaming metrics expose active workload vector")
+    func adaptiveStreamingMetricsExposeActiveWorkloadVector() {
+        let store = MirageClientMetricsStore()
+        let currentTier = MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: CGSize(width: 2752, height: 2064),
+            targetFrameRate: 120
+        )
+        let targetTier = MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: CGSize(width: 2304, height: 1728),
+            targetFrameRate: 120
+        )
+        let vector = MirageWorkloadVector(
+            currentTier: currentTier,
+            targetTier: targetTier,
+            phase: .encoderOnlyRelief,
+            trigger: .clientPresentationPressure
+        )
+
+        store.updateAdaptiveStreamingState(
+            streamID: 77,
+            vector: vector,
+            decision: "client presentation collapse"
+        )
+        let denialCount = store.recordTopologyMutationDenied(streamID: 77)
+
+        let snapshot = store.snapshot(for: 77)
+        #expect(snapshot?.adaptiveStreamingRecoveryPhase == .encoderOnlyRelief)
+        #expect(snapshot?.adaptiveStreamingTrigger == .clientPresentationPressure)
+        #expect(snapshot?.adaptiveStreamingDecision == "client presentation collapse")
+        #expect(snapshot?.adaptiveStreamingTargetWidth == 2304)
+        #expect(snapshot?.adaptiveStreamingTargetHeight == 1728)
+        #expect(snapshot?.adaptiveStreamingTargetFrameRate == 120)
+        #expect((snapshot?.adaptiveStreamingEncodedPixelRatio ?? 1) < 1)
+        #expect(denialCount == 1)
+        #expect(snapshot?.topologyMutationDenialCount == 1)
     }
 
     @Test("Smoothness priority preserves refresh with a lower resolution first")
@@ -339,8 +433,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.encodedPixelSize.height < 2064)
     }
 
-    @Test("Severe ProMotion presentation collapse reduces workload immediately")
-    func severeProMotionPresentationCollapseReducesWorkloadImmediately() {
+    @Test("Severe ProMotion presentation collapse preserves refresh and reduces encoded pixels")
+    func severeProMotionPresentationCollapsePreservesRefreshAndReducesEncodedPixels() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -355,26 +449,25 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 48
 
-        let action = controller.advance(
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
             snapshot: snapshot,
-            resizeCriticalSectionActive: false,
             minimumTargetFrameRate: 60,
-            maximumTargetFrameRate: 120,
-            now: 0
+            maximumTargetFrameRate: 120
         )
 
         guard case .reconfigure(let target, let reason) = action else {
-            Issue.record("Expected fast workload reconfiguration")
+            Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.targetFrameRate == 60)
+        #expect(target.targetFrameRate == 120)
         #expect(target.encodedPixelSize.width < 2752)
         #expect(target.encodedPixelSize.height < 2064)
         #expect(reason.contains("client presentation collapse"))
     }
 
-    @Test("Zero-FPS client recovery collapse drops encoded pixels using client cadence")
-    func zeroFPSClientRecoveryCollapseDropsEncodedPixelsUsingClientCadence() {
+    @Test("Zero-FPS client recovery collapse reduces encoded pixels before lowering FPS")
+    func zeroFPSClientRecoveryCollapseReducesEncodedPixelsBeforeLoweringFPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -394,57 +487,58 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.clientReceivedWorstGapMs = 556
         snapshot.clientIncomingMediaBatchIntervalMaxMs = 556
 
-        let action = controller.advance(
+        let action = advanceThroughPipelinePressure(
+            controller: &controller,
             snapshot: snapshot,
-            resizeCriticalSectionActive: false,
             minimumTargetFrameRate: 60,
-            maximumTargetFrameRate: 120,
-            now: 0
+            maximumTargetFrameRate: 120
         )
 
         guard case .reconfigure(let target, let reason) = action else {
-            Issue.record("Expected fast workload reconfiguration")
+            Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.targetFrameRate == 60)
+        #expect(target.targetFrameRate == 120)
         #expect(target.encodedPixelSize.width < 2752)
         #expect(target.encodedPixelSize.height < 2064)
         #expect(reason.contains("client presentation collapse"))
     }
 
-    @Test("Post-FPS fallback decode collapse reduces encoded pixels quickly")
-    func postFPSFallbackDecodeCollapseReducesEncodedPixelsQuickly() {
+    @Test("Follow-up 60fps decode collapse reduces encoded pixels quickly")
+    func followUp60FPSDecodeCollapseReducesEncodedPixelsQuickly() {
         var controller = MirageAutomaticDesktopWorkloadController()
-        let initialCollapse = postFallbackDecodeCollapseSnapshot(
+        let initialCollapse = decodeCollapseSnapshot(
             width: 2752,
             height: 2064,
             targetFrameRate: 120
         )
 
-        let firstAction = controller.advance(
+        let firstAction = advanceThroughPipelinePressure(
+            controller: &controller,
             snapshot: initialCollapse,
-            resizeCriticalSectionActive: false,
             minimumTargetFrameRate: 60,
-            maximumTargetFrameRate: 120,
-            now: 0
+            maximumTargetFrameRate: 120
         )
         #expect(firstAction != .none)
 
-        let postFallbackCollapse = postFallbackDecodeCollapseSnapshot(
+        let followUpCollapse = decodeCollapseSnapshot(
             width: 2752,
             height: 2064,
             targetFrameRate: 60
         )
 
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
-        for sample in 1...3 {
-            action = controller.advance(
-                snapshot: postFallbackCollapse,
+        for sample in 8...12 {
+            let sampleAction = controller.advance(
+                snapshot: followUpCollapse,
                 resizeCriticalSectionActive: false,
                 minimumTargetFrameRate: 60,
                 maximumTargetFrameRate: 120,
                 now: CFAbsoluteTime(sample)
             )
+            if sampleAction != .none {
+                action = sampleAction
+            }
         }
 
         guard case .reconfigure(let target, let reason) = action else {
@@ -457,8 +551,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(reason.contains("client presentation collapse"))
     }
 
-    @Test("Virtual-display source-bound ProMotion samples drop FPS before resizing")
-    func virtualDisplaySourceBoundProMotionSamplesDropFPSBeforeResizing() {
+    @Test("Virtual-display source-bound ProMotion samples reduce encoded pixels before lowering FPS")
+    func virtualDisplaySourceBoundProMotionSamplesReduceEncodedPixelsBeforeLoweringFPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -485,8 +579,9 @@ struct AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected source-bound workload reconfiguration")
             return
         }
-        #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
+        #expect(target.targetFrameRate == 120)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
     @Test("Smoothness priority severe presentation collapse preserves refresh while reducing resolution")
@@ -556,8 +651,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.encodedPixelSize.height < 2064)
     }
 
-    @Test("Presentation cadence spikes near 60fps do not downshift preserve priority")
-    func presentationCadenceSpikesNear60FPSDoNotDownshiftPreservePriority() {
+    @Test("Sustained presentation spikes near 60fps reduce encoded pixels without lowering FPS")
+    func sustainedPresentationSpikesNear60FPSReduceEncodedPixelsWithoutLoweringFPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -576,7 +671,13 @@ struct AutomaticDesktopWorkloadControllerTests {
             minimumTargetFrameRate: 60
         )
 
-        #expect(action == .none)
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected sustained presentation jitter workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")
@@ -766,7 +867,7 @@ struct AutomaticDesktopWorkloadControllerTests {
         return snapshot
     }
 
-    private func postFallbackDecodeCollapseSnapshot(
+    private func decodeCollapseSnapshot(
         width: Int,
         height: Int,
         targetFrameRate: Int

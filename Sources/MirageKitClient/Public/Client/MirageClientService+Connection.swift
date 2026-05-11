@@ -491,6 +491,8 @@ extension MirageClientService {
         pendingStreamSetupLatencyMode = nil
         renderLatencyModeByStream.removeAll()
         desktopDimensionTokenByStream.removeAll()
+        clearAllPendingEncoderReconfigurations()
+        activeEncoderStreamScaleByStream.removeAll()
         appDimensionTokenByStream.removeAll()
         appStreamStartAcknowledgementByStreamID.removeAll()
         appAtlasLayoutsByMediaStreamID.removeAll()

@@ -52,40 +52,12 @@ struct RuntimeWorkloadSafetyPolicyTests {
         ) == nil)
     }
 
-    @Test("ProMotion stall heuristic only applies to high frame-rate streams")
-    func proMotionStallTargets() {
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 120,
-            recentStallCount: 1
-        ) == nil)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 120,
-            recentStallCount: 2
-        ) == 60)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 90,
-            recentStallCount: 2
-        ) == 60)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 60,
-            recentStallCount: 2
-        ) == nil)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 60,
-            recentStallCount: 2
-        ) == nil)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 30,
-            recentStallCount: 2
-        ) == nil)
-    }
-
-    @Test("Presenter recovery allows FPS fallback while starvation alone does not")
-    func recoveryEventsDoNotAllowFrameRateFallback() {
-        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
-        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.keyframeStarved))
-        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.packetStarved))
-        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.clientRenderCapacity))
+    @Test("Runtime stall events are telemetry for the adaptive controller, not frame-rate caps")
+    func recoveryEventsOnlyReportAdaptivePressure() {
+        #expect(MirageClientService.runtimeWorkloadSafetyStallEventReportsAdaptivePressure(.presentationRecovery))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventReportsAdaptivePressure(.keyframeStarved))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventReportsAdaptivePressure(.packetStarved))
+        #expect(MirageClientService.runtimeWorkloadSafetyStallEventReportsAdaptivePressure(.clientRenderCapacity))
     }
 
     @Test("Runtime caps clamp frame rates without forcing streams below their current target")
@@ -118,7 +90,7 @@ struct RuntimeWorkloadSafetyPolicyTests {
         service.updateMaxRefreshRateOverride(120)
         service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] = RuntimeWorkloadSafetyFrameRateCap(
             frameRate: 60,
-            reason: .promotionStall,
+            reason: .memoryPressure,
             appliedAt: CFAbsoluteTimeGetCurrent(),
             expiresAt: CFAbsoluteTimeGetCurrent() + 60
         )

@@ -96,6 +96,25 @@ extension StreamContext {
         if !queued { MirageLogger.stream("Fallback resume keyframe skipped (unable to queue)") }
     }
 
+    func forceKeyframeAfterEncoderReconfiguration() async {
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        let queued = queueKeyframe(
+            reason: "Encoder reconfiguration keyframe",
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: true,
+            advanceEpochOnReset: true,
+            urgent: true
+        )
+        guard queued else {
+            MirageLogger.stream("Encoder reconfiguration keyframe skipped (unable to queue)")
+            return
+        }
+        noteLossEvent(reason: "Encoder reconfiguration keyframe", enablePFrameFEC: true)
+        scheduleProcessingIfNeeded()
+    }
+
     func forceKeyframeAfterCaptureRestart(
         restartStreak: Int,
         shouldEscalateRecovery: Bool

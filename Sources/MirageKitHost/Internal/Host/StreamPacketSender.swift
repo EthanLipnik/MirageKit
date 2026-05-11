@@ -1124,6 +1124,13 @@ actor StreamPacketSender {
                     .timing(
                         "\(item.logPrefix) \(item.frameNumber) keyframe: \(roundedDuration)ms, \(totalFragments) packets, \(roundedBytes)KB"
                     )
+            } else {
+                queueLock.withLock {
+                    if latestKeyframeGeneration == item.generation,
+                       latestKeyframeFrameNumber == item.frameNumber {
+                        resetKeyframeTrackingLocked()
+                    }
+                }
             }
         }
     }

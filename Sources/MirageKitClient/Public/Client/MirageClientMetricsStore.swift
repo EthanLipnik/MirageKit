@@ -152,6 +152,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostUltra444Validated: Bool?
     public var clientDecoderOutputPixelFormat: String?
     public var clientUsingHardwareDecoder: Bool?
+    public var adaptiveStreamingRecoveryPhase: MirageAdaptiveStreamingRecoveryPhase?
+    public var adaptiveStreamingTrigger: MirageAdaptiveStreamingRecoveryTrigger?
+    public var adaptiveStreamingDecision: String?
+    public var adaptiveStreamingTargetWidth: Int?
+    public var adaptiveStreamingTargetHeight: Int?
+    public var adaptiveStreamingTargetFrameRate: Int?
+    public var adaptiveStreamingEncodedPixelRatio: Double?
+    public var adaptiveStreamingPixelRateRatio: Double?
+    public var adaptiveStreamingQualityMultiplier: Double?
+    public var topologyMutationDenialCount: UInt64
     package var hostCaptureIngressAverageMs: Double? = nil
     package var hostCaptureIngressMaxMs: Double? = nil
     package var hostPreEncodeWaitAverageMs: Double? = nil
@@ -414,6 +424,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostUltra444Validated: Bool? = nil,
         clientDecoderOutputPixelFormat: String? = nil,
         clientUsingHardwareDecoder: Bool? = nil,
+        adaptiveStreamingRecoveryPhase: MirageAdaptiveStreamingRecoveryPhase? = nil,
+        adaptiveStreamingTrigger: MirageAdaptiveStreamingRecoveryTrigger? = nil,
+        adaptiveStreamingDecision: String? = nil,
+        adaptiveStreamingTargetWidth: Int? = nil,
+        adaptiveStreamingTargetHeight: Int? = nil,
+        adaptiveStreamingTargetFrameRate: Int? = nil,
+        adaptiveStreamingEncodedPixelRatio: Double? = nil,
+        adaptiveStreamingPixelRateRatio: Double? = nil,
+        adaptiveStreamingQualityMultiplier: Double? = nil,
+        topologyMutationDenialCount: UInt64 = 0,
         hasHostMetrics: Bool = false
     ) {
         self.decodedFPS = decodedFPS
@@ -558,6 +578,16 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostUltra444Validated = hostUltra444Validated
         self.clientDecoderOutputPixelFormat = clientDecoderOutputPixelFormat
         self.clientUsingHardwareDecoder = clientUsingHardwareDecoder
+        self.adaptiveStreamingRecoveryPhase = adaptiveStreamingRecoveryPhase
+        self.adaptiveStreamingTrigger = adaptiveStreamingTrigger
+        self.adaptiveStreamingDecision = adaptiveStreamingDecision
+        self.adaptiveStreamingTargetWidth = adaptiveStreamingTargetWidth
+        self.adaptiveStreamingTargetHeight = adaptiveStreamingTargetHeight
+        self.adaptiveStreamingTargetFrameRate = adaptiveStreamingTargetFrameRate
+        self.adaptiveStreamingEncodedPixelRatio = adaptiveStreamingEncodedPixelRatio.map { max(0, $0) }
+        self.adaptiveStreamingPixelRateRatio = adaptiveStreamingPixelRateRatio.map { max(0, $0) }
+        self.adaptiveStreamingQualityMultiplier = adaptiveStreamingQualityMultiplier.map { max(0, $0) }
+        self.topologyMutationDenialCount = topologyMutationDenialCount
         self.hasHostMetrics = hasHostMetrics
     }
 
@@ -902,6 +932,37 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.clientUsingHardwareDecoder = usingHardwareDecoder
         metricsByStream[streamID] = snapshot
         lock.unlock()
+    }
+
+    public func updateAdaptiveStreamingState(
+        streamID: StreamID,
+        vector: MirageWorkloadVector?,
+        decision: String?
+    ) {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.adaptiveStreamingRecoveryPhase = vector?.phase
+        snapshot.adaptiveStreamingTrigger = vector?.trigger
+        snapshot.adaptiveStreamingDecision = decision
+        snapshot.adaptiveStreamingTargetWidth = vector.map { Int($0.encodedPixelSize.width) }
+        snapshot.adaptiveStreamingTargetHeight = vector.map { Int($0.encodedPixelSize.height) }
+        snapshot.adaptiveStreamingTargetFrameRate = vector?.targetFrameRate
+        snapshot.adaptiveStreamingEncodedPixelRatio = vector?.encodedPixelRatio
+        snapshot.adaptiveStreamingPixelRateRatio = vector?.pixelRateRatio
+        snapshot.adaptiveStreamingQualityMultiplier = vector?.qualityMultiplier
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+    }
+
+    @discardableResult
+    public func recordTopologyMutationDenied(streamID: StreamID) -> UInt64 {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.topologyMutationDenialCount &+= 1
+        let count = snapshot.topologyMutationDenialCount
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+        return count
     }
 
     package func updateClientVideoIngressMetrics(

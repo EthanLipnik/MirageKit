@@ -185,6 +185,7 @@ actor StreamContext {
     var lastEncodeAttemptFPS: Double?
     var lastCaptureCadenceMetrics: StreamCaptureCadenceMetrics?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
+    var receiverHasPresentedFrame = false
     var captureIngressDelayTotalMs: Double = 0
     var captureIngressDelayMaxMs: Double = 0
     var captureIngressDelayCount: UInt64 = 0

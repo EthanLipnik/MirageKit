@@ -97,6 +97,10 @@ extension MirageClientService {
         return clampStreamScale(scale)
     }
 
+    func activeEncoderStreamScale(for streamID: StreamID) -> CGFloat {
+        clampStreamScale(activeEncoderStreamScaleByStream[streamID] ?? clampedStreamScale())
+    }
+
     func clampStreamScale(_ scale: CGFloat) -> CGFloat {
         MirageStreamGeometry.clampStreamScale(scale)
     }
@@ -411,10 +415,11 @@ extension MirageClientService {
                 "deferred stream=\(streamID) reason=session-missing target=\(target.logLabel)"
             return false
         }
-        let recoveryAllowsReconfiguration = session.clientRecoveryStatus == .idle ||
-            (session.clientRecoveryStatus == .keyframeRecovery && session.hasPresentedFrame)
+        let allowsInPlaceRecoveryWorkloadChange =
+            session.clientRecoveryStatus == .idle ||
+            session.clientRecoveryStatus == .keyframeRecovery
         guard session.hasPresentedFrame,
-              recoveryAllowsReconfiguration else {
+              allowsInPlaceRecoveryWorkloadChange else {
             lastAutomaticDesktopWorkloadReconfigurationSummary =
                 "deferred stream=\(streamID) reason=session-not-ready target=\(target.logLabel) " +
                 "hasPresentedFrame=\(session.hasPresentedFrame) " +
@@ -443,7 +448,7 @@ extension MirageClientService {
         let targetEncodedSize = streamScalePlan?.encodedPixelSize ?? effectiveTarget.encodedPixelSize
         let diagnosticSuffix = Self.automaticDesktopWorkloadDiagnosticsSuffix(
             baseDisplayPixelSize: desktopStreamResolution,
-            currentStreamScale: clampedStreamScale(),
+            currentStreamScale: activeEncoderStreamScale(for: streamID),
             plannedEncodedPixelSize: targetEncodedSize,
             currentEncodedPixelSize: currentEncodedSize
         )

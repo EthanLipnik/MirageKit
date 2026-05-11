@@ -39,8 +39,9 @@ struct AppStreamRecoveryParityTests {
         )
         host.streamsByID[77] = context
 
-        await host.handleStreamEncoderSettingsChange(
+        await host.applyStreamEncoderSettingsChange(
             StreamEncoderSettingsChangeMessage(
+                requestID: UUID(),
                 streamID: 77,
                 streamScale: 0.8
             )

@@ -505,6 +505,19 @@ public final class MirageClientService {
     public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
+    struct PendingEncoderReconfiguration: Sendable, Equatable {
+        let requestID: UUID
+        let streamID: StreamID
+        let requestedStreamScale: CGFloat?
+        let requestedFrameRate: Int?
+        let requestedColorDepth: MirageStreamColorDepth?
+    }
+    /// Request-correlated encoder-only reconfigurations awaiting host ACK.
+    var pendingEncoderReconfigurationsByRequestID: [UUID: PendingEncoderReconfiguration] = [:]
+    /// Latest request-correlated encoder-only reconfiguration per stream.
+    var pendingEncoderReconfigurationRequestIDByStream: [StreamID: UUID] = [:]
+    /// Last encoder-only stream scale requested for each stream.
+    var activeEncoderStreamScaleByStream: [StreamID: CGFloat] = [:]
     /// Last host-authoritative desktop presentation generation per active session.
     var desktopPresentationGenerationBySessionID: [UUID: UInt64] = [:]
     /// Last seen app/window stream dimension token per stream.

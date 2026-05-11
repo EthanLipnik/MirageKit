@@ -21,16 +21,16 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(policy.evaluate(sample(now: 3, isEncodingSuspendedForResize: true)) == .none)
     }
 
-    @Test("Sustained bad capture cadence restarts virtual display cadence driver first")
-    func sustainedBadCaptureCadenceRestartsVirtualDisplayCadenceDriverFirst() {
+    @Test("Established stream cadence recovery restarts capture only")
+    func establishedStreamCadenceRecoveryRestartsCaptureOnly() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         #expect(policy.evaluate(sample(now: 1)) == .none)
-        #expect(policy.evaluate(sample(now: 3)) == .restartVirtualDisplayCadenceDriver)
+        #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
     }
 
-    @Test("Repeated bad windows escalate from cadence driver restart to virtual display reassert")
-    func repeatedBadWindowsEscalateToVirtualDisplayReassert() {
+    @Test("Established stream cadence recovery does not escalate to virtual display topology")
+    func establishedStreamCadenceRecoveryDoesNotEscalateToVirtualDisplayTopology() {
         var policy = policy(
             consecutiveBadWindowsRequired: 1,
             actionCooldownSeconds: 1,
@@ -38,13 +38,13 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             virtualDisplayReassertsBeforeRecreate: 2
         )
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
-        #expect(policy.evaluate(sample(now: 3)) == .restartVirtualDisplayCadenceDriver)
-        #expect(policy.evaluate(sample(now: 5)) == .reassertVirtualDisplayMode)
+        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 5)) == .restartCapture)
     }
 
-    @Test("Repeated reassert failures eventually request virtual display recreation")
-    func repeatedReassertFailuresRequestVirtualDisplayRecreation() {
+    @Test("Pre-presentation cadence recovery may still use topology ladder")
+    func prePresentationCadenceRecoveryMayStillUseTopologyLadder() {
         var policy = policy(
             consecutiveBadWindowsRequired: 1,
             actionCooldownSeconds: 1,
@@ -52,16 +52,16 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             virtualDisplayReassertsBeforeRecreate: 1
         )
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
-        #expect(policy.evaluate(sample(now: 3)) == .reassertVirtualDisplayMode)
-        #expect(policy.evaluate(sample(now: 5)) == .recreateVirtualDisplay)
+        #expect(policy.evaluate(sample(now: 1, receiverHasPresentedFrame: false)) == .restartVirtualDisplayCadenceDriver)
+        #expect(policy.evaluate(sample(now: 3, receiverHasPresentedFrame: false)) == .reassertVirtualDisplayMode)
+        #expect(policy.evaluate(sample(now: 5, receiverHasPresentedFrame: false)) == .recreateVirtualDisplay)
     }
 
     @Test("Cooldown prevents restart loops")
     func cooldownPreventsRestartLoops() {
         var policy = policy(consecutiveBadWindowsRequired: 1, actionCooldownSeconds: 8)
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartVirtualDisplayCadenceDriver)
+        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
         #expect(policy.evaluate(sample(now: 2)) == .none)
     }
 
@@ -123,13 +123,38 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(action == .restartCapture)
     }
 
-    @Test("High refresh policy rate mismatch reasserts virtual display mode")
-    func highRefreshPolicyRateMismatchReassertsVirtualDisplayMode() {
+    @Test("Established high refresh policy rate mismatch does not mutate topology")
+    func establishedHighRefreshPolicyRateMismatchDoesNotMutateTopology() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         let action = policy.evaluate(
             sample(
                 now: 1,
+                targetFrameRate: 120,
+                captureFPS: 64,
+                captureCadence: StreamCaptureCadenceMetrics(
+                    deliveredFrameGapWorstMs: 22,
+                    deliveredFrameGapP99Ms: 21,
+                    usesDisplayRefreshCadence: true,
+                    usesNativeRefreshMinimumFrameInterval: true,
+                    minimumFrameIntervalRate: 60,
+                    displayRefreshRate: 60,
+                    virtualDisplayRefreshRate: 120
+                )
+            )
+        )
+
+        #expect(action == .none)
+    }
+
+    @Test("Pre-presentation high refresh policy rate mismatch may reassert virtual display mode")
+    func prePresentationHighRefreshPolicyRateMismatchMayReassertVirtualDisplayMode() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                receiverHasPresentedFrame: false,
                 targetFrameRate: 120,
                 captureFPS: 64,
                 captureCadence: StreamCaptureCadenceMetrics(
@@ -190,6 +215,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
     private func sample(
         now: Double,
         startupSettled: Bool = true,
+        receiverHasPresentedFrame: Bool = true,
         isResizing: Bool = false,
         isEncodingSuspendedForResize: Bool = false,
         targetFrameRate: Int = 60,
@@ -201,6 +227,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             now: now,
             isDesktopDisplayStream: true,
             startupSettled: startupSettled,
+            receiverHasPresentedFrame: receiverHasPresentedFrame,
             isResizing: isResizing,
             isEncodingSuspendedForResize: isEncodingSuspendedForResize,
             targetFrameRate: targetFrameRate,

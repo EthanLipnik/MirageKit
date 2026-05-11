@@ -62,7 +62,7 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Keyframe submission clears non-keyframe hold before send completion")
+    @Test("Keyframe submission clears hold before transport completion")
     func keyframeSubmissionClearsHoldBeforeCompletion() async throws {
         let submittedPackets = Locked<[SubmittedPacket]>([])
         let pendingCompletions = Locked<[PendingSendCompletion]>([])
@@ -161,7 +161,6 @@ struct StreamPacketSenderRegressionTests {
         }
 
         try await waitForSubmissionCount(submittedPackets, expectedCount: 8)
-
         let frameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
         #expect(frameNumbers == [90, 90, 91, 92, 93, 94, 95, 96])
         #expect((await sender.telemetrySnapshot()).nonKeyframeHoldDrops == 0)
@@ -533,7 +532,8 @@ struct StreamPacketSenderRegressionTests {
         #expect(telemetry.stalePacketDrops == 1)
         #expect(telemetry.nonKeyframeHoldDrops == 0)
         #expect(dependencyDrops.read { $0.isEmpty })
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [500, 500, 502])
+        let submittedFrameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
+        #expect(submittedFrameNumbers == [500, 500, 502])
 
         await sender.stop()
     }

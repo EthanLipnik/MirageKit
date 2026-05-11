@@ -46,6 +46,28 @@ extension StreamController {
         )
     }
 
+    func primeForEncoderReconfiguration(
+        dimensionToken: UInt16,
+        streamDimensions: (width: Int, height: Int),
+        colorDepth: MirageStreamColorDepth
+    )
+    async {
+        clearQueuedFramesForRecovery()
+        reassembler.updateExpectedDimensionToken(dimensionToken)
+        reassembler.enterKeyframeOnlyMode()
+        preferredDecoderColorDepth = colorDepth
+        await decoder.setPreferredOutputColorDepth(colorDepth)
+        await decoder.prepareForDimensionChange(
+            expectedWidth: streamDimensions.width,
+            expectedHeight: streamDimensions.height
+        )
+        MirageLogger.client(
+            "Primed encoder reconfiguration admission fence for stream \(streamID) " +
+                "(\(streamDimensions.width)x\(streamDimensions.height), " +
+                "dimensionToken=\(dimensionToken), colorDepth=\(colorDepth.displayName))"
+        )
+    }
+
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.

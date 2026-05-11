@@ -376,6 +376,50 @@ struct DesktopStreamStartResetDecisionTests {
         }
     }
 
+    @MainActor
+    @Test("Encoder settings ack primes controller without desktop restart")
+    func encoderSettingsAckPrimesControllerWithoutDesktopRestart() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 33
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.controllersByStream[streamID] = controller
+        let requestID = UUID()
+        service.pendingEncoderReconfigurationsByRequestID[requestID] = MirageClientService.PendingEncoderReconfiguration(
+            requestID: requestID,
+            streamID: streamID,
+            requestedStreamScale: 0.7,
+            requestedFrameRate: 60,
+            requestedColorDepth: .standard
+        )
+        service.pendingEncoderReconfigurationRequestIDByStream[streamID] = requestID
+
+        let ack = StreamEncoderSettingsChangeAckMessage(
+            requestID: requestID,
+            streamID: streamID,
+            encodedWidth: 1920,
+            encodedHeight: 1080,
+            frameRate: 60,
+            colorDepth: .standard,
+            dimensionToken: 5,
+            requiresReset: true
+        )
+
+        await service.handleStreamEncoderSettingsChangeAck(
+            try ControlMessage(type: .streamEncoderSettingsChangeAck, content: ack)
+        )
+
+        #expect(service.desktopDimensionTokenByStream[streamID] == 5)
+        #expect(service.appDimensionTokenByStream[streamID] == 5)
+        #expect(service.pendingEncoderReconfigurationsByRequestID[requestID] == nil)
+        #expect(service.pendingEncoderReconfigurationRequestIDByStream[streamID] == nil)
+        #expect(service.activeEncoderStreamScaleByStream[streamID] == 0.7)
+        #expect(service.controllersByStream[streamID].map(ObjectIdentifier.init) == ObjectIdentifier(controller))
+        let reassembler = await controller.getReassembler()
+        #expect(reassembler.isAwaitingKeyframe())
+
+        await controller.stop()
+    }
+
     @Test("Desktop stream start geometry comparison distinguishes scale-only updates")
     func desktopStreamStartGeometryComparisonDistinguishesScaleOnlyUpdates() {
         #expect(

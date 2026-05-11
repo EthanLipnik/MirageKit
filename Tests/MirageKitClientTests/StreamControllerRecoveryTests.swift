@@ -328,12 +328,81 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Backpressure threshold does not request keyframe recovery")
-    func backpressureDoesNotRequestKeyframes() async throws {
+    @Test("Backpressure threshold keeps keyframe during freshness catch-up without recovery")
+    func backpressureKeepsKeyframeDuringFreshnessCatchUpWithoutRecovery() async throws {
         let keyframeCounter = LockedCounter()
+        let renderCapacityStallCounter = LockedCounter()
+        let releasedFrameCounter = LockedCounter()
         let clock = ManualTimeProvider(start: 1_000)
+        let streamID: StreamID = 2
         let controller = StreamController(
-            streamID: 2,
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil,
+            onStallEvent: { event in
+                if event == .clientRenderCapacity {
+                    renderCapacityStallCounter.increment()
+                }
+            }
+        )
+
+        await controller.updatePresentationTier(.activeLive, targetFPS: 120)
+        await controller.markFirstFramePresented()
+        clock.advance(by: StreamController.startupBurstRecoveryEscalationHoldoff + 0.1)
+        let reassembler = await controller.getReassembler()
+        primeKeyframeAnchor(for: reassembler, streamID: streamID)
+        #expect(!reassembler.isAwaitingKeyframe())
+
+        for frameNumber in UInt32(1) ... UInt32(StreamController.decodeQueueRecoveryThreshold) {
+            await controller.enqueueFrameForRecoveryTesting(
+                frameNumber: frameNumber,
+                releaseBuffer: {
+                    releasedFrameCounter.increment()
+                }
+            )
+        }
+
+        let filledQueue = await controller.queuedFrameSnapshotForTesting()
+        #expect(filledQueue.count == StreamController.decodeQueueRecoveryThreshold)
+
+        await controller.enqueueFrameForRecoveryTesting(
+            frameNumber: 99,
+            isKeyframe: true,
+            releaseBuffer: {
+                releasedFrameCounter.increment()
+            }
+        )
+
+        try await Task.sleep(for: .milliseconds(150))
+
+        let caughtUpQueue = await controller.queuedFrameSnapshotForTesting()
+        #expect(caughtUpQueue.count == 1)
+        #expect(caughtUpQueue.firstFrameNumber == UInt32(99))
+        #expect(caughtUpQueue.lastFrameNumber == UInt32(99))
+        #expect(releasedFrameCounter.value == StreamController.decodeQueueRecoveryThreshold)
+        #expect(keyframeCounter.value == 0)
+        #expect(renderCapacityStallCounter.value == 0)
+        #expect(!reassembler.isAwaitingKeyframe())
+        #expect(await controller.clientRecoveryStatus == .idle)
+
+        await controller.stop()
+    }
+
+    @Test("Backpressure threshold drops dependent frame and requests keyframe recovery")
+    func backpressureDropsDependentFrameAndRequestsKeyframeRecovery() async throws {
+        let keyframeCounter = LockedCounter()
+        let releasedFrameCounter = LockedCounter()
+        let clock = ManualTimeProvider(start: 2_000)
+        let streamID: StreamID = 3
+        let controller = StreamController(
+            streamID: streamID,
             maxPayloadSize: 1200,
             nowProvider: { clock.now }
         )
@@ -345,22 +414,42 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        await controller.recordQueueDrop()
-        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        await controller.updatePresentationTier(.activeLive, targetFPS: 120)
+        await controller.markFirstFramePresented()
+        clock.advance(by: StreamController.startupBurstRecoveryEscalationHoldoff + 0.1)
+        let reassembler = await controller.getReassembler()
+        primeKeyframeAnchor(for: reassembler, streamID: streamID)
+        #expect(!reassembler.isAwaitingKeyframe())
 
-        // Additional drops inside cooldown should remain no-op.
-        await controller.recordQueueDrop()
-        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        for frameNumber in UInt32(1) ... UInt32(StreamController.decodeQueueRecoveryThreshold) {
+            await controller.enqueueFrameForRecoveryTesting(
+                frameNumber: frameNumber,
+                releaseBuffer: {
+                    releasedFrameCounter.increment()
+                }
+            )
+        }
 
-        clock.advance(by: 1.1)
-        await controller.recordQueueDrop()
-        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        let filledQueue = await controller.queuedFrameSnapshotForTesting()
+        #expect(filledQueue.count == StreamController.decodeQueueRecoveryThreshold)
+
+        await controller.enqueueFrameForRecoveryTesting(
+            frameNumber: 99,
+            releaseBuffer: {
+                releasedFrameCounter.increment()
+            }
+        )
+
+        try await waitUntil("backpressure dependent-frame keyframe request") {
+            keyframeCounter.value == 1
+        }
+
+        let caughtUpQueue = await controller.queuedFrameSnapshotForTesting()
+        #expect(caughtUpQueue.count == 0)
+        #expect(releasedFrameCounter.value == StreamController.decodeQueueRecoveryThreshold + 1)
+        #expect(keyframeCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe())
+        #expect(await controller.clientRecoveryStatus == .keyframeRecovery)
 
         await controller.stop()
     }
@@ -388,6 +477,57 @@ struct StreamControllerRecoveryTests {
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Smoothest startup burst uses expanded decode queue headroom")
+    func smoothestStartupBurstUsesExpandedDecodeQueueHeadroom() async {
+        let clock = ManualTimeProvider(start: 7_000)
+        let controller = StreamController(
+            streamID: 248,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.updatePresentationTier(.activeLive, targetFPS: 120)
+        await controller.updateCadenceTarget(
+            sourceFPS: 120,
+            displayFPS: 120,
+            latencyMode: .smoothest,
+            reason: "test smoothest startup"
+        )
+
+        let limits = await controller.decodeQueueAdmissionLimits(now: clock.now)
+        #expect(limits.recoveryThreshold == StreamController.smoothestStartupBurstDecodeQueueRecoveryThreshold)
+        #expect(limits.hardLimit == StreamController.smoothestStartupBurstMaxQueuedFrames)
+
+        await controller.stop()
+    }
+
+    @Test("Recovery stabilization keeps extra decode queue headroom after keyframe decode")
+    func recoveryStabilizationKeepsExtraDecodeQueueHeadroom() async {
+        let clock = ManualTimeProvider(start: 8_000)
+        let controller = StreamController(
+            streamID: 249,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.updatePresentationTier(.activeLive, targetFPS: 120)
+        await controller.updateCadenceTarget(
+            sourceFPS: 120,
+            displayFPS: 120,
+            latencyMode: .smoothest,
+            reason: "test smoothest recovery"
+        )
+        await controller.markFirstFramePresented()
+        clock.advance(by: StreamController.startupBurstRecoveryEscalationHoldoff + 0.1)
+        await controller.setClientRecoveryStatus(.keyframeRecovery)
+
+        let limits = await controller.decodeQueueAdmissionLimits(now: clock.now)
+        #expect(limits.recoveryThreshold == StreamController.smoothestRecoveryStabilizationDecodeQueueRecoveryThreshold)
+        #expect(limits.hardLimit == StreamController.smoothestRecoveryStabilizationMaxQueuedFrames)
+
+        await controller.stop()
     }
 
     @Test("Decode threshold requests recovery after sustained freeze")
@@ -1102,11 +1242,12 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Repeated established hard recovery escalates to terminal live failure")
-    func repeatedEstablishedHardRecoveryEscalatesToTerminalLiveFailure() async throws {
+    @Test("Repeated established hard recovery holds topology and requests a keyframe")
+    func repeatedEstablishedHardRecoveryHoldsTopologyAndRequestsKeyframe() async throws {
         let streamID: StreamID = 167
         let clock = ManualTimeProvider(start: 7_000)
         let failures = LockedTerminalLiveRecoveryFailure()
+        let keyframes = LockedCounter()
         let controller = StreamController(
             streamID: streamID,
             maxPayloadSize: 1200,
@@ -1115,7 +1256,9 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
-            onKeyframeNeeded: nil,
+            onKeyframeNeeded: {
+                keyframes.increment()
+            },
             onResizeEvent: nil,
             onTerminalLiveRecoveryFailure: { failure in
                 failures.record(failure)
@@ -1142,15 +1285,65 @@ struct StreamControllerRecoveryTests {
             firstPresentedFrameWaitReason: "decode-error-hard-reset"
         )
 
-        try await waitUntil("terminal live recovery failure callback") {
-            failures.value != nil
+        try await waitUntil("topology-held recovery keyframe") {
+            keyframes.value > 0
         }
 
-        let failure = try #require(failures.value)
-        #expect(failure.reason == .decodeErrorThreshold)
-        #expect(failure.hardRecoveryAttempts == StreamController.liveRecoveryHardRecoveryLimit)
-        #expect(failure.waitReason == "decode-error-hard-reset")
-        #expect(await controller.hasTriggeredTerminalLiveRecoveryFailure)
+        #expect(failures.value == nil)
+        #expect(!(await controller.hasTriggeredTerminalLiveRecoveryFailure))
+
+        await controller.stop()
+        MirageRenderStreamStore.shared.clear(for: streamID)
+    }
+
+    @Test("Partial keyframe recovery progress continues soft recovery instead of hard reset")
+    func partialKeyframeRecoveryProgressContinuesSoftInsteadOfHardReset() async throws {
+        let streamID: StreamID = 169
+        let clock = ManualTimeProvider(start: 8_000)
+        let keyframes = LockedCounter()
+        let presentationRecoveryStalls = LockedCounter()
+        let failures = LockedTerminalLiveRecoveryFailure()
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframes.increment()
+            },
+            onResizeEvent: nil,
+            onStallEvent: { event in
+                if event == .presentationRecovery {
+                    presentationRecoveryStalls.increment()
+                }
+            },
+            onTerminalLiveRecoveryFailure: { failure in
+                failures.record(failure)
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        markSubmitted(streamID: streamID)
+        await controller.markFirstFramePresented()
+
+        await controller.setClientRecoveryStatus(.keyframeRecovery)
+        await controller.armRecoveryStabilizationTracking(
+            baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
+        )
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+        await controller.recordDecodedFrame()
+
+        let didContinueSoftRecovery = await controller.continueSoftRecoveryAfterPartialProgress(elapsedMs: 1_500)
+
+        #expect(didContinueSoftRecovery)
+        #expect(await controller.lastHardRecoveryStartTime == 0)
+        #expect(await controller.clientRecoveryStatus == .keyframeRecovery)
+        #expect(keyframes.value == 1)
+        #expect(presentationRecoveryStalls.value == 1)
+        #expect(failures.value == nil)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -1222,8 +1415,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Frame-loss after first decode requests recovery keyframe")
-    func frameLossAfterFirstDecodeRequestsRecoveryKeyframe() async throws {
+    @Test("Dependency frame loss after first decode enters keyframe repair")
+    func dependencyFrameLossAfterFirstDecodeEntersKeyframeRepair() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 41, maxPayloadSize: 1200)
 
@@ -1242,6 +1435,7 @@ struct StreamControllerRecoveryTests {
         let reassembler = await controller.getReassembler()
         #expect(reassembler.isAwaitingKeyframe())
         #expect(keyframeCounter.value == 1)
+        #expect(await controller.clientRecoveryStatus == .keyframeRecovery)
 
         await controller.stop()
     }
@@ -1268,8 +1462,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Keyframe recovery loop escalates once to hard recovery when keyframes never arrive")
-    func keyframeRecoveryLoopEscalatesToHardRecoveryWhenKeyframesNeverArrive() async throws {
+    @Test("Startup keyframe recovery loop holds topology while keyframes never arrive")
+    func startupKeyframeRecoveryLoopHoldsTopologyWhenKeyframesNeverArrive() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 151, maxPayloadSize: 1200)
 
@@ -1288,19 +1482,11 @@ struct StreamControllerRecoveryTests {
         await controller.startKeyframeRecoveryLoopIfNeeded()
         await controller.requestKeyframeRecovery(reason: .frameLoss)
 
-        var hardRecoveryTriggered = false
-        let timeoutAt = ContinuousClock.now + .seconds(6)
-        while ContinuousClock.now < timeoutAt {
-            if await controller.lastHardRecoveryStartTime > 0 {
-                hardRecoveryTriggered = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        try await Task.sleep(for: .seconds(1))
 
-        #expect(hardRecoveryTriggered)
         #expect(keyframeCounter.value >= 1)
-        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+        #expect(await controller.lastHardRecoveryStartTime == 0)
+        #expect(await controller.clientRecoveryStatus == .keyframeRecovery)
 
         await controller.stop()
     }

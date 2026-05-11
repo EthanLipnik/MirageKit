@@ -44,8 +44,8 @@ extension MirageHostService {
             .streamReady: { [weak self] message, _ in
                 await self?.handleStreamReadyMessage(message)
             },
-            .streamEncoderSettingsChange: { [weak self] message, _ in
-                await self?.handleStreamEncoderSettingsChangeMessage(message)
+            .streamEncoderSettingsChange: { [weak self] message, clientContext in
+                await self?.handleStreamEncoderSettingsChangeMessage(message, from: clientContext)
             },
             .receiverMediaFeedback: { [weak self] message, _ in
                 await self?.handleReceiverMediaFeedbackMessage(message)
@@ -323,7 +323,7 @@ extension MirageHostService {
         }
     }
 
-    private func handleStreamEncoderSettingsChangeMessage(_ message: ControlMessage) async {
+    private func handleStreamEncoderSettingsChangeMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
         do {
             let request = try message.decode(StreamEncoderSettingsChangeMessage.self)
             MirageLogger
@@ -334,7 +334,7 @@ extension MirageHostService {
                         "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged"), " +
                         "fps=\(request.targetFrameRate.map(String.init) ?? "unchanged")"
                 )
-            await handleStreamEncoderSettingsChange(request)
+            await handleStreamEncoderSettingsChange(request, from: clientContext)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle streamEncoderSettingsChange: ")
         }

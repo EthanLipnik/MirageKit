@@ -282,10 +282,6 @@ extension MirageClientService {
     )
     -> Bool {
         if status == .idle { return false }
-        if status == .keyframeRecovery,
-           sessionStore.sessionByStreamID(streamID)?.hasPresentedFrame == true {
-            return false
-        }
         if status == .postResizeAwaitingFirstFrame,
            !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
             return false

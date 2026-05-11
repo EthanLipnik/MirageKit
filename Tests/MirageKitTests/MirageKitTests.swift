@@ -878,7 +878,9 @@ struct MirageKitTests {
 
     @Test("Stream encoder settings message serialization")
     func streamEncoderSettingsSerialization() throws {
+        let requestID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         let request = StreamEncoderSettingsChangeMessage(
+            requestID: requestID,
             streamID: 7,
             colorDepth: .pro,
             bitrate: 120_000_000,
@@ -893,12 +895,37 @@ struct MirageKitTests {
         #expect(decodedEnvelope.type == .streamEncoderSettingsChange)
 
         let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+        #expect(decodedRequest.requestID == requestID)
         #expect(decodedRequest.streamID == 7)
         #expect(decodedRequest.colorDepth == .pro)
         #expect(decodedRequest.bitrate == 120_000_000)
         #expect(decodedRequest.targetFrameRate == 30)
         let scale = try #require(decodedRequest.streamScale)
         #expect(abs(Double(scale) - 0.75) < 0.0001)
+    }
+
+    @Test("Stream encoder settings ack serialization")
+    func streamEncoderSettingsAckSerialization() throws {
+        let requestID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let ack = StreamEncoderSettingsChangeAckMessage(
+            requestID: requestID,
+            streamID: 9,
+            encodedWidth: 1_920,
+            encodedHeight: 1_440,
+            frameRate: 60,
+            colorDepth: .standard,
+            dimensionToken: 12,
+            requiresReset: true
+        )
+
+        let message = try ControlMessage(type: .streamEncoderSettingsChangeAck, content: ack)
+        let serialized = message.serialize()
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: serialized)
+        #expect(consumed == serialized.count)
+        #expect(decodedEnvelope.type == .streamEncoderSettingsChangeAck)
+
+        let decodedAck = try decodedEnvelope.decode(StreamEncoderSettingsChangeAckMessage.self)
+        #expect(decodedAck == ack)
     }
 
     @Test("Start stream request latency mode serialization")

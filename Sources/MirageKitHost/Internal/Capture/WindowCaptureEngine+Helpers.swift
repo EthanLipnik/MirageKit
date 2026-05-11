@@ -190,6 +190,13 @@ extension WindowCaptureEngine {
             displayRefreshRate: displayRefreshRate,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         ) else { return requestedFrameRate }
+        if usesNativeRefreshMinimumFrameInterval(
+            requestedFrameRate: requestedFrameRate,
+            displayRefreshRate: displayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        ) {
+            return displayRefreshRate
+        }
         return max(1, min(requestedFrameRate, displayRefreshRate))
     }
 
@@ -206,7 +213,11 @@ extension WindowCaptureEngine {
               ) else {
             return false
         }
-        return max(1, requestedFrameRate) >= displayRefreshRate
+        let requestedFrameRate = max(1, requestedFrameRate)
+        if displayRefreshRate >= 90, requestedFrameRate <= displayRefreshRate {
+            return true
+        }
+        return requestedFrameRate >= displayRefreshRate
     }
 
     nonisolated static func resolvedDisplayRefreshRateForCadence(

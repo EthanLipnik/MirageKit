@@ -7,13 +7,8 @@
 //  Runtime workload safety policy for client memory pressure.
 //
 
-import CoreGraphics
 import Foundation
 import MirageKit
-
-#if os(iOS) && canImport(UIKit)
-import UIKit
-#endif
 
 enum RuntimeWorkloadSafetyStallEvent: Sendable, Equatable {
     case presentationRecovery
@@ -34,13 +29,11 @@ extension MirageClientService {
     enum RuntimeWorkloadSafetyFallbackReason: String, Sendable {
         case memoryPressure = "memory_pressure"
         case repeatedMemoryPressure = "repeated_memory_pressure"
-        case promotionStall = "promotion_stall"
     }
 
     nonisolated static let runtimeWorkloadSafetyMinimumFrameRate = 30
     nonisolated static let runtimeWorkloadSafetyMemoryPressureRepeatWindow: CFAbsoluteTime = 600
-    nonisolated static let runtimeWorkloadSafetyProMotionStallWindow: CFAbsoluteTime = 300
-    nonisolated static let runtimeWorkloadSafetyProMotionStallThreshold = 2
+    nonisolated static let runtimeWorkloadSafetyStallTelemetryWindow: CFAbsoluteTime = 300
     nonisolated static let runtimeWorkloadSafetyFrameRateCapDuration: CFAbsoluteTime = 120
 
     public var runtimeWorkloadFrameRateCap: Int? {
@@ -106,35 +99,17 @@ extension MirageClientService {
         streamID: StreamID,
         event: RuntimeWorkloadSafetyStallEvent
     ) {
-        guard Self.runtimeWorkloadSafetyShouldUseIPadProMotionFallback() else { return }
-        guard Self.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(event) else { return }
-        guard runtimeWorkloadSafetyTransportIsClean(for: streamID) else { return }
-        guard runtimeWorkloadSafetyHostSourceIsHealthy(for: streamID) else { return }
-
-        let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
-        guard currentFrameRate >= 90 else { return }
+        guard Self.runtimeWorkloadSafetyStallEventReportsAdaptivePressure(event) else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
         let recentStalls = (runtimeWorkloadSafetyStallTimesByStream[streamID] ?? [])
-            .filter { now - $0 <= Self.runtimeWorkloadSafetyProMotionStallWindow } + [now]
+            .filter { now - $0 <= Self.runtimeWorkloadSafetyStallTelemetryWindow } + [now]
         runtimeWorkloadSafetyStallTimesByStream[streamID] = recentStalls
 
-        guard let targetFrameRate = Self.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: currentFrameRate,
-            recentStallCount: recentStalls.count
-        ) else {
-            return
-        }
-
-        runtimeWorkloadSafetyStallTimesByStream[streamID] = []
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.applyRuntimeWorkloadSafetyCap(
-                targetFrameRate: targetFrameRate,
-                reason: .promotionStall,
-                triggerStreamID: streamID
-            )
-        }
+        MirageLogger.client(
+            "Runtime workload pressure noted for stream \(streamID): event=\(event) " +
+                "recent=\(recentStalls.count); adaptive streaming controller owns ProMotion relief"
+        )
     }
 
     func applyRuntimeWorkloadSafetyCap(
@@ -241,61 +216,6 @@ extension MirageClientService {
         return preferredScreenMaxRefreshRate()
     }
 
-    func runtimeWorkloadSafetyTransportIsClean(for streamID: StreamID) -> Bool {
-        guard let snapshot = metricsStore.snapshot(for: streamID), snapshot.hasHostMetrics else { return false }
-        let assessment = MirageTransportPressure.assess(
-            sample: MirageTransportPressureSample(
-                queueBytes: max(0, snapshot.hostSendQueueBytes ?? 0),
-                queueStressBytes: 800_000,
-                queueSevereBytes: 2_000_000,
-                packetPacerAverageSleepMs: max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0),
-                packetPacerStressThresholdMs: 0.75,
-                packetPacerSevereThresholdMs: 2.0,
-                sendStartDelayAverageMs: max(0, snapshot.hostSendStartDelayAverageMs ?? 0),
-                sendStartDelayStressThresholdMs: 2.0,
-                sendStartDelaySevereThresholdMs: 6.0,
-                sendCompletionAverageMs: max(0, snapshot.hostSendCompletionAverageMs ?? 0),
-                sendCompletionStressThresholdMs: 12.0,
-                sendCompletionSevereThresholdMs: 28.0,
-                transportDropCount: snapshot.hostStalePacketDrops ?? 0,
-                transportDropSevereCount: 12
-            )
-        )
-        return !assessment.isStress && !assessment.isDelayOnlyBurst
-    }
-
-    func runtimeWorkloadSafetyHostSourceIsHealthy(for streamID: StreamID) -> Bool {
-        guard let snapshot = metricsStore.snapshot(for: streamID), snapshot.hasHostMetrics else { return false }
-        let targetFPS = Double(max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60))
-        if snapshot.hostCaptureVirtualDisplayTimingSuspect == true { return false }
-        let cadenceFloor = targetFPS * 0.90
-        let lowHostCadence = [
-            snapshot.hostCaptureIngressFPS,
-            snapshot.hostCaptureFPS,
-            snapshot.hostEncodeAttemptFPS,
-        ].contains { value in
-            guard let value, value > 0 else { return false }
-            return value < cadenceFloor
-        }
-        if lowHostCadence { return false }
-
-        let frameBudgetMs = 1_000.0 / targetFPS
-        let p99Gap = max(
-            snapshot.hostCaptureDeliveredFrameGapP99Ms ?? 0,
-            snapshot.hostCaptureWallClockGapP99Ms ?? 0,
-            snapshot.hostCaptureDisplayTimeGapP99Ms ?? 0
-        )
-        let worstGap = max(
-            snapshot.hostCaptureDeliveredFrameGapWorstMs ?? 0,
-            snapshot.hostCaptureWallClockGapWorstMs ?? 0,
-            snapshot.hostCaptureDisplayTimeGapWorstMs ?? 0
-        )
-        if p99Gap >= max(35.0, frameBudgetMs * 2.0) { return false }
-        if worstGap >= max(70.0, frameBudgetMs * 4.0) { return false }
-        if (snapshot.hostCaptureLongFrameGapCount ?? 0) > 0 { return false }
-        return true
-    }
-
     nonisolated static func runtimeWorkloadSafetyMemoryPressureTarget(
         currentFrameRate: Int,
         repeated: Bool
@@ -313,17 +233,7 @@ extension MirageClientService {
         return nil
     }
 
-    nonisolated static func runtimeWorkloadSafetyProMotionStallTarget(
-        currentFrameRate: Int,
-        recentStallCount: Int
-    ) -> Int? {
-        guard recentStallCount >= runtimeWorkloadSafetyProMotionStallThreshold else { return nil }
-        let currentFrameRate = max(0, currentFrameRate)
-        if currentFrameRate >= 90 { return 60 }
-        return nil
-    }
-
-    nonisolated static func runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(
+    nonisolated static func runtimeWorkloadSafetyStallEventReportsAdaptivePressure(
         _ event: RuntimeWorkloadSafetyStallEvent
     ) -> Bool {
         switch event {
@@ -353,11 +263,4 @@ extension MirageClientService {
         )
     }
 
-    nonisolated static func runtimeWorkloadSafetyShouldUseIPadProMotionFallback() -> Bool {
-        #if os(iOS) && canImport(UIKit)
-        return UIDevice.current.userInterfaceIdiom == .pad
-        #else
-        return false
-        #endif
-    }
 }

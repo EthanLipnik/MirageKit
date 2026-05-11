@@ -732,7 +732,9 @@ extension MirageClientService {
                 cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
             )
         }
+        let requestID = UUID()
         let request = StreamEncoderSettingsChangeMessage(
+            requestID: requestID,
             streamID: streamID,
             colorDepth: colorDepth,
             bitrate: bitrate,
@@ -756,9 +758,25 @@ extension MirageClientService {
                 "Requesting encoder stream-scale update for stream \(streamID): \(String(format: "%.3f", clampedScale))"
             )
         }
-        try await sendControlMessage(.streamEncoderSettingsChange, content: request)
+        pendingEncoderReconfigurationsByRequestID[requestID] = PendingEncoderReconfiguration(
+            requestID: requestID,
+            streamID: streamID,
+            requestedStreamScale: clampedScale,
+            requestedFrameRate: clampedFrameRate,
+            requestedColorDepth: colorDepth
+        )
+        pendingEncoderReconfigurationRequestIDByStream[streamID] = requestID
+        do {
+            try await sendControlMessage(.streamEncoderSettingsChange, content: request)
+        } catch {
+            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: requestID)
+            if pendingEncoderReconfigurationRequestIDByStream[streamID] == requestID {
+                pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: streamID)
+            }
+            throw error
+        }
         if let clampedScale {
-            resolutionScale = clampedScale
+            activeEncoderStreamScaleByStream[streamID] = clampedScale
         }
         if let clampedFrameRate {
             refreshRateOverridesByStream[streamID] = clampedFrameRate
@@ -768,6 +786,92 @@ extension MirageClientService {
                 reason: "encoder settings change"
             )
         }
+    }
+
+    func handleStreamEncoderSettingsChangeAck(_ message: ControlMessage) async {
+        do {
+            let ack = try message.decode(StreamEncoderSettingsChangeAckMessage.self)
+            await applyStreamEncoderSettingsChangeAck(ack)
+        } catch {
+            MirageLogger.error(
+                .client,
+                error: error,
+                message: "Failed to decode stream encoder settings ack: "
+            )
+        }
+    }
+
+    private func applyStreamEncoderSettingsChangeAck(
+        _ ack: StreamEncoderSettingsChangeAckMessage
+    ) async {
+        guard let pending = pendingEncoderReconfigurationsByRequestID[ack.requestID] else {
+            MirageLogger.client(
+                "Ignoring stale encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID)"
+            )
+            return
+        }
+        guard pending.streamID == ack.streamID else {
+            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
+            MirageLogger.client(
+                "Ignoring mismatched encoder settings ack \(ack.requestID.uuidString): " +
+                    "pendingStream=\(pending.streamID) ackStream=\(ack.streamID)"
+            )
+            return
+        }
+        guard pendingEncoderReconfigurationRequestIDByStream[ack.streamID] == ack.requestID else {
+            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
+            MirageLogger.client(
+                "Ignoring superseded encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID)"
+            )
+            return
+        }
+
+        pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
+        pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: ack.streamID)
+
+        if let requestedScale = pending.requestedStreamScale {
+            activeEncoderStreamScaleByStream[ack.streamID] = requestedScale
+        }
+        refreshRateOverridesByStream[ack.streamID] =
+            MirageRenderModePolicy.normalizedTargetFPS(ack.frameRate)
+        decoderCompatibilityCurrentColorDepthByStream[ack.streamID] = ack.colorDepth
+        if decoderCompatibilityBaselineColorDepthByStream[ack.streamID] == nil,
+           pending.requestedColorDepth != nil {
+            decoderCompatibilityBaselineColorDepthByStream[ack.streamID] = ack.colorDepth
+        }
+        desktopDimensionTokenByStream[ack.streamID] = ack.dimensionToken
+        appDimensionTokenByStream[ack.streamID] = ack.dimensionToken
+
+        await applyStreamCadenceTarget(
+            ack.frameRate,
+            for: ack.streamID,
+            reason: "encoder settings ack"
+        )
+
+        if let controller = controllersByStream[ack.streamID] {
+            await controller.primeForEncoderReconfiguration(
+                dimensionToken: ack.dimensionToken,
+                streamDimensions: (width: ack.encodedWidth, height: ack.encodedHeight),
+                colorDepth: ack.colorDepth
+            )
+        }
+
+        MirageLogger.client(
+            "Accepted encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID): " +
+                "\(ack.encodedWidth)x\(ack.encodedHeight)@\(ack.frameRate)fps, " +
+                "dimensionToken=\(ack.dimensionToken), requiresReset=\(ack.requiresReset)"
+        )
+    }
+
+    func clearPendingEncoderReconfiguration(for streamID: StreamID) {
+        if let requestID = pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: streamID) {
+            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: requestID)
+        }
+    }
+
+    func clearAllPendingEncoderReconfigurations() {
+        pendingEncoderReconfigurationsByRequestID.removeAll()
+        pendingEncoderReconfigurationRequestIDByStream.removeAll()
     }
 
     // MARK: - Adaptive Fallback

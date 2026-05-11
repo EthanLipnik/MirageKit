@@ -513,10 +513,17 @@ extension MirageHostService {
         }
     }
 
-    func handleStreamEncoderSettingsChange(_ request: StreamEncoderSettingsChangeMessage) async {
+    struct AppliedStreamEncoderSettingsChange: Sendable {
+        let requiresReset: Bool
+    }
+
+    @discardableResult
+    func applyStreamEncoderSettingsChange(
+        _ request: StreamEncoderSettingsChangeMessage
+    ) async -> AppliedStreamEncoderSettingsChange? {
         guard let context = streamsByID[request.streamID] else {
             MirageLogger.debug(.host, "No stream found for encoder settings update: \(request.streamID)")
-            return
+            return nil
         }
         let isHostResolutionDesktopStream = request.streamID == desktopStreamID && desktopUsesHostResolution
 
@@ -524,7 +531,8 @@ extension MirageHostService {
         let hasBitrateChange = request.bitrate != nil
         let hasScaleChange = request.streamScale != nil && !isHostResolutionDesktopStream
         let hasFrameRateChange = request.targetFrameRate != nil
-        let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange || hasFrameRateChange
+        let requiresKeyframeRefresh = hasColorDepthChange || hasScaleChange || hasFrameRateChange
+        let requiresReset = hasColorDepthChange || hasScaleChange
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
         do {
@@ -541,19 +549,73 @@ extension MirageHostService {
                         "Ignoring encoder settings streamScale for host-resolution desktop stream \(request.streamID): \(streamScale)"
                     )
                 } else {
-                    try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
+                    try await context.updateStreamScale(
+                        StreamContext.clampStreamScale(streamScale),
+                        forceRecoveryKeyframe: false
+                    )
                 }
             }
             if let targetFrameRate = request.targetFrameRate {
                 try await context.updateFrameRate(targetFrameRate)
             }
-            if shouldBroadcastStreamUpdate {
-                await sendStreamScaleUpdate(streamID: request.streamID)
-            } else {
+            if !requiresKeyframeRefresh {
                 MirageLogger.host("Encoder settings update applied without stream resize notification (bitrate only)")
             }
+            if requiresKeyframeRefresh {
+                await context.forceKeyframeAfterEncoderReconfiguration()
+            }
+            return AppliedStreamEncoderSettingsChange(requiresReset: requiresReset)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to apply encoder settings update: ")
+            return nil
+        }
+    }
+
+    func handleStreamEncoderSettingsChange(
+        _ request: StreamEncoderSettingsChangeMessage,
+        from clientContext: ClientContext
+    ) async {
+        guard let result = await applyStreamEncoderSettingsChange(request) else { return }
+        await sendStreamEncoderSettingsChangeAck(
+            requestID: request.requestID,
+            streamID: request.streamID,
+            requiresReset: result.requiresReset,
+            to: clientContext
+        )
+    }
+
+    func sendStreamEncoderSettingsChangeAck(
+        requestID: UUID,
+        streamID: StreamID,
+        requiresReset: Bool,
+        to clientContext: ClientContext
+    ) async {
+        guard let context = streamsByID[streamID] else {
+            MirageLogger.debug(.host, "No stream found for encoder settings ack: \(streamID)")
+            return
+        }
+        let encodedDimensions = await context.getEncodedDimensions()
+        let settings = await context.getEncoderSettings()
+        let frameRate = await context.getTargetFrameRate()
+        let dimensionToken = await context.getDimensionToken()
+        let ack = StreamEncoderSettingsChangeAckMessage(
+            requestID: requestID,
+            streamID: streamID,
+            encodedWidth: encodedDimensions.width,
+            encodedHeight: encodedDimensions.height,
+            frameRate: frameRate,
+            colorDepth: settings.colorDepth,
+            dimensionToken: dimensionToken,
+            requiresReset: requiresReset
+        )
+        do {
+            try await clientContext.send(.streamEncoderSettingsChangeAck, content: ack)
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to send streamEncoderSettingsChangeAck for stream \(streamID): "
+            )
         }
     }
 

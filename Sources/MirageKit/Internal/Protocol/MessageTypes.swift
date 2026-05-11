@@ -51,6 +51,7 @@ package enum ControlMessageType: UInt8, Codable {
     case streamRefreshRateChange = 0x63
     case streamEncoderSettingsChange = 0x64
     case receiverMediaFeedback = 0x65
+    case streamEncoderSettingsChangeAck = 0x66
 
     // Session state (for headless Mac support)
     case sessionStateUpdate = 0x70

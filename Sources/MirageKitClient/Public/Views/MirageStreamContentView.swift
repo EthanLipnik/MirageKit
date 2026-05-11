@@ -316,18 +316,10 @@ public struct MirageStreamContentView: View {
                         scheduleContainerSizeChanged(size)
                     },
                     onRefreshRateOverrideChange: { override in
-                        Task { @MainActor [clientService] in
-                            await Task.yield()
-                            do {
-                                try await Task.sleep(for: .milliseconds(1))
-                            } catch {
-                                return
-                            }
-                            clientService.updateStreamRefreshRateOverride(
-                                streamID: session.streamID,
-                                maxRefreshRate: override
-                            )
-                        }
+                        clientService.updateStreamRefreshRateOverride(
+                            streamID: session.streamID,
+                            maxRefreshRate: override
+                        )
                     },
                     cursorStore: clientService.cursorStore,
                     cursorPositionStore: clientService.cursorPositionStore,
@@ -384,18 +376,10 @@ public struct MirageStreamContentView: View {
                         scheduleContainerSizeChanged(size)
                     },
                     onRefreshRateOverrideChange: { override in
-                        Task { @MainActor [clientService] in
-                            await Task.yield()
-                            do {
-                                try await Task.sleep(for: .milliseconds(1))
-                            } catch {
-                                return
-                            }
-                            clientService.updateStreamRefreshRateOverride(
-                                streamID: session.streamID,
-                                maxRefreshRate: override
-                            )
-                        }
+                        clientService.updateStreamRefreshRateOverride(
+                            streamID: session.streamID,
+                            maxRefreshRate: override
+                        )
                     },
                     cursorStore: clientService.cursorStore,
                     cursorPositionStore: clientService.cursorPositionStore,
@@ -453,33 +437,14 @@ public struct MirageStreamContentView: View {
         }
         .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
             guard !isDesktopStream else { return }
-            Task { @MainActor in
-                await Task.yield()
-                do {
-                    try await Task.sleep(for: .milliseconds(1))
-                } catch {
-                    return
-                }
-                handleResizeAcknowledgement(minSize)
-            }
+            handleResizeAcknowledgement(minSize)
         }
         .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) { _, _ in
             guard !isDesktopStream else { return }
-            Task { @MainActor in
-                await Task.yield()
-                do {
-                    try await Task.sleep(for: .milliseconds(1))
-                } catch {
-                    return
-                }
-                handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
-            }
+            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
         }
         .onChange(of: clientService.appStreamStartAcknowledgementByStreamID[session.streamID]) { _, acknowledgement in
-            Task { @MainActor in
-                await Task.yield()
-                handleAppStreamStartAcknowledgement(acknowledgement)
-            }
+            handleAppStreamStartAcknowledgement(acknowledgement)
         }
         .onChange(of: awaitingPostResizeFirstFrame) { _, awaiting in
             guard isDesktopStream, !awaiting else { return }
@@ -789,7 +754,7 @@ public struct MirageStreamContentView: View {
             ? latestContainerDisplaySize
             : latestDrawableViewSize
         guard containerSize.width > 0, containerSize.height > 0 else { return }
-        scheduleContainerSizeChanged(containerSize)
+        handleContainerSizeChanged(containerSize, lifecycleEvent: .containerSizeChanged)
     }
 
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
@@ -878,77 +843,69 @@ public struct MirageStreamContentView: View {
 
         guard case let .useContainerSize(targetViewSize) = decision else { return }
 
-        Task { @MainActor [clientService] in
-            await Task.yield()
-            do {
-                try await Task.sleep(for: .milliseconds(1))
-            } catch {
-                return
-            }
-            let lifecycleState = isDesktopStream
-                ? desktopResizeCoordinator.resizeLifecycleState
-                : resizeLifecycleState
-            guard lifecycleState == .active else { return }
+        let lifecycleState = isDesktopStream
+            ? desktopResizeCoordinator.resizeLifecycleState
+            : resizeLifecycleState
+        guard lifecycleState == .active else { return }
 
+        #if os(visionOS)
+        let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: targetViewSize)
+        #endif
+        let desktopDisplaySize = isDesktopStream
+            ? clientService.preferredDesktopDisplayResolution(for: targetViewSize)
+            : .zero
+        if !isDesktopStream {
             #if os(visionOS)
-            let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: targetViewSize)
-            #endif
-            let desktopDisplaySize = isDesktopStream
-                ? clientService.preferredDesktopDisplayResolution(for: targetViewSize)
-                : .zero
-            if !isDesktopStream {
-                #if os(visionOS)
-                let baseDisplaySize = visionOSDisplaySize
-                #else
-                let baseDisplaySize = clientService.scaledDisplayResolution(targetViewSize)
-                #endif
-                guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
-                    if isResizing, !awaitingAppResizeAck { isResizing = false }
-                    return
-                }
-                if streamPresentationTier == .passiveSnapshot {
-                    displayResolutionTask?.cancel()
-                    displayResolutionTask = nil
-                    pendingDisplayResolutionDispatchTarget = .zero
-                    if awaitingAppResizeAck {
-                        finishAppResizeAwaitingAck()
-                    } else if isResizing {
-                        isResizing = false
-                    }
-                    return
-                }
-
-                // Dedicated app/window virtual-display streams now resize via display-resolution
-                // updates only. Suppress dynamic stream-scale pushes that can fight placement.
-                streamScaleTask?.cancel()
-                streamScaleTask = nil
-                lastSentEncodedPixelSize = .zero
-                guard lastSentDisplayResolution != baseDisplaySize else {
-                    if isResizing, !awaitingAppResizeAck { isResizing = false }
-                    return
-                }
-                enqueueImmediateAppDisplayResolutionChange(baseDisplaySize)
-                return
-            }
-
-            guard isDesktopStream else { return }
-
-            #if os(visionOS)
-            let preferredDisplaySize = visionOSDisplaySize
+            let baseDisplaySize = visionOSDisplaySize
             #else
-            let preferredDisplaySize = desktopDisplaySize
+            let baseDisplaySize = clientService.scaledDisplayResolution(targetViewSize)
             #endif
-            let target = clientService.desktopResizeTarget(
-                for: preferredDisplaySize,
-                maxDrawableSize: maxDrawableSize
-            )
-            clientService.queueDesktopResize(
-                streamID: session.streamID,
-                target: target,
-                hasPresentedFrame: session.hasPresentedFrame,
-                useHostResolution: useHostResolution
-            )
+            guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
+                if isResizing, !awaitingAppResizeAck { isResizing = false }
+                return
+            }
+            if streamPresentationTier == .passiveSnapshot {
+                displayResolutionTask?.cancel()
+                displayResolutionTask = nil
+                pendingDisplayResolutionDispatchTarget = .zero
+                if awaitingAppResizeAck {
+                    finishAppResizeAwaitingAck()
+                } else if isResizing {
+                    isResizing = false
+                }
+                return
+            }
+
+            // Dedicated app/window virtual-display streams now resize via display-resolution
+            // updates only. Suppress dynamic stream-scale pushes that can fight placement.
+            streamScaleTask?.cancel()
+            streamScaleTask = nil
+            lastSentEncodedPixelSize = .zero
+            guard lastSentDisplayResolution != baseDisplaySize else {
+                if isResizing, !awaitingAppResizeAck { isResizing = false }
+                return
+            }
+            enqueueImmediateAppDisplayResolutionChange(baseDisplaySize)
+            return
         }
+
+        guard isDesktopStream else { return }
+
+        #if os(visionOS)
+        let preferredDisplaySize = visionOSDisplaySize
+        #else
+        let preferredDisplaySize = desktopDisplaySize
+        #endif
+        let target = clientService.desktopResizeTarget(
+            for: preferredDisplaySize,
+            maxDrawableSize: maxDrawableSize
+        )
+        clientService.queueDesktopResize(
+            streamID: session.streamID,
+            target: target,
+            hasPresentedFrame: session.hasPresentedFrame,
+            useHostResolution: useHostResolution
+        )
     }
 
     private func enqueueImmediateAppDisplayResolutionChange(_ targetDisplaySize: CGSize) {

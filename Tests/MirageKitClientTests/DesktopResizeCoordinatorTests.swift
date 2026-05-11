@@ -347,6 +347,22 @@ struct DesktopResizeCoordinatorTests {
         #expect(!service.desktopResizeCoordinator.maskActive)
     }
 
+    @Test("Encoder-only stream scale does not affect desktop resize geometry")
+    func encoderOnlyStreamScaleDoesNotAffectDesktopResizeGeometry() {
+        let service = MirageClientService()
+        let streamID: StreamID = 381
+        service.resolutionScale = 1.0
+        service.activeEncoderStreamScaleByStream[streamID] = 0.7
+
+        let resizeTarget = service.desktopResizeTarget(
+            for: CGSize(width: 1600, height: 1200),
+            maxDrawableSize: nil
+        )
+
+        #expect(resizeTarget?.requestedStreamScale == 1.0)
+        #expect(service.activeEncoderStreamScale(for: streamID) == 0.7)
+    }
+
     @Test("No-op startup resize is suppressed when encoder cap matches uncapped output")
     func noOpStartupResizeIsSuppressedWhenEncoderCapMatchesUncappedOutput() {
         let service = MirageClientService()

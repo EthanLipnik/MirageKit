@@ -15,6 +15,9 @@ extension StreamContext {
     func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
         guard feedback.streamID == streamID else { return }
         guard shouldEncodeFrames else { return }
+        if feedback.rendererPresentedFPS > 0 {
+            receiverHasPresentedFrame = true
+        }
         realtimeMediaSession.recordFeedback(feedback)
     }
 }

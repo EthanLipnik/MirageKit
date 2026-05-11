@@ -44,8 +44,8 @@ struct DecodeSubmissionSchedulerTests {
         await controller.stop()
     }
 
-    @Test("High-FPS Smoothest is capped at two decode submissions")
-    func highFPSSmoothestCapsAtTwoDecodeSubmissions() async {
+    @Test("High-FPS Smoothest starts at two decode submissions")
+    func highFPSSmoothestStartsAtTwoDecodeSubmissions() async {
         let controller = StreamController(streamID: 902, maxPayloadSize: 1200)
         await controller.updateCadenceTarget(
             sourceFPS: 120,
@@ -73,6 +73,9 @@ struct DecodeSubmissionSchedulerTests {
             latencyMode: .smoothest,
             reason: "test high fps"
         )
+        for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
+            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 70, receivedFPS: 118)
+        }
         #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
 
         await controller.updateCadenceTarget(

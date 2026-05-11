@@ -49,6 +49,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         var now: CFAbsoluteTime
         var isDesktopDisplayStream: Bool
         var startupSettled: Bool
+        var receiverHasPresentedFrame: Bool
         var isResizing: Bool
         var isEncodingSuspendedForResize: Bool
         var targetFrameRate: Int
@@ -114,6 +115,9 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             guard lastActionTime <= 0 || sample.now - lastActionTime >= configuration.actionCooldownSeconds else {
                 return .none
             }
+            guard allowsAction(immediateAction, receiverHasPresentedFrame: sample.receiverHasPresentedFrame) else {
+                return .none
+            }
             badWindowCount = 0
             goodWindowCount = 0
             lastActionTime = sample.now
@@ -139,6 +143,10 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
 
         badWindowCount = 0
         lastActionTime = sample.now
+        if sample.receiverHasPresentedFrame {
+            captureRestartCount += 1
+            return .restartCapture
+        }
         if cadenceDriverRestartCount < configuration.cadenceDriverRestartsBeforeReassert {
             cadenceDriverRestartCount += 1
             return .restartVirtualDisplayCadenceDriver
@@ -152,6 +160,22 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             return .reassertVirtualDisplayMode
         }
         return .recreateVirtualDisplay
+    }
+
+    private func allowsAction(
+        _ action: Action,
+        receiverHasPresentedFrame: Bool
+    ) -> Bool {
+        guard receiverHasPresentedFrame else { return true }
+        switch action {
+        case .none,
+             .restartCapture:
+            return true
+        case .restartVirtualDisplayCadenceDriver,
+             .reassertVirtualDisplayMode,
+             .recreateVirtualDisplay:
+            return false
+        }
     }
 
     private static func captureCadenceIsBad(

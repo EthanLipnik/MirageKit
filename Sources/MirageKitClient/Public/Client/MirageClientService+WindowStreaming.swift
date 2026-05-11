@@ -839,6 +839,8 @@ public extension MirageClientService {
             lastAutomaticDesktopWorkloadReconfigurationSummary = nil
         }
         desktopDimensionTokenByStream.removeValue(forKey: streamID)
+        clearPendingEncoderReconfiguration(for: streamID)
+        activeEncoderStreamScaleByStream.removeValue(forKey: streamID)
         clearStartupAttempt(for: streamID)
         sessionStore.clearPostResizeTransition(for: streamID)
         metricsStore.clear(streamID: streamID)

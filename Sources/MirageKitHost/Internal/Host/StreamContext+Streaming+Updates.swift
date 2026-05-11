@@ -304,7 +304,11 @@ extension StreamContext {
         }
     }
 
-    func updateStreamScale(_ newScale: CGFloat) async throws {
+    func updateStreamScale(
+        _ newScale: CGFloat,
+        forceRecoveryKeyframe: Bool = true
+    )
+    async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
         let rollbackSnapshot = makeResizeRollbackSnapshot()
         let previousScale = streamScale
@@ -345,6 +349,7 @@ extension StreamContext {
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "stream scale update")
         resetPipelineStateForReconfiguration(reason: "stream scale update")
+        suppressEncodedNonKeyframesUntilKeyframe = true
 
         baseCaptureSize = derivedBaseSize
 
@@ -387,7 +392,9 @@ extension StreamContext {
             updateQueueLimits()
 
             await applyDerivedQuality(for: outputSize, logLabel: "Stream scale update")
-            await encoder?.forceKeyframe()
+            if forceRecoveryKeyframe {
+                await encoder?.forceKeyframe()
+            }
             MirageLogger
                 .stream(
                     "Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))"

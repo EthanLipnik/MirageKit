@@ -58,7 +58,6 @@ actor StreamController {
 
     enum RecoveryReason: Sendable, Equatable {
         case decodeErrorThreshold
-        case decodeBacklog
         case frameLoss
         case freezeTimeout
         case keyframeRecoveryLoop
@@ -70,8 +69,6 @@ actor StreamController {
             switch self {
             case .decodeErrorThreshold:
                 "decode-error-threshold"
-            case .decodeBacklog:
-                "decode-backlog"
             case .frameLoss:
                 "frame-loss"
             case .freezeTimeout:
@@ -108,6 +105,11 @@ actor StreamController {
     enum BootstrapFirstFrameRecoveryAction: Sendable, Equatable {
         case requestKeyframe
         case hardRecovery
+    }
+
+    struct DecodeQueueAdmissionLimits: Sendable, Equatable {
+        let recoveryThreshold: Int
+        let hardLimit: Int
     }
 
     struct TerminalStartupFailure: Sendable, Equatable {
@@ -359,6 +361,16 @@ actor StreamController {
     static let maxQueuedFrames: Int = 6
     /// Start recovery before the decode queue reaches the hard admission bound.
     static let decodeQueueRecoveryThreshold: Int = 5
+    /// Temporary headroom while VideoToolbox creates the first session and the renderer becomes visible.
+    static let smoothestStartupBurstMaxQueuedFrames: Int = 18
+    static let smoothestStartupBurstDecodeQueueRecoveryThreshold: Int = 16
+    static let lowestLatencyStartupBurstMaxQueuedFrames: Int = 10
+    static let lowestLatencyStartupBurstDecodeQueueRecoveryThreshold: Int = 8
+    /// Recovery keyframes can briefly refill the queue before presentation stabilization catches up.
+    static let smoothestRecoveryStabilizationMaxQueuedFrames: Int = 12
+    static let smoothestRecoveryStabilizationDecodeQueueRecoveryThreshold: Int = 10
+    static let lowestLatencyRecoveryStabilizationMaxQueuedFrames: Int = 8
+    static let lowestLatencyRecoveryStabilizationDecodeQueueRecoveryThreshold: Int = 6
     /// Poll interval while waiting for the first presented frame after startup/reset/resize.
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
@@ -377,6 +389,7 @@ actor StreamController {
     static let startupHardRecoveryLimit: Int = 1
     static let liveRecoveryHardRecoveryWindow: CFAbsoluteTime = 20.0
     static let liveRecoveryHardRecoveryLimit: Int = 2
+    static let startupBurstRecoveryEscalationHoldoff: CFAbsoluteTime = 3.0
     static let recoveryStabilizationDecodedFrameThreshold: Int = 3
     static let recoveryStabilizationPresentedFrameThreshold: Int = 3
     static let recoveryStabilizationLogInterval: CFAbsoluteTime = 0.5
@@ -455,6 +468,7 @@ actor StreamController {
     var hasDecodedFirstFrame = false
     /// Whether we've presented at least one frame.
     var hasPresentedFirstFrame = false
+    var firstPresentedFrameTime: CFAbsoluteTime = 0
     /// True while hard recovery must wait for a new render-store submission sequence.
     var presentationProgressRequiresSequenceAdvance = false
     /// True while post-resize recovery remains active.
@@ -718,6 +732,7 @@ actor StreamController {
         hasTriggeredTerminalStartupFailure = false
         liveRecoveryHardRecoveryTimestamps.removeAll(keepingCapacity: false)
         hasTriggeredTerminalLiveRecoveryFailure = false
+        firstPresentedFrameTime = 0
         resetRecoveryStabilizationTracking()
         cancelMemoryBudgetRecoveryTask()
         await setClientRecoveryStatus(.idle)
@@ -1198,6 +1213,42 @@ actor StreamController {
         return MirageRenderStreamStore.shared.currentGeneration(for: streamID)
     }
 
+    func decodeQueueAdmissionLimits(now: CFAbsoluteTime) -> DecodeQueueAdmissionLimits {
+        if presentationTier == .activeLive {
+            let isStartupBurst = !hasPresentedFirstFrame || isWithinStartupBurstRecoveryHoldoff(now: now)
+            if isStartupBurst {
+                return streamCadenceTarget.latencyMode == .smoothest
+                    ? DecodeQueueAdmissionLimits(
+                        recoveryThreshold: Self.smoothestStartupBurstDecodeQueueRecoveryThreshold,
+                        hardLimit: Self.smoothestStartupBurstMaxQueuedFrames
+                    )
+                    : DecodeQueueAdmissionLimits(
+                        recoveryThreshold: Self.lowestLatencyStartupBurstDecodeQueueRecoveryThreshold,
+                        hardLimit: Self.lowestLatencyStartupBurstMaxQueuedFrames
+                    )
+            }
+
+            if clientRecoveryStatus == .keyframeRecovery,
+               !reassembler.isAwaitingKeyframe(),
+               !hasStableRecoveryPresentationProgress() {
+                return streamCadenceTarget.latencyMode == .smoothest
+                    ? DecodeQueueAdmissionLimits(
+                        recoveryThreshold: Self.smoothestRecoveryStabilizationDecodeQueueRecoveryThreshold,
+                        hardLimit: Self.smoothestRecoveryStabilizationMaxQueuedFrames
+                    )
+                    : DecodeQueueAdmissionLimits(
+                        recoveryThreshold: Self.lowestLatencyRecoveryStabilizationDecodeQueueRecoveryThreshold,
+                        hardLimit: Self.lowestLatencyRecoveryStabilizationMaxQueuedFrames
+                    )
+            }
+        }
+
+        return DecodeQueueAdmissionLimits(
+            recoveryThreshold: Self.decodeQueueRecoveryThreshold,
+            hardLimit: Self.maxQueuedFrames
+        )
+    }
+
     private func enqueueFrameInOrder(_ frame: FrameData) async {
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
@@ -1213,35 +1264,17 @@ actor StreamController {
             return
         }
 
-        if queuedFrames.count >= Self.decodeQueueRecoveryThreshold {
+        let admissionLimits = decodeQueueAdmissionLimits(now: currentTime())
+        if queuedFrames.count >= admissionLimits.recoveryThreshold {
             let queueDepth = queuedFrames.count
-            if frame.isKeyframe {
-                clearQueuedFramesForRecovery()
-                queuedFrames.append(frame)
-                maybeLogDecodeBackpressure(queueDepth: queueDepth)
-                return
-            }
-
-            frame.releaseBuffer()
-            recordQueueDrop()
-            await triggerDecodeBacklogRecovery(queueDepth: queueDepth)
+            await performDecodeFreshnessCatchUp(keeping: frame, queueDepth: queueDepth)
             logQueueDropIfNeeded()
             return
         }
 
-        if queuedFrames.count >= Self.maxQueuedFrames {
+        if queuedFrames.count >= admissionLimits.hardLimit {
             let queueDepth = queuedFrames.count
-            if frame.isKeyframe {
-                clearQueuedFramesForRecovery()
-                queuedFrames.append(frame)
-                maybeLogDecodeBackpressure(queueDepth: queueDepth)
-                return
-            }
-
-            frame.releaseBuffer()
-            recordQueueDrop()
-            await handleDecodeQueueEviction(frameNumber: frame.frameNumber)
-            maybeLogDecodeBackpressure(queueDepth: queueDepth)
+            await performDecodeFreshnessCatchUp(keeping: frame, queueDepth: queueDepth)
             logQueueDropIfNeeded()
             return
         }
@@ -1249,16 +1282,72 @@ actor StreamController {
         queuedFrames.append(frame)
     }
 
-    private func triggerDecodeBacklogRecovery(queueDepth: Int) async {
+    func enqueueFrameForRecoveryTesting(
+        frameNumber: UInt32,
+        isKeyframe: Bool = false,
+        releaseBuffer: @escaping @Sendable () -> Void = {}
+    ) async {
+        let payload = Data([UInt8(truncatingIfNeeded: frameNumber)])
+        let frame = FrameData(
+            data: payload,
+            frameNumber: frameNumber,
+            remotePresentationTime: CMTime(value: CMTimeValue(frameNumber), timescale: 120),
+            presentationTime: CMTime(value: CMTimeValue(frameNumber), timescale: 120),
+            isKeyframe: isKeyframe,
+            contentRect: .zero,
+            renderGeneration: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+            hostEpoch: 0,
+            dimensionToken: 0,
+            timeline: FrameTimeline(
+                streamID: streamID,
+                frameNumber: frameNumber,
+                dependencyEpoch: DependencyEpoch(0),
+                isKeyframe: isKeyframe,
+                encodedByteCount: payload.count,
+                fragmentCount: 1
+            ),
+            queueTicket: FrameQueueTicket(
+                pipelineGeneration: framePipelineGeneration,
+                queueEpoch: enqueueOrderAllocator.currentQueueEpoch(),
+                order: nextExpectedEnqueueOrder
+            ),
+            releaseBuffer: releaseBuffer
+        )
+        await enqueueFrameInOrder(frame)
+    }
+
+    func queuedFrameSnapshotForTesting() -> (count: Int, firstFrameNumber: UInt32?, lastFrameNumber: UInt32?) {
+        (
+            queuedFrames.count,
+            queuedFrames.first?.frameNumber,
+            queuedFrames.last?.frameNumber
+        )
+    }
+
+    private func performDecodeFreshnessCatchUp(keeping frame: FrameData, queueDepth: Int) async {
         maybeLogDecodeBackpressure(queueDepth: queueDepth)
-        let dropped = clearQueuedFramesForRecovery()
+        let dropped = clearQueuedFramesForFreshnessCatchUp()
+        if frame.isKeyframe {
+            queuedFrames.append(frame)
+            MirageLogger.client(
+                "Decode freshness catch-up for stream \(streamID) at depth \(queueDepth); " +
+                    "dropped stale queued frames=\(dropped)"
+            )
+            return
+        }
+
+        frame.releaseBuffer()
+        recordQueueDrop()
         reassembler.enterKeyframeOnlyMode()
         await decoder.beginRecoveryTracking()
+        if presentationTier == .activeLive {
+            await startKeyframeRecoveryLoopIfNeeded()
+        }
+        await requestKeyframeRecovery(reason: .frameLoss)
         MirageLogger.client(
-            "Decode backlog recovery requested for stream \(streamID) at depth \(queueDepth); dropped=\(dropped)"
+            "Decode freshness catch-up for stream \(streamID) at depth \(queueDepth); " +
+                "dropped stale queued frames=\(dropped), rejected dependent frame=\(frame.frameNumber)"
         )
-        await startKeyframeRecoveryLoopIfNeeded()
-        await requestKeyframeRecovery(reason: .decodeBacklog)
     }
 
     private func dequeueFrame() async -> FrameData? {
@@ -1310,6 +1399,22 @@ actor StreamController {
         for frame in frames {
             frame.releaseBuffer()
         }
+        return frames.count
+    }
+
+    @discardableResult
+    func clearQueuedFramesForFreshnessCatchUp() -> Int {
+        let queued = queuedFrames.drain()
+        let pending = Array(pendingOrderedFrames.values)
+        pendingOrderedFrames.removeAll(keepingCapacity: false)
+        nextExpectedEnqueueOrder = 0
+        enqueueOrderAllocator.reset()
+        guard !queued.isEmpty || !pending.isEmpty else { return 0 }
+        let frames = queued + pending
+        for frame in frames {
+            frame.releaseBuffer()
+        }
+        recordQueueDrops(frames.count)
         return frames.count
     }
 

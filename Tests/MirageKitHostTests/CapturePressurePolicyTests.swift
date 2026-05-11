@@ -15,8 +15,8 @@ import Testing
 
 @Suite("Capture Rate Policy")
 struct CaptureRatePolicyTests {
-    @Test("Display refresh cadence caps effective capture rate when enabled")
-    func displayRefreshCadenceCapsEffectiveRate() {
+    @Test("Display refresh cadence follows native high refresh when enabled")
+    func displayRefreshCadenceFollowsNativeHighRefresh() {
         #expect(
             WindowCaptureEngine.resolvedEffectiveCaptureRate(
                 requestedFrameRate: 120,
@@ -28,6 +28,13 @@ struct CaptureRatePolicyTests {
             WindowCaptureEngine.resolvedEffectiveCaptureRate(
                 requestedFrameRate: 120,
                 displayRefreshRate: 144,
+                usesDisplayRefreshCadence: true
+            ) == 144
+        )
+        #expect(
+            WindowCaptureEngine.resolvedEffectiveCaptureRate(
+                requestedFrameRate: 60,
+                displayRefreshRate: 120,
                 usesDisplayRefreshCadence: true
             ) == 120
         )
@@ -61,7 +68,7 @@ struct CaptureRatePolicyTests {
                 requestedFrameRate: 60,
                 displayRefreshRate: 120,
                 usesDisplayRefreshCadence: true
-            ) != .zero
+            ) == .zero
         )
         #expect(
             WindowCaptureEngine.resolvedMinimumFrameInterval(
