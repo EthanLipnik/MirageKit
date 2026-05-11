@@ -149,7 +149,16 @@ extension StreamController {
         )
         let resolvedBaseline = presentationTier == .passiveSnapshot
             ? 1
-            : VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: target.sourceFPS)
+            : VideoDecoder.baselineDecodeSubmissionLimit(
+                targetFrameRate: target.sourceFPS,
+                latencyMode: target.latencyMode
+            )
+        let resolvedMaximum = presentationTier == .passiveSnapshot
+            ? 1
+            : VideoDecoder.maximumDecodeSubmissionLimit(
+                targetFrameRate: target.sourceFPS,
+                latencyMode: target.latencyMode
+            )
         let targetUnchanged = target == streamCadenceTarget
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
 
@@ -161,9 +170,10 @@ extension StreamController {
         MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
 
         if targetUnchanged, baselineUnchanged {
-            if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
-                currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
-            }
+            currentDecodeSubmissionLimit = min(
+                resolvedMaximum,
+                max(decodeSubmissionBaselineLimit, currentDecodeSubmissionLimit)
+            )
             if await decoder.currentDecodeSubmissionLimit() != currentDecodeSubmissionLimit {
                 await decoder.setDecodeSubmissionLimit(
                     limit: currentDecodeSubmissionLimit,
@@ -178,7 +188,7 @@ extension StreamController {
         decodeSubmissionHealthyStreak = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
         lastSourceBoundDiagnosticSignature = nil
-        currentDecodeSubmissionLimit = max(1, min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit))
+        currentDecodeSubmissionLimit = max(1, min(resolvedMaximum, decodeSubmissionBaselineLimit))
         await decoder.setDecodeSubmissionLimit(
             limit: currentDecodeSubmissionLimit,
             reason: reason
@@ -306,7 +316,7 @@ extension StreamController {
             MirageLogger.client(
                 "Tier promotion probe progressed for stream \(streamID) " +
                     "(baseline=\(baselineCursor.generation):\(baselineCursor.sequence), " +
-                    "latest=\(snapshot.visibleGeneration):\(snapshot.visibleSequence))"
+                    "latest=\(snapshot.visibleCursor.generation):\(snapshot.visibleCursor.sequence))"
             )
             await setClientRecoveryStatus(.idle)
             return

@@ -581,11 +581,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
     }
 
-    private func refreshFrameListener(for streamID: StreamID) {
-        unregisterFrameListener(for: listenerStreamID)
-        registerFrameListener(for: streamID)
-    }
-
     private func recoverDisplayLayerLivenessIfNeeded(
         now: CFTimeInterval,
         presenterHasPendingFrame: Bool

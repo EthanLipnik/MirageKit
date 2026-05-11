@@ -19,8 +19,6 @@ final class SerialWorker: @unchecked Sendable {
         queue.setSpecific(key: key, value: ())
     }
 
-    var dispatchQueue: DispatchQueue { queue }
-
     func submit(_ block: @escaping @Sendable () -> Void) {
         queue.async(execute: block)
     }

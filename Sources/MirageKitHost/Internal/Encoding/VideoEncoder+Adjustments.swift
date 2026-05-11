@@ -205,14 +205,15 @@ extension VideoEncoder {
 
     private func sessionStringProperty(_ key: CFString) -> String? {
         guard let session = compressionSession else { return nil }
-        var value: CFTypeRef?
+        var value: Unmanaged<CFTypeRef>?
         let status = VTSessionCopyProperty(
             session,
             key: key,
             allocator: kCFAllocatorDefault,
             valueOut: &value
         )
-        guard status == noErr, let value else { return nil }
+        guard status == noErr,
+              let value = value?.takeRetainedValue() else { return nil }
         return value as? String
     }
 

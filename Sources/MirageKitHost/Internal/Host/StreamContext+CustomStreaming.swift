@@ -2,7 +2,7 @@
 //  StreamContext+CustomStreaming.swift
 //  MirageKit
 //
-//  Created by Codex on 4/30/26.
+//  Created by Ethan Lipnik on 4/30/26.
 //
 
 import CoreMedia

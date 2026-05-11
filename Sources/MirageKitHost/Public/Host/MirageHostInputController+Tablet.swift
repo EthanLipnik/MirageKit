@@ -94,7 +94,7 @@ extension MirageHostInputController {
         if let pointerButtons {
             cgEvent.setIntegerValueField(.tabletEventPointButtons, value: pointerButtons)
         }
-        cgEvent.setIntegerValueField(.tabletEventDeviceID, value: syntheticTabletDeviceID)
+        cgEvent.setIntegerValueField(.tabletEventDeviceID, value: Self.syntheticTabletDeviceID)
     }
 
     func postTabletPointerSample(
@@ -187,18 +187,18 @@ extension MirageHostInputController {
             value: Int64(CGEventMouseSubtype.tabletProximity.rawValue)
         )
         proximityEvent.setIntegerValueField(.tabletProximityEventEnterProximity, value: entering ? 1 : 0)
-        proximityEvent.setIntegerValueField(.tabletProximityEventPointerType, value: syntheticTabletPointerType)
-        proximityEvent.setIntegerValueField(.tabletProximityEventPointerID, value: syntheticTabletDeviceID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventDeviceID, value: syntheticTabletDeviceID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventSystemTabletID, value: syntheticTabletDeviceID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventVendorID, value: syntheticTabletVendorID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventTabletID, value: syntheticTabletProductID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventVendorPointerType, value: syntheticTabletPointerType)
+        proximityEvent.setIntegerValueField(.tabletProximityEventPointerType, value: Self.syntheticTabletPointerType)
+        proximityEvent.setIntegerValueField(.tabletProximityEventPointerID, value: Self.syntheticTabletDeviceID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventDeviceID, value: Self.syntheticTabletDeviceID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventSystemTabletID, value: Self.syntheticTabletDeviceID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventVendorID, value: Self.syntheticTabletVendorID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventTabletID, value: Self.syntheticTabletProductID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventVendorPointerType, value: Self.syntheticTabletPointerType)
         proximityEvent.setIntegerValueField(
             .tabletProximityEventVendorPointerSerialNumber,
-            value: syntheticTabletPointerSerialNumber
+            value: Self.syntheticTabletPointerSerialNumber
         )
-        proximityEvent.setIntegerValueField(.tabletProximityEventVendorUniqueID, value: syntheticTabletUniqueID)
+        proximityEvent.setIntegerValueField(.tabletProximityEventVendorUniqueID, value: Self.syntheticTabletUniqueID)
         proximityEvent.setIntegerValueField(.tabletProximityEventCapabilityMask, value: syntheticTabletCapabilityMask)
         return proximityEvent
     }
@@ -243,12 +243,12 @@ extension MirageHostInputController {
         }
     }
 
-    private var syntheticTabletDeviceID: Int64 { 1 }
-    private var syntheticTabletPointerType: Int64 { 1 }
-    private var syntheticTabletVendorID: Int64 { 0x4D52 }
-    private var syntheticTabletProductID: Int64 { 0x0001 }
-    private var syntheticTabletPointerSerialNumber: Int64 { 1 }
-    private var syntheticTabletUniqueID: Int64 { 0x4D4952414745 }
+    private static let syntheticTabletDeviceID: Int64 = 1
+    private static let syntheticTabletPointerType: Int64 = 1
+    private static let syntheticTabletVendorID: Int64 = 0x4D52
+    private static let syntheticTabletProductID: Int64 = 0x0001
+    private static let syntheticTabletPointerSerialNumber: Int64 = 1
+    private static let syntheticTabletUniqueID: Int64 = 0x4D4952414745
     private var syntheticTabletCapabilityMask: Int64 {
         0x0001 | // device ID
             0x0002 | // absolute X

@@ -678,7 +678,7 @@ actor AppAtlasMediaCoordinator {
                 )
             }
         let nextLayout = AppAtlasLayout.nativePackedLayout(windows: windows)
-        guard !nextLayout.isEmpty else {
+        guard !nextLayout.placements.isEmpty else {
             currentLayout = nil
             currentPublicLayout = nil
             return

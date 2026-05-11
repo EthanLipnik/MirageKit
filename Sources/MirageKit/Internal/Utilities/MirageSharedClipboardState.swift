@@ -216,7 +216,6 @@ package struct MirageSharedClipboardState: Sendable {
         }
     }
 
-    @discardableResult
     package mutating func recordRemoteTransferObservation(
         changeCount: Int,
         orderingToken: MirageSharedClipboardOrderingToken,

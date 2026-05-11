@@ -15,7 +15,6 @@ enum AppStreamStartResetDecision: Equatable {
 }
 
 func appStreamStartResetDecision(
-    streamID: StreamID,
     isExistingStream: Bool,
     hasController: Bool,
     requestStartPending: Bool,
@@ -29,7 +28,5 @@ func appStreamStartResetDecision(
     if let previousDimensionToken, let receivedDimensionToken, previousDimensionToken != receivedDimensionToken {
         return .resetController
     }
-
-    _ = streamID // retained for parity with desktop helper signature.
     return .reuseController
 }

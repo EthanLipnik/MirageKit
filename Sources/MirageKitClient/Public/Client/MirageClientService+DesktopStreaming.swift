@@ -200,9 +200,8 @@ public extension MirageClientService {
             )
             cancelStreamSetup()
             clearPendingDesktopStreamStartState()
-            delegate?.clientService(
-                self,
-                didEncounterError: MirageError.protocolError("Desktop stream start timed out. The host may be busy or unreachable.")
+            delegate?.didEncounterError(
+                MirageError.protocolError("Desktop stream start timed out. The host may be busy or unreachable.")
             )
         }
     }
@@ -244,21 +243,6 @@ public extension MirageClientService {
         MirageLogger.client(
             "Requested stop desktop stream: stream=\(streamID), session=\(desktopSessionID.uuidString)"
         )
-    }
-
-    internal func hasDesktopStreamRestartBudget(streamID: StreamID) -> Bool {
-        desktopStreamID == streamID &&
-            lastDesktopStreamStartRequest != nil &&
-            desktopStreamRestartAttempts < desktopStreamRestartLimit
-    }
-
-    internal func canRestartDesktopStreamAfterTerminalStartupFailure(streamID: StreamID) -> Bool {
-        guard case .connected = connectionState,
-              controlChannel != nil,
-              hasDesktopStreamRestartBudget(streamID: streamID) else {
-            return false
-        }
-        return true
     }
 
     package func makeDesktopStreamRestartRequest(
@@ -377,7 +361,7 @@ public extension MirageClientService {
                 streamID: failedStreamID,
                 desktopSessionID: failedDesktopSessionID
             )
-            _ = sendControlMessageBestEffort(.stopDesktopStream, content: stopRequest)
+            sendControlMessageBestEffort(.stopDesktopStream, content: stopRequest)
         }
 
         await forceStopDesktopStreamLocally(
@@ -470,7 +454,7 @@ public extension MirageClientService {
     /// Used when the user cancels during loading before a stream ID is established.
     func cancelStreamSetup() {
         guard case .connected = connectionState else { return }
-        _ = sendControlMessageBestEffort(
+        sendControlMessageBestEffort(
             .cancelStreamSetup,
             content: CancelStreamSetupMessage(
                 startupRequestID: pendingStreamSetupRequestID,

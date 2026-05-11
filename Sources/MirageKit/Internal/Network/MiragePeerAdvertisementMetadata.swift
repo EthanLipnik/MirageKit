@@ -166,16 +166,6 @@ package enum MiragePeerAdvertisementMetadata {
         intValue(maxFrameRateKey, from: advertisement, defaultValue: 120)
     }
 
-    package static func updatingAcceptingConnections(
-        _ acceptingConnections: Bool,
-        in advertisement: LoomPeerAdvertisement
-    ) -> LoomPeerAdvertisement {
-        updatingAvailability(
-            acceptingConnections ? .available : .busy,
-            in: advertisement
-        )
-    }
-
     package static func updatingAvailability(
         _ reason: AvailabilityReason,
         in advertisement: LoomPeerAdvertisement

@@ -55,6 +55,7 @@ public struct MirageStreamContentView: View {
     public let useHostResolution: Bool
     public let macSystemShortcutForwardingEnabled: Bool
     public let keyboardAvoidanceEnabled: Bool
+    public let inputCaptureEnabled: Bool
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
     public let ignoresSafeArea: Bool
@@ -111,6 +112,7 @@ public struct MirageStreamContentView: View {
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
     ///   - dictationLocalePreference: Dictation language selection.
     ///   - macSystemShortcutForwardingEnabled: Whether macOS should use Input Monitoring backed shortcut forwarding.
+    ///   - inputCaptureEnabled: Whether the stream should actively claim local input focus.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
     public init(
         session: MirageStreamSessionState,
@@ -147,6 +149,7 @@ public struct MirageStreamContentView: View {
         useHostResolution: Bool = false,
         macSystemShortcutForwardingEnabled: Bool = true,
         keyboardAvoidanceEnabled: Bool = true,
+        inputCaptureEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
         ignoresSafeArea: Bool = true
@@ -185,6 +188,7 @@ public struct MirageStreamContentView: View {
         self.useHostResolution = useHostResolution
         self.macSystemShortcutForwardingEnabled = macSystemShortcutForwardingEnabled
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
+        self.inputCaptureEnabled = inputCaptureEnabled
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
         self.ignoresSafeArea = ignoresSafeArea
@@ -361,6 +365,7 @@ public struct MirageStreamContentView: View {
                     preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                     maxDrawableSize: maxDrawableSize,
                     prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+                    inputCaptureEnabled: inputCaptureEnabled,
                     ignoresSafeArea: ignoresSafeArea
                 )
                 .blur(radius: resizeBlurRadius)
@@ -576,7 +581,7 @@ public struct MirageStreamContentView: View {
     }
 
     private var macOSInputEnabled: Bool {
-        canSendInputToHost && sessionStore.focusedSessionID == session.id
+        inputCaptureEnabled && canSendInputToHost && sessionStore.focusedSessionID == session.id
     }
 
     private var streamPresentationTier: StreamPresentationTier {
@@ -588,6 +593,7 @@ public struct MirageStreamContentView: View {
     }
 
     private func focusCurrentStreamForInputIfNeeded(force: Bool = false) {
+        guard inputCaptureEnabled else { return }
         guard force || sessionStore.focusedSessionID != session.id else { return }
         sessionStore.setFocusedSession(session.id)
         clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
@@ -617,6 +623,8 @@ public struct MirageStreamContentView: View {
     }
 
     private func sendInputEvent(_ event: MirageInputEvent) {
+        guard inputCaptureEnabled else { return }
+
         if case let .keyDown(keyEvent) = event {
             if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
                 logDesktopExitShortcutTriggered()

@@ -20,9 +20,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: Int
-
-        var generation: UInt64 { cursor.generation }
-        var sequence: UInt64 { cursor.sequence }
     }
 
     struct SubmissionSnapshot: Sendable {
@@ -33,10 +30,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let visibleCursor: MirageRenderCursor
         let visibleSubmittedTime: CFAbsoluteTime
 
-        var generation: UInt64 { cursor.generation }
-        var sequence: UInt64 { cursor.sequence }
-        var visibleGeneration: UInt64 { visibleCursor.generation }
-        var visibleSequence: UInt64 { visibleCursor.sequence }
         var hasSubmission: Bool { cursor.hasSubmittedFrame && submittedTime > 0 }
         var hasVisibleFrame: Bool { visibleCursor.hasSubmittedFrame && visibleSubmittedTime > 0 }
     }
@@ -186,6 +179,15 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let sourceTargetFPS: Int
         let displayTargetFPS: Int
         let targetFPS: Int
+
+        var rendererEnqueueFPS: Double { layerEnqueueFPS }
+        var uniqueRendererEnqueueFPS: Double { uniqueLayerEnqueueFPS }
+        var uniqueDeliveredSourceFrameFPS: Double { visibleFrameFPS }
+        var deliveredSourceFrameCadenceKnown: Bool { visibleFrameCadenceKnown }
+        var repeatedDeliveredSourceFrameCount: UInt64 { repeatedSourceFrameCount }
+        var repeatedDisplayTickFrameCount: UInt64 { repeatedFrameCount }
+        var displayRefreshTickFPS: Double { displayTickFPS }
+        var renderQueueBacklogFrames: Int { unsubmittedPendingFrameCount }
     }
 
     struct FeedbackTelemetrySnapshot: Sendable, Equatable {
@@ -194,6 +196,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let uniqueLayerEnqueueFPS: Double
         let visibleFrameFPS: Double
         let visibleFrameCadenceKnown: Bool
+
+        var rendererEnqueueFPS: Double { layerEnqueueFPS }
+        var uniqueRendererEnqueueFPS: Double { uniqueLayerEnqueueFPS }
+        var uniqueDeliveredSourceFrameFPS: Double { visibleFrameFPS }
+        var deliveredSourceFrameCadenceKnown: Bool { visibleFrameCadenceKnown }
     }
 
     static let shared = MirageRenderStreamStore()
@@ -220,6 +227,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var lastSubmittedTime: CFAbsoluteTime = 0
         var lastSubmittedRemotePresentationTime: CMTime = .invalid
         var lastSubmittedMappedPresentationTime: CMTime = .invalid
+        var lastAcceptedFrameTimeline: FrameTimeline?
         var lastDisplayTickTime: CFAbsoluteTime = 0
         var sourceTargetFPS: Int = 60
         var displayTargetFPS: Int = 60
@@ -334,6 +342,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         dimensionToken: UInt16? = nil,
         frameNumber: UInt32? = nil,
         queueEpoch: UInt64? = nil,
+        timeline: FrameTimeline? = nil,
         for streamID: StreamID
     ) -> EnqueueResult {
         let state = streamState(for: streamID)
@@ -356,6 +365,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         state.nextSequence &+= 1
         let cursor = MirageRenderCursor(generation: state.generation, sequence: state.nextSequence)
+        let now = CFAbsoluteTimeGetCurrent()
+        let renderTimeline = timeline?.markingRenderEnqueued(
+            at: decodeTime,
+            queueAgeMs: max(0, now - decodeTime) * 1000
+        )
         let frame = MirageRenderFrame(
             pixelBuffer: pixelBuffer,
             contentRect: contentRect,
@@ -370,10 +384,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             hostEpoch: hostEpoch,
             dimensionToken: dimensionToken,
             frameNumber: frameNumber,
-            queueEpoch: queueEpoch
+            queueEpoch: queueEpoch,
+            timeline: renderTimeline
         )
         let overwrittenPendingFrames = appendPendingFrameLocked(frame, state: state)
-        let now = CFAbsoluteTimeGetCurrent()
         appendSampleLocked(now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
         listeners = activeListenersLocked(state: state)
         result = EnqueueResult(
@@ -784,6 +798,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lastSubmittedTime = now
         state.lastSubmittedRemotePresentationTime = remotePresentationTime
         state.lastSubmittedMappedPresentationTime = mappedPresentationTime
+        if let frameIndex = state.pendingFrames.firstIndex(where: { $0.cursor == cursor }) {
+            let acceptedTimeline = state.pendingFrames[frameIndex].timeline?.markingDisplayAccepted(at: now)
+            state.pendingFrames[frameIndex].timeline = acceptedTimeline
+            state.lastAcceptedFrameTimeline = acceptedTimeline
+        }
         appendSampleLocked(
             now,
             samples: &state.uniqueSubmittedSamples,
@@ -822,6 +841,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             )
         }
         state.lock.unlock()
+    }
+
+    func latestAcceptedFrameTimeline(for streamID: StreamID) -> FrameTimeline? {
+        guard let state = streamStateIfPresent(for: streamID) else { return nil }
+        state.lock.lock()
+        let timeline = state.lastAcceptedFrameTimeline
+        state.lock.unlock()
+        return timeline
     }
 
     func submissionSnapshot(for streamID: StreamID) -> SubmissionSnapshot {
@@ -1555,6 +1582,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lastSubmittedTime = 0
         state.lastSubmittedRemotePresentationTime = .invalid
         state.lastSubmittedMappedPresentationTime = .invalid
+        state.lastAcceptedFrameTimeline = nil
         state.lastDisplayTickTime = 0
         state.decodeSamples.removeAll(keepingCapacity: false)
         state.decodeSampleStartIndex = 0

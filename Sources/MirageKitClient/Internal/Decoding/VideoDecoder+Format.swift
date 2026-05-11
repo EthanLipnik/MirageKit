@@ -62,6 +62,9 @@ extension VideoDecoder {
                 strippedData = stripSEINALUnits(from: strippedData)
                 return strippedData
             }
+            throw malformedKeyframeError(
+                "Framed keyframe missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
+            )
         }
 
         // Parse HEVC NAL units to extract VPS, SPS, PPS (in Annex B format)
@@ -91,7 +94,7 @@ extension VideoDecoder {
 
         guard startCodePositions.count >= 3 else {
             MirageLogger.decoder("Not enough start codes found: \(startCodePositions.count)")
-            return data
+            throw malformedKeyframeError("Keyframe missing Annex-B parameter-set start codes")
         }
 
         var vps: Data?
@@ -141,14 +144,9 @@ extension VideoDecoder {
                 .decoder,
                 "Missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
             )
-
-            // Try to use cached format description if available
-            if let cached = cachedFormatDescription {
-                MirageLogger.decoder("Using cached format description due to corrupted keyframe")
-                formatDescription = cached
-            }
-
-            return data // Return original data, will try again on next keyframe
+            throw malformedKeyframeError(
+                "Keyframe missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
+            )
         }
 
         try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
@@ -166,6 +164,14 @@ extension VideoDecoder {
         }
 
         return data
+    }
+
+    private func malformedKeyframeError(_ message: String) -> MirageError {
+        MirageError.decodingError(NSError(
+            domain: "MirageKit.VideoDecoder.Keyframe",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        ))
     }
 
     private func splitFramedKeyframeData(from data: Data) -> (parameterSets: Data, frameData: Data)? {
@@ -338,11 +344,6 @@ extension VideoDecoder {
                     )
 
                     guard status == noErr, let desc = formatDesc else {
-                        if let cached = self.cachedFormatDescription {
-                            MirageLogger.decoder("Format description creation failed (status \(status)), using cached")
-                            self.formatDescription = cached
-                            return
-                        }
                         throw MirageError.decodingError(NSError(
                             domain: NSOSStatusErrorDomain,
                             code: Int(status),
@@ -499,109 +500,6 @@ extension VideoDecoder {
 
         // Fallback: assume PPS is about 10 bytes
         return min(nalStart + 10, data.count)
-    }
-
-    private func parseNALUnitsWithPositions(from data: Data) -> [(Data, Int)] {
-        var nalUnits: [(Data, Int)] = []
-        var currentIndex = 0
-
-        while currentIndex < data.count {
-            // Look for start code (0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
-            var startCodeLength = 0
-            var foundStartCode = false
-
-            if currentIndex + 3 <= data.count {
-                if data[currentIndex] == 0x00, data[currentIndex + 1] == 0x00 {
-                    if data[currentIndex + 2] == 0x01 {
-                        startCodeLength = 3
-                        foundStartCode = true
-                    } else if currentIndex + 4 <= data.count,
-                              data[currentIndex + 2] == 0x00, data[currentIndex + 3] == 0x01 {
-                        startCodeLength = 4
-                        foundStartCode = true
-                    }
-                }
-            }
-
-            if foundStartCode {
-                currentIndex += startCodeLength
-
-                // Find next start code or end of data
-                var nextStart = currentIndex
-                while nextStart < data.count {
-                    if nextStart + 3 <= data.count,
-                       data[nextStart] == 0x00, data[nextStart + 1] == 0x00,
-                       data[nextStart + 2] == 0x01 ||
-                       (nextStart + 4 <= data.count && data[nextStart + 2] == 0x00 && data[nextStart + 3] == 0x01) {
-                        break
-                    }
-                    nextStart += 1
-                }
-
-                // Extract NAL unit
-                if nextStart > currentIndex {
-                    let nalUnit = data.subdata(in: currentIndex ..< nextStart)
-                    nalUnits.append((nalUnit, nextStart))
-                }
-                currentIndex = nextStart
-            } else {
-                // No more Annex B start codes found, remaining data is AVCC format
-                break
-            }
-        }
-
-        return nalUnits
-    }
-
-    private func parseNALUnits(from data: Data) -> [Data] {
-        var nalUnits: [Data] = []
-        var currentIndex = 0
-
-        while currentIndex < data.count {
-            // Look for start code (0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
-            var startCodeLength = 0
-            var foundStartCode = false
-
-            if currentIndex + 3 <= data.count {
-                if data[currentIndex] == 0x00, data[currentIndex + 1] == 0x00 {
-                    if data[currentIndex + 2] == 0x01 {
-                        startCodeLength = 3
-                        foundStartCode = true
-                    } else if currentIndex + 4 <= data.count,
-                              data[currentIndex + 2] == 0x00, data[currentIndex + 3] == 0x01 {
-                        startCodeLength = 4
-                        foundStartCode = true
-                    }
-                }
-            }
-
-            if foundStartCode {
-                currentIndex += startCodeLength
-
-                // Find next start code or end of data
-                var nextStart = currentIndex
-                while nextStart < data.count {
-                    if nextStart + 3 <= data.count,
-                       data[nextStart] == 0x00, data[nextStart + 1] == 0x00,
-                       data[nextStart + 2] == 0x01 ||
-                       (nextStart + 4 <= data.count && data[nextStart + 2] == 0x00 && data[nextStart + 3] == 0x01) {
-                        break
-                    }
-                    nextStart += 1
-                }
-
-                // Extract NAL unit
-                if nextStart > currentIndex {
-                    let nalUnit = data.subdata(in: currentIndex ..< nextStart)
-                    nalUnits.append(nalUnit)
-                }
-                currentIndex = nextStart
-            } else {
-                currentIndex += 1
-            }
-        }
-
-        return nalUnits
     }
 
     // MARK: - ProRes Format Description

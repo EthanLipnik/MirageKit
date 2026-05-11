@@ -7,7 +7,7 @@
 //  Audio frame decode and downmix helpers for playback.
 //
 
-import AVFAudio
+@preconcurrency import AVFAudio
 import AudioToolbox
 import Foundation
 import MirageKit
@@ -26,6 +26,25 @@ struct DecodedPCMFrame: Sendable {
 }
 
 actor AudioDecoder {
+    private final class ConverterInputProvider: @unchecked Sendable {
+        private let buffer: AVAudioBuffer
+        private var didProvideInput = false
+
+        init(buffer: AVAudioBuffer) {
+            self.buffer = buffer
+        }
+
+        func nextBuffer(outStatus: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
+            if didProvideInput {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return buffer
+        }
+    }
+
     private struct ConverterKey: Hashable {
         let codec: MirageAudioCodec
         let inputSampleRate: Int
@@ -131,16 +150,10 @@ actor AudioDecoder {
             return nil
         }
 
-        var didProvideInput = false
+        let inputProvider = ConverterInputProvider(buffer: compressedBuffer)
         var conversionError: NSError?
         let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-            if didProvideInput {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            didProvideInput = true
-            outStatus.pointee = .haveData
-            return compressedBuffer
+            inputProvider.nextBuffer(outStatus: outStatus)
         }
 
         guard conversionError == nil else { return nil }
@@ -208,16 +221,10 @@ actor AudioDecoder {
             return nil
         }
 
-        var didProvideInput = false
+        let inputProvider = ConverterInputProvider(buffer: inputBuffer)
         var conversionError: NSError?
         let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-            if didProvideInput {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            didProvideInput = true
-            outStatus.pointee = .haveData
-            return inputBuffer
+            inputProvider.nextBuffer(outStatus: outStatus)
         }
 
         guard conversionError == nil else { return nil }

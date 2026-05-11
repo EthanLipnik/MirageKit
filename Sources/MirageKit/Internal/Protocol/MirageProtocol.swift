@@ -23,10 +23,8 @@ package let mirageSupportedFeatures: MirageFeatureSet = [
     .customStreamsV1,
 ]
 
-/// Registration packet magic values.
-package let mirageVideoRegistrationMagic: UInt32 = 0x4D49_5247 // "MIRG"
+/// Audio registration packet magic value.
 package let mirageAudioRegistrationMagic: UInt32 = 0x4D49_5241 // "MIRA"
-package let mirageQualityTestRegistrationMagic: UInt32 = 0x4D49_5251 // "MIRQ"
 
 /// Default maximum UDP packet size (header + payload) to avoid IPv6 fragmentation.
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
@@ -527,9 +525,6 @@ package struct FrameFlags: OptionSet, Sendable {
     /// This is a full desktop stream (virtual display mirroring mode)
     /// Used when client requests streaming of the entire desktop
     package static let desktopStream = FrameFlags(rawValue: 1 << 8)
-
-    /// Frame is a repeat of the most recent capture
-    package static let repeatedFrame = FrameFlags(rawValue: 1 << 9)
 
     /// FEC parity fragment (not part of the encoded frame payload)
     package static let fecParity = FrameFlags(rawValue: 1 << 10)

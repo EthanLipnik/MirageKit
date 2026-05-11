@@ -35,7 +35,7 @@ struct RenderCadenceSmoothingTests {
         }
 
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 4)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor.sequence == 4)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 2)
@@ -93,7 +93,7 @@ struct RenderCadenceSmoothingTests {
         }
 
         let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(frame?.sequence == 3)
+        #expect(frame?.cursor.sequence == 3)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
@@ -186,7 +186,7 @@ struct RenderCadenceSmoothingTests {
         let first = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let second = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
 
-        #expect(first?.sequence == 1)
+        #expect(first?.cursor.sequence == 1)
         #expect(second == nil)
     }
 

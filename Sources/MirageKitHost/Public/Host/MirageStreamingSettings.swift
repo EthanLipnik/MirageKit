@@ -29,17 +29,6 @@ public struct MirageStreamingSettings: Codable, Equatable {
         self.perAppSettings = perAppSettings
     }
 
-    /// Get settings for a specific app (with fallback to global).
-    public func settings(for bundleIdentifier: String) -> MirageAppStreamingSettings {
-        perAppSettings[bundleIdentifier.lowercased()] ?? MirageAppStreamingSettings()
-    }
-
-    /// Check if an app should be allowed for streaming.
-    public func isAppAllowed(_ bundleIdentifier: String) -> Bool {
-        let appSettings = settings(for: bundleIdentifier)
-        return appSettings.allowStreaming
-    }
-
     /// Set allow/block status for an app.
     /// - Parameters:
     ///   - allowed: Whether the app is allowed to stream.
@@ -52,12 +41,6 @@ public struct MirageStreamingSettings: Codable, Equatable {
         } else {
             perAppSettings[key] = MirageAppStreamingSettings(allowStreaming: allowed)
         }
-    }
-
-    /// Remove per-app settings (revert to defaults).
-    /// - Parameter bundleIdentifier: Bundle identifier to reset.
-    public mutating func removeAppSettings(for bundleIdentifier: String) {
-        perAppSettings.removeValue(forKey: bundleIdentifier.lowercased())
     }
 
     /// Get list of blocked apps.

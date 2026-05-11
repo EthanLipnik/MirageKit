@@ -23,7 +23,7 @@ public extension MirageClientService {
             desktopCursorLockAvailable: desktopCursorLockAvailable,
             desktopCursorLockMode: desktopCursorLockMode
         )
-        _ = sendControlMessageBestEffort(.remoteClientStreamOptionsState, content: update)
+        sendControlMessageBestEffort(.remoteClientStreamOptionsState, content: update)
     }
 }
 

@@ -19,6 +19,7 @@ struct MirageVideoDecodeFrameContext: Sendable, Equatable {
     let dimensionToken: UInt16
     let frameNumber: UInt32
     let remotePresentationTime: CMTime
+    let timeline: FrameTimeline
 }
 
 /// Hardware-accelerated video decoder using VideoToolbox (HEVC or ProRes)
@@ -365,20 +366,9 @@ final class FrameReassembler: @unchecked Sendable {
     enum FrameLossReason: String, Sendable, Equatable {
         case timeout
         case forwardGapTimeout
+        case payloadIntegrity
         case memoryBudget
         case severeForwardGap
-
-        var requestsImmediateActiveRecovery: Bool {
-            switch self {
-            case .timeout:
-                false
-            case .forwardGapTimeout,
-                 .severeForwardGap:
-                true
-            case .memoryBudget:
-                false
-            }
-        }
     }
 
     struct MemoryBudget: Sendable, Equatable {
@@ -473,6 +463,7 @@ final class FrameReassembler: @unchecked Sendable {
         UInt16,
         UInt16,
         CGRect,
+        FrameTimeline,
         @escaping @Sendable () -> Void
     ) -> Void)?
 
@@ -514,6 +505,7 @@ final class FrameReassembler: @unchecked Sendable {
         var expectedTotalBytes: Int
         var parityFragments: [Int: Data]
         var receivedParityCount: Int
+        var timeline: FrameTimeline
         var retainedMemoryBytes: Int {
             buffer.capacity + parityFragments.values.reduce(0) { $0 + $1.count }
         }
@@ -535,7 +527,8 @@ final class FrameReassembler: @unchecked Sendable {
             contentRect: CGRect,
             expectedTotalBytes: Int,
             parityFragments: [Int: Data] = [:],
-            receivedParityCount: Int = 0
+            receivedParityCount: Int = 0,
+            timeline: FrameTimeline
         ) {
             self.buffer = buffer
             self.receivedMap = receivedMap
@@ -554,6 +547,7 @@ final class FrameReassembler: @unchecked Sendable {
             self.expectedTotalBytes = expectedTotalBytes
             self.parityFragments = parityFragments
             self.receivedParityCount = receivedParityCount
+            self.timeline = timeline
         }
     }
 

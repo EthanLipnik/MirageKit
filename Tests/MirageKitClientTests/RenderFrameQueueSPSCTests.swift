@@ -42,7 +42,7 @@ struct RenderFrameQueueSPSCTests {
         #expect(first.overwrittenPendingFrames == 0)
         #expect(second.overwrittenPendingFrames == 0)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor.sequence == 1)
     }
 
     @Test("Lowest latency replaces older pending frames with the newest frame")
@@ -72,7 +72,7 @@ struct RenderFrameQueueSPSCTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 10)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor.sequence == 10)
         #expect(telemetry.overwrittenPendingFrames == 9)
         #expect(telemetry.renderStoreOverwriteFPS >= 9)
         #expect(telemetry.lowestLatencyFreshBacklogDrops == 0)
@@ -157,7 +157,7 @@ struct RenderFrameQueueSPSCTests {
                 after: healthyFirst.cursor
             )
         )
-        #expect(healthySecond.sequence == 2)
+        #expect(healthySecond.cursor.sequence == 2)
 
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: underfiringStreamID,
@@ -216,8 +216,8 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 4)
-        #expect(secondFrame?.sequence == 5)
+        #expect(firstFrame?.cursor.sequence == 4)
+        #expect(secondFrame?.cursor.sequence == 5)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
@@ -240,7 +240,7 @@ struct RenderFrameQueueSPSCTests {
         )
 
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        #expect(snapshot.sequence == 3)
+        #expect(snapshot.cursor.sequence == 3)
         #expect(CMTimeCompare(snapshot.mappedPresentationTime, CMTime(seconds: 3, preferredTimescale: 600)) == 0)
     }
 
@@ -356,8 +356,8 @@ struct RenderFrameQueueSPSCTests {
             for: streamB
         )
 
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamA)?.sequence == 1)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamB)?.sequence == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamA)?.cursor.sequence == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamB)?.cursor.sequence == 1)
     }
 
     @Test("Memory pressure clear removes only pending render frames")
@@ -390,8 +390,8 @@ struct RenderFrameQueueSPSCTests {
 
         #expect(clearedCount == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
-        #expect(snapshot.sequence == 2)
-        #expect(snapshot.generation == generationBeforeTrim)
+        #expect(snapshot.cursor.sequence == 2)
+        #expect(snapshot.cursor.generation == generationBeforeTrim)
     }
 
     @Test("Submitted pending frame remains visible for peer presenters")
@@ -421,9 +421,9 @@ struct RenderFrameQueueSPSCTests {
             after: MirageRenderStreamStore.shared.baselineCursor(for: streamID)
         )
 
-        #expect(firstPresenterFrame?.sequence == 1)
-        #expect(secondPresenterFrame?.sequence == 1)
-        #expect(peerPresenterFrame?.sequence == 1)
+        #expect(firstPresenterFrame?.cursor.sequence == 1)
+        #expect(secondPresenterFrame?.cursor.sequence == 1)
+        #expect(peerPresenterFrame?.cursor.sequence == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
     }
 
@@ -446,7 +446,7 @@ struct RenderFrameQueueSPSCTests {
         )
 
         #expect(result.didEnqueue == false)
-        #expect(result.sequence == 0)
+        #expect(result.cursor.sequence == 0)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
@@ -481,8 +481,8 @@ struct RenderFrameQueueSPSCTests {
         )
         let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: oldCursor)
 
-        #expect(second.sequence == 1)
-        #expect(second.generation > oldCursor.generation)
+        #expect(second.cursor.sequence == 1)
+        #expect(second.cursor.generation > oldCursor.generation)
         #expect(frame?.cursor == second.cursor)
     }
 
@@ -508,8 +508,8 @@ struct RenderFrameQueueSPSCTests {
         )
 
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        #expect(snapshot.sequence == 0)
-        #expect(snapshot.generation > result.generation)
+        #expect(snapshot.cursor.sequence == 0)
+        #expect(snapshot.cursor.generation > result.cursor.generation)
     }
 
     @Test("Actionable pending count excludes retained submitted frames")
@@ -700,7 +700,7 @@ struct RenderFrameQueueSPSCTests {
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         #expect(timing.playoutDelayFrames == 0)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor.sequence == 2)
     }
 
     @Test("Pending frame cursor fast path matches selection semantics")

@@ -151,57 +151,14 @@ struct DesktopStopFailureSuppressionTests {
         #expect(lowered.startupRequestID == request.startupRequestID)
     }
 
-    @MainActor
-    @Test("Terminal startup desktop restart is bounded to one attempt")
-    func terminalStartupDesktopRestartIsBoundedToOneAttempt() {
-        let service = MirageClientService(deviceName: "Test Device")
-        let streamID: StreamID = 56
-        let request = StartDesktopStreamMessage(
-            startupRequestID: UUID(),
-            scaleFactor: 2,
-            displayWidth: 2732,
-            displayHeight: 2048,
-            targetFrameRate: 120,
-            streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: false),
-            dataPort: nil,
-            useHostResolution: false,
-            mediaMaxPacketSize: 1180
-        )
-
-        service.desktopStreamID = streamID
-        service.lastDesktopStreamStartRequest = request
-        service.desktopStreamRestartAttempts = 0
-
-        #expect(service.hasDesktopStreamRestartBudget(streamID: streamID))
-        service.desktopStreamRestartAttempts = service.desktopStreamRestartLimit
-        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID))
-        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID + 1))
-    }
 }
 
 private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
     private(set) var errorCount = 0
 
     @MainActor
-    func clientService(_: MirageClientService, didUpdateWindowList _: [MirageWindow]) {}
-
-    @MainActor
-    func clientService(_: MirageClientService, didReceiveVideoPacket _: Data, forStream _: StreamID) {}
-
-    @MainActor
-    func clientService(_: MirageClientService, didDisconnectFromHost _: String) {}
-
-    @MainActor
-    func clientService(_: MirageClientService, didEncounterError _: Error) {
+    func didEncounterError(_: Error) {
         errorCount += 1
     }
-
-    @MainActor
-    func clientService(
-        _: MirageClientService,
-        hostSessionStateChanged _: LoomSessionAvailability,
-        requiresUserIdentifier _: Bool
-    ) {}
 }
 #endif

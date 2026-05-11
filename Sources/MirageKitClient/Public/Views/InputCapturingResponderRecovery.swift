@@ -30,6 +30,7 @@ enum InputCapturingResponderRecoveryTrigger: String {
 }
 
 struct InputCapturingResponderRecoveryContext: Equatable {
+    let inputCaptureEnabled: Bool
     let hasWindow: Bool
     let isKeyWindow: Bool
     let sceneActivationState: UIScene.ActivationState?
@@ -37,6 +38,7 @@ struct InputCapturingResponderRecoveryContext: Equatable {
 }
 
 enum InputCapturingResponderRecoverySkipReason: String, Equatable {
+    case inputCaptureDisabled = "input_capture_disabled"
     case noWindow = "no_window"
     case windowNotKey = "window_not_key"
     case sceneNotForegroundActive = "scene_not_foreground_active"
@@ -64,6 +66,7 @@ enum InputCapturingResponderRecoveryPolicy {
         trigger: InputCapturingResponderRecoveryTrigger
     ) -> InputCapturingResponderRecoveryDecision {
         guard context.hasWindow else { return .skip(.noWindow) }
+        guard context.inputCaptureEnabled else { return .skip(.inputCaptureDisabled) }
         guard !context.targetIsFirstResponder else {
             return .skip(.targetAlreadyFirstResponder)
         }
@@ -85,7 +88,8 @@ enum InputCapturingResponderRecoveryPolicy {
         switch decision {
         case .recover,
              .skip(.noWindow),
-             .skip(.targetAlreadyFirstResponder):
+             .skip(.targetAlreadyFirstResponder),
+             .skip(.inputCaptureDisabled):
             return false
         case .skip(.windowNotKey),
              .skip(.sceneNotForegroundActive):

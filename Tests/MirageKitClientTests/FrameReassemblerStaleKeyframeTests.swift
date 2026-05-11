@@ -52,6 +52,32 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 2)
     }
 
+    @Test("Payload integrity failure enters keyframe wait")
+    func payloadIntegrityFailureEntersKeyframeWait() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
+
+        reassembler.setFrameLossHandler { _, reason in
+            lossReason.value = reason
+        }
+
+        let pFramePayload = Data([0x00, 0x00, 0x00, 0x02, 0x02, 0x03])
+        reassembler.processPacket(
+            pFramePayload,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 1,
+                payload: pFramePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                checksum: 0xDEAD_BEEF
+            )
+        )
+
+        #expect(reassembler.isAwaitingKeyframe())
+        #expect(lossReason.value == .payloadIntegrity)
+    }
+
     @Test("Keyframe-only mode admits dependent P-frames after recovery keyframe")
     func keyframeOnlyModeAdmitsDependentPFramesAfterRecoveryKeyframe() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
@@ -1102,7 +1128,8 @@ struct FrameReassemblerStaleKeyframeTests {
         fragmentCount: UInt16,
         frameByteCount: UInt32? = nil,
         fecBlockSize: UInt8 = 0,
-        dimensionToken: UInt16 = 0
+        dimensionToken: UInt16 = 0,
+        checksum: UInt32? = nil
     )
     -> FrameHeader {
         FrameHeader(
@@ -1116,7 +1143,7 @@ struct FrameReassemblerStaleKeyframeTests {
             fecBlockSize: fecBlockSize,
             payloadLength: UInt32(payload.count),
             frameByteCount: frameByteCount ?? UInt32(payload.count),
-            checksum: crc32(payload),
+            checksum: checksum ?? crc32(payload),
             contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
             dimensionToken: dimensionToken,
             epoch: 0

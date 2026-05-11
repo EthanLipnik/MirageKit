@@ -234,8 +234,8 @@ extension MirageClientService {
         }
 
         let wirePayload = data.dropFirst(mirageHeaderSize)
-        // Loom session handles encryption, so packets arrive unencrypted.
-        // Accept both encrypted and unencrypted payloads for backward compatibility.
+        // Media encryption is negotiated per session; local peer-to-peer sessions may use raw media
+        // while remote or policy-enforced sessions carry an authenticated encrypted payload.
         let expectedWireLength = header.flags.contains(.encryptedPayload)
             ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
             : Int(header.payloadLength)
@@ -382,7 +382,6 @@ extension MirageClientService {
         let previous = controlPathSnapshot
         controlPathSnapshot = snapshot
         recordControlPathHistory(snapshot)
-        guard awdlExperimentEnabled else { return }
         guard let previous, previous.signature != snapshot.signature else { return }
         if previous.kind != snapshot.kind {
             awdlPathSwitches &+= 1
@@ -393,7 +392,6 @@ extension MirageClientService {
     }
 
     func logAwdlExperimentTelemetryIfNeeded() {
-        guard awdlExperimentEnabled else { return }
         guard MirageSteadyStateDiagnostics.isEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
         guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 5.0 else { return }
@@ -469,20 +467,14 @@ extension MirageClientService {
         }
         lastKeyframeRequestTime[streamID] = now
 
-        let request = KeyframeRequestMessage(streamID: streamID)
-        guard let message = try? ControlMessage(type: .keyframeRequest, content: request) else {
-            MirageLogger.error(.client, "Failed to create keyframe request message")
-            return
-        }
-
-        sendControlMessageBestEffort(message)
+        sendControlMessageBestEffort(.keyframeRequest, content: KeyframeRequestMessage(streamID: streamID))
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
         MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
     }
 
     func sendReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
         guard case .connected = connectionState else { return }
-        _ = sendControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
+        sendControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
     }
 
     func receiverMediaFeedbackSender() -> @Sendable (ReceiverMediaFeedbackMessage) -> Void {
@@ -491,10 +483,9 @@ extension MirageClientService {
             return { _ in }
         }
         return { feedback in
-            guard let message = try? ControlMessage(type: .receiverMediaFeedback, content: feedback) else {
-                return
+            if let message = try? ControlMessage(type: .receiverMediaFeedback, content: feedback) {
+                controlChannel.sendBestEffort(message)
             }
-            controlChannel.sendBestEffort(message)
         }
     }
 
@@ -551,7 +542,7 @@ extension MirageClientService {
             hasController: controller != nil,
             hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
             latestPacketTime: reassembler?.latestPacketReceivedTime() ?? 0,
-            submittedSequence: submissionSnapshot.visibleSequence,
+            submittedSequence: submissionSnapshot.visibleCursor.sequence,
             isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true,
             decodedFPS: metricsSnapshot?.decodedFPS ?? renderTelemetry.decodeFPS,
             layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS ?? renderTelemetry.layerEnqueueFPS,
@@ -623,7 +614,7 @@ extension MirageClientService {
             let reassembler = await controller.getReassembler()
             let baselineSubmittedSequence = MirageRenderStreamStore.shared
                 .submissionSnapshot(for: streamID)
-                .sequence
+                .cursor.sequence
             var lastPacketTime = reassembler.latestPacketReceivedTime()
 
             for attempt in 1...self.recoveryKeyframeRetryLimit {
@@ -641,7 +632,7 @@ extension MirageClientService {
                 let latestPacketTime = reassembler.latestPacketReceivedTime()
                 let latestSubmittedSequence = MirageRenderStreamStore.shared
                     .submissionSnapshot(for: streamID)
-                    .sequence
+                    .cursor.sequence
                 let disposition = Self.recoveryKeyframeRetryDisposition(
                     baselineSubmittedSequence: baselineSubmittedSequence,
                     latestSubmittedSequence: latestSubmittedSequence,
@@ -925,10 +916,6 @@ extension MirageClientService {
         decoderCompatibilityCurrentColorDepthByStream.removeValue(forKey: streamID)
         decoderCompatibilityBaselineColorDepthByStream.removeValue(forKey: streamID)
         decoderCompatibilityFallbackLastAppliedTime.removeValue(forKey: streamID)
-    }
-
-    func handleVideoPacket(_ data: Data, header: FrameHeader) async {
-        delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
     }
 
     // MARK: - Network Endpoint Utilities

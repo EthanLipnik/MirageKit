@@ -43,8 +43,8 @@ struct HostSoftwareUpdateFlowTests {
     }
 
     @MainActor
-    @Test("Protocol mismatch update trigger acceptance is authorization-gated")
-    func protocolMismatchUpdateTriggerIsAuthorizationGated() async {
+    @Test("Protocol mismatch update trigger returns install result")
+    func protocolMismatchUpdateTriggerReturnsInstallResult() async {
         let host = MirageHostService()
         let controller = MockHostSoftwareUpdateController()
         host.softwareUpdateController = controller
@@ -52,7 +52,6 @@ struct HostSoftwareUpdateFlowTests {
         let peerIdentity = makePeerIdentity()
         let mismatchRequest = makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: true)
 
-        controller.authorizeResult = true
         controller.installResult = .init(
             accepted: true,
             message: "Install started.",
@@ -69,7 +68,14 @@ struct HostSoftwareUpdateFlowTests {
         #expect(acceptedResult?.accepted == true)
         #expect(acceptedResult?.message == "Install started.")
 
-        controller.authorizeResult = false
+        controller.installResult = .init(
+            accepted: false,
+            message: "Remote update request denied for this device.",
+            code: .denied,
+            blockReason: .policyDenied,
+            remediationHint: nil,
+            status: controller.snapshot
+        )
         let deniedResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
             request: mismatchRequest,
             peerIdentity: peerIdentity
@@ -91,7 +97,14 @@ struct HostSoftwareUpdateFlowTests {
         let host = MirageHostService()
         let controller = MockHostSoftwareUpdateController()
         host.softwareUpdateController = controller
-        controller.authorizeResult = false
+        controller.installResult = .init(
+            accepted: false,
+            message: "Remote update request denied for this device.",
+            code: .denied,
+            blockReason: .policyDenied,
+            remediationHint: nil,
+            status: controller.snapshot
+        )
 
         let result = await host.resolveHostSoftwareUpdateInstallResult(
             for: makePeerIdentity(),
@@ -99,11 +112,11 @@ struct HostSoftwareUpdateFlowTests {
         )
 
         #expect(result.accepted == false)
-        #expect(result.message == "Approve this client on the host before requesting a remote update.")
+        #expect(result.message == "Remote update request denied for this device.")
         #expect(result.status?.currentVersion == controller.snapshot.currentVersion)
         #expect(result.resultCode == .denied)
-        #expect(result.blockReason == .authorizationRequired)
-        #expect(result.remediationHint == "Open Mirage Host on the Mac and approve or trust this client, then try again.")
+        #expect(result.blockReason == .policyDenied)
+        #expect(result.remediationHint == nil)
     }
 
 }
@@ -163,32 +176,22 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
             lastCheckedAtMs: 1_700_000_000_000
         )
     )
-    var authorizeResult = true
     var lastStatusForceRefresh: Bool?
+    var lastInstallTrigger: MirageHostSoftwareUpdateInstallTrigger?
 
-    func hostService(
-        _: MirageHostService,
-        softwareUpdateStatusFor _: LoomPeerIdentity,
+    func softwareUpdateStatus(
         forceRefresh: Bool
     ) async -> MirageHostSoftwareUpdateStatusSnapshot {
         lastStatusForceRefresh = forceRefresh
         return snapshot
     }
 
-    func hostService(
-        _: MirageHostService,
-        shouldAuthorizeSoftwareUpdateRequestFrom _: LoomPeerIdentity,
-        trigger _: MirageHostSoftwareUpdateInstallTrigger
-    ) async -> Bool {
-        authorizeResult
-    }
-
-    func hostService(
-        _: MirageHostService,
-        performSoftwareUpdateInstallFor _: LoomPeerIdentity,
-        trigger _: MirageHostSoftwareUpdateInstallTrigger
+    func performSoftwareUpdateInstall(
+        for _: LoomPeerIdentity,
+        trigger: MirageHostSoftwareUpdateInstallTrigger
     ) async -> MirageHostSoftwareUpdateInstallResult {
-        installResult
+        lastInstallTrigger = trigger
+        return installResult
     }
 }
 

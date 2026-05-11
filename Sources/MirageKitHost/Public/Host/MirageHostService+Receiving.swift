@@ -267,7 +267,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         case .otherMouseDragged:
             return (inputMessage.streamID, .replaceable(.otherMouseDragged))
         case let .scrollWheel(event):
-            return (inputMessage.streamID, isBoundaryScrollEvent(event) ? .protected : .replaceable(.scrollWheel))
+            return (inputMessage.streamID, event.isBoundaryScrollEvent ? .protected : .replaceable(.scrollWheel))
         case let .pointerSampleBatch(batch):
             if batch.phase == .hover {
                 return (inputMessage.streamID, .replaceable(.stylusHover))
@@ -279,10 +279,6 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         default:
             return (inputMessage.streamID, .protected)
         }
-    }
-
-    private static func isBoundaryScrollEvent(_ event: MirageScrollEvent) -> Bool {
-        event.isBoundaryScrollEvent
     }
 
     private static func hasNativeScrollMetadata(_ message: ControlMessage) -> Bool {

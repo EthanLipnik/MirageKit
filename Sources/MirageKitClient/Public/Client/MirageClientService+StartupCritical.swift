@@ -15,7 +15,7 @@ extension MirageClientService {
         startupCriticalSectionActive = active
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.onStartupCriticalSectionChanged?(active)
+            self.onStartupCriticalSectionChanged?(active)
         }
     }
 

@@ -576,14 +576,14 @@ public extension MirageClientService {
     async {
         let streamID = session.id
 
-        let request = StopStreamMessage(
-            streamID: streamID,
-            minimizeWindow: minimizeWindow,
-            origin: origin?.controlMessageOrigin
+        sendControlMessageBestEffort(
+            .stopStream,
+            content: StopStreamMessage(
+                streamID: streamID,
+                minimizeWindow: minimizeWindow,
+                origin: origin?.controlMessageOrigin
+            )
         )
-        if let message = try? ControlMessage(type: .stopStream, content: request) {
-            sendControlMessageBestEffort(message)
-        }
 
         await forceStopWindowStreamLocally(streamID: streamID)
     }
@@ -620,36 +620,36 @@ public extension MirageClientService {
             }
 
             if let desktopSessionID {
-                let request = StopDesktopStreamMessage(
-                    streamID: streamID,
-                    desktopSessionID: desktopSessionID
+                sendControlMessageBestEffort(
+                    .stopDesktopStream,
+                    content: StopDesktopStreamMessage(
+                        streamID: streamID,
+                        desktopSessionID: desktopSessionID
+                    )
                 )
-                if let message = try? ControlMessage(type: .stopDesktopStream, content: request) {
-                    sendControlMessageBestEffort(message)
-                }
             }
             await forceStopDesktopStreamLocally(
                 streamID: streamID,
                 desktopSessionID: desktopSessionID,
                 notifyStopReason: .error
             )
-            delegate?.clientService(self, didEncounterError: error)
+            delegate?.didEncounterError(error)
             return
         }
 
         if activeStreams.contains(where: { $0.id == streamID }) || controllersByStream[streamID] != nil {
-            let request = StopStreamMessage(
-                streamID: streamID,
-                minimizeWindow: false,
-                origin: nil
+            sendControlMessageBestEffort(
+                .stopStream,
+                content: StopStreamMessage(
+                    streamID: streamID,
+                    minimizeWindow: false,
+                    origin: nil
+                )
             )
-            if let message = try? ControlMessage(type: .stopStream, content: request) {
-                sendControlMessageBestEffort(message)
-            }
             await forceStopWindowStreamLocally(streamID: streamID)
         }
 
-        delegate?.clientService(self, didEncounterError: error)
+        delegate?.didEncounterError(error)
     }
 
     internal func handleTerminalLiveRecoveryFailure(
@@ -667,7 +667,7 @@ public extension MirageClientService {
             if await restartDesktopStreamAfterTerminalLiveRecoveryFailure(failure, failedStreamID: streamID) {
                 return
             }
-            delegate?.clientService(self, didEncounterError: MirageError.protocolError(failure.errorMessage))
+            delegate?.didEncounterError(MirageError.protocolError(failure.errorMessage))
             return
         }
 

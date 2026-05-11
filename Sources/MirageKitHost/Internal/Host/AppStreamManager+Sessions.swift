@@ -81,16 +81,14 @@ public extension AppStreamManager {
         sessions[key] = session
     }
 
-    @discardableResult
-    func raiseMaxVisibleSlots(bundleIdentifier: String, to requestedSlots: Int) -> Bool {
+    func raiseMaxVisibleSlots(bundleIdentifier: String, to requestedSlots: Int) {
         let key = bundleIdentifier.lowercased()
-        guard var session = sessions[key] else { return false }
+        guard var session = sessions[key] else { return }
         let resolvedSlots = max(1, requestedSlots)
-        guard resolvedSlots > session.maxVisibleSlots else { return false }
+        guard resolvedSlots > session.maxVisibleSlots else { return }
         session.maxVisibleSlots = resolvedSlots
         sessions[key] = session
         logger.info("Raised app session slot cap for \(bundleIdentifier) to \(resolvedSlots)")
-        return true
     }
 
     func markSessionStreaming(_ bundleIdentifier: String) {
@@ -177,8 +175,6 @@ public extension AppStreamManager {
     }
 
     /// Replace the window metadata bound to an existing visible stream ID.
-    /// Returns the prior window ID and slot index when successful.
-    @discardableResult
     func replaceVisibleWindowForStream(
         bundleIdentifier: String,
         streamID: StreamID,
@@ -190,11 +186,11 @@ public extension AppStreamManager {
         capturedClusterWindowIDs: [WindowID] = [],
         mediaStreamID: StreamID? = nil,
         atlasRegion: MirageAppAtlasRegion? = nil
-    ) -> (oldWindowID: WindowID, slotIndex: Int, isActive: Bool)? {
+    ) {
         let key = bundleIdentifier.lowercased()
-        guard var session = sessions[key] else { return nil }
+        guard var session = sessions[key] else { return }
         guard let oldEntry = session.windowStreams.first(where: { $0.value.streamID == streamID }) else {
-            return nil
+            return
         }
 
         let slotIndex = oldEntry.value.slotIndex
@@ -218,19 +214,15 @@ public extension AppStreamManager {
         )
         session.streamActivityByStreamID[streamID] = isActive
         sessions[key] = session
-
-        return (oldWindowID, slotIndex, isActive)
     }
 
     /// Remove a tracked window from an app session (visible or hidden).
-    /// Returns visible-window stream info when the removed window was currently visible.
-    @discardableResult
     func removeWindowFromSession(
         bundleIdentifier: String,
         windowID: WindowID
-    ) -> WindowStreamInfo? {
+    ) {
         let key = bundleIdentifier.lowercased()
-        guard var session = sessions[key] else { return nil }
+        guard var session = sessions[key] else { return }
 
         let removedVisibleInfo = session.windowStreams.removeValue(forKey: windowID)
         session.hiddenWindows.removeValue(forKey: windowID)
@@ -248,7 +240,6 @@ public extension AppStreamManager {
         }
 
         sessions[key] = session
-        return removedVisibleInfo
     }
 
     func upsertHiddenWindow(

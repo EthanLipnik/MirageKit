@@ -571,10 +571,6 @@ public extension MirageHostService {
         return effectiveEncoderConfig
     }
 
-    private func classifyWindowStreamStartFailure(_ error: Error) -> WindowStreamStartFailureCode {
-        windowStreamStartFailureCode(for: error)
-    }
-
     private func cleanupFailedStreamStart(
         streamID: StreamID,
         context: StreamContext,
@@ -658,32 +654,6 @@ public extension MirageHostService {
             await disableDisplayMirroring(displayID: mirroredDisplayID)
         }
         await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.appStream)
-    }
-
-    private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
-        if let windowStartError = error as? WindowStreamStartError {
-            switch windowStartError {
-            case let .windowAlreadyBound(_, existingStreamID):
-                return existingStreamID
-            case .windowStartupInProgress:
-                return nil
-            case .virtualDisplayStartFailed:
-                break
-            }
-        }
-
-        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-            switch windowSpaceError {
-            case let .ownerConflict(_, existingStreamID, _):
-                return existingStreamID
-            case let .ownerMismatch(_, _, actualStreamID):
-                return actualStreamID == 0 ? nil : actualStreamID
-            case .windowNotFound, .noOriginalState, .moveFailed:
-                return nil
-            }
-        }
-
-        return nil
     }
 
     private func virtualDisplayPlacementDriftReason(
@@ -823,24 +793,6 @@ public extension MirageHostService {
             reason: force ? "forced placement reassert" : "placement repair"
         )
         return true
-    }
-
-    private func scheduleVirtualDisplayPlacementReassert(windowID: WindowID) {
-        let retryDelays: [Duration] = [
-            .milliseconds(120),
-            .milliseconds(260),
-            .milliseconds(520),
-        ]
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for delay in retryDelays {
-                try? await Task.sleep(for: delay)
-                guard isStreamUsingVirtualDisplay(windowID: windowID) else { return }
-                guard !shouldSkipPlacementRepair(for: windowID) else { return }
-                _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
-            }
-        }
     }
 
     nonisolated static func shouldSkipPlacementRepair(

@@ -65,7 +65,6 @@ extension MirageClientService {
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
         }
-        // MetalFX upscaling removed.
         if let codec = overrides.codec {
             request.codec = codec
             MirageLogger.client("Requesting codec: \(codec.rawValue)")
@@ -125,7 +124,6 @@ extension MirageClientService {
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
         }
-        // MetalFX upscaling removed.
         if let codec = overrides.codec {
             request.codec = codec
             MirageLogger.client("Requesting codec: \(codec.rawValue)")
@@ -185,7 +183,6 @@ extension MirageClientService {
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
         }
-        // MetalFX upscaling removed.
         if let codec = overrides.codec {
             request.codec = codec
             MirageLogger.client("Requesting codec: \(codec.rawValue)")

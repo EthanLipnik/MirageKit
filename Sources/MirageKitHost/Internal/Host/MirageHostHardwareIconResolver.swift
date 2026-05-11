@@ -88,7 +88,7 @@ enum MirageHostHardwareIconResolver {
         hardwareMachineFamily: String?,
         hardwareModelIdentifier: String?
     ) -> CoreTypesIconAsset? {
-        let iconAssets = metadataCoreTypesIconAssets()
+        let iconAssets = cachedIconAssets
         guard !iconAssets.isEmpty else {
             return nil
         }
@@ -174,14 +174,6 @@ enum MirageHostHardwareIconResolver {
         default:
             return nil
         }
-    }
-
-    private static func metadataCoreTypesIconAssets() -> [CoreTypesIconAsset] {
-        cachedIconAssets
-    }
-
-    private static func metadataCoreTypesBundlePath() -> String? {
-        cachedBundlePath
     }
 
     private static func loadMetadataCoreTypesIconAssets() -> [CoreTypesIconAsset] {

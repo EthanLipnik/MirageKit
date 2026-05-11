@@ -99,7 +99,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         layout: AppAtlasLayout.Result
     ) throws -> CVPixelBuffer {
         let copyOperations = layout.placements.compactMap { placement -> FrameCopyOperation? in
-            guard let frame = framesByWindowID[placement.windowID] else { return nil }
+            guard let frame = framesByWindowID[placement.id] else { return nil }
             return FrameCopyOperation(
                 frame: frame,
                 sourceRect: placement.sourceRect,

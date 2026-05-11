@@ -77,6 +77,9 @@ extension StreamContext {
             pendingKeyframeRequiresFlush = true
         }
         if requiresFlush { pendingKeyframeRequiresFlush = true }
+        if requiresFlush || requiresReset {
+            suppressEncodedNonKeyframesUntilKeyframe = true
+        }
         return true
     }
 
@@ -284,6 +287,7 @@ extension StreamContext {
 
     func markKeyframeSent() {
         lastKeyframeTime = CFAbsoluteTimeGetCurrent()
+        keyframeSendDeadline = 0
         suppressEncodedNonKeyframesUntilKeyframe = false
         pendingKeyframeReason = nil
         pendingKeyframeDeadline = 0
@@ -412,10 +416,10 @@ extension StreamContext {
 
         let queued = queueKeyframe(
             reason: reason,
-            checkInFlight: true,
-            requiresFlush: false,
-            requiresReset: false,
-            advanceEpochOnReset: false,
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: true,
+            advanceEpochOnReset: true,
             urgent: true
         )
         guard queued else {

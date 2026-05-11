@@ -5,8 +5,6 @@
 //  Created by Ethan Lipnik on 5/8/26.
 //
 
-import Foundation
-
 /// Selects the client-side bounds source used for window-driven stream resizing.
 public enum MirageStreamContainerSizingMode: Sendable, Equatable {
     /// Use the platform content layout area when available.

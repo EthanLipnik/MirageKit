@@ -35,32 +35,23 @@ extension MirageClientService {
         try await requireConnectedControlChannel().sendSerialized(data)
     }
 
-    @discardableResult
-    func sendControlMessageBestEffort(_ message: ControlMessage) -> Bool {
+    func sendControlMessageBestEffort(_ message: ControlMessage) {
         guard case .connected = connectionState,
               let controlChannel else {
-            return false
+            return
         }
         controlChannel.sendBestEffort(message)
-        return true
     }
 
-    @discardableResult
-    func sendControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
+    func sendControlMessageBestEffort(_ type: ControlMessageType) {
+        sendControlMessageBestEffort(ControlMessage(type: type))
+    }
+
+    func sendControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) {
         guard let message = try? ControlMessage(type: type, content: content) else {
-            return false
+            return
         }
-        return sendControlMessageBestEffort(message)
-    }
-
-    @discardableResult
-    func sendSerializedControlMessageBestEffort(_ data: Data) -> Bool {
-        guard case .connected = connectionState,
-              let controlChannel else {
-            return false
-        }
-        controlChannel.sendSerializedBestEffort(data)
-        return true
+        sendControlMessageBestEffort(message)
     }
 
     func currentControlRemoteEndpoint() async -> NWEndpoint? {
@@ -78,13 +69,11 @@ extension MirageClientService {
     /// Refresh the cached control-path classification from the active Loom session.
     /// This is useful immediately before automatic stream startup so the first
     /// request does not rely on an `.unknown` path while the observer is still warming up.
-    @discardableResult
-    public func refreshCurrentControlPathKind() async -> MirageNetworkPathKind? {
+    public func refreshCurrentControlPathKind() async {
         guard let snapshot = await currentControlPathSnapshot() else {
-            return currentControlPathKind
+            return
         }
         let classifiedSnapshot = MirageNetworkPathClassifier.classify(snapshot)
         handleControlPathUpdate(classifiedSnapshot)
-        return classifiedSnapshot.kind
     }
 }

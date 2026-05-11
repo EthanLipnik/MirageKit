@@ -13,25 +13,6 @@ import Testing
 #if os(macOS)
 @Suite("Capture Benchmark")
 struct CaptureBenchmarkTests {
-    private func phaseResult(
-        kind: MirageHostCaptureBenchmarkPhaseKind,
-        rawIngressFPS: Double? = nil,
-        renderableIngressFPS: Double? = nil,
-        cadenceAdmittedFPS: Double? = nil,
-        deliveryFPS: Double? = nil,
-        startupReadiness: MirageHostCaptureBenchmarkStartupReadiness? = .usableFrameSeen
-    ) -> MirageHostCaptureBenchmarkPhaseResult {
-        MirageHostCaptureBenchmarkPhaseResult(
-            kind: kind,
-            rawIngressFPS: rawIngressFPS,
-            validSampleFPS: rawIngressFPS,
-            renderableIngressFPS: renderableIngressFPS,
-            cadenceAdmittedFPS: cadenceAdmittedFPS,
-            deliveryFPS: deliveryFPS,
-            startupReadiness: startupReadiness
-        )
-    }
-
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
         #expect(MirageHostCaptureBenchmarkReport.currentVersion == 2)

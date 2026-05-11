@@ -90,12 +90,6 @@ package final class MirageControlChannel: @unchecked Sendable {
         sendBestEffort(message)
     }
 
-    package func sendSerializedBestEffort(_ data: Data) {
-        Task {
-            try? await self.sendSerialized(data)
-        }
-    }
-
     package func closeStream() async throws {
         // Bootstrap rejection paths need an ordered EOF on the control stream
         // so the peer can read the final response before either side tears the

@@ -194,16 +194,13 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 72
 
-        var action: MirageAutomaticDesktopWorkloadController.Action = .none
-        for sample in 0..<3 {
-            action = controller.advance(
-                snapshot: snapshot,
-                resizeCriticalSectionActive: false,
-                minimumTargetFrameRate: 60,
-                adaptivePriority: .prioritizeSmoothness,
-                now: CFAbsoluteTime(sample)
-            )
-        }
+        let action = controller.advance(
+            snapshot: snapshot,
+            resizeCriticalSectionActive: false,
+            minimumTargetFrameRate: 60,
+            adaptivePriority: .prioritizeSmoothness,
+            now: 0
+        )
 
         guard case .reconfigure(let target, let reason) = action else {
             Issue.record("Expected severe client collapse reconfiguration")
@@ -342,8 +339,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.encodedPixelSize.height < 2064)
     }
 
-    @Test("Severe ProMotion presentation collapse drops FPS after three samples")
-    func severeProMotionPresentationCollapseDropsFPSAfterThreeSamples() {
+    @Test("Severe ProMotion presentation collapse reduces workload immediately")
+    func severeProMotionPresentationCollapseReducesWorkloadImmediately() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -358,10 +355,91 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.clientDisplayLayerNotReadyCount = 3
         snapshot.clientPendingFrameAgeMs = 48
 
+        let action = controller.advance(
+            snapshot: snapshot,
+            resizeCriticalSectionActive: false,
+            minimumTargetFrameRate: 60,
+            maximumTargetFrameRate: 120,
+            now: 0
+        )
+
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected fast workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
+        #expect(reason.contains("client presentation collapse"))
+    }
+
+    @Test("Zero-FPS client recovery collapse drops encoded pixels using client cadence")
+    func zeroFPSClientRecoveryCollapseDropsEncodedPixelsUsingClientCadence() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        var snapshot = pipelineBoundSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 120,
+            cadenceFPS: 120
+        )
+        snapshot.receivedFPS = 0
+        snapshot.decodedFPS = 0
+        snapshot.layerEnqueueFPS = 0
+        snapshot.uniqueLayerEnqueueFPS = 0
+        snapshot.clientRendererEnqueueFPS = 0
+        snapshot.clientUniqueRendererEnqueueFPS = 0
+        snapshot.clientVisibleFrameFPS = 0
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 0
+        snapshot.decodeHealthy = false
+        snapshot.clientReceivedWorstGapMs = 556
+        snapshot.clientIncomingMediaBatchIntervalMaxMs = 556
+
+        let action = controller.advance(
+            snapshot: snapshot,
+            resizeCriticalSectionActive: false,
+            minimumTargetFrameRate: 60,
+            maximumTargetFrameRate: 120,
+            now: 0
+        )
+
+        guard case .reconfigure(let target, let reason) = action else {
+            Issue.record("Expected fast workload reconfiguration")
+            return
+        }
+        #expect(target.targetFrameRate == 60)
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
+        #expect(reason.contains("client presentation collapse"))
+    }
+
+    @Test("Post-FPS fallback decode collapse reduces encoded pixels quickly")
+    func postFPSFallbackDecodeCollapseReducesEncodedPixelsQuickly() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        let initialCollapse = postFallbackDecodeCollapseSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 120
+        )
+
+        let firstAction = controller.advance(
+            snapshot: initialCollapse,
+            resizeCriticalSectionActive: false,
+            minimumTargetFrameRate: 60,
+            maximumTargetFrameRate: 120,
+            now: 0
+        )
+        #expect(firstAction != .none)
+
+        let postFallbackCollapse = postFallbackDecodeCollapseSnapshot(
+            width: 2752,
+            height: 2064,
+            targetFrameRate: 60
+        )
+
         var action: MirageAutomaticDesktopWorkloadController.Action = .none
-        for sample in 0..<3 {
+        for sample in 1...3 {
             action = controller.advance(
-                snapshot: snapshot,
+                snapshot: postFallbackCollapse,
                 resizeCriticalSectionActive: false,
                 minimumTargetFrameRate: 60,
                 maximumTargetFrameRate: 120,
@@ -370,11 +448,12 @@ struct AutomaticDesktopWorkloadControllerTests {
         }
 
         guard case .reconfigure(let target, let reason) = action else {
-            Issue.record("Expected fast workload reconfiguration")
+            Issue.record("Expected follow-up encoded-pixel reduction")
             return
         }
         #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
+        #expect(target.encodedPixelSize.width < 2752)
+        #expect(target.encodedPixelSize.height < 2064)
         #expect(reason.contains("client presentation collapse"))
     }
 
@@ -684,6 +763,36 @@ struct AutomaticDesktopWorkloadControllerTests {
         snapshot.hostSendCompletionAverageMs = 0
         snapshot.hostPacketPacerAverageSleepMs = 0
         snapshot.hostStalePacketDrops = 0
+        return snapshot
+    }
+
+    private func postFallbackDecodeCollapseSnapshot(
+        width: Int,
+        height: Int,
+        targetFrameRate: Int
+    ) -> MirageClientMetricsSnapshot {
+        var snapshot = pipelineBoundSnapshot(
+            width: width,
+            height: height,
+            targetFrameRate: targetFrameRate,
+            cadenceFPS: 44
+        )
+        snapshot.hostCaptureIngressFPS = 120.4
+        snapshot.hostCaptureFPS = 120.4
+        snapshot.hostEncodeAttemptFPS = 119.9
+        snapshot.hostEncodedFPS = targetFrameRate >= 90 ? 120 : 81.2
+        snapshot.receivedFPS = 44
+        snapshot.decodedFPS = 44
+        snapshot.layerEnqueueFPS = 44
+        snapshot.uniqueLayerEnqueueFPS = 44
+        snapshot.clientRendererEnqueueFPS = 44
+        snapshot.clientUniqueRendererEnqueueFPS = 44
+        snapshot.clientVisibleFrameFPS = 42
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 42
+        snapshot.decodeHealthy = false
+        snapshot.clientFrameIntervalP99Ms = 83
+        snapshot.clientVisibleFrameIntervalP99Ms = 83
+        snapshot.clientReceivedWorstGapMs = 640
         return snapshot
     }
 

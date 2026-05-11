@@ -20,10 +20,10 @@ struct VideoDecoderSubmissionLimiterTests {
         #expect(await decoder.currentDecodeSubmissionLimit() == 1)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 120)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 3)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 1)
     }
 
     @Test("Submission limiter enforces cap and releases waiters")
@@ -33,29 +33,27 @@ struct VideoDecoderSubmissionLimiterTests {
 
         let first = try #require(await decoder.acquireDecodeSubmissionSlot())
         let second = try #require(await decoder.acquireDecodeSubmissionSlot())
-        let third = try #require(await decoder.acquireDecodeSubmissionSlot())
-        #expect(await decoder.currentInFlightDecodeSubmissions() == 3)
+        #expect(await decoder.currentInFlightDecodeSubmissions() == 2)
 
-        let fourthAcquired = LockedBool()
-        let fourthLease = LockedLease()
+        let thirdAcquired = LockedBool()
+        let thirdLease = LockedLease()
         let waitingTask = Task {
             let lease = await decoder.acquireDecodeSubmissionSlot()
-            fourthLease.store(lease)
-            fourthAcquired.setTrue()
+            thirdLease.store(lease)
+            thirdAcquired.setTrue()
         }
 
         try await Task.sleep(for: .milliseconds(50))
-        #expect(fourthAcquired.value == false)
+        #expect(thirdAcquired.value == false)
 
         await decoder.releaseDecodeSubmissionSlot(first)
         try await Task.sleep(for: .milliseconds(50))
-        #expect(fourthAcquired.value == true)
+        #expect(thirdAcquired.value == true)
 
-        if let lease = fourthLease.value {
+        if let lease = thirdLease.value {
             await decoder.releaseDecodeSubmissionSlot(lease)
         }
         await decoder.releaseDecodeSubmissionSlot(second)
-        await decoder.releaseDecodeSubmissionSlot(third)
         _ = await waitingTask.result
         #expect(await decoder.currentInFlightDecodeSubmissions() == 0)
     }

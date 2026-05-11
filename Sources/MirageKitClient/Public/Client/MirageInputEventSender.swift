@@ -338,17 +338,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
         case .otherMouseDragged:
             .otherMouseDragged
         case let .scrollWheel(e):
-            isBoundaryScrollEvent(e) ? nil : .scrollWheel
+            e.isBoundaryScrollEvent ? nil : .scrollWheel
         case let .pointerSampleBatch(batch):
             batch.isHover ? .stylusHover : nil
         default:
             nil
         }
-    }
-
-    private func isBoundaryScrollEvent(_ event: MirageScrollEvent) -> Bool {
-        event.phase == .began || event.phase == .ended || event.phase == .cancelled
-            || event.momentumPhase == .began || event.momentumPhase == .ended || event.momentumPhase == .cancelled
     }
 
     private func isLowPriorityStaleInput(_ event: MirageInputEvent) -> Bool {

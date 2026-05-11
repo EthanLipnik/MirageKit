@@ -245,19 +245,19 @@ extension MirageClientService {
         guard let snapshot = metricsStore.snapshot(for: streamID), snapshot.hasHostMetrics else { return false }
         let assessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
-                queueBytes: max(0, snapshot.hostTransportSendQueueBytes ?? 0),
+                queueBytes: max(0, snapshot.hostSendQueueBytes ?? 0),
                 queueStressBytes: 800_000,
                 queueSevereBytes: 2_000_000,
-                packetPacerAverageSleepMs: max(0, snapshot.hostTransportPacketPacerAverageSleepMs ?? 0),
+                packetPacerAverageSleepMs: max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0),
                 packetPacerStressThresholdMs: 0.75,
                 packetPacerSevereThresholdMs: 2.0,
-                sendStartDelayAverageMs: max(0, snapshot.hostTransportSendStartDelayAverageMs ?? 0),
+                sendStartDelayAverageMs: max(0, snapshot.hostSendStartDelayAverageMs ?? 0),
                 sendStartDelayStressThresholdMs: 2.0,
                 sendStartDelaySevereThresholdMs: 6.0,
-                sendCompletionAverageMs: max(0, snapshot.hostTransportSendCompletionAverageMs ?? 0),
+                sendCompletionAverageMs: max(0, snapshot.hostSendCompletionAverageMs ?? 0),
                 sendCompletionStressThresholdMs: 12.0,
                 sendCompletionSevereThresholdMs: 28.0,
-                transportDropCount: snapshot.hostTransportStalePacketDrops ?? 0,
+                transportDropCount: snapshot.hostStalePacketDrops ?? 0,
                 transportDropSevereCount: 12
             )
         )

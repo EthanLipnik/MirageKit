@@ -359,7 +359,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func startModifierPollingIfNeeded() {
         guard modifierPollTimer == nil else { return }
         let timer = Timer(timeInterval: modifierPollInterval, repeats: true) { [weak self] _ in
-            self?.pollModifierState()
+            Task { @MainActor in
+                self?.pollModifierState()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         modifierPollTimer = timer
@@ -752,7 +754,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
             withTimeInterval: MirageInteractionCadence.frameInterval120Seconds,
             repeats: true
         ) { [weak self] _ in
-            self?.handleLockedCursorSmoothing()
+            Task { @MainActor in
+                self?.handleLockedCursorSmoothing()
+            }
         }
     }
 

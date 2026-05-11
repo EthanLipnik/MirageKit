@@ -35,10 +35,13 @@ extension VideoDecoder {
         callbackGeneration != activeGeneration
     }
 
-    @discardableResult
-    func advanceDecodeCallbackGeneration() -> UInt64 {
+    func advanceDecodeCallbackGeneration() {
         decompressionSessionGeneration &+= 1
         decodeCallbackGenerationFence.update(activeGeneration: decompressionSessionGeneration)
+    }
+
+    func nextDecodeCallbackGeneration() -> UInt64 {
+        advanceDecodeCallbackGeneration()
         return decompressionSessionGeneration
     }
 

@@ -118,8 +118,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Layer-healthy true presentation collapse backs off")
-    func layerHealthyTruePresentationCollapseBacksOff() {
+    @Test("Layer-healthy true presentation collapse blocks probes without transport backoff")
+    func layerHealthyTruePresentationCollapseBlocksProbesWithoutTransportBackoff() {
         var controller = MirageReceiverHealthController()
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.clientVisibleFrameFPS = 5
@@ -140,8 +140,9 @@ struct ReceiverHealthControllerTests {
         )
 
         #expect(firstAction == .none)
-        #expect(secondAction == .backoff(targetBitrateBps: 40_800_000))
-        #expect(controller.lastTransportPressureReason?.contains("client presentation cadence") == true)
+        #expect(secondAction == .none)
+        #expect(controller.state == .stable)
+        #expect(controller.lastTransportPressureReason == nil)
     }
 
     @Test("Recent interaction defers probes while allowing severe backoff")

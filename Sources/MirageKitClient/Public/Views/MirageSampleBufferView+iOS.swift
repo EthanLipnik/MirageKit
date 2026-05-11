@@ -81,7 +81,7 @@ public class MirageSampleBufferView: UIView {
     // MARK: - Rendering State
 
     let preferencesObserver = MirageUserDefaultsObserver()
-    lazy var refreshRateMonitor = MirageRefreshRateMonitor(view: self)
+    lazy var refreshRateMonitor = MirageRefreshRateMonitor()
     var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayLink: CADisplayLink?
     private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
@@ -132,7 +132,6 @@ public class MirageSampleBufferView: UIView {
             resumeRendering()
             requestImmediateSubmission()
         } else {
-            refreshRateMonitor.stop()
             stopPresentationDisplayLink()
             suspendRendering()
         }
@@ -244,10 +243,6 @@ public class MirageSampleBufferView: UIView {
 
     func requestImmediateSubmission() {
         presentationPipeline.requestImmediateSubmission()
-    }
-
-    private func startPresentationDisplayLinkIfNeeded() {
-        presentationPipeline.resumeRendering()
     }
 
     private func startPresentationDisplayLink(

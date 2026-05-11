@@ -634,8 +634,8 @@ public struct MirageReceiverHealthController: Sendable {
             deliveryRatio < Self.deliverySevereRatio
         let clientKeyframeStarved = hostPipelineHealthy &&
             snapshot.clientReassemblerPendingKeyframeCount > 0
-        let clientVisibleFrameFPS = max(0, snapshot.clientVisibleFrameFPS)
-        let clientVisibleCadenceKnown = snapshot.clientVisibleFrameCadenceKnown
+        let clientVisibleFrameFPS = max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
+        let clientVisibleCadenceKnown = snapshot.clientDeliveredSourceFrameCadenceKnown
         let clientPresentationFPS = clientVisibleCadenceKnown ? clientVisibleFrameFPS : 0
         let clientStarvationStress = clientKeyframeStarved && (
             snapshot.receivedFPS < targetFPS * Self.clientStarvationStressRatio ||
@@ -658,19 +658,11 @@ public struct MirageReceiverHealthController: Sendable {
                 snapshot.clientVisiblePresentationStallCount > 0 ||
                 snapshot.clientVisibleWorstPresentationGapMs >= max(80, targetFrameIntervalMs * 4) ||
                 snapshot.clientVisibleFrameIntervalP99Ms >= max(80, targetFrameIntervalMs * 3) ||
-                snapshot.clientRepeatedSourceFrameCount > 0
-        )
-        let severeVisibleCadencePressure = clientVisibleCadenceKnown && (
-            clientVisibleFrameFPS < targetFPS * 0.60 ||
-                snapshot.clientVisibleWorstPresentationGapMs >= max(160, targetFrameIntervalMs * 8) ||
-                snapshot.clientVisibleFrameIntervalP99Ms >= max(120, targetFrameIntervalMs * 6)
+                snapshot.clientRepeatedDeliveredSourceFrameCount > 0
         )
         let clientPresentationPressure = hostPipelineHealthy &&
             snapshot.decodeHealthy &&
             (visibleCadencePressure || staleVideoGateAdvanced)
-        let severeClientPresentationPressure = hostPipelineHealthy &&
-            snapshot.decodeHealthy &&
-            severeVisibleCadencePressure
 
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
         let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
@@ -678,14 +670,12 @@ public struct MirageReceiverHealthController: Sendable {
             sendDelaySevere ||
             dropSevere ||
             pairedPacerSevere ||
-            deliverySevere ||
-            severeClientPresentationPressure
+            deliverySevere
         let sustainedTransportPressure = queueStress ||
             sendDelaySevere ||
             dropStress ||
             pairedPacerStress ||
-            deliveryStress ||
-            clientPresentationPressure
+            deliveryStress
         let transportPressureReason = Self.transportPressureReason(
             queueBytes: queueBytes,
             queueStress: queueStress,
@@ -704,13 +694,7 @@ public struct MirageReceiverHealthController: Sendable {
             deliveryStress: deliveryStress,
             deliverySevere: deliverySevere,
             hostEncodedFPS: snapshot.hostEncodedFPS,
-            receivedFPS: snapshot.receivedFPS,
-            clientPresentationPressure: clientPresentationPressure,
-            severeClientPresentationPressure: severeClientPresentationPressure,
-            clientVisibleFrameFPS: clientVisibleFrameFPS,
-            clientVisibleFrameCadenceKnown: clientVisibleCadenceKnown,
-            clientVisibleWorstPresentationGapMs: snapshot.clientVisibleWorstPresentationGapMs,
-            staleVideoGateAdvanced: staleVideoGateAdvanced
+            receivedFPS: snapshot.receivedFPS
         )
 
         let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
@@ -781,13 +765,7 @@ public struct MirageReceiverHealthController: Sendable {
         deliveryStress: Bool,
         deliverySevere: Bool,
         hostEncodedFPS: Double,
-        receivedFPS: Double,
-        clientPresentationPressure: Bool,
-        severeClientPresentationPressure: Bool,
-        clientVisibleFrameFPS: Double,
-        clientVisibleFrameCadenceKnown: Bool,
-        clientVisibleWorstPresentationGapMs: Double,
-        staleVideoGateAdvanced: Bool
+        receivedFPS: Double
     ) -> String? {
         if queueSevere || queueStress {
             return "host send queue \(Self.formatBytes(queueBytes))"
@@ -808,14 +786,6 @@ public struct MirageReceiverHealthController: Sendable {
             let encodedText = hostEncodedFPS.formatted(.number.precision(.fractionLength(1)))
             let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
             return "delivery collapse \(ratio)% received (host=\(encodedText)fps received=\(receivedText)fps)"
-        }
-        if severeClientPresentationPressure || clientPresentationPressure {
-            let visibleText = clientVisibleFrameCadenceKnown
-                ? clientVisibleFrameFPS.formatted(.number.precision(.fractionLength(1)))
-                : "unknown"
-            let gapText = Self.formatMilliseconds(clientVisibleWorstPresentationGapMs)
-            let staleSuffix = staleVideoGateAdvanced ? " stale-video-gate" : ""
-            return "client presentation cadence \(visibleText)fps gap=\(gapText)\(staleSuffix)"
         }
         return nil
     }
@@ -862,8 +832,8 @@ public struct MirageReceiverHealthController: Sendable {
         }
         let targetFrameIntervalMs = 1000.0 / targetFPS
         return snapshot.clientPresentationStallCount == 0 &&
-            snapshot.clientVisibleFrameCadenceKnown &&
-            snapshot.clientVisibleFrameFPS >= targetFPS * Self.deliveryStressRatio &&
+            snapshot.clientDeliveredSourceFrameCadenceKnown &&
+            snapshot.clientUniqueDeliveredSourceFrameFPS >= targetFPS * Self.deliveryStressRatio &&
             max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) <
                 max(250, targetFrameIntervalMs * 6)
     }

@@ -1222,8 +1222,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Frame-loss after first decode without starvation does not request keyframe")
-    func frameLossAfterFirstDecodeWithoutStarvationDoesNotRequestKeyframe() async throws {
+    @Test("Frame-loss after first decode requests recovery keyframe")
+    func frameLossAfterFirstDecodeRequestsRecoveryKeyframe() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 41, maxPayloadSize: 1200)
 
@@ -1236,8 +1236,12 @@ struct StreamControllerRecoveryTests {
 
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal()
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(keyframeCounter.value == 0)
+        try await waitUntil("frame-loss keyframe request") {
+            keyframeCounter.value == 1
+        }
+        let reassembler = await controller.getReassembler()
+        #expect(reassembler.isAwaitingKeyframe())
+        #expect(keyframeCounter.value == 1)
 
         await controller.stop()
     }
@@ -1329,8 +1333,8 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Frame-loss after first decode while keyframe-starved defers immediate keyframe request")
-    func frameLossAfterFirstDecodeWithStarvationDefersImmediateKeyframeRequest() async throws {
+    @Test("Frame-loss while keyframe-starved requests one recovery keyframe")
+    func frameLossWhileKeyframeStarvedRequestsOneRecoveryKeyframe() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 42, maxPayloadSize: 1200)
 
@@ -1346,8 +1350,11 @@ struct StreamControllerRecoveryTests {
         reassembler.enterKeyframeOnlyMode()
 
         await controller.handleFrameLossSignal()
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(keyframeCounter.value == 0)
+        try await waitUntil("starved frame-loss keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(reassembler.isAwaitingKeyframe())
+        #expect(keyframeCounter.value == 1)
 
         await controller.stop()
     }

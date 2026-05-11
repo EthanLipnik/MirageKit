@@ -47,15 +47,4 @@ package struct MirageProtocolNegotiation: Codable, Sendable {
         self.selectedFeatures = selectedFeatures
     }
 
-    package static func clientHello(
-        protocolVersion: Int,
-        supportedFeatures: MirageFeatureSet
-    )
-    -> MirageProtocolNegotiation {
-        MirageProtocolNegotiation(
-            protocolVersion: protocolVersion,
-            supportedFeatures: supportedFeatures,
-            selectedFeatures: []
-        )
-    }
 }

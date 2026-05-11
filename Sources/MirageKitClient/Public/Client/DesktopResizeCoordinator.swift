@@ -153,7 +153,6 @@ final class DesktopResizeCoordinator {
         }
     }
 
-    @discardableResult
     func expireActiveTransition(streamID: StreamID, transitionID: UUID) -> Bool {
         guard let activeTransition,
               activeTransition.streamID == streamID,

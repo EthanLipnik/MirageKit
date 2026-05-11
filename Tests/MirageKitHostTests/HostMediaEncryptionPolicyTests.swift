@@ -111,8 +111,8 @@ struct HostMediaEncryptionPolicyTests {
     }
 
     @MainActor
-    @Test("Client-declared local origin metadata does not disable encryption for remote sessions")
-    func clientDeclaredLocalOriginDoesNotDisableEncryptionForRemoteSessions() {
+    @Test("Remote sessions keep media encryption enabled")
+    func remoteSessionsKeepMediaEncryptionEnabled() {
         let host = MirageHostService()
         let remoteEndpoint = NWEndpoint.hostPort(
             host: NWEndpoint.Host("203.0.113.8"),
@@ -133,14 +133,10 @@ struct HostMediaEncryptionPolicyTests {
             localEndpoint: nil,
             remoteEndpoint: remoteEndpoint
         )
-        let advertisement = LoomPeerAdvertisement(
-            metadata: ["mirage.connection-origin": "local"]
-        )
 
         #expect(
             host.resolveAcceptedSessionMediaEncryptionPolicy(
                 clientRequiresMediaEncryption: false,
-                peerAdvertisement: advertisement,
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot
             )

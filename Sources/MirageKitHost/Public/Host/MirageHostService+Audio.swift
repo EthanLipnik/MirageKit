@@ -22,14 +22,13 @@ extension MirageHostService {
         hostAudioMuteController.setMuted(shouldMuteLocalAudio)
     }
 
-    @discardableResult
     func activateAudioForClient(
         clientID: UUID,
         expectedSessionID: UUID? = nil,
         sourceStreamID: StreamID,
         configuration: MirageAudioConfiguration
     )
-    async throws -> Bool {
+    async throws {
         let previousSourceStreamID = audioSourceStreamByClientID[clientID]
         cancelAudioFirstSampleWatchdog(for: clientID)
         audioFirstSampleRetryAttemptedByClientID.remove(clientID)
@@ -48,20 +47,20 @@ extension MirageHostService {
             await stopAudioPipeline(for: clientID, reason: .disabled)
             await closeAudioTransportIfNeeded(for: clientID)
             audioSourceStreamByClientID.removeValue(forKey: clientID)
-            return false
+            return
         }
 
         audioSourceStreamByClientID[clientID] = sourceStreamID
         guard !disconnectingClientIDs.contains(clientID),
               clientsByID[clientID] != nil else {
             audioSourceStreamByClientID.removeValue(forKey: clientID)
-            return false
+            return
         }
         guard mediaSecurityByClientID[clientID] != nil else {
             MirageLogger.host(
                 "Deferring audio pipeline activation for client \(clientID) — security context not yet available"
             )
-            return false
+            return
         }
 
         let clientContext: ClientContext
@@ -136,7 +135,6 @@ extension MirageHostService {
         await setAudioSourceCaptureHandler(clientID: clientID, streamID: sourceStreamID)
         scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: sourceStreamID)
         updateHostAudioMuteState()
-        return true
     }
 
     func activateDeferredAudioIfNeeded(clientID: UUID) async {
@@ -311,13 +309,12 @@ extension MirageHostService {
 
     }
 
-    @discardableResult
     private func ensureAudioTransport(
         clientID: UUID,
         sourceStreamID: StreamID,
         clientContext: ClientContext
-    ) async throws -> Bool {
-        guard loomAudioStreamsByClientID[clientID] == nil else { return true }
+    ) async throws {
+        guard loomAudioStreamsByClientID[clientID] == nil else { return }
         let audioStream = try await clientContext.controlChannel.session.openStream(
             label: "audio/\(sourceStreamID)"
         )
@@ -326,7 +323,6 @@ extension MirageHostService {
         audioSendErrorReportedByClientID.remove(clientID)
         await sendPendingAudioStartedIfPossible(clientID: clientID)
         MirageLogger.host("Opened Loom audio stream for client \(clientID)")
-        return true
     }
 
     private func scheduleAudioFirstSampleWatchdog(clientID: UUID, streamID: StreamID) {
@@ -397,7 +393,6 @@ extension MirageHostService {
         }
     }
 
-    @discardableResult
     private func maybeSendAudioStarted(
         clientID: UUID,
         streamID: StreamID,

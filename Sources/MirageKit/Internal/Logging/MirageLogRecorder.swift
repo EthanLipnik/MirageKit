@@ -171,8 +171,6 @@ public final class MirageLogRecorder: @unchecked Sendable {
         appendEntry(entry)
     }
 
-    public func record(error _: LoomDiagnosticsErrorEvent) async {}
-
     // MARK: - Export
 
     public func exportLogArchive(

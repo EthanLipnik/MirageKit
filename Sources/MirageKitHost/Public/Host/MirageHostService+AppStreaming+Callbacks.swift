@@ -614,14 +614,6 @@ extension MirageHostService {
         try? await clientContext.send(.windowStreamFailed, content: message)
     }
 
-    private func streamFailureTitle(for window: MirageWindow, appName: String) -> String {
-        if let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !title.isEmpty {
-            return title
-        }
-        return "\(appName) window #\(window.id)"
-    }
-
 }
 
 #endif

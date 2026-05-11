@@ -355,7 +355,6 @@ extension MirageHostService {
             await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
             let captureDisplay = try await findSCDisplayWithRetry(
                 maxAttempts: 8,
-                delayMs: 60,
                 expectedPixelResolution: virtualResolution
             )
             guard isDesktopDisplayTopologyRefreshStillActive(
@@ -539,7 +538,6 @@ extension MirageHostService {
             await desktopContext.updateVirtualDisplaySnapshotResolution(virtualResolution)
             let captureDisplay = try await findSCDisplayWithRetry(
                 maxAttempts: 6,
-                delayMs: 60,
                 expectedPixelResolution: virtualResolution
             )
             try await desktopContext.hardResetDesktopDisplayCapture(

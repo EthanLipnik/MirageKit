@@ -7,9 +7,6 @@
 //  Frame rate helpers for host-side stream setup.
 //
 
-import Foundation
-import MirageKit
-
 #if os(macOS)
 extension MirageHostService {
     func resolvedTargetFrameRate(_ requested: Int) -> Int {

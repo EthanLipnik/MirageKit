@@ -509,11 +509,11 @@ actor StreamContext {
         latencyMode: MirageStreamLatencyMode
     )
     -> Int {
-        if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
+        if useLowLatencyPipeline { return 1 }
         switch latencyMode {
         case .smoothest:
-            if frameRate >= 120 { return 6 }
-            if frameRate >= 60 { return 5 }
+            if frameRate >= 120 { return 3 }
+            if frameRate >= 60 { return 2 }
             return 3
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -531,8 +531,8 @@ actor StreamContext {
         if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
         switch latencyMode {
         case .smoothest:
-            if frameRate >= 120 { return 5 }
-            if frameRate >= 60 { return 4 }
+            if frameRate >= 120 { return 2 }
+            if frameRate >= 60 { return 2 }
             return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -549,16 +549,15 @@ actor StreamContext {
         if useLowLatencyPipeline { return 1 }
         switch latencyMode {
         case .smoothest:
-            if frameRate >= 120 { return 4 }
-            if frameRate >= 60 { return 3 }
+            if frameRate >= 60 { return 1 }
             return 1
         case .lowestLatency:
             return 1
         }
     }
 
-    static func lowLatencyPipelineInFlightLimit(frameRate: Int) -> Int {
-        return frameRate >= 120 ? 2 : 1
+    static func lowLatencyPipelineInFlightLimit() -> Int {
+        1
     }
 
     nonisolated static func packetSendDeadline(
@@ -577,7 +576,7 @@ actor StreamContext {
         }
 
         let frameInterval = 1.0 / Double(max(1, targetFrameRate))
-        return encodedAt + max(frameInterval * 2.0, 0.025)
+        return encodedAt + max(frameInterval * 3.0, 0.033)
     }
 
     func schedulePipelineStatsLog() {

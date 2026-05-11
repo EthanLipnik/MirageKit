@@ -427,11 +427,9 @@ extension MirageHostService {
                     )
             }
             if let session = activeSessionByStreamID[inputMessage.streamID] {
-                delegate?.hostService(
-                    self,
-                    didReceiveInputEvent: inputMessage.event,
-                    forWindow: session.window,
-                    fromClient: client
+                delegate?.didReceiveInputEvent(
+                    inputMessage.event,
+                    forWindow: session.window
                 )
             } else {
                 MirageLogger.host("No session found for stream \(inputMessage.streamID)")
@@ -453,7 +451,7 @@ extension MirageHostService {
             sessionID: clientContext.sessionID,
             notifyClient: false
         )
-        delegate?.hostService(self, didDisconnectClient: client)
+        delegate?.didDisconnectClient(client)
     }
 
     // MARK: - Stream Pause/Resume (Client Backgrounding)

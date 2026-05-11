@@ -233,17 +233,16 @@ extension MirageHostService {
             return
         }
 
-        delegate?.hostService(self, didDiscoverPeerWithAdvertisement: context.peerAdvertisement)
+        delegate?.didDiscoverPeer(advertisement: context.peerAdvertisement)
 
         let peerIdentity = context.peerIdentity
         let sessionID = session.id
         let remoteEndpoint = await session.remoteEndpoint
         let pathSnapshot = await session.pathSnapshot
-        let origin: MirageHostConnectionOrigin = inferOrigin(
-            peerAdvertisement: context.peerAdvertisement,
+        let origin: MirageHostConnectionOrigin = ClientContext.isPeerToPeerConnection(
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
-        )
+        ) ? .local : .remote
         MirageLogger.host(
             "Incoming authenticated session trustDecision=\(String(describing: context.trustEvaluation.decision)) "
                 + "autoTrustNotice=\(context.trustEvaluation.shouldShowAutoTrustNotice) "
@@ -252,7 +251,7 @@ extension MirageHostService {
                 + "name=\(peerIdentity.name) origin=\(origin)"
         )
 
-        if await hostSoftwareUpdateInstallInProgress(for: peerIdentity) {
+        if await hostSoftwareUpdateInstallInProgress() {
             MirageLogger.host("Connection rejected while host software update install is in progress")
             await rejectIncomingSession(session, reason: .hostUpdateInProgress)
             return
@@ -302,9 +301,8 @@ extension MirageHostService {
             ) { [self] in
                 await withCheckedContinuation { continuation in
                     if let delegate = self.delegate {
-                        delegate.hostService(
-                            self,
-                            shouldAcceptConnectionFrom: peerIdentity.deviceInfo,
+                        delegate.shouldAcceptConnection(
+                            from: peerIdentity.deviceInfo,
                             origin: origin,
                             completion: { accepted in
                                 continuation.resume(returning: accepted)
@@ -372,7 +370,7 @@ extension MirageHostService {
                     reason: .takenOver,
                     message: "Disconnected because a trusted client connected to this host."
                 )
-                delegate?.hostService(self, didDisconnectClient: busyClientContext.client)
+                delegate?.didDisconnectClient(busyClientContext.client)
             }
 
             if !reservedSingleClientSlot {
@@ -392,7 +390,6 @@ extension MirageHostService {
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,
                 peerIdentity: peerIdentity,
-                peerAdvertisement: context.peerAdvertisement,
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot,
                 autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice
@@ -439,7 +436,7 @@ extension MirageHostService {
             await activateDeferredAudioIfNeeded(clientID: client.id)
             startReceivingFromClient(clientContext: clientContext)
             startClientLivenessMonitorIfNeeded()
-            delegate?.hostService(self, didConnectClient: client)
+            delegate?.didConnectClient(client)
         } catch {
             if isExpectedBootstrapConnectionClosure(error) ||
                 isFatalConnectionError(error) ||
@@ -483,21 +480,9 @@ extension MirageHostService {
         throw MirageError.protocolError("Control stream closed before session bootstrap request")
     }
 
-    private func inferOrigin(
-        peerAdvertisement: LoomPeerAdvertisement,
-        remoteEndpoint: NWEndpoint?,
-        pathSnapshot: LoomSessionNetworkPathSnapshot?
-    ) -> MirageHostConnectionOrigin {
-        return ClientContext.isPeerToPeerConnection(
-            remoteEndpoint: remoteEndpoint,
-            pathSnapshot: pathSnapshot
-        ) ? MirageHostConnectionOrigin.local : MirageHostConnectionOrigin.remote
-    }
-
     private func makeBootstrapResponse(
         for request: MirageSessionBootstrapRequest,
         peerIdentity: LoomPeerIdentity,
-        peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
@@ -555,7 +540,6 @@ extension MirageHostService {
         let hostIdentity = try identityManager.currentIdentity()
         let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(
             clientRequiresMediaEncryption: request.clientRequiresMediaEncryption,
-            peerAdvertisement: peerAdvertisement,
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
         )
@@ -578,7 +562,7 @@ extension MirageHostService {
             mediaEncryptionEnabled: mediaEncryptionEnabled,
             udpRegistrationToken: udpRegistrationToken,
             autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: delegate?.hostService(self, remoteAccessAllowedFor: peerIdentity.deviceInfo) ?? false
+            remoteAccessAllowed: delegate?.remoteAccessAllowedForConnections ?? false
         )
         return (response, mediaSecurity)
     }
@@ -594,7 +578,6 @@ extension MirageHostService {
 
     func resolveAcceptedSessionMediaEncryptionPolicy(
         clientRequiresMediaEncryption: Bool,
-        peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) -> Bool {
@@ -621,28 +604,16 @@ extension MirageHostService {
             return (false, "Host update service unavailable.")
         }
 
-        let isAuthorized = await softwareUpdateController.hostService(
-            self,
-            shouldAuthorizeSoftwareUpdateRequestFrom: peerIdentity,
-            trigger: .protocolMismatch
-        )
-        guard isAuthorized else {
-            return (false, "Remote update request denied for this device.")
-        }
-
-        let result = await softwareUpdateController.hostService(
-            self,
-            performSoftwareUpdateInstallFor: peerIdentity,
+        let result = await softwareUpdateController.performSoftwareUpdateInstall(
+            for: peerIdentity,
             trigger: .protocolMismatch
         )
         return (result.accepted, result.message)
     }
 
-    func hostSoftwareUpdateInstallInProgress(for peerIdentity: LoomPeerIdentity) async -> Bool {
+    func hostSoftwareUpdateInstallInProgress() async -> Bool {
         guard let softwareUpdateController else { return false }
-        let status = await softwareUpdateController.hostService(
-            self,
-            softwareUpdateStatusFor: peerIdentity,
+        let status = await softwareUpdateController.softwareUpdateStatus(
             forceRefresh: false
         )
         return status.isInstallInProgress

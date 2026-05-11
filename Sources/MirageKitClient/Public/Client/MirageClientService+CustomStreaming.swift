@@ -2,7 +2,7 @@
 //  MirageClientService+CustomStreaming.swift
 //  MirageKit
 //
-//  Created by Codex on 4/30/26.
+//  Created by Ethan Lipnik on 4/30/26.
 //
 
 import CoreGraphics
@@ -87,10 +87,10 @@ public extension MirageClientService {
 
     func stopCustomStream(_ session: ClientStreamSession) async {
         let streamID = session.id
-        let request = StopCustomStreamMessage(streamID: streamID)
-        if let message = try? ControlMessage(type: .stopCustomStream, content: request) {
-            sendControlMessageBestEffort(message)
-        }
+        sendControlMessageBestEffort(
+            .stopCustomStream,
+            content: StopCustomStreamMessage(streamID: streamID)
+        )
         await forceStopCustomStreamLocally(
             streamID: streamID,
             notifyStopReason: .clientRequested
@@ -114,7 +114,6 @@ extension MirageClientService {
 
             let window = syntheticCustomStreamWindow(for: started)
             let clientSession = ClientStreamSession(id: streamID, window: window, kind: .custom)
-            customStreamDescriptorsByStreamID[streamID] = started.descriptor
             upsertActiveStreamSession(streamID: streamID, window: window, kind: .custom)
             activeStreamCodecs[streamID] = started.codec
 
@@ -195,7 +194,7 @@ extension MirageClientService {
                 continuation.resume(throwing: MirageError.protocolError(failed.reason))
             }
             clearPendingStreamSetup(kind: .custom)
-            delegate?.clientService(self, didEncounterError: MirageError.protocolError(failed.reason))
+            delegate?.didEncounterError(MirageError.protocolError(failed.reason))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode custom stream failed: ")
         }
@@ -229,7 +228,6 @@ extension MirageClientService {
         )
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
-        customStreamDescriptorsByStreamID.removeValue(forKey: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
         renderLatencyModeByStream.removeValue(forKey: streamID)
 

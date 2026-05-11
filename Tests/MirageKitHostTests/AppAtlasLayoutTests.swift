@@ -52,7 +52,7 @@ struct AppAtlasLayoutTests {
         )
 
         let mapped = try #require(layout.sourcePoint(forCanvasPoint: CGPoint(x: 960, y: 1080)))
-        #expect(mapped.windowID == 11)
+        #expect(mapped.id == 11)
         #expect(mapped.point == CGPoint(x: 2020, y: 1280))
     }
 
@@ -98,7 +98,7 @@ struct AppAtlasLayoutTests {
         let after = AppAtlasLayout.nativePackedLayout(windows: [parentWindow])
 
         #expect(after == before)
-        #expect(after.placements.map(\.windowID) == [71])
+        #expect(after.placements.map(\.id) == [71])
     }
 }
 #endif

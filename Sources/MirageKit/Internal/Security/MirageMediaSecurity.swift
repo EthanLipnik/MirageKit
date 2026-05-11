@@ -264,17 +264,6 @@ package enum MirageMediaSecurity {
         return plaintextData
     }
 
-    package static func constantTimeEqual(_ lhs: Data, _ rhs: Data) -> Bool {
-        let maxLength = max(lhs.count, rhs.count)
-        var diff = lhs.count ^ rhs.count
-        for index in 0 ..< maxLength {
-            let left = index < lhs.count ? lhs[index] : 0
-            let right = index < rhs.count ? rhs[index] : 0
-            diff |= Int(left ^ right)
-        }
-        return diff == 0
-    }
-
     private static func seal(
         _ plaintext: UnsafeRawBufferPointer,
         key: SymmetricKey,

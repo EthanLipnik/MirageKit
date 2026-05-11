@@ -59,12 +59,10 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         return state.smoothedLevel
     }
 
-    @discardableResult
-    func reset() -> Float {
+    func reset() {
         lock.lock()
         state = State()
         lock.unlock()
-        return 0
     }
 
     static func normalizedLevel(

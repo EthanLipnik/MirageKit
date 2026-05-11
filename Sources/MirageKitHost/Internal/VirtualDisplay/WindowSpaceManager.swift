@@ -803,9 +803,6 @@ actor WindowSpaceManager {
         guard visibleFrame.width > 0, visibleFrame.height > 0 else { return }
         guard let axWindow = axWindow ?? resolveAXWindow(for: windowID) else { return }
 
-        let shouldCompensateTopChrome = false
-        let inferredInset: CGFloat = 0
-
         func fitFrameForInset(_ inset: CGFloat) -> CGRect {
             let unconstrained = CGRect(
                 x: visibleFrame.minX,
@@ -819,46 +816,7 @@ actor WindowSpaceManager {
             )
         }
 
-        func effectiveContentRect(for frame: CGRect, fallbackInset: CGFloat) -> CGRect {
-            guard shouldCompensateTopChrome else {
-                return frame
-            }
-
-            let measuredInset = normalizedInset(inferredTopChromeInset(for: axWindow, currentFrame: frame))
-            let resolvedInset = measuredInset > 0 ? measuredInset : normalizedInset(fallbackInset)
-            let contentHeight = max(1, frame.height - resolvedInset)
-            return CGRect(
-                x: frame.minX,
-                y: frame.minY + resolvedInset,
-                width: frame.width,
-                height: contentHeight
-            )
-        }
-
-        func normalizedInset(_ value: CGFloat) -> CGFloat {
-            guard value.isFinite else { return 0 }
-            return min(120, max(0, ceil(value)))
-        }
-
-        var candidateInsets: [CGFloat]
-        if shouldCompensateTopChrome {
-            candidateInsets = [
-                normalizedInset(inferredInset),
-                40,
-                56,
-                72,
-                0,
-            ]
-        } else {
-            candidateInsets = [0]
-        }
-        var uniqueInsets: [CGFloat] = []
-        for inset in candidateInsets {
-            if !uniqueInsets.contains(where: { abs($0 - inset) <= 0.5 }) {
-                uniqueInsets.append(inset)
-            }
-        }
-        candidateInsets = uniqueInsets
+        let candidateInsets: [CGFloat] = [0]
 
         let coverageTargetFrame = aspectFittedFrame(
             visibleFrame,
@@ -901,7 +859,7 @@ actor WindowSpaceManager {
             } else {
                 resolvedFrame = requestedFrame
             }
-            let coverageRect = effectiveContentRect(for: resolvedFrame, fallbackInset: inset).intersection(visibleFrame)
+            let coverageRect = resolvedFrame.intersection(visibleFrame)
             let coverageHeight = max(0, coverageRect.height)
             let coverageWidth = max(0, coverageRect.width)
             if coverageHeight > bestCoverageHeight ||
@@ -976,43 +934,6 @@ actor WindowSpaceManager {
         }
         guard let axWindow else { return false }
         return AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString) == .success
-    }
-
-    private func inferredTopChromeInset(
-        for axWindow: AXUIElement,
-        currentFrame: CGRect?
-    ) -> CGFloat {
-        guard let windowFrame = currentFrame else { return 0 }
-        guard let closeButton = axElementAttributeValue(axWindow, attribute: kAXCloseButtonAttribute as CFString),
-              let closeButtonFrame = axWindowFrame(closeButton) else {
-            return 0
-        }
-        let inferredInset = (closeButtonFrame.maxY - windowFrame.minY) + 6
-        guard inferredInset.isFinite else { return 0 }
-        return min(140, max(0, ceil(inferredInset)))
-    }
-
-    private func ensureTrafficLightsHidden(windowID: WindowID) {
-        guard var savedState = savedStates[windowID] else { return }
-        guard let axWindow = resolveAXWindow(for: windowID) else { return }
-        let existingSnapshot = savedState.trafficLightVisibilitySnapshot
-        let attemptedSnapshot = hideTrafficLightsIfSupported(
-            windowID: windowID,
-            axWindow: axWindow
-        )
-
-        guard existingSnapshot == nil || existingSnapshot?.hasRecordedState == false else { return }
-        guard let attemptedSnapshot, attemptedSnapshot.hasRecordedState else { return }
-
-        savedState = SavedWindowState(
-            windowID: savedState.windowID,
-            originalFrame: savedState.originalFrame,
-            originalSpaceIDs: savedState.originalSpaceIDs,
-            trafficLightVisibilitySnapshot: attemptedSnapshot,
-            owner: savedState.owner,
-            savedAt: savedState.savedAt
-        )
-        savedStates[windowID] = savedState
     }
 
     private func restoreTrafficLightButtonIfNeeded(
@@ -1362,7 +1283,7 @@ extension WindowSpaceManager {
 
         // Set size
         var mutableSize = size
-        var sizeValue = AXValueCreate(.cgSize, &mutableSize)
+        let sizeValue = AXValueCreate(.cgSize, &mutableSize)
         let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
 
         guard result == .success else {

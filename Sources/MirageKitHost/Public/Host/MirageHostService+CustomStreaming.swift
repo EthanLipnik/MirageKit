@@ -2,7 +2,7 @@
 //  MirageHostService+CustomStreaming.swift
 //  MirageKit
 //
-//  Created by Codex on 4/30/26.
+//  Created by Ethan Lipnik on 4/30/26.
 //
 
 import CoreGraphics
@@ -30,12 +30,6 @@ public extension MirageHostService {
         customStreamSourcesByKind.removeValue(forKey: kind)
     }
 
-    /// Snapshot of registered custom stream descriptors.
-    var customStreamDescriptors: [MirageCustomStreamDescriptor] {
-        customStreamSourcesByKind.values
-            .map(\.descriptor)
-            .sorted { lhs, rhs in lhs.kind < rhs.kind }
-    }
 }
 
 @MainActor

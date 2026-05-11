@@ -68,11 +68,11 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
         let decodedFPS = max(0, snapshot.decodedFPS)
-        let layerEnqueueFPS = max(0, snapshot.layerEnqueueFPS)
-        let uniqueLayerEnqueueFPS = max(0, snapshot.uniqueLayerEnqueueFPS)
-        let visibleFrameFPS = max(0, snapshot.clientVisibleFrameFPS)
-        let hasVisibleFrameCadence = snapshot.clientVisibleFrameCadenceKnown
-        let presentationFPS = hasVisibleFrameCadence ? visibleFrameFPS : uniqueLayerEnqueueFPS
+        let rendererEnqueueFPS = max(0, snapshot.clientRendererEnqueueFPS)
+        let uniqueRendererEnqueueFPS = max(0, snapshot.clientUniqueRendererEnqueueFPS)
+        let deliveredSourceFrameFPS = max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
+        let hasDeliveredSourceFrameCadence = snapshot.clientDeliveredSourceFrameCadenceKnown
+        let presentationFPS = hasDeliveredSourceFrameCadence ? deliveredSourceFrameFPS : 0
         let captureIngressFPS = max(0, snapshot.hostCaptureIngressFPS ?? 0)
         let captureFPS = max(0, snapshot.hostCaptureFPS ?? 0)
         let encodeAttemptFPS = max(0, snapshot.hostEncodeAttemptFPS ?? 0)
@@ -144,32 +144,76 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
                 max(100.0, targetFrameIntervalMs * 6.0) ||
             snapshot.clientDisplayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
 
-        let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress ||
-            unevenReceiveCadence && hostEncodedFPS >= targetFPS * 0.75
-
-        let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
-            (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)
+        let decodeQueueBacklogPressure = snapshot.clientDecodeQueueBacklogFrames > max(
+            1,
+            snapshot.clientDecodeSubmissionLimit
+        )
+        let decodeSubmissionSaturated = snapshot.clientDecodeSubmissionLimit > 0 &&
+            snapshot.clientDecodeSubmissionInFlightCount >= snapshot.clientDecodeSubmissionLimit
+        let decodeHasClientPressure = !snapshot.decodeHealthy ||
+            decodeQueueBacklogPressure ||
+            decodeSubmissionSaturated
+        let decodeRecoveryCollapse = decodeHasClientPressure &&
+            hostEncodedFPS >= targetFPS * 0.75 &&
+            decodedFPS < targetFPS * 0.50 &&
+            rendererEnqueueFPS < targetFPS * 0.50 &&
+            uniqueRendererEnqueueFPS < targetFPS * 0.50 &&
+            (!hasDeliveredSourceFrameCadence || presentationFPS < targetFPS * 0.50)
+        let decodeHealthCadenceDeficit = decodeHasClientPressure &&
+            hostEncodedFPS >= targetFPS * 0.75 &&
+            decodedFPS < targetFPS * 0.85 &&
+            rendererEnqueueFPS < targetFPS * 0.90 &&
+            uniqueRendererEnqueueFPS < targetFPS * 0.90 &&
+            (!hasDeliveredSourceFrameCadence || presentationFPS < targetFPS * 0.90)
+        let decodeBound = (
+            receivedFPS > 0 &&
+                decodedFPS + decodeGapGrace < receivedFPS &&
+                (decodeHasClientPressure || receivedFPS >= targetFPS * 0.75)
+        ) || decodeRecoveryCollapse ||
+            decodeHealthCadenceDeficit
 
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
-        let submissionLaggingDecode = if hasVisibleFrameCadence {
+        let deliveredFramesLaggingDecode = hasDeliveredSourceFrameCadence &&
             presentationFPS + presentationGapGrace < decodedFPS
-        } else {
-            (layerEnqueueFPS + presentationGapGrace < decodedFPS) ||
-                (uniqueLayerEnqueueFPS + presentationGapGrace < decodedFPS)
-        }
+        let rendererEnqueueLaggingDecode = rendererEnqueueFPS > 0 &&
+            rendererEnqueueFPS + presentationGapGrace < decodedFPS
+        let uniqueRendererEnqueueLaggingDecode = uniqueRendererEnqueueFPS > 0 &&
+            uniqueRendererEnqueueFPS + presentationGapGrace < decodedFPS
         let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold ||
-            snapshot.clientRepeatedSourceFrameCount > 0
+            snapshot.clientRenderQueueBacklogFrames > max(1, snapshot.clientPlayoutDelayFrames + 1) ||
+            snapshot.clientRepeatedDeliveredSourceFrameCount > 0
+        let clientRenderPressure = presentationBackpressure ||
+            deliveredFramesLaggingDecode ||
+            rendererEnqueueLaggingDecode ||
+            uniqueRendererEnqueueLaggingDecode ||
+            unevenPresentationCadence ||
+            severeUnevenPresentationCadence
+        let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress ||
+            !decodeHasClientPressure &&
+            unevenReceiveCadence &&
+                hostEncodedFPS >= targetFPS * 0.75 &&
+                !decodeBound &&
+                !clientRenderPressure
         let presentationBound = decodeKeepsUp && (
-            !hasVisibleFrameCadence && (uniqueLayerEnqueueFPS > 0 || layerEnqueueFPS > 0) ||
-                submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
-                unevenPresentationCadence && presentationFPS < targetFPS * 0.97 ||
-                severeUnevenPresentationCadence && presentationFPS >= targetFPS * 0.90
-        )
+            deliveredFramesLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
+                hasDeliveredSourceFrameCadence &&
+                    unevenPresentationCadence &&
+                    presentationFPS < targetFPS * 0.97 ||
+                hasDeliveredSourceFrameCadence &&
+                    severeUnevenPresentationCadence &&
+                    presentationFPS >= targetFPS * 0.90 ||
+                !hasDeliveredSourceFrameCadence &&
+                    (rendererEnqueueLaggingDecode || uniqueRendererEnqueueLaggingDecode) &&
+                    presentationBackpressure
+        ) || rendererEnqueueFPS >= targetFPS * 0.75 &&
+            hasDeliveredSourceFrameCadence &&
+            presentationFPS < targetFPS * 0.50 &&
+            clientRenderPressure
 
         let hostCadenceLimited = !networkBound && (
                 (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
@@ -185,8 +229,14 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
 
         let encodeHasWork = (encodeAttemptFPS > 0 && encodeAttemptFPS >= targetFPS * 0.90) ||
             (captureFPS > 0 && captureFPS >= targetFPS * 0.90)
-        let encodeBound = (encodeAttemptFPS > 0 && hostEncodedFPS + fpsGapGrace < encodeAttemptFPS) ||
-            (encodeHasWork && frameBudgetMs > 0 && averageEncodeMs > frameBudgetMs * 1.05)
+        let encodeThroughputBelowSource = encodeAttemptFPS > 0 &&
+            hostEncodedFPS < targetFPS * 0.90 &&
+            hostEncodedFPS + fpsGapGrace < encodeAttemptFPS
+        let encodeCostOverBudget = encodeHasWork &&
+            hostEncodedFPS < targetFPS * 0.95 &&
+            frameBudgetMs > 0 &&
+            averageEncodeMs > frameBudgetMs * 1.05
+        let encodeBound = encodeThroughputBelowSource || encodeCostOverBudget
 
         let activeKinds = [
             captureBound ? MirageStreamBottleneckKind.captureBound : nil,

@@ -40,8 +40,6 @@ enum AppAtlasLayout {
         let destinationRect: CGRect
         let normalizedDestinationRect: CGRect
 
-        var windowID: WindowID { id }
-
         func sourcePoint(forCanvasPoint point: CGPoint) -> CGPoint? {
             guard destinationRect.width > 0,
                   destinationRect.height > 0,
@@ -65,18 +63,16 @@ enum AppAtlasLayout {
         let contentRect: CGRect
         let placements: [Placement]
 
-        var isEmpty: Bool { placements.isEmpty }
-
         func placement(containing point: CGPoint) -> Placement? {
             placements.first { $0.destinationRect.contains(point) }
         }
 
-        func sourcePoint(forCanvasPoint point: CGPoint) -> (windowID: WindowID, point: CGPoint)? {
+        func sourcePoint(forCanvasPoint point: CGPoint) -> (id: WindowID, point: CGPoint)? {
             guard let placement = placement(containing: point),
                   let sourcePoint = placement.sourcePoint(forCanvasPoint: point) else {
                 return nil
             }
-            return (placement.windowID, sourcePoint)
+            return (placement.id, sourcePoint)
         }
 
         func makePublicLayout(
@@ -91,13 +87,13 @@ enum AppAtlasLayout {
                 height: Int(canvasSize.height),
                 regions: placements.enumerated().map { index, placement in
                     MirageAppAtlasRegion(
-                        windowID: placement.windowID,
+                        windowID: placement.id,
                         x: Int(placement.destinationRect.minX),
                         y: Int(placement.destinationRect.minY),
                         width: Int(placement.destinationRect.width),
                         height: Int(placement.destinationRect.height),
                         zIndex: index,
-                        isFocused: placement.windowID == focusedWindowID,
+                        isFocused: placement.id == focusedWindowID,
                         isVisible: true
                     )
                 }

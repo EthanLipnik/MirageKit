@@ -185,15 +185,24 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS,
         ])
-        let clientPresentationCadence = snapshot.clientVisibleFrameCadenceKnown
-            ? max(0, snapshot.clientVisibleFrameFPS)
-            : 0
-        let presentedCadence = minimumPositive([
+        let decodedCadence: Double? = if snapshot.receivedFPS > 0 ||
+            snapshot.decodedFPS > 0 ||
+            !snapshot.decodeHealthy ||
+            snapshot.clientDecodeQueueBacklogFrames > 0 ||
+            snapshot.clientDecodeSubmissionInFlightCount > 0 {
+            max(0, snapshot.decodedFPS)
+        } else {
+            nil
+        }
+        let deliveredCadence: Double? = snapshot.clientDeliveredSourceFrameCadenceKnown
+            ? max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
+            : nil
+        let presentedCadence = minimumKnown([
             snapshot.hostCaptureFPS,
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS,
-            snapshot.decodedFPS,
-            clientPresentationCadence,
+            decodedCadence,
+            deliveredCadence,
         ])
         let hostPipelinePixelRate = if let currentTier, let hostCadence {
             Double(max(1, Int(currentTier.encodedPixelSize.width))) *
@@ -273,11 +282,12 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
     ) -> Bool {
         let targetFPS = Double(max(1, minimumHealthyFrameRate))
         let frameBudgetMs = 1_000.0 / targetFPS
-        let clientCadence = snapshot.clientVisibleFrameCadenceKnown ? max(0, snapshot.clientVisibleFrameFPS) : 0
-        let belowHealthFloor = !snapshot.clientVisibleFrameCadenceKnown ||
-            (clientCadence > 0 && clientCadence < targetFPS * 0.90)
-        let decodeFailed = !snapshot.decodeHealthy &&
-            (snapshot.receivedFPS > 0 || snapshot.decodedFPS > 0)
+        let clientCadence = snapshot.clientDeliveredSourceFrameCadenceKnown
+            ? max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
+            : 0
+        let belowHealthFloor = !snapshot.clientDeliveredSourceFrameCadenceKnown ||
+            clientCadence < targetFPS * 0.90
+        let decodeFailed = !snapshot.decodeHealthy
         let presentationStalled =
             snapshot.clientPresentationStallCount > 0 ||
             snapshot.clientVisiblePresentationStallCount > 0 ||
@@ -289,7 +299,7 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             snapshot.clientPendingFrameAgeMs >= max(40.0, frameBudgetMs * 3.0) ||
             snapshot.clientOverwrittenPendingFrames >= 3 ||
             snapshot.clientDisplayLayerNotReadyCount >= 2 ||
-            snapshot.clientRepeatedSourceFrameCount > 0
+            snapshot.clientRepeatedDeliveredSourceFrameCount > 0
         return belowHealthFloor || decodeFailed || presentationStalled
     }
 
@@ -308,6 +318,12 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
             .filter { $0 > 0 }
             .min()
     }
+
+    private static func minimumKnown(_ values: [Double?]) -> Double? {
+        let knownValues = values.compactMap { $0 }
+        guard !knownValues.isEmpty else { return nil }
+        return knownValues.map { max(0, $0) }.min()
+    }
 }
 
 public struct MirageAutomaticDesktopWorkloadController: Sendable {
@@ -317,9 +333,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     }
 
     private static let requiredPipelinePressureSamples = 8
-    private static let requiredPresentationCollapseSamples = 3
+    private static let requiredPresentationCollapseSamples = 1
     private static let requiredPromotionSamples = 6
     private static let reconfigurationCooldownSeconds: CFAbsoluteTime = 20
+    private static let severeClientCollapseCooldownSeconds: CFAbsoluteTime = 3
     private static let observedPixelRateSafetyFactor = 0.85
 
     private var pipelinePressureSampleCount = 0
@@ -414,14 +431,18 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             let requiredSamples = hasSustainedSevereClientPresentationCollapse
                 ? Self.requiredPresentationCollapseSamples
                 : Self.requiredPipelinePressureSamples
+            let cooldownSeconds = hasSustainedSevereClientPresentationCollapse
+                ? Self.severeClientCollapseCooldownSeconds
+                : Self.reconfigurationCooldownSeconds
             guard pipelinePressureSampleCount >= requiredSamples,
-                  cooldownElapsed(now: now),
+                  cooldownElapsed(now: now, minimumSeconds: cooldownSeconds),
                   let targetTier = Self.clientPipelineTargetTier(
                       currentTier: currentTier,
                       pipelinePixelRate: observedPixelRate,
                       minimumTargetFrameRate: minimumTargetFrameRate,
                       maximumTargetFrameRate: maximumTargetFrameRate,
-                      adaptivePriority: adaptivePriority
+                      adaptivePriority: adaptivePriority,
+                      severeClientCollapse: hasSustainedSevereClientPresentationCollapse
                   ) else {
                 return .none
             }
@@ -487,9 +508,12 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return .reconfigure(target: targetTier, reason: reason)
     }
 
-    private func cooldownElapsed(now: CFAbsoluteTime) -> Bool {
+    private func cooldownElapsed(
+        now: CFAbsoluteTime,
+        minimumSeconds: CFAbsoluteTime = reconfigurationCooldownSeconds
+    ) -> Bool {
         guard let lastReconfigurationAt else { return true }
-        return now - lastReconfigurationAt >= Self.reconfigurationCooldownSeconds
+        return now - lastReconfigurationAt >= minimumSeconds
     }
 
     private static func targetTier(
@@ -556,8 +580,10 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         pipelinePixelRate: Double,
         minimumTargetFrameRate: Int,
         maximumTargetFrameRate: Int,
-        adaptivePriority: MirageAdaptiveQualityPriority
+        adaptivePriority: MirageAdaptiveQualityPriority,
+        severeClientCollapse: Bool
     ) -> MirageAutomaticDesktopWorkloadTier? {
+        let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
         let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
         let normalizedMaximumTargetFrameRate = max(
             normalizedMinimumTargetFrameRate,
@@ -579,11 +605,27 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
                currentTier: currentTier,
                minimumTargetFrameRate: normalizedMinimumTargetFrameRate
            ) {
+            if adaptivePriority == .preserveResolutionAndBitrate,
+               severeClientCollapse,
+               frameRateTier.pixelRate > sustainablePixelRate {
+                return pixelRateTargetTier(
+                    currentTier: currentTier,
+                    sustainablePixelRate: sustainablePixelRate,
+                    minimumTargetFrameRate: normalizedMinimumTargetFrameRate,
+                    maximumTargetFrameRate: normalizedMaximumTargetFrameRate
+                )
+            }
             return frameRateTier
         }
 
         if adaptivePriority == .preserveResolutionAndBitrate {
-            return nil
+            guard severeClientCollapse else { return nil }
+            return pixelRateTargetTier(
+                currentTier: currentTier,
+                sustainablePixelRate: sustainablePixelRate,
+                minimumTargetFrameRate: normalizedMinimumTargetFrameRate,
+                maximumTargetFrameRate: normalizedMaximumTargetFrameRate
+            )
         }
 
         let currentPixels = max(
@@ -641,8 +683,8 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         ) ?? 0
         guard hostCadence >= targetFPS * 0.90 else { return false }
         guard snapshot.decodeHealthy, snapshot.decodedFPS >= targetFPS * 0.90 else { return false }
-        guard snapshot.clientVisibleFrameCadenceKnown,
-              snapshot.clientVisibleFrameFPS >= targetFPS * 0.90 else {
+        guard snapshot.clientDeliveredSourceFrameCadenceKnown,
+              snapshot.clientUniqueDeliveredSourceFrameFPS >= targetFPS * 0.90 else {
             return false
         }
         return true
@@ -738,11 +780,16 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             snapshot.hostEncodeAttemptFPS,
             snapshot.hostEncodedFPS
         ) ?? 0
-        guard snapshot.clientVisibleFrameCadenceKnown else { return false }
-        let clientCadence = max(0, snapshot.clientVisibleFrameFPS)
+        guard snapshot.clientDeliveredSourceFrameCadenceKnown else { return false }
+        let clientCadence = max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
         guard hostCadence >= targetFPS * 0.85 else { return false }
-        guard snapshot.decodedFPS >= targetFPS * 0.60 else { return false }
-        guard clientCadence > 0, clientCadence <= targetFPS * 0.72 else { return false }
+        guard !snapshot.decodeHealthy || snapshot.decodedFPS >= targetFPS * 0.60 else { return false }
+        guard clientCadence <= targetFPS * 0.72 else { return false }
+
+        if !snapshot.decodeHealthy,
+           clientCadence <= targetFPS * 0.50 {
+            return true
+        }
 
         let frameBudgetMs = 1_000.0 / targetFPS
         return snapshot.clientPendingFrameAgeMs >= max(28.0, frameBudgetMs * 3.0) ||

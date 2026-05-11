@@ -5,91 +5,52 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
 
-/// Delegate protocol for MirageHostService events
+/// Receives host lifecycle, connection, stream, and input events from `MirageHostService`.
 public protocol MirageHostDelegate: AnyObject, Sendable {
-    /// Called when a new connection is received, before accepting
-    /// Call the completion handler with true to accept, false to reject
+    /// Asks whether an incoming authenticated peer should be allowed to finish connecting.
     @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        shouldAcceptConnectionFrom deviceInfo: LoomPeerDeviceInfo,
+    func shouldAcceptConnection(
+        from deviceInfo: LoomPeerDeviceInfo,
         origin: MirageHostConnectionOrigin,
         completion: @escaping @Sendable (Bool) -> Void
     )
 
-    /// Called when a new client connects (after approval)
+    /// Called after a client has been approved and connected.
     @MainActor
-    func hostService(_ service: MirageHostService, didConnectClient client: MirageConnectedClient)
+    func didConnectClient(_ client: MirageConnectedClient)
 
-    /// Called when a client disconnects
+    /// Called after a connected client disconnects.
     @MainActor
-    func hostService(_ service: MirageHostService, didDisconnectClient client: MirageConnectedClient)
+    func didDisconnectClient(_ client: MirageConnectedClient)
 
     /// Called when active desktop or app stream state changes.
     @MainActor
-    func hostServiceDidChangeActiveStreams(_ service: MirageHostService)
+    func activeStreamsDidChange()
 
-    /// Called when an input event is received from a client
+    /// Called when a connected client sends an input event for a host window.
     @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        didReceiveInputEvent event: MirageInputEvent,
-        forWindow window: MirageWindow,
-        fromClient client: MirageConnectedClient
+    func didReceiveInputEvent(
+        _ event: MirageInputEvent,
+        forWindow window: MirageWindow
     )
 
-    /// Called when the session state changes (locked, unlocked, sleeping, etc.)
-    /// Use this to update UI or take action when the Mac becomes locked/unlocked
+    /// Called when host session availability changes, such as lock, unlock, or sleep.
     @MainActor
-    func hostService(_ service: MirageHostService, sessionStateChanged state: LoomSessionAvailability)
+    func sessionStateDidChange(_ state: LoomSessionAvailability)
 
     /// Called early in the incoming session when the Loom handshake completes and the peer
     /// advertisement is available, before full Mirage bootstrap negotiation.
     @MainActor
-    func hostService(_ service: MirageHostService, didDiscoverPeerWithAdvertisement advertisement: LoomPeerAdvertisement)
+    func didDiscoverPeer(advertisement: LoomPeerAdvertisement)
 
-    /// Called after an authenticated hello is accepted so the host can advertise whether
-    /// this client may reuse host-published off-LAN access metadata for future sessions.
+    /// Called after an authenticated hello is accepted so the host can advertise whether clients
+    /// may reuse host-published off-LAN access metadata for future sessions.
     @MainActor
-    func hostService(_ service: MirageHostService, remoteAccessAllowedFor deviceInfo: LoomPeerDeviceInfo)
-        -> Bool
-}
-
-/// Default implementations
-public extension MirageHostDelegate {
-    func hostService(
-        _: MirageHostService,
-        shouldAcceptConnectionFrom _: LoomPeerDeviceInfo,
-        origin _: MirageHostConnectionOrigin,
-        completion: @escaping @Sendable (Bool) -> Void
-    ) {
-        // Default: auto-accept all connections
-        completion(true)
-    }
-
-    func hostService(_: MirageHostService, didConnectClient _: MirageConnectedClient) {}
-    func hostService(_: MirageHostService, didDisconnectClient _: MirageConnectedClient) {}
-    func hostServiceDidChangeActiveStreams(_: MirageHostService) {}
-
-    func hostService(
-        _: MirageHostService,
-        didReceiveInputEvent _: MirageInputEvent,
-        forWindow _: MirageWindow,
-        fromClient _: MirageConnectedClient
-    ) {}
-
-    func hostService(_: MirageHostService, sessionStateChanged _: LoomSessionAvailability) {}
-
-    func hostService(_: MirageHostService, didDiscoverPeerWithAdvertisement _: LoomPeerAdvertisement) {}
-
-    func hostService(_: MirageHostService, remoteAccessAllowedFor _: LoomPeerDeviceInfo) -> Bool {
-        false
-    }
+    var remoteAccessAllowedForConnections: Bool { get }
 }
 
 #endif

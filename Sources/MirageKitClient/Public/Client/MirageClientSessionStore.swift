@@ -18,6 +18,7 @@ public final class MirageClientSessionStore {
     /// Active stream sessions by session ID.
     @ObservationIgnored
     private var streamSessions: [StreamSessionID: MirageStreamSessionState] = [:]
+    /// Observable revision that invalidates views reading the ignored session dictionary.
     private var streamSessionsRevision: UInt64 = 0
 
     /// Minimum window sizes per session (observable for resize completion detection).

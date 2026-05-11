@@ -20,7 +20,7 @@ struct CursorUpdateRouterCoalescingTests {
         let streamID: StreamID = 42
         let burstCount = 1_000
         let sequence = SharedSequence()
-        let router = MirageCursorUpdateRouter.makeForTesting(
+        let router = MirageCursorUpdateRouter(
             flushInterval: MirageInteractionCadence.frameInterval120Duration
         )
         let probe = await MainActor.run {
@@ -61,7 +61,7 @@ struct CursorUpdateRouterCoalescingTests {
     func forcedNotifyWinsOverNonForcedRefreshes() async throws {
         let streamID: StreamID = 77
         let sequence = SharedSequence()
-        let router = MirageCursorUpdateRouter.makeForTesting(
+        let router = MirageCursorUpdateRouter(
             flushInterval: MirageInteractionCadence.frameInterval120Duration
         )
         let probe = await MainActor.run {

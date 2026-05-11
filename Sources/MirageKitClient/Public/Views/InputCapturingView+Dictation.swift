@@ -189,7 +189,7 @@ extension InputCapturingView {
 
     private func beginDictationInputLevelSession() -> ((AVAudioPCMBuffer) -> Void)? {
         dictationInputLevelGeneration &+= 1
-        _ = dictationInputLevelMeter.reset()
+        dictationInputLevelMeter.reset()
 
         guard onDictationInputLevelChanged != nil else { return nil }
         let generation = dictationInputLevelGeneration
@@ -206,8 +206,8 @@ extension InputCapturingView {
 
     private func endDictationInputLevelSession() {
         dictationInputLevelGeneration &+= 1
-        let resetLevel = dictationInputLevelMeter.reset()
-        onDictationInputLevelChanged?(resetLevel)
+        dictationInputLevelMeter.reset()
+        onDictationInputLevelChanged?(0)
     }
 
     @available(iOS 26.0, visionOS 26.0, *)

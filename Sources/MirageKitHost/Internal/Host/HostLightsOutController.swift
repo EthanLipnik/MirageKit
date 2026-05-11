@@ -142,7 +142,6 @@ final class HostLightsOutController {
         }
     }
 
-    @discardableResult
     func updateTarget(
         _ newTarget: Target?,
         emergencyShortcut: MirageClientShortcutBinding

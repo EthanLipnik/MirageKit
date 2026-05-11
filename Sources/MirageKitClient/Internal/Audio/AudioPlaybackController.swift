@@ -68,7 +68,7 @@ public final class AudioPlaybackController {
     private var isConfigured = false
     private var playbackGeneration: UInt64 = 0
     private var hasPlaybackSessionLease = false
-    private var configurationTask: Task<Bool, Never>?
+    private var configurationTask: Task<Void, Never>?
     private var configurationTaskKey: PlaybackConfigurationKey?
     private var configurationTaskGeneration: UInt64?
     nonisolated(unsafe) private var audioSessionObserverTokens: [NSObjectProtocol] = []
@@ -207,10 +207,6 @@ public final class AudioPlaybackController {
         playerNode.reset()
     }
 
-    func runtimeExtraDelaySecondsForTesting() -> Double {
-        runtimeExtraDelaySeconds
-    }
-
     func enqueue(_ frame: DecodedPCMFrame) {
         let generation = startConfigurationIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount)
         pendingFrames.append(PendingPlaybackFrame(frame: frame, generation: generation))
@@ -220,30 +216,28 @@ public final class AudioPlaybackController {
         drainPendingFramesIfNeeded()
     }
 
-    @discardableResult
-    func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) async -> Bool {
+    func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) async {
         await ensureConfigured(sampleRate: sampleRate, channelCount: channelCount)
     }
 
-    private func ensureConfigured(sampleRate: Int, channelCount: Int) async -> Bool {
+    private func ensureConfigured(sampleRate: Int, channelCount: Int) async {
         let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
-            return true
+            return
         }
 
         if let configurationTask,
            configurationTaskKey == key,
            configurationTaskGeneration == playbackGeneration {
-            return await configurationTask.value
+            await configurationTask.value
+            return
         }
 
-        let task = startConfigurationTask(for: key)
-        return await task.value
+        await awaitConfigurationTask(for: key)
     }
 
-    @discardableResult
     private func startConfigurationIfNeeded(sampleRate: Int, channelCount: Int) -> UInt64 {
         let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
         if isConfigured,
@@ -267,27 +261,33 @@ public final class AudioPlaybackController {
             resetPendingPlaybackState()
         }
 
-        _ = startConfigurationTask(for: key, generation: playbackGeneration)
+        startConfigurationTask(for: key, generation: playbackGeneration)
         return playbackGeneration
     }
 
-    @discardableResult
+    private func awaitConfigurationTask(
+        for key: PlaybackConfigurationKey,
+        generation: UInt64? = nil
+    ) async {
+        startConfigurationTask(for: key, generation: generation)
+        await configurationTask?.value
+    }
+
     private func startConfigurationTask(
         for key: PlaybackConfigurationKey,
         generation: UInt64? = nil
-    ) -> Task<Bool, Never> {
+    ) {
         let generation = generation ?? playbackGeneration
         let task = Task { [weak self] in
-            guard let self else { return false }
-            return await self.performConfiguration(key: key, generation: generation)
+            guard let self else { return }
+            await self.performConfiguration(key: key, generation: generation)
         }
         configurationTask = task
         configurationTaskKey = key
         configurationTaskGeneration = generation
-        return task
     }
 
-    private func performConfiguration(key: PlaybackConfigurationKey, generation: UInt64) async -> Bool {
+    private func performConfiguration(key: PlaybackConfigurationKey, generation: UInt64) async {
         defer {
             if configurationTaskKey == key, configurationTaskGeneration == generation {
                 configurationTask = nil
@@ -297,27 +297,27 @@ public final class AudioPlaybackController {
         }
 
         guard isCurrentConfigurationTask(key: key, generation: generation) else {
-            return false
+            return
         }
 
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
-            return true
+            return
         }
 
         tearDownPlaybackGraph()
         let hadPlaybackSessionLease = hasPlaybackSessionLease
 
         guard await ensurePlaybackSessionConfigured(generation: generation) else {
-            return false
+            return
         }
 
         if Task.isCancelled || !isCurrentConfigurationTask(key: key, generation: generation) {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return false
+            return
         }
 
         guard let format = AVAudioFormat(
@@ -329,14 +329,14 @@ public final class AudioPlaybackController {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return false
+            return
         }
 
         guard isCurrentConfigurationTask(key: key, generation: generation) else {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return false
+            return
         }
 
         let playbackGraph = resolvePlaybackGraph()
@@ -349,7 +349,7 @@ public final class AudioPlaybackController {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return false
+            return
         }
 
         configuredSampleRate = key.sampleRate
@@ -359,7 +359,6 @@ public final class AudioPlaybackController {
         isDelayHoldActive = false
         isConfigured = true
         drainPendingFramesIfNeeded()
-        return true
     }
 
     private func isCurrentConfigurationTask(key: PlaybackConfigurationKey, generation: UInt64) -> Bool {

@@ -27,7 +27,7 @@ extension StreamContext {
         parentFrame: CGRect
     ) async throws -> StreamID {
         if let existing = auxiliaryCaptures[windowID] {
-            return await existing.auxiliaryStreamID
+            return existing.auxiliaryStreamID
         }
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)

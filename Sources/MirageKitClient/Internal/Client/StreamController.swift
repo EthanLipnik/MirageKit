@@ -33,14 +33,11 @@ private final class FrameEnqueueOrderAllocator: @unchecked Sendable {
         return ticket
     }
 
-    @discardableResult
-    func reset() -> UInt64 {
+    func reset() {
         lock.lock()
         queueEpoch &+= 1
         nextOrder = 0
-        let epoch = queueEpoch
         lock.unlock()
-        return epoch
     }
 
     func currentQueueEpoch() -> UInt64 {
@@ -61,6 +58,7 @@ actor StreamController {
 
     enum RecoveryReason: Sendable, Equatable {
         case decodeErrorThreshold
+        case decodeBacklog
         case frameLoss
         case freezeTimeout
         case keyframeRecoveryLoop
@@ -72,6 +70,8 @@ actor StreamController {
             switch self {
             case .decodeErrorThreshold:
                 "decode-error-threshold"
+            case .decodeBacklog:
+                "decode-backlog"
             case .frameLoss:
                 "frame-loss"
             case .freezeTimeout:
@@ -185,17 +185,19 @@ actor StreamController {
         let renderGeneration: UInt64
         let hostEpoch: UInt16
         let dimensionToken: UInt16
+        let timeline: FrameTimeline
         let queueTicket: FrameQueueTicket
         let releaseBuffer: @Sendable () -> Void
 
-        var decodeContext: MirageVideoDecodeFrameContext {
+        func decodeContext(submittedAt time: CFAbsoluteTime) -> MirageVideoDecodeFrameContext {
             MirageVideoDecodeFrameContext(
                 renderGeneration: renderGeneration,
                 queueEpoch: queueTicket.queueEpoch,
                 hostEpoch: hostEpoch,
                 dimensionToken: dimensionToken,
                 frameNumber: frameNumber,
-                remotePresentationTime: remotePresentationTime
+                remotePresentationTime: remotePresentationTime,
+                timeline: timeline.markingDecodeSubmitted(at: time)
             )
         }
     }
@@ -354,7 +356,9 @@ actor StreamController {
     static let freezeRecoveryEscalationThreshold: Int = 2
 
     /// Maximum number of compressed frames buffered ahead of decode.
-    static let maxQueuedFrames: Int = 15
+    static let maxQueuedFrames: Int = 6
+    /// Start recovery before the decode queue reaches the hard admission bound.
+    static let decodeQueueRecoveryThreshold: Int = 5
     /// Poll interval while waiting for the first presented frame after startup/reset/resize.
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
@@ -421,7 +425,6 @@ actor StreamController {
     static let decodeErrorEscalationThreshold: Int = 3
     static let postResizeDecodeErrorGraceInterval: CFAbsoluteTime = 0.75
     static let postResizeDecodeRecoverySuccessThreshold: Int = 3
-    static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
     static let decodeSubmissionStressWindows: Int = 2
@@ -524,10 +527,10 @@ actor StreamController {
     var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
     var streamCadenceClock = MirageStreamCadenceClock(targetFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
-    var decodeSubmissionBaselineLimit: Int = 2
+    var decodeSubmissionBaselineLimit: Int = 1
     var decodeSubmissionStressStreak: Int = 0
     var decodeSubmissionHealthyStreak: Int = 0
-    var currentDecodeSubmissionLimit: Int = 2
+    var currentDecodeSubmissionLimit: Int = 1
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var lastSourceBoundDiagnosticSignature: String?
     var latestHostMetricsMessage: StreamMetricsMessage?
@@ -552,9 +555,6 @@ actor StreamController {
     var adaptiveJitterHoldMs: Int = 0
     var adaptiveJitterStressStreak: Int = 0
     var adaptiveJitterStableStreak: Int = 0
-
-    // MetalFX upscaler removed — pixel format compatibility issues
-    // and no quality improvement justified the complexity.
 
     var lastDecodedFrameTime: CFAbsoluteTime = 0
     var lastPresentedCursorObserved: MirageRenderCursor = .zero
@@ -770,6 +770,7 @@ actor StreamController {
                     dimensionToken: context.dimensionToken,
                     frameNumber: context.frameNumber,
                     queueEpoch: context.queueEpoch,
+                    timeline: context.timeline,
                     for: capturedStreamID
                 )
                 guard enqueueResult.didEnqueue else { return }
@@ -838,12 +839,13 @@ actor StreamController {
                     continue
                 }
                 do {
+                    let decodeSubmitTime = CFAbsoluteTimeGetCurrent()
                     try await capturedDecoder.decodeFrame(
                         frame.data,
                         presentationTime: frame.presentationTime,
                         isKeyframe: frame.isKeyframe,
                         contentRect: frame.contentRect,
-                        context: frame.decodeContext
+                        context: frame.decodeContext(submittedAt: decodeSubmitTime)
                     )
                 } catch {
                     await recordDecodeFailure(error)
@@ -866,8 +868,9 @@ actor StreamController {
             UInt16,
             UInt16,
             CGRect,
+            FrameTimeline,
             @escaping @Sendable () -> Void
-        ) -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, releaseBuffer in
+        ) -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, timeline, releaseBuffer in
                 let receivedRecord = metricsTracker.recordReceivedFrame()
                 diagnosticsBuffer.recordFrameArrivalGap(
                     streamID: reassemblerStreamID,
@@ -890,6 +893,7 @@ actor StreamController {
                         hostEpoch: epoch,
                         dimensionToken: dimensionToken,
                         contentRect: contentRect,
+                        timeline: timeline,
                         releaseBuffer: releaseBuffer,
                         ticket: ticket
                     )
@@ -1123,6 +1127,7 @@ actor StreamController {
         hostEpoch: UInt16,
         dimensionToken: UInt16,
         contentRect: CGRect,
+        timeline: FrameTimeline,
         releaseBuffer: @escaping @Sendable () -> Void,
         ticket: FrameQueueTicket
     )
@@ -1155,6 +1160,7 @@ actor StreamController {
             renderGeneration: renderGeneration,
             hostEpoch: hostEpoch,
             dimensionToken: dimensionToken,
+            timeline: timeline,
             queueTicket: ticket,
             releaseBuffer: releaseBuffer
         )
@@ -1207,6 +1213,22 @@ actor StreamController {
             return
         }
 
+        if queuedFrames.count >= Self.decodeQueueRecoveryThreshold {
+            let queueDepth = queuedFrames.count
+            if frame.isKeyframe {
+                clearQueuedFramesForRecovery()
+                queuedFrames.append(frame)
+                maybeLogDecodeBackpressure(queueDepth: queueDepth)
+                return
+            }
+
+            frame.releaseBuffer()
+            recordQueueDrop()
+            await triggerDecodeBacklogRecovery(queueDepth: queueDepth)
+            logQueueDropIfNeeded()
+            return
+        }
+
         if queuedFrames.count >= Self.maxQueuedFrames {
             let queueDepth = queuedFrames.count
             if frame.isKeyframe {
@@ -1218,12 +1240,25 @@ actor StreamController {
 
             frame.releaseBuffer()
             recordQueueDrop()
+            await handleDecodeQueueEviction(frameNumber: frame.frameNumber)
             maybeLogDecodeBackpressure(queueDepth: queueDepth)
             logQueueDropIfNeeded()
             return
         }
 
         queuedFrames.append(frame)
+    }
+
+    private func triggerDecodeBacklogRecovery(queueDepth: Int) async {
+        maybeLogDecodeBackpressure(queueDepth: queueDepth)
+        let dropped = clearQueuedFramesForRecovery()
+        reassembler.enterKeyframeOnlyMode()
+        await decoder.beginRecoveryTracking()
+        MirageLogger.client(
+            "Decode backlog recovery requested for stream \(streamID) at depth \(queueDepth); dropped=\(dropped)"
+        )
+        await startKeyframeRecoveryLoopIfNeeded()
+        await requestKeyframeRecovery(reason: .decodeBacklog)
     }
 
     private func dequeueFrame() async -> FrameData? {
@@ -1623,7 +1658,18 @@ actor StreamController {
 
         let targetFPS = max(1, decodeSchedulerTargetFPS)
         let ratio = decodedFPS / Double(targetFPS)
-        let stressLimit = min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit + 1)
+        let maximumLimit = VideoDecoder.maximumDecodeSubmissionLimit(
+            targetFrameRate: targetFPS,
+            latencyMode: streamCadenceTarget.latencyMode
+        )
+        if currentDecodeSubmissionLimit > maximumLimit {
+            currentDecodeSubmissionLimit = maximumLimit
+            await decoder.setDecodeSubmissionLimit(
+                limit: maximumLimit,
+                reason: "decode submission cap"
+            )
+        }
+        let stressLimit = min(maximumLimit, decodeSubmissionBaselineLimit + 1)
         let decodeGap = max(0.0, receivedFPS - decodedFPS)
         let sourceBound = receivedFPS > 0 && decodeGap <= Self.decodeSubmissionSourceBoundGapFPS
         let decodeBound = receivedFPS > 0 && decodeGap >= Self.decodeSubmissionDecodeBoundGapFPS
@@ -1643,7 +1689,7 @@ actor StreamController {
                 decodeSubmissionStressStreak += 1
                 decodeSubmissionHealthyStreak = 0
             } else {
-                let sourceDiagnosticSignature = hostCadencePressure?.signature ?? "generic-source-bound"
+                let sourceDiagnosticSignature = hostCadencePressure?.kind.rawValue ?? "generic-source-bound"
                 if sourceBound,
                    lastDecodeSubmissionConstraintWasSourceBound != true ||
                    lastSourceBoundDiagnosticSignature != sourceDiagnosticSignature {

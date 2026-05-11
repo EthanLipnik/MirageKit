@@ -107,7 +107,18 @@ extension VideoDecoder {
                 let keyframeHeader = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
                 MirageLogger.decoder("Keyframe header: \(keyframeHeader)")
             }
-            let result = try extractFormatDescriptionAndStripParameterSets(from: data)
+            let result: Data
+            do {
+                result = try extractFormatDescriptionAndStripParameterSets(from: data)
+            } catch {
+                MirageLogger.error(
+                    .decoder,
+                    error: error,
+                    message: "Dropping malformed keyframe before decode"
+                )
+                errorTracker?.recordError(isKeyframe: true)
+                throw error
+            }
             frameData = result
             if shouldLogDecoderDiagnostics {
                 let strippedHeader = frameData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
@@ -135,9 +146,7 @@ extension VideoDecoder {
                     }
                     frameData = trimmed
                 } else {
-                    if shouldLog {
-                        errorTracker?.recordError(isKeyframe: isKeyframe)
-                    }
+                    errorTracker?.recordError(isKeyframe: isKeyframe)
                     return
                 }
             }
@@ -328,7 +337,8 @@ extension VideoDecoder {
 
             // Successful decode - reset error counter
             info.errorTracker?.recordSuccess(isKeyframe: info.isKeyframe)
-            let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000
+            let callbackTime = CFAbsoluteTimeGetCurrent()
+            let decodeDurationMs = (callbackTime - info.decodeStartTime) * 1000
             info.performanceTracker?.record(durationMs: decodeDurationMs)
             let outputPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
             Task { [weak self] in
@@ -339,7 +349,16 @@ extension VideoDecoder {
             }
             MirageColorAttachments.enforceOnPixelBuffer(pixelBuffer, colorSpace: info.colorDepth.colorSpace)
             if info.handler != nil {
-                info.handler?(pixelBuffer, presentationTime, info.contentRect, info.frameContext)
+                let callbackContext = MirageVideoDecodeFrameContext(
+                    renderGeneration: info.frameContext.renderGeneration,
+                    queueEpoch: info.frameContext.queueEpoch,
+                    hostEpoch: info.frameContext.hostEpoch,
+                    dimensionToken: info.frameContext.dimensionToken,
+                    frameNumber: info.frameContext.frameNumber,
+                    remotePresentationTime: info.frameContext.remotePresentationTime,
+                    timeline: info.frameContext.timeline.markingDecodeCallback(at: callbackTime)
+                )
+                info.handler?(pixelBuffer, presentationTime, info.contentRect, callbackContext)
             } else {
                 MirageLogger.error(.decoder, "Warning: no frame handler set")
             }

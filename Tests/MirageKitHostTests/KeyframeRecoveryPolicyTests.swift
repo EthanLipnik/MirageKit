@@ -18,26 +18,26 @@ import Testing
 #if os(macOS)
 @Suite("Keyframe Recovery Policy")
 struct KeyframeRecoveryPolicyTests {
-    @Test("Recovery keyframe requests do not escalate into host hard resets")
-    func recoveryRequestsDoNotEscalateIntoHostHardResets() async throws {
+    @Test("Recovery keyframe requests flush and fence dependent frames")
+    func recoveryRequestsFlushAndFenceDependentFrames() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
         #expect(await context.softRecoveryCount == 1)
-        #expect(await context.pendingKeyframeRequiresReset == false)
-        #expect(await context.pendingKeyframeRequiresFlush == false)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
         #expect(await context.softRecoveryCount == 2)
-        #expect(await context.pendingKeyframeRequiresReset == false)
-        #expect(await context.pendingKeyframeRequiresFlush == false)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
         #expect(await context.softRecoveryCount == 3)
-        #expect(await context.pendingKeyframeRequiresReset == false)
-        #expect(await context.pendingKeyframeRequiresFlush == false)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
     }
 
     @Test("Capture-starved recovery schedules restart when no frame has arrived")

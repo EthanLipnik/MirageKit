@@ -174,7 +174,7 @@ extension InputCapturingView {
 
     #if os(iOS)
     @objc
-    func softwareKeyboardWillHide(_: Notification) {
+    func softwareKeyboardWillHide() {
         handleSoftwareKeyboardSystemHide()
     }
 
@@ -227,6 +227,7 @@ extension InputCapturingView {
         charactersIgnoringModifiers: String?,
         modifiers: MirageModifierFlags
     ) {
+        guard inputCaptureEnabled else { return }
         hideCursorForTypingUntilPointerMovement()
         let keyDown = MirageKeyEvent(
             keyCode: keyCode,

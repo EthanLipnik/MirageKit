@@ -131,6 +131,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the stream should present locally using aspect fit.
     public var prefersLocalAspectFitPresentation: Bool
 
+    /// Whether the stream should actively claim local input focus.
+    public var inputCaptureEnabled: Bool
+
     /// Whether the UIKit stream view should extend through platform safe areas.
     public var ignoresSafeArea: Bool
 
@@ -176,6 +179,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
         prefersLocalAspectFitPresentation: Bool = false,
+        inputCaptureEnabled: Bool = true,
         ignoresSafeArea: Bool = true
     ) {
         self.streamID = streamID
@@ -219,6 +223,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         self.maxDrawableSize = maxDrawableSize
         self.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
+        self.inputCaptureEnabled = inputCaptureEnabled
         self.ignoresSafeArea = ignoresSafeArea
     }
 
@@ -286,6 +291,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             preferredMaximumRenderFPS: preferredMaximumRenderFPS,
             maxDrawableSize: maxDrawableSize,
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            inputCaptureEnabled: inputCaptureEnabled,
             ignoresSafeArea: ignoresSafeArea
         )
         return controller
@@ -353,6 +359,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             preferredMaximumRenderFPS: preferredMaximumRenderFPS,
             maxDrawableSize: maxDrawableSize,
             prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            inputCaptureEnabled: inputCaptureEnabled,
             ignoresSafeArea: ignoresSafeArea
         )
     }
@@ -490,6 +497,7 @@ public final class MirageStreamViewController: UIViewController {
         preferredMaximumRenderFPS: Int?,
         maxDrawableSize: CGSize?,
         prefersLocalAspectFitPresentation: Bool,
+        inputCaptureEnabled: Bool,
         ignoresSafeArea: Bool
     ) {
         // Establish media and logical stream identities before cursor stores refresh.
@@ -522,6 +530,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         captureView.maxDrawableSize = maxDrawableSize
         captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
+        captureView.inputCaptureEnabled = inputCaptureEnabled
         captureView.ignoresSafeArea = ignoresSafeArea
         captureView.activateStreamPresentation()
 

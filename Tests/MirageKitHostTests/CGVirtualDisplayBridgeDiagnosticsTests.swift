@@ -135,36 +135,4 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
     }
 }
 
-private actor CGVirtualDisplayBridgeTestSink: LoomDiagnosticsSink {
-    private var logs: [LoomDiagnosticsLogEvent] = []
-    private var errors: [LoomDiagnosticsErrorEvent] = []
-
-    func record(log event: LoomDiagnosticsLogEvent) async {
-        logs.append(event)
-    }
-
-    func record(error event: LoomDiagnosticsErrorEvent) async {
-        errors.append(event)
-    }
-
-    func logCount() -> Int {
-        logs.count
-    }
-
-    func bridgeErrorCount() -> Int {
-        errors.filter { Self.isBridgeError($0) }.count
-    }
-
-    func logMessages() -> [String] {
-        logs.map(\.message)
-    }
-
-    func firstBridgeError() -> LoomDiagnosticsErrorEvent? {
-        errors.first(where: Self.isBridgeError)
-    }
-
-    private static func isBridgeError(_ event: LoomDiagnosticsErrorEvent) -> Bool {
-        event.fileID.contains("CGVirtualDisplayBridge.swift")
-    }
-}
 #endif

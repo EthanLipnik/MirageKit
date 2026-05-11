@@ -300,7 +300,7 @@ extension MirageClientService {
             }
             hasReceivedWindowList = true
             availableWindows = windowList.windows
-            delegate?.clientService(self, didUpdateWindowList: windowList.windows)
+            delegate?.didUpdateWindowList(windowList.windows)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window list: ")
         }
@@ -357,7 +357,6 @@ extension MirageClientService {
                 sessionStore.sessionByStreamID(streamID) != nil
             let previousDimensionToken = appDimensionTokenByStream[streamID]
             let resetDecision = appStreamStartResetDecision(
-                streamID: streamID,
                 isExistingStream: isExistingStream,
                 hasController: hasController,
                 requestStartPending: streamStartedContinuation != nil,
@@ -626,7 +625,6 @@ extension MirageClientService {
     }
 
     func handleTransportRefreshRequest(_ message: ControlMessage) {
-        guard awdlExperimentEnabled else { return }
         do {
             let request = try message.decode(TransportRefreshRequestMessage.self)
             transportRefreshRequests &+= 1
@@ -665,9 +663,9 @@ extension MirageClientService {
                 return
             }
             if let runtimeCondition = errorMessage.code.runtimeConditionError {
-                delegate?.clientService(self, didEncounterError: runtimeCondition)
+                delegate?.didEncounterError(runtimeCondition)
             } else {
-                delegate?.clientService(self, didEncounterError: MirageError.protocolError(errorMessage.message))
+                delegate?.didEncounterError(MirageError.protocolError(errorMessage.message))
             }
         }
     }
@@ -738,18 +736,13 @@ extension MirageClientService {
             MirageLogger.client("Host session state: \(update.state), requires username: \(update.requiresUserIdentifier)")
             hostSessionState = update.state
             currentSessionToken = update.sessionToken
-            delegate?.clientService(
-                self,
-                hostSessionStateChanged: update.state,
+            delegate?.hostSessionStateChanged(
+                update.state,
                 requiresUserIdentifier: update.requiresUserIdentifier
             )
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode session state update: ")
         }
-    }
-
-    private func recordHelloValidationFailure(_ reason: MirageClientHelloValidationStepReason) {
-        MirageInstrumentation.record(.clientHelloInvalid(reason))
     }
 
     private func resolveWindowForStartedStream(

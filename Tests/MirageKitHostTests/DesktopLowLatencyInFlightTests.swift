@@ -40,18 +40,31 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 1)
     }
 
-    @Test("60 Hz desktop smoothest keeps smoothing capacity")
-    func desktopSmoothestKeepsSmoothingCapacity() async {
+    @Test("120 Hz lowest-latency never raises in-flight")
+    func highRefreshLowestLatencyNeverRaisesInflight() async {
+        let context = makeContext(targetFrameRate: 120)
+
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 1)
+        #expect(await context.frameBufferDepth == 1)
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 14, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 1)
+    }
+
+    @Test("60 Hz desktop smoothest is bounded by target latency")
+    func desktopSmoothestIsBoundedByTargetLatency() async {
         let context = makeContext(latencyMode: .smoothest)
 
-        #expect(await context.minInFlightFrames == 3)
-        #expect(await context.maxInFlightFrames == 3)
-        #expect(await context.maxInFlightFramesCap == 4)
-        #expect(await context.frameBufferDepth == 5)
+        #expect(await context.minInFlightFrames == 1)
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.frameBufferDepth == 2)
 
-        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 10, pendingCount: 4)
 
-        #expect(await context.maxInFlightFrames == 4)
+        #expect(await context.maxInFlightFrames == 2)
     }
 
     @Test("Lowest-latency non-keyframe send deadline is shorter than Smoothest")
@@ -77,10 +90,11 @@ struct DesktopLowLatencyInFlightTests {
 
     private func makeContext(
         streamKind: VideoEncoder.StreamKind = .desktop,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        targetFrameRate: Int = 60
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
-            targetFrameRate: 60,
+            targetFrameRate: targetFrameRate,
             keyFrameInterval: 1800,
             colorSpace: .displayP3,
             pixelFormat: .bgr10a2,

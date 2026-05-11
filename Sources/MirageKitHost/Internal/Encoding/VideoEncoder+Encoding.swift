@@ -393,9 +393,17 @@ extension VideoEncoder {
                             MirageLogger.encoder("Prepended \(parameterSets.count) bytes of parameter sets")
                         } else {
                             MirageLogger.error(.encoder, "Failed to extract parameter sets from format description")
+                            Task { [weak self] in
+                                await self?.scheduleRecoveryKeyframe(reason: "missing-keyframe-parameter-sets")
+                            }
+                            return
                         }
                     } else {
                         MirageLogger.error(.encoder, "No format description available for keyframe")
+                        Task { [weak self] in
+                            await self?.scheduleRecoveryKeyframe(reason: "missing-keyframe-format-description")
+                        }
+                        return
                     }
                 }
             }

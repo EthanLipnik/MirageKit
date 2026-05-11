@@ -562,7 +562,7 @@ public final class MirageHostService {
         set { onInputEventStorage = newValue }
     }
 
-    nonisolated(unsafe) var onInputEventStorage: ((
+    @ObservationIgnored nonisolated(unsafe) var onInputEventStorage: ((
         _ event: MirageInputEvent,
         _ window: MirageWindow,
         _ client: MirageConnectedClient
@@ -570,7 +570,7 @@ public final class MirageHostService {
         -> Void)?
     typealias ControlMessageHandler = @MainActor (ControlMessage, ClientContext) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
-    nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
+    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
 
     public enum HostState: Equatable {
         case idle
@@ -788,12 +788,10 @@ public final class MirageHostService {
     }
 
     private static func detectSupportedColorDepths() -> [MirageStreamColorDepth] {
-        let ultraProbe = strictUltraColorDepthProbeResult()
+        let ultraProbe = UltraColorDepthProbeCache.result
         var supported: [MirageStreamColorDepth] = [.standard]
 
-        if supportsProColorDepth() {
-            supported.append(.pro)
-        }
+        supported.append(.pro)
         if ultraProbe.supportsUltra444 {
             supported.append(.ultra)
         }
@@ -815,18 +813,6 @@ public final class MirageHostService {
         let supported = ProRes4444SupportProbeCache.supported
         MirageLogger.host("ProRes 4444 support: \(supported)")
         return supported
-    }
-
-    private static func supportsProColorDepth() -> Bool {
-        true
-    }
-
-    private static func supportsStrictUltraColorDepth() -> Bool {
-        strictUltraColorDepthProbeResult().supportsUltra444
-    }
-
-    private static func strictUltraColorDepthProbeResult() -> VideoEncoderUltraProbeResult {
-        UltraColorDepthProbeCache.result
     }
 
     private enum UltraColorDepthProbeCache {
@@ -1875,68 +1861,12 @@ public final class MirageHostService {
         return desktopPrimaryPhysicalBounds ?? .zero
     }
 
-    // Start hosting and advertising
-
-    // Refresh session state on demand and apply any changes immediately.
-
-    // Send session state to a specific client
-
-    // Send window list to a specific client
-
-    // Stop hosting
-
-    // End streaming for a specific app
-    // - Parameter bundleIdentifier: The bundle identifier of the app to stop streaming
-
-    // Refresh available windows list
-
-    /// Start streaming a window
-    /// - Parameters:
-    ///   - window: The window to stream
-    ///   - client: The client to stream to
-    ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
-    ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
-    ///   - bitDepth: Optional client-requested stream bit depth
-    ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override
-    ///   - bitrate: Optional target bitrate (bits per second)
-    ///   - targetFrameRate: Optional client-selected frame rate override
-
-    // Stop a stream
-    // - Parameters:
-    //   - session: The stream session to stop
-    //   - minimizeWindow: Whether to minimize the source window after stopping (default: false)
-
-    // Notify that a window has been resized - updates the stream to match new dimensions
-    // Always encodes at host's native resolution for maximum quality
-    // - Parameters:
-    //   - window: The window that was resized (contains the new frame)
-
-    // Notify that a window has been resized (convenience overload that ignores preferredPixelSize)
-    // Always encodes at host's native resolution for maximum quality
-    // - Parameters:
-    //   - window: The window that was resized (contains the new frame)
-    //   - preferredPixelSize: Ignored - kept for API compatibility
-
-    // Update capture resolution to match client's exact pixel dimensions
-    // This allows encoding at the client's native resolution regardless of host window size
-    // - Parameters:
-    //   - windowID: The window whose stream should be updated
-    //   - width: Target pixel width (client's drawable width)
-    //   - height: Target pixel height (client's drawable height)
-
-    // Disconnect a client
-
-    // Activate the application and raise the window being streamed.
-    // Uses robust multi-method activation that works on headless Macs.
-
-    // Find the AXUIElement for a specific window using its known ID
-
     // MARK: - Private
 }
 
 extension MirageHostService {
     func notifyActiveStreamActivityChanged() {
-        delegate?.hostServiceDidChangeActiveStreams(self)
+        delegate?.activeStreamsDidChange()
     }
 }
 

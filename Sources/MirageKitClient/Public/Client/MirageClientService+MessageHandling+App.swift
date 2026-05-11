@@ -212,7 +212,6 @@ extension MirageClientService {
             let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[mediaStreamID] ?? mirageDefaultMaxPacketSize
             let packetSizeChanged = hasController && previousMediaMaxPacketSize != acceptedMediaMaxPacketSize
             let resetDecision = appStreamStartResetDecision(
-                streamID: mediaStreamID,
                 isExistingStream: isExistingStream,
                 hasController: hasController,
                 requestStartPending: false,

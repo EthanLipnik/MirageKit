@@ -293,14 +293,14 @@ extension MirageClientService {
         setReceiverMediaFeedbackSuspendedForActiveStreams(true)
         if let backgroundLeaseDuration {
             let lease = ClientBackgroundLeaseMessage(durationSeconds: backgroundLeaseDuration)
-            _ = sendControlMessageBestEffort(.streamPauseAll, content: lease)
+            sendControlMessageBestEffort(.streamPauseAll, content: lease)
             MirageLogger.client(
                 "Sent streamPauseAll to host with background lease \(backgroundLeaseDuration)s"
             )
             return
         }
 
-        sendControlMessageBestEffort(ControlMessage(type: .streamPauseAll))
+        sendControlMessageBestEffort(.streamPauseAll)
         MirageLogger.client("Sent streamPauseAll to host")
     }
 
@@ -308,7 +308,7 @@ extension MirageClientService {
     /// the decoder can immediately begin presenting frames again.
     public func resumeStreaming() {
         setReceiverMediaFeedbackSuspendedForActiveStreams(false)
-        sendControlMessageBestEffort(ControlMessage(type: .streamResumeAll))
+        sendControlMessageBestEffort(.streamResumeAll)
         MirageLogger.client("Sent streamResumeAll to host")
     }
 
@@ -466,7 +466,6 @@ extension MirageClientService {
             continuation.resume(throwing: MirageError.protocolError(reason))
         }
         customStreamStartedContinuations.removeAll()
-        customStreamDescriptorsByStreamID.removeAll()
         registeredStreamIDs.removeAll()
         cancelDesktopStreamStopTimeout()
         retiredDesktopSessionIDs.removeAll()
@@ -571,7 +570,7 @@ extension MirageClientService {
         await refreshSharedClipboardBridgeState()
 
         if notifyDelegate {
-            delegate?.clientService(self, didDisconnectFromHost: reason)
+            delegate?.didDisconnectFromHost(reason: reason)
         }
     }
 
@@ -660,6 +659,7 @@ extension MirageClientService {
         var lastFailureReason: String?
         var retriedCurrentBootstrapTransportLossAttemptIndices: Set<Int> = []
         var attemptIndex = 0
+        let fallbackStartedAt = ContinuousClock.now
 
         while attemptIndex < attempts.count {
             let attempt = attempts[attemptIndex]
@@ -669,6 +669,11 @@ extension MirageClientService {
             var openedChannel: MirageControlChannel?
 
             do {
+                MirageLogger.client(
+                    "Control session candidate \(attemptIndex + 1)/\(attempts.count): " +
+                        "\(attempt.transportKind.rawValue) endpoint=\(attempt.endpoint) " +
+                        "candidate=\(attempt.candidateKind.rawValue)"
+                )
                 let session = try await establishControlSession(
                     attempt: attempt,
                     hello: hello,
@@ -735,7 +740,11 @@ extension MirageClientService {
                     attempts: attempts,
                     currentAttemptIndex: attemptIndex
                 ) {
-                    MirageLogger.client("\(failureReason); retrying over next advertised transport")
+                    MirageLogger.client(
+                        "\(failureReason); retrying over next advertised transport " +
+                            "nextCandidate=\(attemptIndex + 2)/\(attempts.count) " +
+                            "elapsed=\(Self.formatControlSessionFallbackElapsed(since: fallbackStartedAt))"
+                    )
                     attemptIndex += 1
                     continue
                 }
@@ -1557,17 +1566,6 @@ extension MirageClientService {
         }
     }
 
-    internal static func controlSessionFailureReason(
-        for attempt: ControlSessionAttempt,
-        classification: ControlSessionFailureClassification,
-        underlyingError: Error
-    ) -> String {
-        "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed for " +
-            "\(attempt.hostName) candidate=\(attempt.candidateKind.rawValue) endpoint=\(attempt.endpoint) " +
-            "interface=\(attempt.interfaceDescription) " +
-            "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
-    }
-
     internal static func bootstrappedControlSessionFailureReason(
         for attempt: ControlSessionAttempt,
         classification: ControlSessionFailureClassification,
@@ -1577,6 +1575,13 @@ extension MirageClientService {
             "transport=\(attempt.transportKind.rawValue) candidate=\(attempt.candidateKind.rawValue) " +
             "interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
+    }
+
+    private static func formatControlSessionFallbackElapsed(since start: ContinuousClock.Instant) -> String {
+        let elapsed = ContinuousClock.now - start
+        let components = elapsed.components
+        let seconds = Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
+        return String(format: "%.1fs", seconds)
     }
 
     internal static func localNetworkMismatchReason(

@@ -97,16 +97,8 @@ package struct MirageTransportPressureAssessment: Sendable, Equatable {
         queueStress || packetBudgetStress || packetPacerStress || transportDropStress
     }
 
-    package var primarySevere: Bool {
-        queueSevere || packetBudgetSevere || packetPacerSevere || transportDropSevere
-    }
-
     package var isStress: Bool {
         primaryStress
-    }
-
-    package var isSevere: Bool {
-        primarySevere || (primaryStress && advisoryDelaySevere)
     }
 
     package var isDelayOnlyBurst: Bool {
@@ -120,14 +112,6 @@ package struct MirageTransportPressureAssessment: Sendable, Equatable {
             !transportDropStress
     }
 
-    package var pipelineCadenceStress: Bool {
-        deliveryStress
-    }
-
-    package var pipelineCadenceSevere: Bool {
-        deliverySevere
-    }
-
     package var reasonTokens: [String] {
         var tokens: [String] = []
         if queueStress { tokens.append("queue") }
@@ -138,10 +122,6 @@ package struct MirageTransportPressureAssessment: Sendable, Equatable {
             tokens.append(primaryStress ? "delay" : "delayOnly")
         }
         return tokens
-    }
-
-    package var pipelineCadenceReasonTokens: [String] {
-        deliveryStress ? ["delivery"] : []
     }
 }
 

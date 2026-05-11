@@ -26,7 +26,7 @@ extension MirageClientService {
     }
 
     func stopAudioConnection() {
-        _ = advanceAudioStreamConfigurationGeneration()
+        advanceAudioStreamConfigurationGeneration()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         audioRegisteredStreamID = nil
@@ -55,7 +55,7 @@ extension MirageClientService {
         audioRegisteredStreamID = streamID
 
         if streamChanged {
-            _ = advanceAudioStreamConfigurationGeneration()
+            advanceAudioStreamConfigurationGeneration()
             if activeAudioStreamMessage?.streamID != streamID {
                 activeAudioStreamMessage = nil
             }
@@ -99,8 +99,8 @@ extension MirageClientService {
 
         let generation = audioPacketIngressQueue.currentGeneration()
         let wirePayload = data.dropFirst(mirageAudioHeaderSize)
-        // Loom session handles encryption, so packets arrive unencrypted.
-        // Accept both encrypted and unencrypted payloads for backward compatibility.
+        // Media encryption is negotiated per session; local peer-to-peer sessions may use raw media
+        // while remote or policy-enforced sessions carry an authenticated encrypted payload.
         let expectedWireLength = header.flags.contains(.encryptedPayload)
             ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
             : Int(header.payloadLength)
@@ -165,7 +165,7 @@ extension MirageClientService {
             let isReplacingActiveAudioStream = previous != nil && previous != started
             let audioPlaybackController = resolveAudioPlaybackController()
             let preferredChannels = audioPlaybackController.preferredChannelCount(for: Int(started.channelCount))
-            let configurationGeneration = advanceAudioStreamConfigurationGeneration()
+            let configurationGeneration = nextAudioStreamConfigurationGeneration()
 
             MirageLogger
                 .client(
@@ -218,7 +218,7 @@ extension MirageClientService {
         Task { @MainActor [weak self, audioPlaybackController] in
             guard let self else { return }
             guard self.isAudioStreamConfigurationCurrent(generation) else { return }
-            _ = await audioPlaybackController.prepareForIncomingFormat(
+            await audioPlaybackController.prepareForIncomingFormat(
                 sampleRate: started.sampleRate,
                 channelCount: preferredChannels
             )
@@ -237,7 +237,7 @@ extension MirageClientService {
             let shouldReset = activeAudioStreamMessage?.streamID == stopped.streamID
             guard shouldReset else { return }
 
-            _ = advanceAudioStreamConfigurationGeneration()
+            advanceAudioStreamConfigurationGeneration()
             activeAudioStreamMessage = nil
             resetPendingDecodedAudioFrames(for: stopped.streamID)
             audioVideoGateActiveStreamIDs.remove(stopped.streamID)
@@ -627,8 +627,12 @@ extension MirageClientService {
         )
     }
 
-    private func advanceAudioStreamConfigurationGeneration() -> UInt64 {
+    private func advanceAudioStreamConfigurationGeneration() {
         audioStreamConfigurationGeneration &+= 1
+    }
+
+    private func nextAudioStreamConfigurationGeneration() -> UInt64 {
+        advanceAudioStreamConfigurationGeneration()
         return audioStreamConfigurationGeneration
     }
 

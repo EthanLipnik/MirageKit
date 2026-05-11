@@ -114,7 +114,6 @@ extension MirageHostService {
 
             let captureDisplay = try await findSCDisplayWithRetry(
                 maxAttempts: 6,
-                delayMs: 60,
                 expectedPixelResolution: newContext.resolution
             )
             try await desktopContext.updateCaptureDisplay(

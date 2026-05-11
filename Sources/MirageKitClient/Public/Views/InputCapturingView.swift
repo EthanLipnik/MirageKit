@@ -18,6 +18,26 @@ import GameController
 public class InputCapturingView: UIView {
     public let sampleBufferView: MirageSampleBufferView
 
+    /// Whether this view should actively claim local input focus for streaming.
+    public var inputCaptureEnabled: Bool = true {
+        didSet {
+            guard inputCaptureEnabled != oldValue else { return }
+            if inputCaptureEnabled {
+                requestResponderRecovery(.interaction)
+            } else {
+                cancelPendingResponderRecovery()
+                stopAllKeyRepeats()
+                resetAllModifiers()
+                if softwareKeyboardField?.isFirstResponder == true {
+                    softwareKeyboardField?.resignFirstResponder()
+                }
+                if isFirstResponder {
+                    resignFirstResponder()
+                }
+            }
+        }
+    }
+
     // MARK: - Safe Area Override
 
     public var ignoresSafeArea: Bool = true {
@@ -335,6 +355,7 @@ public class InputCapturingView: UIView {
             self?.responderRecoverySnapshot(for: trigger) ?? (
                 target: .captureView,
                 context: InputCapturingResponderRecoveryContext(
+                    inputCaptureEnabled: false,
                     hasWindow: false,
                     isKeyWindow: false,
                     sceneActivationState: nil,
@@ -367,7 +388,6 @@ public class InputCapturingView: UIView {
     var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var lockedCursorTargetPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var lockedCursorConfirmedHostPosition: CGPoint?
-    private let lockedCursorSize: CGFloat = 12
     var lockedCursorVisible: Bool = false
     var lockedCursorTargetVisible: Bool = false
     var lockedPointerButtonDown: Bool = false
@@ -1216,6 +1236,7 @@ public class InputCapturingView: UIView {
         return (
             target: target,
             context: InputCapturingResponderRecoveryContext(
+                inputCaptureEnabled: inputCaptureEnabled,
                 hasWindow: window != nil,
                 isKeyWindow: window?.isKeyWindow == true,
                 sceneActivationState: window?.windowScene?.activationState,
@@ -1242,6 +1263,7 @@ public class InputCapturingView: UIView {
     func attemptResponderRecovery(
         for target: InputCapturingResponderTarget
     ) -> Bool {
+        guard inputCaptureEnabled else { return false }
         switch target {
         case .captureView:
             let didBecomeFirstResponder = becomeFirstResponder()
@@ -1842,7 +1864,7 @@ public class InputCapturingView: UIView {
 
     private func startLockedCursorSmoothingIfNeeded() {
         guard lockedCursorDisplayLink == nil else { return }
-        let displayLink = CADisplayLink(target: self, selector: #selector(handleLockedCursorSmoothing(_:)))
+        let displayLink = CADisplayLink(target: self, selector: #selector(handleLockedCursorSmoothing))
         configureInteractionDisplayLink(displayLink)
         displayLink.add(to: .main, forMode: .common)
         lockedCursorDisplayLink = displayLink
@@ -1868,7 +1890,7 @@ public class InputCapturingView: UIView {
     }
 
     @objc
-    private func handleLockedCursorSmoothing(_: CADisplayLink) {
+    private func handleLockedCursorSmoothing() {
         guard cursorLockEnabled else {
             stopLockedCursorSmoothing()
             return
@@ -2022,7 +2044,7 @@ public class InputCapturingView: UIView {
         #if os(iOS)
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(softwareKeyboardWillHide(_:)),
+            selector: #selector(softwareKeyboardWillHide),
             name: UIResponder.keyboardWillHideNotification,
             object: nil
         )
@@ -2031,25 +2053,25 @@ public class InputCapturingView: UIView {
         #if canImport(GameController)
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(keyboardDidConnect(_:)),
+            selector: #selector(keyboardDidConnect),
             name: .GCKeyboardDidConnect,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(keyboardDidDisconnect(_:)),
+            selector: #selector(keyboardDidDisconnect),
             name: .GCKeyboardDidDisconnect,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(mouseDidConnect(_:)),
+            selector: #selector(mouseDidConnect),
             name: .GCMouseDidConnect,
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(mouseDidDisconnect(_:)),
+            selector: #selector(mouseDidDisconnect),
             name: .GCMouseDidDisconnect,
             object: nil
         )
@@ -2127,14 +2149,14 @@ public class InputCapturingView: UIView {
 
     #if canImport(GameController)
     @objc
-    private func keyboardDidConnect(_: Notification) {
+    private func keyboardDidConnect() {
         installHardwareKeyboardHandler()
         refreshModifierStateFromHardware()
         updateHardwareKeyboardPresence(true)
     }
 
     @objc
-    private func keyboardDidDisconnect(_: Notification) {
+    private func keyboardDidDisconnect() {
         HardwareKeyboardCoordinator.shared.handleKeyboardDisconnect()
         stopModifierRefresh()
         updateHardwareKeyboardPresence(false)
@@ -2148,12 +2170,12 @@ public class InputCapturingView: UIView {
     }
 
     @objc
-    private func mouseDidConnect(_: Notification) {
+    private func mouseDidConnect() {
         updateMouseInputHandler()
     }
 
     @objc
-    private func mouseDidDisconnect(_: Notification) {
+    private func mouseDidDisconnect() {
         updateMouseInputHandler()
     }
     #endif
@@ -2182,7 +2204,7 @@ public class InputCapturingView: UIView {
         applyPendingApplicationActivationHandlingIfPossible()
     }
 
-    override public var canBecomeFirstResponder: Bool { true }
+    override public var canBecomeFirstResponder: Bool { inputCaptureEnabled }
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()
@@ -2849,6 +2871,7 @@ private final class HardwareKeyboardCoordinator {
 
     private func handleModifierKeyChange() {
         for view in views.allObjects {
+            guard view.inputCaptureEnabled else { continue }
             guard view.window?.isKeyWindow == true else { continue }
             guard view.refreshModifierStateFromHardware() else { continue }
             guard view.recoverFirstResponderForGCShortcutModifierIfNeeded() else { continue }
@@ -2861,6 +2884,7 @@ private final class HardwareKeyboardCoordinator {
 
     private func handleNonModifierKeyChange(keyCode: GCKeyCode, isPressed: Bool) {
         for view in views.allObjects {
+            guard view.inputCaptureEnabled else { continue }
             guard view.window?.isKeyWindow == true else { continue }
             guard view.recoverFirstResponderForGCKeyIfNeeded(keyCode: keyCode, isPressed: isPressed) else {
                 continue

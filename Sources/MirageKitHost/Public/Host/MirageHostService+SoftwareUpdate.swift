@@ -67,11 +67,7 @@ extension MirageHostService {
         hostSoftwareUpdateStatusRequestTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            let peer = peerIdentityByClientID[clientID]
-            let status = await resolveHostSoftwareUpdateStatus(
-                for: peer,
-                forceRefresh: forceRefresh
-            )
+            let status = await resolveHostSoftwareUpdateStatus(forceRefresh: forceRefresh)
             guard !Task.isCancelled else { return }
 
             do {
@@ -134,17 +130,11 @@ extension MirageHostService {
         }
     }
 
-    func resolveHostSoftwareUpdateStatus(
-        for peer: LoomPeerIdentity?,
-        forceRefresh: Bool
-    ) async -> HostSoftwareUpdateStatusMessage {
-        guard let softwareUpdateController,
-              let peer else {
+    func resolveHostSoftwareUpdateStatus(forceRefresh: Bool) async -> HostSoftwareUpdateStatusMessage {
+        guard let softwareUpdateController else {
             return fallbackHostSoftwareUpdateStatusMessage()
         }
-        let snapshot = await softwareUpdateController.hostService(
-            self,
-            softwareUpdateStatusFor: peer,
+        let snapshot = await softwareUpdateController.softwareUpdateStatus(
             forceRefresh: forceRefresh
         )
         return makeHostSoftwareUpdateStatusMessage(from: snapshot)
@@ -178,32 +168,9 @@ extension MirageHostService {
             )
         }
 
-        let resolvedTrigger = mapHostSoftwareUpdateInstallTrigger(trigger)
-        let authorized = await softwareUpdateController.hostService(
-            self,
-            shouldAuthorizeSoftwareUpdateRequestFrom: peer,
-            trigger: resolvedTrigger
-        )
-        guard authorized else {
-            let snapshot = await softwareUpdateController.hostService(
-                self,
-                softwareUpdateStatusFor: peer,
-                forceRefresh: false
-            )
-            return HostSoftwareUpdateInstallResultMessage(
-                accepted: false,
-                message: "Approve this client on the host before requesting a remote update.",
-                resultCode: .denied,
-                blockReason: .authorizationRequired,
-                remediationHint: "Open Mirage Host on the Mac and approve or trust this client, then try again.",
-                status: makeHostSoftwareUpdateStatusMessage(from: snapshot)
-            )
-        }
-
-        let result = await softwareUpdateController.hostService(
-            self,
-            performSoftwareUpdateInstallFor: peer,
-            trigger: resolvedTrigger
+        let result = await softwareUpdateController.performSoftwareUpdateInstall(
+            for: peer,
+            trigger: mapHostSoftwareUpdateInstallTrigger(trigger)
         )
         return makeHostSoftwareUpdateInstallResultMessage(from: result)
     }

@@ -161,7 +161,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         }
         _ = performPass(
             referenceTime: referenceTime,
-            allowFollowUpSchedule: shouldAllowFollowUpScheduling,
+            allowFollowUpSchedule: false,
             isDisplayTick: false,
             source: .immediate
         )
@@ -200,12 +200,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             return
         }
 
-        if shouldUseCoalescedFrameArrivalSubmission {
-            schedulePass(referenceTime: referenceTime, source: .scheduled)
-            return
-        }
-
-        _ = performPass(referenceTime: referenceTime, allowFollowUpSchedule: shouldAllowFollowUpScheduling)
+        _ = performPass(referenceTime: referenceTime, allowFollowUpSchedule: false)
     }
 
     func handleDisplayTick(referenceTime: CFTimeInterval) {
@@ -229,14 +224,6 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         case .blocked:
             break
         }
-    }
-
-    private var shouldUseCoalescedFrameArrivalSubmission: Bool {
-        false
-    }
-
-    private var shouldAllowFollowUpScheduling: Bool {
-        false
     }
 
     private func scheduleActiveLiveFallbackIfNeeded(referenceTime: CFTimeInterval) {
@@ -324,7 +311,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         scheduledPassSource = .scheduled
         let result = performPass(
             referenceTime: referenceTime,
-            allowFollowUpSchedule: shouldAllowFollowUpScheduling,
+            allowFollowUpSchedule: false,
             source: source
         )
         if isFrameArrivalFallback, result == .submitted {

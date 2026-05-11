@@ -60,6 +60,20 @@ struct DecodeRecoveryAdmissionTests {
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
     }
 
+    @Test("First decode error fences P-frame admission")
+    func firstDecodeErrorFencesPFrameAdmission() {
+        let thresholdRequests = TestCounter()
+        let tracker = DecodeErrorTracker(maxErrors: 5) {
+            thresholdRequests.increment()
+        }
+
+        tracker.recordError(isKeyframe: false)
+
+        #expect(thresholdRequests.value == 1)
+        #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
+        #expect(tracker.shouldDecodeFrame(isKeyframe: true))
+    }
+
     @Test("Throttled threshold keeps P-frame admission after recovered session reset")
     func throttledThresholdKeepsPFrameAdmissionAfterRecoveredSessionReset() {
         let thresholdRequests = TestCounter()

@@ -22,13 +22,9 @@ final class MirageRefreshRateMonitor: NSObject {
 
     private var currentOverride: Int = 60
 
-    init(view: MirageSampleBufferView) {}
-
     func start() {
         applyPreferredOverride()
     }
-
-    func stop() {}
 
     private func applyPreferredOverride() {
         setOverride(preferredMaximumRefreshRate)

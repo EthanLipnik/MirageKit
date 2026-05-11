@@ -61,8 +61,6 @@ enum MirageHostWallpaperResolver {
     nonisolated package static let requestedMaxPixelHeight = 480
     nonisolated package static let minimumRequestPixelWidth = 427
     nonisolated package static let minimumRequestPixelHeight = 240
-    nonisolated package static let encodedFileExtension = "jpg"
-    nonisolated package static let encodedContentType = "image/jpeg"
     nonisolated package static let encodedCompressionQuality: CGFloat = 0.5
     nonisolated private static let minEncodedMaxDimension = 360
 

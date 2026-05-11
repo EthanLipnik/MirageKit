@@ -182,7 +182,7 @@ struct ClientLoomControlPlaneTests {
             #expect(receivedRequest.forceIconReset == true)
             #expect(receivedRequest.priorityBundleIdentifiers == ["com.apple.Terminal"])
 
-            #expect(service.sendControlMessageBestEffort(ControlMessage(type: .ping)) == true)
+            service.sendControlMessageBestEffort(ControlMessage(type: .ping))
             let receivedPing = try await serverReceiver.next()
             #expect(receivedPing.type == .ping)
 
@@ -449,7 +449,7 @@ struct ClientLoomControlPlaneTests {
         let serverReceiver = ControlMessageReceiver(channel: serverControl)
         let incomingStreamsTask = Task<[LoomMultiplexedStream], Never> {
             var streams: [LoomMultiplexedStream] = []
-            let observer = await pair.server.makeIncomingStreamObserver()
+            let observer = pair.server.makeIncomingStreamObserver()
             for await stream in observer {
                 guard stream.label == "control/42" || stream.label == "video/42" else { continue }
                 streams.append(stream)

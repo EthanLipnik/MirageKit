@@ -28,11 +28,27 @@ extension VideoDecoder {
     }
 
     nonisolated static func baselineDecodeSubmissionLimit(targetFrameRate: Int) -> Int {
-        targetFrameRate >= 120 ? 3 : 2
+        targetFrameRate > 60 ? 2 : 1
+    }
+
+    nonisolated static func baselineDecodeSubmissionLimit(
+        targetFrameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        guard latencyMode != .lowestLatency else { return 1 }
+        return baselineDecodeSubmissionLimit(targetFrameRate: targetFrameRate)
+    }
+
+    nonisolated static func maximumDecodeSubmissionLimit(
+        targetFrameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        guard latencyMode != .lowestLatency else { return 1 }
+        return targetFrameRate > 60 ? 2 : 1
     }
 
     func setDecodeSubmissionLimit(limit: Int, reason: String? = nil) {
-        let desiredLimit = min(max(1, limit), 3)
+        let desiredLimit = min(max(1, limit), 2)
         guard desiredLimit != decodeSubmissionLimit else { return }
         decodeSubmissionLimit = desiredLimit
         drainDecodeSubmissionWaiters()

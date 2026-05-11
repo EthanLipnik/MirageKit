@@ -42,7 +42,5 @@ actor AppStreamDisplayAllocator {
     func currentSnapshot() -> AllocationSnapshot {
         snapshot
     }
-
-    nonisolated static var maximumDisplayCount: Int { Slot.allCases.count }
 }
 #endif

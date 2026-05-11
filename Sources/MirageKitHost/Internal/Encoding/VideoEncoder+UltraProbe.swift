@@ -192,14 +192,15 @@ extension VideoEncoder {
     }
 
     private static func hardwareEncoderStatus(_ session: VTCompressionSession) -> Bool? {
-        var value: CFTypeRef?
+        var value: Unmanaged<CFTypeRef>?
         let status = VTSessionCopyProperty(
             session,
             key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
             allocator: kCFAllocatorDefault,
             valueOut: &value
         )
-        guard status == noErr else { return nil }
+        guard status == noErr,
+              let value = value?.takeRetainedValue() else { return nil }
         return value as? Bool
     }
 

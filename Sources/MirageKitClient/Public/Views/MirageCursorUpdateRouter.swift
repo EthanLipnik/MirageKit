@@ -138,24 +138,5 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         return view
     }
 
-    func debugPendingStreamCount() -> Int {
-        lock.lock()
-        let count = pendingStreamIDs.count
-        lock.unlock()
-        return count
-    }
-
-    func debugFlushTaskIsRunning() -> Bool {
-        lock.lock()
-        let isRunning = flushTask != nil
-        lock.unlock()
-        return isRunning
-    }
-}
-
-extension MirageCursorUpdateRouter {
-    static func makeForTesting(flushInterval: Duration) -> MirageCursorUpdateRouter {
-        MirageCursorUpdateRouter(flushInterval: flushInterval)
-    }
 }
 #endif

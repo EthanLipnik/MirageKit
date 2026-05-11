@@ -37,8 +37,6 @@ extension StreamContext {
         let captureSourceRect: CGRect
         let destinationRect: CGRect
 
-        var sourceRect: CGRect { captureSourceRect }
-        var contentRect: CGRect { destinationRect }
     }
 
     private static let sharedDisplayAppAutoWidenTolerance: CGFloat = 8
@@ -363,11 +361,11 @@ extension StreamContext {
             width: max(1, ceil(resolvedVisibleBounds.width * scaleFactor)),
             height: max(1, ceil(resolvedVisibleBounds.height * scaleFactor))
         )
-        currentContentRect = layout.contentRect
+        currentContentRect = layout.destinationRect
 
         try await captureEngine.updateDisplayCaptureLayout(
             display: displayWrapper.display,
-            sourceRect: layout.sourceRect,
+            sourceRect: layout.captureSourceRect,
             destinationRect: layout.destinationRect,
             contentWindowID: windowID,
             includedWindows: layout.includedWindowWrappers.map(\.window)
@@ -601,7 +599,7 @@ extension StreamContext {
         capturedWindowClusterWindowIDs = captureLayout.clusterWindowIDs
         virtualDisplayCapturePresentationRect = captureLayout.presentationRect
         virtualDisplayCaptureSourceRect = captureLayout.captureSourceRect
-        currentContentRect = captureLayout.contentRect
+        currentContentRect = captureLayout.destinationRect
 
         try await createAndPreheatEncoder(
             streamKind: .window,
@@ -621,7 +619,7 @@ extension StreamContext {
         try await captureEngine.startDisplayCapture(
             display: resolvedDisplayWrapper.display,
             resolution: outputSize,
-            sourceRect: captureLayout.sourceRect,
+            sourceRect: captureLayout.captureSourceRect,
             destinationRect: captureLayout.destinationRect,
             contentWindowID: windowID,
             includedWindows: captureLayout.includedWindowWrappers.map(\.window),
@@ -784,8 +782,6 @@ extension StreamContext {
             throw error
         }
     }
-
-    // MARK: - SCK Resolution Helpers
 
     // MARK: - Aspect-Fit Sizing
 

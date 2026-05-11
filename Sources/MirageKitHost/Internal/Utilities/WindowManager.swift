@@ -47,7 +47,6 @@ enum WindowManager {
         setWindowFullScreen(windowID, fullScreen: false)
     }
 
-    @discardableResult
     private static func setWindowMinimized(_ windowID: WindowID, minimized: Bool) -> Bool {
         let action = minimized ? "minimize" : "restore"
         guard let axWindow = resolveAXWindow(windowID) else {
@@ -71,7 +70,6 @@ enum WindowManager {
         return false
     }
 
-    @discardableResult
     private static func setWindowFullScreen(_ windowID: WindowID, fullScreen: Bool) -> Bool {
         let action = fullScreen ? "enter full screen" : "exit full screen"
         guard let axWindow = resolveAXWindow(windowID) else {

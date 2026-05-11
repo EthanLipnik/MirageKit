@@ -42,7 +42,7 @@ extension VideoDecoder {
 
         outputPixelFormat = activeOutputPixelFormat
 
-        let sessionGeneration = advanceDecodeCallbackGeneration()
+        let sessionGeneration = nextDecodeCallbackGeneration()
         pendingOutputTelemetryGeneration = sessionGeneration
         lastDecodedOutputPixelFormat = nil
 
@@ -102,7 +102,7 @@ extension VideoDecoder {
         if resetFormatDescription {
             formatDescription = nil
         }
-        _ = advanceDecodeCallbackGeneration()
+        advanceDecodeCallbackGeneration()
         pendingOutputTelemetryGeneration = 0
         lastDecodedOutputPixelFormat = nil
         usingHardwareDecoder = nil

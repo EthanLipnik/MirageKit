@@ -97,8 +97,8 @@ struct CaptureRatePolicyTests {
         )
     }
 
-    @Test("Virtual display SCK queue depth separates low latency from smoothest at 60 Hz")
-    func virtualDisplaySCKQueueDepthSeparatesLowLatencyFromSmoothestAt60Hz() {
+    @Test("Smoothest SCK queue depth is bounded by target latency")
+    func smoothestSCKQueueDepthIsBoundedByTargetLatency() {
         #expect(
             WindowCaptureEngine.resolveSCKQueueDepth(
                 width: 2752,
@@ -117,7 +117,17 @@ struct CaptureRatePolicyTests {
                 latencyMode: .smoothest,
                 overrideDepth: nil,
                 usesDisplayRefreshCadence: true
-            ) == 8
+            ) == 3
+        )
+        #expect(
+            WindowCaptureEngine.resolveSCKQueueDepth(
+                width: 2752,
+                height: 2064,
+                frameRate: 120,
+                latencyMode: .smoothest,
+                overrideDepth: nil,
+                usesDisplayRefreshCadence: true
+            ) == 6
         )
     }
 }

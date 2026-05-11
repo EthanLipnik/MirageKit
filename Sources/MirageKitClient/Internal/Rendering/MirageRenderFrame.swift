@@ -72,7 +72,6 @@ struct MirageRenderFrame: @unchecked Sendable {
     let contentRect: CGRect
     let presentationMetadata: MirageRenderFramePresentationMetadata
     let cursor: MirageRenderCursor
-    var sequence: UInt64 { cursor.sequence }
     let decodeTime: CFAbsoluteTime
     let presentationTime: CMTime
     let remotePresentationTime: CMTime
@@ -80,4 +79,5 @@ struct MirageRenderFrame: @unchecked Sendable {
     let dimensionToken: UInt16?
     let frameNumber: UInt32?
     let queueEpoch: UInt64?
+    var timeline: FrameTimeline?
 }

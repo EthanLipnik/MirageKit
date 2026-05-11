@@ -188,24 +188,69 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostCaptureStatusUnknownCount: UInt64? = nil
     package var hostCaptureCadenceDropCount: UInt64? = nil
     package var hostCaptureCadenceSampleOverwriteCount: UInt64? = nil
-    package var hostSendQueueBytes: Int? = nil
-    package var hostSendStartDelayAverageMs: Double? = nil
-    package var hostSendStartDelayMaxMs: Double? = nil
-    package var hostSendCompletionAverageMs: Double? = nil
-    package var hostSendCompletionMaxMs: Double? = nil
-    package var hostNonKeyframeSendStartDelayAverageMs: Double? = nil
-    package var hostNonKeyframeSendStartDelayMaxMs: Double? = nil
-    package var hostNonKeyframeSendCompletionAverageMs: Double? = nil
-    package var hostNonKeyframeSendCompletionMaxMs: Double? = nil
-    package var hostPacketPacerAverageSleepMs: Double? = nil
-    package var hostPacketPacerTotalSleepMs: Int? = nil
-    package var hostPacketPacerMaxSleepMs: Int? = nil
-    package var hostPacketPacerFrameMaxSleepMs: Int? = nil
-    package var hostStalePacketDrops: UInt64? = nil
-    package var hostSenderLocalDeadlineDrops: UInt64? = nil
-    package var hostGenerationAbortDrops: UInt64? = nil
-    package var hostNonKeyframeHoldDrops: UInt64? = nil
+    public var hostSendQueueBytes: Int? = nil
+    public var hostSendStartDelayAverageMs: Double? = nil
+    public var hostSendStartDelayMaxMs: Double? = nil
+    public var hostSendCompletionAverageMs: Double? = nil
+    public var hostSendCompletionMaxMs: Double? = nil
+    public var hostNonKeyframeSendStartDelayAverageMs: Double? = nil
+    public var hostNonKeyframeSendStartDelayMaxMs: Double? = nil
+    public var hostNonKeyframeSendCompletionAverageMs: Double? = nil
+    public var hostNonKeyframeSendCompletionMaxMs: Double? = nil
+    public var hostPacketPacerAverageSleepMs: Double? = nil
+    public var hostPacketPacerTotalSleepMs: Int? = nil
+    public var hostPacketPacerMaxSleepMs: Int? = nil
+    public var hostPacketPacerFrameMaxSleepMs: Int? = nil
+    public var hostStalePacketDrops: UInt64? = nil
+    public var hostSenderLocalDeadlineDrops: UInt64? = nil
+    public var hostGenerationAbortDrops: UInt64? = nil
+    public var hostNonKeyframeHoldDrops: UInt64? = nil
     public var hasHostMetrics: Bool
+
+    public var clientRendererEnqueueFPS: Double {
+        get { layerEnqueueFPS }
+        set { layerEnqueueFPS = newValue }
+    }
+
+    public var clientUniqueRendererEnqueueFPS: Double {
+        get { uniqueLayerEnqueueFPS }
+        set { uniqueLayerEnqueueFPS = newValue }
+    }
+
+    public var clientUniqueDeliveredSourceFrameFPS: Double {
+        get { clientVisibleFrameFPS }
+        set { clientVisibleFrameFPS = newValue }
+    }
+
+    public var clientDeliveredSourceFrameCadenceKnown: Bool {
+        get { clientVisibleFrameCadenceKnown }
+        set { clientVisibleFrameCadenceKnown = newValue }
+    }
+
+    public var clientRepeatedDeliveredSourceFrameCount: UInt64 {
+        get { clientRepeatedSourceFrameCount }
+        set { clientRepeatedSourceFrameCount = newValue }
+    }
+
+    public var clientRepeatedDisplayTickFrameCount: UInt64 {
+        get { clientRepeatedFrameCount }
+        set { clientRepeatedFrameCount = newValue }
+    }
+
+    public var clientDisplayRefreshTickFPS: Double {
+        get { clientDisplayTickFPS }
+        set { clientDisplayTickFPS = newValue }
+    }
+
+    public var clientRenderQueueBacklogFrames: Int {
+        get { clientUnsubmittedPendingFrameCount }
+        set { clientUnsubmittedPendingFrameCount = max(0, newValue) }
+    }
+
+    public var clientDecodeQueueBacklogFrames: Int {
+        get { clientDecodeBacklogFrames }
+        set { clientDecodeBacklogFrames = max(0, newValue) }
+    }
 
     public var hostTransportSendQueueBytes: Int? { hostSendQueueBytes }
     public var hostTransportSendStartDelayAverageMs: Double? { hostSendStartDelayAverageMs }
@@ -217,25 +262,29 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTransportStalePacketDrops: UInt64? { hostStalePacketDrops }
     public var hostTransportGenerationAbortDrops: UInt64? { hostGenerationAbortDrops }
     public var hostTransportNonKeyframeHoldDrops: UInt64? { hostNonKeyframeHoldDrops }
-    @available(*, deprecated, renamed: "layerEnqueueFPS")
+
+    @available(*, deprecated, renamed: "clientRendererEnqueueFPS")
     public var submittedFPS: Double {
-        get { layerEnqueueFPS }
-        set { layerEnqueueFPS = newValue }
+        get { clientRendererEnqueueFPS }
+        set { clientRendererEnqueueFPS = newValue }
     }
-    @available(*, deprecated, renamed: "uniqueLayerEnqueueFPS")
+
+    @available(*, deprecated, renamed: "clientUniqueRendererEnqueueFPS")
     public var uniqueSubmittedFPS: Double {
-        get { uniqueLayerEnqueueFPS }
-        set { uniqueLayerEnqueueFPS = newValue }
+        get { clientUniqueRendererEnqueueFPS }
+        set { clientUniqueRendererEnqueueFPS = newValue }
     }
-    @available(*, deprecated, renamed: "layerEnqueueFPS")
+
+    @available(*, deprecated, renamed: "clientRendererEnqueueFPS")
     public var clientLayerAcceptedFPS: Double {
-        get { layerEnqueueFPS }
-        set { layerEnqueueFPS = newValue }
+        get { clientRendererEnqueueFPS }
+        set { clientRendererEnqueueFPS = newValue }
     }
-    @available(*, deprecated, renamed: "uniqueLayerEnqueueFPS")
+
+    @available(*, deprecated, renamed: "clientUniqueDeliveredSourceFrameFPS")
     public var clientPresentedFPS: Double {
-        get { uniqueLayerEnqueueFPS }
-        set { uniqueLayerEnqueueFPS = newValue }
+        get { clientUniqueDeliveredSourceFrameFPS }
+        set { clientUniqueDeliveredSourceFrameFPS = newValue }
     }
 
     public init(

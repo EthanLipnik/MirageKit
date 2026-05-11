@@ -27,6 +27,12 @@ extension WindowCaptureEngine {
         return safeWidth * safeHeight >= highResolutionPixelThreshold
     }
 
+    nonisolated static func smoothestSCKQueueDepth(frameRate: Int) -> Int {
+        let frameBudgetMs = 1_000.0 / Double(max(1, min(240, frameRate)))
+        let targetLatencyMs = 50.0
+        return min(8, max(3, Int(ceil(targetLatencyMs / frameBudgetMs))))
+    }
+
     nonisolated static func resolveSCKQueueDepth(
         width: Int,
         height: Int,
@@ -42,9 +48,9 @@ extension WindowCaptureEngine {
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
         if frameRate >= 120 {
-            // Native-refresh capture is where SCK is most sensitive to queue starvation.
-            // Keep the stream queue at the platform-supported ceiling and use Mirage's
-            // own pool/in-flight tuning to reduce downstream pressure instead.
+            if latencyMode == .smoothest {
+                return smoothestSCKQueueDepth(frameRate: frameRate)
+            }
             return 8
         }
         if usesDisplayRefreshCadence, frameRate >= 60 {
@@ -52,7 +58,7 @@ extension WindowCaptureEngine {
             case .lowestLatency:
                 return 3
             case .smoothest:
-                return 8
+                return smoothestSCKQueueDepth(frameRate: frameRate)
             }
         }
 
@@ -69,6 +75,7 @@ extension WindowCaptureEngine {
             break
         case .smoothest:
             depth += 1
+            depth = min(depth, smoothestSCKQueueDepth(frameRate: frameRate))
         }
 
         return min(max(3, depth), 8)

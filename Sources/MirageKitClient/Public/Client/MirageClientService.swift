@@ -578,7 +578,6 @@ public final class MirageClientService {
     var pendingStreamSetupKind: StreamSetupKind?
     var pendingStreamSetupAppSessionID: UUID?
     var customStreamStartedContinuations: [UUID: CheckedContinuation<ClientStreamSession, Error>] = [:]
-    public internal(set) var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
@@ -773,7 +772,6 @@ public final class MirageClientService {
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
-    let awdlExperimentEnabled: Bool = true
     public var currentLocalPathKind: MirageNetworkPathKind {
         localNetworkMonitor.snapshot().currentPathKind
     }
@@ -1152,8 +1150,8 @@ public final class MirageClientService {
             streamID: streamID,
             reason: reason,
             retiredAt: CFAbsoluteTimeGetCurrent(),
-            renderGeneration: renderSubmissionSnapshot.generation,
-            renderSequence: renderSubmissionSnapshot.sequence,
+            renderGeneration: renderSubmissionSnapshot.cursor.generation,
+            renderSequence: renderSubmissionSnapshot.cursor.sequence,
             layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS,
             uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS,
             visibleFrameFPS: metricsSnapshot?.clientVisibleFrameFPS,
@@ -1205,11 +1203,11 @@ public final class MirageClientService {
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
             "client.primaryStreamID": primaryStreamID.map { .int(Int($0)) } ?? .null,
             "client.primaryStream.renderGeneration": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.generation)) } ?? .null,
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.cursor.generation)) } ?? .null,
             "client.primaryStream.renderSequence": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.sequence)) } ?? .null,
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.cursor.sequence)) } ?? .null,
             "client.primaryStream.visibleRenderSequence": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.visibleSequence)) } ?? .null,
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.visibleCursor.sequence)) } ?? .null,
             "client.primaryStream.layerEnqueueFPS": primarySnapshot
                 .map { LoomDiagnosticsValue.double($0.layerEnqueueFPS) } ?? .null,
             "client.primaryStream.uniqueLayerEnqueueFPS": primarySnapshot

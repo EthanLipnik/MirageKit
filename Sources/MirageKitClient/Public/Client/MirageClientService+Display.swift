@@ -384,7 +384,6 @@ extension MirageClientService {
         try await sendControlMessage(.displayResolutionChange, content: request)
     }
 
-    @discardableResult
     public func requestAutomaticDesktopWorkloadReconfiguration(
         streamID: StreamID,
         target: MirageAutomaticDesktopWorkloadTier
@@ -412,8 +411,10 @@ extension MirageClientService {
                 "deferred stream=\(streamID) reason=session-missing target=\(target.logLabel)"
             return false
         }
+        let recoveryAllowsReconfiguration = session.clientRecoveryStatus == .idle ||
+            (session.clientRecoveryStatus == .keyframeRecovery && session.hasPresentedFrame)
         guard session.hasPresentedFrame,
-              session.clientRecoveryStatus == .idle else {
+              recoveryAllowsReconfiguration else {
             lastAutomaticDesktopWorkloadReconfigurationSummary =
                 "deferred stream=\(streamID) reason=session-not-ready target=\(target.logLabel) " +
                 "hasPresentedFrame=\(session.hasPresentedFrame) " +

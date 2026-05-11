@@ -140,16 +140,109 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .presentationBound)
     }
 
-    @Test("Legacy submitted FPS aliases map to layer enqueue telemetry")
-    func legacySubmittedFPSAliasesMapToLayerEnqueueTelemetry() {
+    @Test("Client render pressure is not classified as network-bound on clean transport")
+    func clientRenderPressureIsNotNetworkBoundOnCleanTransport() {
         var snapshot = baselineSnapshot()
-        snapshot.submittedFPS = 42
-        snapshot.uniqueSubmittedFPS = 39
+        snapshot.clientVisibleFrameFPS = 24
+        snapshot.clientVisibleWorstPresentationGapMs = 120
+        snapshot.clientVisibleFrameIntervalP99Ms = 70
+        snapshot.clientRepeatedDeliveredSourceFrameCount = 8
+        snapshot.clientIncomingMediaBatchIntervalMaxMs = 120
+
+        #expect(snapshot.bottleneckKind == .presentationBound)
+    }
+
+    @Test("Renderer enqueue cadence alone is not visible progress")
+    func rendererEnqueueCadenceAloneIsNotVisibleProgress() {
+        var snapshot = baselineSnapshot()
+        snapshot.clientDeliveredSourceFrameCadenceKnown = false
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 0
+        snapshot.clientRendererEnqueueFPS = 60
+        snapshot.clientUniqueRendererEnqueueFPS = 60
+
+        #expect(snapshot.bottleneckKind == .unknown)
+    }
+
+    @Test("Decode backlog classification stays client-bound on clean transport")
+    func decodeBacklogClassificationStaysClientBoundOnCleanTransport() {
+        var snapshot = baselineSnapshot()
+        snapshot.decodedFPS = 42
+        snapshot.clientRendererEnqueueFPS = 42
+        snapshot.clientUniqueRendererEnqueueFPS = 42
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 42
+        snapshot.clientDecodeQueueBacklogFrames = 4
+        snapshot.clientDecodeSubmissionInFlightCount = 2
+        snapshot.clientDecodeSubmissionLimit = 2
+
+        #expect(snapshot.bottleneckKind == .decodeBound)
+    }
+
+    @Test("Decode recovery collapse stays client-bound on clean transport")
+    func decodeRecoveryCollapseStaysClientBoundOnCleanTransport() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostTargetFrameRate = 120
+        snapshot.hostFrameBudgetMs = 8.33
+        snapshot.hostAverageEncodeMs = 6
+        snapshot.hostCaptureIngressFPS = 120
+        snapshot.hostCaptureFPS = 120
+        snapshot.hostEncodeAttemptFPS = 120
+        snapshot.hostEncodedFPS = 120
+        snapshot.receivedFPS = 0
+        snapshot.decodedFPS = 0
+        snapshot.clientRendererEnqueueFPS = 0
+        snapshot.clientUniqueRendererEnqueueFPS = 0
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 0
+        snapshot.clientVisibleFrameFPS = 0
+        snapshot.decodeHealthy = false
+        snapshot.clientReceivedWorstGapMs = 556
+        snapshot.clientIncomingMediaBatchIntervalMaxMs = 556
+
+        #expect(snapshot.bottleneckKind == .decodeBound)
+    }
+
+    @Test("Above-target host encode does not hide client decode deficit")
+    func aboveTargetHostEncodeDoesNotHideClientDecodeDeficit() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostTargetFrameRate = 60
+        snapshot.hostFrameBudgetMs = 16.67
+        snapshot.hostAverageEncodeMs = 10
+        snapshot.hostCaptureIngressFPS = 120.4
+        snapshot.hostCaptureFPS = 120.4
+        snapshot.hostEncodeAttemptFPS = 119.9
+        snapshot.hostEncodedFPS = 81.2
+        snapshot.receivedFPS = 44
+        snapshot.decodedFPS = 44
+        snapshot.clientRendererEnqueueFPS = 44
+        snapshot.clientUniqueRendererEnqueueFPS = 44
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 42
+        snapshot.clientVisibleFrameFPS = 42
+        snapshot.decodeHealthy = false
+
+        #expect(snapshot.bottleneckKind == .decodeBound)
+    }
+
+    @Test("Clearly named cadence aliases route to existing telemetry")
+    func clearlyNamedCadenceAliasesRouteToExistingTelemetry() {
+        var snapshot = baselineSnapshot()
+        snapshot.clientRendererEnqueueFPS = 42
+        snapshot.clientUniqueRendererEnqueueFPS = 39
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 37
+        snapshot.clientDeliveredSourceFrameCadenceKnown = true
+        snapshot.clientRepeatedDeliveredSourceFrameCount = 3
+        snapshot.clientRepeatedDisplayTickFrameCount = 5
+        snapshot.clientDisplayRefreshTickFPS = 120
+        snapshot.clientRenderQueueBacklogFrames = 2
+        snapshot.clientDecodeQueueBacklogFrames = 4
 
         #expect(snapshot.layerEnqueueFPS == 42)
         #expect(snapshot.uniqueLayerEnqueueFPS == 39)
-        #expect(snapshot.clientLayerAcceptedFPS == 42)
-        #expect(snapshot.clientPresentedFPS == 39)
+        #expect(snapshot.clientVisibleFrameFPS == 37)
+        #expect(snapshot.clientVisibleFrameCadenceKnown)
+        #expect(snapshot.clientRepeatedSourceFrameCount == 3)
+        #expect(snapshot.clientRepeatedFrameCount == 5)
+        #expect(snapshot.clientDisplayTickFPS == 120)
+        #expect(snapshot.clientUnsubmittedPendingFrameCount == 2)
+        #expect(snapshot.clientDecodeBacklogFrames == 4)
     }
 
     @Test("Mixed classification reports multiple active constraints")

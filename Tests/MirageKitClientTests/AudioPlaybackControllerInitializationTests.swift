@@ -19,7 +19,7 @@ struct AudioPlaybackControllerInitializationTests {
         let controller = AudioPlaybackController(automaticallyStartsPlayer: false)
 
         #expect(!controller.hasInitializedPlaybackGraphForTesting())
-        #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
+        await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2)
         #expect(controller.hasInitializedPlaybackGraphForTesting())
     }
 
@@ -133,7 +133,7 @@ struct AudioPlaybackControllerInitializationTests {
     func playbackRecoveryTearsDownInitializedGraph() async {
         let controller = AudioPlaybackController(automaticallyStartsPlayer: false)
 
-        #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
+        await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2)
         #expect(controller.hasInitializedPlaybackGraphForTesting())
 
         await controller.recoverPlaybackGraphForTesting()

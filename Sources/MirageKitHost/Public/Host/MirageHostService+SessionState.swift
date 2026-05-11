@@ -45,7 +45,7 @@ extension MirageHostService {
         sessionState = newState
         currentSessionToken = UUID().uuidString
 
-        delegate?.hostService(self, sessionStateChanged: newState)
+        delegate?.sessionStateDidChange(newState)
 
         for clientContext in clientsBySessionID.values {
             await sendSessionState(to: clientContext)

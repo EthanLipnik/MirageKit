@@ -262,11 +262,12 @@ struct SharedClipboardTests {
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!
         )
 
-        state.recordRemoteTransferObservation(
+        let recordedObservation = state.recordRemoteTransferObservation(
             changeCount: 5,
             orderingToken: remoteToken,
             observedAtMs: 40_000
         )
+        #expect(recordedObservation)
 
         #expect(state.shouldApplyRemoteUpdate(orderingToken: remoteToken))
         state.recordRemoteWrite(changeCount: 6, orderingToken: remoteToken)
@@ -284,11 +285,12 @@ struct SharedClipboardTests {
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!
         )
 
-        state.recordRemoteTransferObservation(
+        let recordedObservation = state.recordRemoteTransferObservation(
             changeCount: 10,
             orderingToken: remoteToken,
             observedAtMs: observedAtMs
         )
+        #expect(recordedObservation)
 
         #expect(
             state.prepareLocalSend(
@@ -316,11 +318,12 @@ struct SharedClipboardTests {
             changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000009")!
         )
 
-        state.recordRemoteTransferObservation(
+        let recordedObservation = state.recordRemoteTransferObservation(
             changeCount: 10,
             orderingToken: remoteToken,
             observedAtMs: observedAtMs
         )
+        #expect(recordedObservation)
 
         let localSend = state.prepareLocalSend(
             currentItem: textItem("client-newer"),

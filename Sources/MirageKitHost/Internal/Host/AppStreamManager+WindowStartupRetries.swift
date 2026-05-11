@@ -25,7 +25,7 @@ enum AppStreamWindowStartupFailureDisposition: Sendable, Equatable {
 }
 
 extension AppStreamManager {
-    private var maxWindowStartupAttempts: Int { 3 }
+    private static let maxWindowStartupAttempts = 3
 
     private var windowStartupRetryBackoffSeconds: [TimeInterval] {
         [0.35, 1.0, 2.0]
@@ -38,7 +38,7 @@ extension AppStreamManager {
     ) -> Bool {
         let normalizedBundleID = bundleID.lowercased()
         guard let state = startupFailureStateByBundleID[normalizedBundleID]?[windowID] else { return true }
-        guard state.failureCount < maxWindowStartupAttempts else { return false }
+        guard state.failureCount < Self.maxWindowStartupAttempts else { return false }
         return now >= state.nextRetryAt
     }
 
@@ -55,7 +55,7 @@ extension AppStreamManager {
         var state = windowStates[windowID] ?? AppStreamWindowStartupFailureState()
         state.lastReason = reason
 
-        if state.failureCount >= maxWindowStartupAttempts {
+        if state.failureCount >= Self.maxWindowStartupAttempts {
             if state.terminalNoticeSent {
                 windowStates[windowID] = state
                 startupFailureStateByBundleID[normalizedBundleID] = windowStates
@@ -69,7 +69,7 @@ extension AppStreamManager {
 
         if retryable {
             state.failureCount += 1
-            if state.failureCount < maxWindowStartupAttempts {
+            if state.failureCount < Self.maxWindowStartupAttempts {
                 let backoffIndex = min(state.failureCount - 1, windowStartupRetryBackoffSeconds.count - 1)
                 let retryAt = now.addingTimeInterval(windowStartupRetryBackoffSeconds[backoffIndex])
                 state.nextRetryAt = retryAt
@@ -78,7 +78,7 @@ extension AppStreamManager {
                 return .retryScheduled(attempt: state.failureCount, retryAt: retryAt)
             }
         } else {
-            state.failureCount = maxWindowStartupAttempts
+            state.failureCount = Self.maxWindowStartupAttempts
         }
 
         state.nextRetryAt = .distantFuture

@@ -12,9 +12,9 @@ import Foundation
 public struct MirageAppAtlasRegion: Codable, Sendable, Equatable {
     /// Logical host window identity represented by this atlas region.
     public let windowID: WindowID
-    /// Region origin in the physical media stream's pixel coordinate space.
+    /// Horizontal origin in the physical media stream's pixel coordinate space.
     public let x: Int
-    /// Region origin in the physical media stream's pixel coordinate space.
+    /// Vertical origin in the physical media stream's pixel coordinate space.
     public let y: Int
     /// Region width in physical media-stream pixels.
     public let width: Int

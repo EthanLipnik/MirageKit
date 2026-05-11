@@ -95,8 +95,6 @@ enum HostCadencePressureDiagnosticKind: String, Sendable, Equatable {
 struct HostCadencePressureDiagnostic: Sendable, Equatable {
     let kind: HostCadencePressureDiagnosticKind
     let summary: String
-
-    var signature: String { kind.rawValue }
 }
 
 func hostCadencePressureDiagnostic(

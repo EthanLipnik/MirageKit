@@ -71,10 +71,10 @@ struct VirtualDisplayColorValidationTests {
     }
 
     private func makeUnnamedWideGamutRGB() -> CGColorSpace? {
-        var whitePoint: [CGFloat] = [0.95047, 1.0, 1.08883]
-        var blackPoint: [CGFloat] = [0, 0, 0]
-        var gamma: [CGFloat] = [2.2, 2.2, 2.2]
-        var matrix: [CGFloat] = [
+        let whitePoint: [CGFloat] = [0.95047, 1.0, 1.08883]
+        let blackPoint: [CGFloat] = [0, 0, 0]
+        let gamma: [CGFloat] = [2.2, 2.2, 2.2]
+        let matrix: [CGFloat] = [
             0.48657095, 0.26566769, 0.19821729,
             0.22897456, 0.69173852, 0.07928691,
             0.00000000, 0.04511338, 1.04394437,

@@ -43,25 +43,6 @@ private struct MirageHostCaptureBenchmarkMeasurementWindow {
     }
 }
 
-private struct MirageHostCaptureBenchmarkPresentationCounter {
-    var frameCount: UInt64 = 0
-    var lastPresentationSeconds: Double?
-
-    mutating func record(_ presentationTime: CMTime) {
-        let presentationSeconds = CMTimeGetSeconds(presentationTime)
-        guard presentationSeconds.isFinite, presentationSeconds >= 0 else {
-            frameCount &+= 1
-            return
-        }
-        if let lastPresentationSeconds,
-           abs(presentationSeconds - lastPresentationSeconds) < 0.000_1 {
-            return
-        }
-        self.lastPresentationSeconds = presentationSeconds
-        frameCount &+= 1
-    }
-}
-
 private struct MirageHostCaptureBenchmarkTelemetryDelta {
     let rawCallbackCount: UInt64
     let validSampleCount: UInt64

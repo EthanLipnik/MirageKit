@@ -12,6 +12,10 @@ import MirageKit
 import AppKit
 import ApplicationServices
 
+private final class WindowActivatorOpenResult: @unchecked Sendable {
+    var error: Error?
+}
+
 /// Result of an activation attempt
 public enum ActivationResult {
     case success(method: String)
@@ -248,17 +252,17 @@ public final class WindowActivator {
         configuration.hidesOthers = false
 
         let semaphore = DispatchSemaphore(value: 0)
-        var openError: Error?
+        let result = WindowActivatorOpenResult()
 
         NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
-            openError = error
+            result.error = error
             semaphore.signal()
         }
 
         let timeout = DispatchTime.now() + .milliseconds(500)
         if semaphore.wait(timeout: timeout) == .timedOut { return .failure(method: "NSWorkspace", error: "Timed out") }
 
-        if let error = openError { return .failure(method: "NSWorkspace", error: error.localizedDescription) }
+        if let error = result.error { return .failure(method: "NSWorkspace", error: error.localizedDescription) }
 
         return .success(method: "NSWorkspace")
     }

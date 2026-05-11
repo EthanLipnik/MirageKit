@@ -25,7 +25,6 @@ final class HostStreamRegistry: @unchecked Sendable {
     private static let pointerCoalescingSoftWindow: CFAbsoluteTime = 1.2
     private static let pointerCoalescingHardWindow: CFAbsoluteTime = 2.0
     private static let pointerCoalescingResumeWindow: CFAbsoluteTime = 0.4
-    private static let pointerCoalescingMinInterval: CFAbsoluteTime = 1.0 / 60.0
 
     private let state = Locked(State())
 

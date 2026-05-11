@@ -26,14 +26,16 @@ extension DecodeErrorTracker {
         }
         let now = CFAbsoluteTimeGetCurrent()
 
-        // Initial threshold fire
-        if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
+        // A VideoToolbox decode failure usually means the HEVC dependency chain
+        // is no longer trustworthy. Fence P-frame admission immediately and
+        // request a recovery keyframe, with dispatch throttled below.
+        if consecutiveErrors >= 1, !thresholdFired {
             thresholdFired = true
             let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
             guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {
                 let remainingMs = Int(((thresholdDispatchCooldown - timeSinceLastThreshold) * 1000).rounded(.up))
                 MirageLogger.decoder(
-                    "Decode error threshold reached (\(consecutiveErrors) errors) - threshold dispatch throttled \(remainingMs)ms"
+                    "Decode error recovery requested (\(consecutiveErrors) errors) - dispatch throttled \(remainingMs)ms"
                 )
                 return
             }
@@ -42,7 +44,7 @@ extension DecodeErrorTracker {
             recoveryRequiresKeyframeDecode = true
             // Call handler outside lock to avoid deadlocks
             lock.unlock()
-            MirageLogger.decoder("Decode error threshold reached (\(consecutiveErrors) errors) - requesting keyframe")
+            MirageLogger.decoder("Decode error recovery requested (\(consecutiveErrors) errors) - requesting keyframe")
             onThresholdReached()
             lock.lock()
             return

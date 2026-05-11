@@ -1299,9 +1299,7 @@ extension StreamContext {
     async {
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
-            let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit(
-                frameRate: currentFrameRate
-            )
+            let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit()
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {
                 maxInFlightFrames = lowLatencyLimit
@@ -1327,7 +1325,9 @@ extension StreamContext {
         let smoothnessFirstMode = latencyMode == .smoothest
         let increaseThreshold = smoothnessFirstMode ? 1.02 : 1.10
         let decreaseThreshold = smoothnessFirstMode ? 0.90 : 0.80
-        if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
+        if smoothnessFirstMode, averageEncodeMs > frameBudgetMs * increaseThreshold {
+            desired = minInFlightFrames
+        } else if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
             desired = min(maxInFlightFrames + 1, maxInFlightFramesCap)
         } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
             desired = max(maxInFlightFrames - 1, minInFlightFrames)

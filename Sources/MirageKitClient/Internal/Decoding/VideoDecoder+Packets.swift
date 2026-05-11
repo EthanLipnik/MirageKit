@@ -28,6 +28,7 @@ extension FrameReassembler {
         UInt16,
         UInt16,
         CGRect,
+        FrameTimeline,
         @escaping @Sendable () -> Void
     )
         -> Void) {
@@ -40,12 +41,29 @@ extension FrameReassembler {
         StreamID,
         Data,
         Bool,
+        UInt32,
+        UInt64,
+        UInt16,
+        UInt16,
+        CGRect,
+        @escaping @Sendable () -> Void
+    )
+        -> Void) {
+        setFrameHandler { streamID, data, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, _, release in
+            handler(streamID, data, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, release)
+        }
+    }
+
+    func setFrameHandler(_ handler: @escaping @Sendable (
+        StreamID,
+        Data,
+        Bool,
         UInt64,
         CGRect,
         @escaping @Sendable () -> Void
     )
         -> Void) {
-        setFrameHandler { streamID, data, isKeyframe, _, timestamp, _, _, contentRect, release in
+        setFrameHandler { streamID, data, isKeyframe, _, timestamp, _, _, contentRect, _, release in
             handler(streamID, data, isKeyframe, timestamp, contentRect, release)
         }
     }
@@ -86,6 +104,7 @@ extension FrameReassembler {
             UInt16,
             UInt16,
             CGRect,
+            FrameTimeline,
             @escaping @Sendable () -> Void
         )
             -> Void)?
@@ -95,6 +114,7 @@ extension FrameReassembler {
         let frameNumber = header.frameNumber
         let isKeyframePacket = header.flags.contains(.keyframe)
         let packetReceivedAt = Date()
+        let packetReceiveTime = packetReceivedAt.timeIntervalSinceReferenceDate
         lock.lock()
         lastPacketReceivedTime = packetReceivedAt.timeIntervalSinceReferenceDate
         totalPacketsReceived += 1
@@ -166,7 +186,10 @@ extension FrameReassembler {
                     .frameAssembly,
                     "CRC mismatch for frame \(frameNumber) fragment \(header.fragmentIndex) - discarding (expected \(header.checksum), got \(calculatedCRC))"
                 )
+                beginAwaitingKeyframe()
+                let lossHandler = onFrameLoss
                 lock.unlock()
+                lossHandler?(streamID, .payloadIntegrity)
                 return
             }
         }
@@ -193,6 +216,16 @@ extension FrameReassembler {
         if let existingFrame = pendingFrames[frameNumber] { frame = existingFrame } else {
             let capacity = max(1, dataFragmentCount) * maxPayloadSize
             let buffer = bufferPool.acquire(capacity: capacity)
+            let timeline = FrameTimeline(
+                streamID: streamID,
+                frameNumber: frameNumber,
+                dependencyEpoch: DependencyEpoch(header.epoch),
+                isKeyframe: isKeyframePacket,
+                encodedByteCount: frameByteCount,
+                fragmentCount: dataFragmentCount,
+                firstPacketReceiveTime: packetReceiveTime,
+                lastPacketReceiveTime: packetReceiveTime
+            )
             frame = PendingFrame(
                 buffer: buffer,
                 receivedMap: Array(repeating: false, count: dataFragmentCount),
@@ -207,7 +240,8 @@ extension FrameReassembler {
                 receivedAt: packetReceivedAt,
                 lastProgressAt: packetReceivedAt,
                 contentRect: header.contentRect,
-                expectedTotalBytes: usesHeaderByteCount ? frameByteCount : capacity
+                expectedTotalBytes: usesHeaderByteCount ? frameByteCount : capacity,
+                timeline: timeline
             )
             pendingFrames[frameNumber] = frame
         }
@@ -241,6 +275,10 @@ extension FrameReassembler {
                 frame.receivedMap[fragmentIndex] = true
                 frame.receivedCount += 1
                 frame.lastProgressAt = packetReceivedAt
+                frame.timeline = frame.timeline.markingPacketReceived(
+                    at: packetReceiveTime,
+                    receivedFragmentCount: frame.receivedCount
+                )
                 if !usesHeaderByteCount, fragmentIndex == frame.receivedMap.count - 1 {
                     let end = offset + data.count
                     frame.expectedTotalBytes = min(end, frame.buffer.capacity)
@@ -348,6 +386,7 @@ extension FrameReassembler {
                     completedFrame.epoch,
                     completedFrame.dimensionToken,
                     completedFrame.contentRect,
+                    completedFrame.timeline,
                     completedFrame.releaseBuffer
                 )
             }
@@ -362,6 +401,7 @@ extension FrameReassembler {
         let epoch: UInt16
         let dimensionToken: UInt16
         let contentRect: CGRect
+        let timeline: FrameTimeline
         let releaseBuffer: @Sendable () -> Void
     }
 
@@ -480,6 +520,14 @@ extension FrameReassembler {
                 clearAwaitingKeyframe()
             }
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
+            let now = CFAbsoluteTimeGetCurrent()
+            let queueAgeMs = max(0, now - frame.receivedAt.timeIntervalSinceReferenceDate) * 1000
+            let timeline = frame.timeline.markingReassembled(
+                at: now,
+                byteCount: output.count,
+                receivedFragmentCount: frame.receivedCount,
+                queueAgeMs: queueAgeMs
+            )
 
             if !frame.isKeyframe {
                 MirageFrameIntegrityDiagnostics.shared.recordPFrame(
@@ -502,6 +550,7 @@ extension FrameReassembler {
                     epoch: frame.epoch,
                     dimensionToken: frame.dimensionToken,
                     contentRect: frame.contentRect,
+                    timeline: timeline,
                     releaseBuffer: releaseBuffer
                 ),
                 frameLossReason: nil,
@@ -670,6 +719,7 @@ extension FrameReassembler {
         // times out, later P-frames are not a safe recovery boundary.
         let shouldEnterAwaitingKeyframe = (
             timedOutKeyframeCount > 0 ||
+                timedOutPFrameCount > 0 ||
                 timedOutExpectedPFrame ||
                 missingExpectedPFrameGapTimedOut
         ) && !awaitingKeyframe
@@ -996,8 +1046,7 @@ extension FrameReassembler {
         return result
     }
 
-    @discardableResult
-    func trimPendingFramesForRecovery(reason: String) -> MemoryTrimResult {
+    func trimPendingFramesForRecovery(reason: String) {
         lock.lock()
         let evictedFrames = pendingFrames.count
         let releasedPendingBytes = pendingFrameBytesLocked()
@@ -1009,12 +1058,6 @@ extension FrameReassembler {
             droppedFrameCount += UInt64(evictedFrames)
         }
         beginAwaitingKeyframe()
-        let result = MemoryTrimResult(
-            evictedFrames: evictedFrames,
-            releasedPendingBytes: releasedPendingBytes,
-            purgedRetainedBytes: 0,
-            awaitingKeyframe: awaitingKeyframe
-        )
         lock.unlock()
 
         if evictedFrames > 0 {
@@ -1023,8 +1066,6 @@ extension FrameReassembler {
                     "reason=\(reason), releasedPendingBytes=\(releasedPendingBytes)"
             )
         }
-
-        return result
     }
 
     func enterKeyframeOnlyMode() {

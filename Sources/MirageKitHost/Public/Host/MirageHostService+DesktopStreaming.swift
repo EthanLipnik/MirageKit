@@ -489,7 +489,6 @@ extension MirageHostService {
 
                     let captureDisplay = try await findSCDisplayWithRetry(
                         maxAttempts: 5,
-                        delayMs: 40,
                         startupBudget: startupBudget,
                         expectedPixelResolution: context.resolution
                     )
@@ -1575,12 +1574,10 @@ extension MirageHostService {
     /// Find SCDisplay with retry - faster than fixed sleep
     func findSCDisplayWithRetry(
         maxAttempts: Int,
-        delayMs: UInt64,
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil,
         expectedPixelResolution: CGSize? = nil
     )
     async throws -> SCDisplayWrapper {
-        _ = delayMs
         let resolvedAttempts = max(maxAttempts, 12)
         do {
             let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(

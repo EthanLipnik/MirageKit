@@ -163,27 +163,16 @@ public struct MirageHostSoftwareUpdateInstallResult: Sendable, Codable, Equatabl
 
 /// Host software update coordinator used by `MirageHostService` for client-initiated update workflows.
 public protocol MirageHostSoftwareUpdateController: AnyObject, Sendable {
-    /// Returns a software update status snapshot for the requesting peer.
+    /// Returns a software update status snapshot.
     @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        softwareUpdateStatusFor peer: LoomPeerIdentity,
+    func softwareUpdateStatus(
         forceRefresh: Bool
     ) async -> MirageHostSoftwareUpdateStatusSnapshot
 
-    /// Returns whether the requesting peer is authorized to request software update installation.
-    @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        shouldAuthorizeSoftwareUpdateRequestFrom peer: LoomPeerIdentity,
-        trigger: MirageHostSoftwareUpdateInstallTrigger
-    ) async -> Bool
-
     /// Executes an immediate host software update install for the requesting peer.
     @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        performSoftwareUpdateInstallFor peer: LoomPeerIdentity,
+    func performSoftwareUpdateInstall(
+        for peer: LoomPeerIdentity,
         trigger: MirageHostSoftwareUpdateInstallTrigger
     ) async -> MirageHostSoftwareUpdateInstallResult
 }

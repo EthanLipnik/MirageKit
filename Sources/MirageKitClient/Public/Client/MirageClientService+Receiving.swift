@@ -228,18 +228,6 @@ extension MirageClientService {
         MirageLogger.network("Control sample (1s): streamMetricsUpdates=\(metricsCount)")
     }
 
-    private func isExpectedReceiveTermination(_ error: Error) -> Bool {
-        Self.isExpectedTransportTermination(error)
-    }
-
-    private func shouldTreatReceiveErrorAsDisconnect(_ error: Error) -> Bool {
-        if isExpectedReceiveTermination(error) {
-            return true
-        }
-
-        return hasCompletedBootstrap == false
-    }
-
     nonisolated static func isExpectedTransportTermination(_ error: Error) -> Bool {
         if let nwError = error as? NWError {
             switch nwError {

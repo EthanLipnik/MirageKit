@@ -26,8 +26,7 @@ final class HostTransportRegistry: @unchecked Sendable {
         }
     }
 
-    @discardableResult
-    func unregisterVideoStream(streamID: StreamID) -> LoomMultiplexedStream? {
+    func unregisterVideoStream(streamID: StreamID) {
         state.withLock { state in
             state.videoByStream.removeValue(forKey: streamID)
         }
@@ -37,8 +36,7 @@ final class HostTransportRegistry: @unchecked Sendable {
         state.withLock { $0.audioByClientID[clientID] = stream }
     }
 
-    @discardableResult
-    func unregisterAudioStream(clientID: UUID) -> LoomMultiplexedStream? {
+    func unregisterAudioStream(clientID: UUID) {
         state.withLock { $0.audioByClientID.removeValue(forKey: clientID) }
     }
 

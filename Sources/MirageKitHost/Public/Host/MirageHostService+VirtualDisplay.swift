@@ -1053,7 +1053,6 @@ extension MirageHostService {
 
                 let captureDisplay = try await findSCDisplayWithRetry(
                     maxAttempts: 6,
-                    delayMs: 60,
                     expectedPixelResolution: effectivePixelResolution
                 )
                 try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
@@ -1286,7 +1285,6 @@ extension MirageHostService {
 
         let captureDisplay = try await findSCDisplayWithRetry(
             maxAttempts: 6,
-            delayMs: 60,
             expectedPixelResolution: restoredSnapshot.resolution
         )
         try await context.hardResetDesktopDisplayCapture(

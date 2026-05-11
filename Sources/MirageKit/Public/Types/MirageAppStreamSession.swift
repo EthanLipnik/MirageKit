@@ -14,9 +14,6 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Unique identifier for this session
     public let id: UUID
 
-    /// Stable app-session identifier mirrored on the wire.
-    public var appSessionID: UUID { id }
-
     /// Bundle identifier of the app being streamed
     public let bundleIdentifier: String
 
@@ -69,8 +66,6 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
 
     /// When the client disconnected unexpectedly (for reservation period)
     public var disconnectedAt: Date?
-
-    public var _id: String { id.uuidString }
 
     public init(
         id: UUID = UUID(),
@@ -232,9 +227,4 @@ public extension MirageAppStreamSession {
         return Date() > expiresAt
     }
 
-    /// Number of currently streamed windows.
-    var totalWindowCount: Int { windowStreams.count }
-
-    /// Number of hidden overflow windows.
-    var hiddenWindowCount: Int { hiddenWindows.count }
 }

@@ -104,6 +104,15 @@ extension InputCapturingView {
     /// Only claims the event when modifiers are held — without modifiers, pressesBegan
     /// provides richer character data and is the better source.
     func handleGCKeyEvent(keyCode: GCKeyCode, isPressed: Bool) {
+        guard inputCaptureEnabled else {
+            if !isPressed, let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) {
+                gcClaimedKeyCodes.remove(keyCode)
+                clientShortcutClaimedKeyCodes.remove(hidUsage)
+                passthroughClaimedKeyCodes.remove(hidUsage)
+            }
+            return
+        }
+
         // Handle key-up first so gcClaimedKeyCodes is cleaned up even when
         // modifiers have already been released by the time the key-up arrives.
         if !isPressed {
@@ -175,6 +184,7 @@ extension InputCapturingView {
     }
 
     func recoverFirstResponderForGCKeyIfNeeded(keyCode: GCKeyCode, isPressed: Bool) -> Bool {
+        guard inputCaptureEnabled else { return false }
         guard !isFirstResponder else { return true }
         guard window?.windowScene?.activationState == .foregroundActive else { return false }
         guard refreshModifierStateFromHardware() else { return false }
@@ -199,6 +209,7 @@ extension InputCapturingView {
     }
 
     func recoverFirstResponderForGCShortcutModifierIfNeeded() -> Bool {
+        guard inputCaptureEnabled else { return false }
         guard !isFirstResponder else { return true }
         guard window?.windowScene?.activationState == .foregroundActive else { return false }
         guard Self.shouldRecoverFirstResponderForGCShortcutModifiers(
@@ -393,6 +404,7 @@ extension InputCapturingView {
     }
 
     func shouldHandleResponderAction(_ action: Selector) -> Bool {
+        guard inputCaptureEnabled else { return false }
         guard let shortcut = editActionShortcut(for: action) else { return false }
         if clientShortcut(for: shortcut) != nil {
             return onClientShortcut != nil
@@ -401,6 +413,11 @@ extension InputCapturingView {
     }
 
     override public func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard inputCaptureEnabled else {
+            super.pressesBegan(presses, with: event)
+            return
+        }
+
         updateHardwareKeyboardPresence(true)
         let hardwareAvailable = refreshModifiersForInput()
         let allowFallback = !hardwareAvailable
@@ -506,6 +523,11 @@ extension InputCapturingView {
     }
 
     override public func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard inputCaptureEnabled else {
+            super.pressesEnded(presses, with: event)
+            return
+        }
+
         let hardwareAvailable = refreshModifiersForInput()
         let allowFallback = !hardwareAvailable
 
@@ -568,6 +590,11 @@ extension InputCapturingView {
     }
 
     override public func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard inputCaptureEnabled else {
+            super.pressesCancelled(presses, with: event)
+            return
+        }
+
         let hardwareAvailable = refreshModifiersForInput()
         let allowFallback = !hardwareAvailable
 
@@ -722,12 +749,6 @@ extension InputCapturingView {
 
     // MARK: - Intercepted Shortcut Repeat
 
-    private func shouldRepeatPassthroughShortcut(
-        shortcut: MirageInterceptedShortcut
-    ) -> Bool {
-        shortcut.allowsRepeat
-    }
-
     private func sendPassthroughShortcutKeyDown(
         shortcut: MirageInterceptedShortcut,
         baseModifiers: MirageModifierFlags,
@@ -749,7 +770,7 @@ extension InputCapturingView {
         shortcut: MirageInterceptedShortcut,
         baseModifiers: MirageModifierFlags
     ) -> Bool {
-        guard shouldRepeatPassthroughShortcut(shortcut: shortcut) else { return false }
+        guard shortcut.allowsRepeat else { return false }
         let eventModifiers = shortcut.forwardedModifiers(baseModifiers: baseModifiers)
 
         if let existing = passthroughShortcutRepeatState {
@@ -962,6 +983,7 @@ extension InputCapturingView {
     }
 
     private func performResponderShortcutAction(_ action: Selector) {
+        guard inputCaptureEnabled else { return }
         guard let shortcut = editActionShortcut(for: action) else { return }
         if let clientShortcut = clientShortcut(for: shortcut) {
             performClientShortcut(clientShortcut, source: .responderAction)
@@ -973,6 +995,8 @@ extension InputCapturingView {
     /// Override keyCommands to claim iPadOS system shortcuts that would otherwise be
     /// handled locally instead of reaching the remote host.
     override public var keyCommands: [UIKeyCommand]? {
+        guard inputCaptureEnabled else { return nil }
+
         var commands: [UIKeyCommand] = []
         var claimedShortcutCommands: Set<ShortcutCommandIdentity> = []
 
@@ -1044,6 +1068,7 @@ extension InputCapturingView {
 
     @objc
     func handleClientShortcutCommand(_ command: UIKeyCommand) {
+        guard inputCaptureEnabled else { return }
         guard let input = command.input else { return }
         guard let keyCode = Self.characterToMacKeyCodeIfKnown(input)
             ?? Self.keyCode(forKeyCommandInput: input) else {
@@ -1062,6 +1087,7 @@ extension InputCapturingView {
 
     @objc
     func handlePassthroughShortcut(_ command: UIKeyCommand) {
+        guard inputCaptureEnabled else { return }
         guard let input = command.input else { return }
         guard let shortcut = MirageInterceptedShortcutPolicy.shortcut(
             input: input,

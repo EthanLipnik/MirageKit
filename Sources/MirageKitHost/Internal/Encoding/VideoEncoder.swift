@@ -72,9 +72,9 @@ actor VideoEncoder {
 
     nonisolated(unsafe) var encoderInFlightLimit: Int
     nonisolated(unsafe) var encoderInFlightCount: Int = 0
-    nonisolated(unsafe) let encoderInFlightLock = NSLock()
+    nonisolated let encoderInFlightLock = NSLock()
     nonisolated(unsafe) var lastBitstreamFailureLogTime: CFAbsoluteTime = 0
-    nonisolated(unsafe) let bitstreamFailureLogLock = NSLock()
+    nonisolated let bitstreamFailureLogLock = NSLock()
     nonisolated(unsafe) var callbackFailureCount: UInt64 = 0
     nonisolated(unsafe) var lastCallbackFailureLogTime: CFAbsoluteTime = 0
 

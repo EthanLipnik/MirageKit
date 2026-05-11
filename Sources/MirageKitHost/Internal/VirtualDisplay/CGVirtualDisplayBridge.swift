@@ -124,10 +124,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
 
     // MARK: - Virtual Display Creation
 
-    private static func hiDPISettingValue(enabled: Bool) -> UInt32 {
-        enabled ? hiDPIEnabledSetting : hiDPIDisabledSetting
-    }
-
     private static func createDisplayMode(
         modeClass: NSObject.Type,
         width: Int,

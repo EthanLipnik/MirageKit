@@ -11,7 +11,7 @@ import MirageKit
 final class MirageUserDefaultsObserver {
     private var observer: NSObjectProtocol?
 
-    func start(onChange: @escaping () -> Void) {
+    func start(onChange: @escaping @Sendable () -> Void) {
         guard observer == nil else { return }
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,

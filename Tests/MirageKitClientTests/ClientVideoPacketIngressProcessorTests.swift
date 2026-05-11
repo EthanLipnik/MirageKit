@@ -7,7 +7,7 @@
 
 @testable import MirageKitClient
 import Foundation
-import MirageKit
+@testable import MirageKit
 import Testing
 
 @Suite("Client Video Packet Ingress Processor")
@@ -75,6 +75,60 @@ struct ClientVideoPacketIngressProcessorTests {
         snapshot = processor.snapshot()
         #expect(snapshot.queueAgeMaxMs >= 0)
     }
+
+    @Test("Processor drops stale P-frame batches while preserving recovery packets")
+    func processorDropsStalePFrameBatchesWhilePreservingRecoveryPackets() async throws {
+        let gate = PacketProcessingGate()
+        let processor = ClientVideoPacketIngressProcessor(
+            streamID: 7,
+            maxQueuedBatches: 8,
+            maxQueuedPackets: 64,
+            maxQueueAgeMilliseconds: 5
+        ) { data, streamID in
+            gate.record(data, streamID: streamID)
+        }
+        defer {
+            gate.unblock()
+            processor.finish()
+        }
+
+        let blocker = Data([0])
+        let stalePFrame = makeVideoPacket(streamID: 7, frameNumber: 1, flags: [])
+        let keyframe = makeVideoPacket(streamID: 7, frameNumber: 2, flags: [.keyframe])
+
+        gate.block()
+        processor.enqueue([blocker])
+        processor.enqueue([stalePFrame])
+        try await Task.sleep(for: .milliseconds(20))
+        processor.enqueue([keyframe])
+
+        let snapshot = processor.snapshot()
+        #expect(snapshot.stalePacketDropCount >= 1)
+
+        gate.unblock()
+        let received = await gate.payloads(containing: keyframe, timeoutSeconds: 1.0)
+        #expect(received.map(\.data).contains(keyframe))
+        #expect(!received.map(\.data).contains(stalePFrame))
+    }
+}
+
+private func makeVideoPacket(
+    streamID: StreamID,
+    frameNumber: UInt32,
+    flags: FrameFlags
+) -> Data {
+    FrameHeader(
+        flags: flags,
+        streamID: streamID,
+        sequenceNumber: frameNumber,
+        timestamp: UInt64(frameNumber),
+        frameNumber: frameNumber,
+        fragmentIndex: 0,
+        fragmentCount: 1,
+        payloadLength: 0,
+        frameByteCount: 0,
+        checksum: 0
+    ).serialize()
 }
 
 private struct ReceivedPacket: Sendable, Equatable {
@@ -128,6 +182,16 @@ private final class PacketProcessingGate: @unchecked Sendable {
         while CFAbsoluteTimeGetCurrent() < deadline {
             let snapshot = snapshot()
             if !snapshot.isEmpty { return snapshot }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return snapshot()
+    }
+
+    func payloads(containing data: Data, timeoutSeconds: TimeInterval) async -> [ReceivedPacket] {
+        let deadline = CFAbsoluteTimeGetCurrent() + timeoutSeconds
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let snapshot = snapshot()
+            if snapshot.contains(where: { $0.data == data }) { return snapshot }
             try? await Task.sleep(for: .milliseconds(10))
         }
         return snapshot()

@@ -96,11 +96,13 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
     package let remoteAccessAllowed: Bool?
     /// Explicit rejection reason when `accepted` is false.
     package let rejectionReason: MirageSessionBootstrapRejectionReason?
-    /// Optional metadata for protocol mismatch handling.
+    /// Host protocol version reported when the host rejects bootstrap for a version mismatch.
     package let protocolMismatchHostVersion: Int?
+    /// Client protocol version reported when the host rejects bootstrap for a version mismatch.
     package let protocolMismatchClientVersion: Int?
-    /// Optional result when a client requested host update on protocol mismatch.
+    /// Whether the host accepted a client-requested update install during mismatch handling.
     package let protocolMismatchUpdateTriggerAccepted: Bool?
+    /// Human-readable host update trigger status returned during mismatch handling.
     package let protocolMismatchUpdateTriggerMessage: String?
 
     package init(

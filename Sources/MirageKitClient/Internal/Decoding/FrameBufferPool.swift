@@ -116,7 +116,6 @@ final class FrameBufferPool: @unchecked Sendable {
         return bytes
     }
 
-    @discardableResult
     func purgeRetainedBuffers() -> Int {
         lock.lock()
         let bytes = retainedBytes

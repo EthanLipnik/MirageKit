@@ -257,7 +257,7 @@ extension MirageClientService {
     }
 
     func handlePing() {
-        sendControlMessageBestEffort(ControlMessage(type: .pong))
+        sendControlMessageBestEffort(.pong)
     }
 
     func handlePong() {

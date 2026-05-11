@@ -144,6 +144,18 @@ struct InputCapturingResponderRecoveryTests {
         )
     }
 
+    @Test("Disabled input capture skips responder recovery without retry")
+    func disabledInputCaptureSkipsResponderRecoveryWithoutRetry() {
+        let disabledContext = makeContext(inputCaptureEnabled: false)
+        let decision = InputCapturingResponderRecoveryPolicy.decision(
+            for: disabledContext,
+            trigger: .streamIdentityUpdated
+        )
+
+        #expect(decision == .skip(.inputCaptureDisabled))
+        #expect(!InputCapturingResponderRecoveryPolicy.shouldRetry(decision, attempt: 0))
+    }
+
     @Test("Software keyboard input sends events while hardware keyboard is present")
     func softwareKeyboardInputSendsEventsWhileHardwareKeyboardIsPresent() {
         let view = InputCapturingView(frame: .zero)
@@ -199,12 +211,14 @@ struct InputCapturingResponderRecoveryTests {
     #endif
 
     private func makeContext(
+        inputCaptureEnabled: Bool = true,
         hasWindow: Bool = true,
         isKeyWindow: Bool = true,
         sceneActivationState: UISceneActivationState? = .foregroundActive,
         targetIsFirstResponder: Bool = false
     ) -> InputCapturingResponderRecoveryContext {
         InputCapturingResponderRecoveryContext(
+            inputCaptureEnabled: inputCaptureEnabled,
             hasWindow: hasWindow,
             isKeyWindow: isKeyWindow,
             sceneActivationState: sceneActivationState,

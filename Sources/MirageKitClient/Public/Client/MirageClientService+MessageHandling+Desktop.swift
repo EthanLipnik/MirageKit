@@ -380,9 +380,8 @@ extension MirageClientService {
             if desktopStreamRequestStartTime > 0 {
                 cancelStreamSetup()
                 clearPendingDesktopStreamStartState()
-                delegate?.clientService(
-                    self,
-                    didEncounterError: MirageError.protocolError("Desktop stream failed: invalid start response from host.")
+                delegate?.didEncounterError(
+                    MirageError.protocolError("Desktop stream failed: invalid start response from host.")
                 )
             }
         }
@@ -397,17 +396,11 @@ extension MirageClientService {
                 clearDesktopResizeState(streamID: streamID)
             }
             clearPendingDesktopStreamStartState()
-            delegate?.clientService(
-                self,
-                didEncounterError: MirageError.protocolError("Desktop stream failed: \(failed.reason)")
-            )
+            delegate?.didEncounterError(MirageError.protocolError("Desktop stream failed: \(failed.reason)"))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream failed: ")
             clearPendingDesktopStreamStartState()
-            delegate?.clientService(
-                self,
-                didEncounterError: MirageError.protocolError("Desktop stream start failed (unknown reason)")
-            )
+            delegate?.didEncounterError(MirageError.protocolError("Desktop stream start failed (unknown reason)"))
         }
     }
 

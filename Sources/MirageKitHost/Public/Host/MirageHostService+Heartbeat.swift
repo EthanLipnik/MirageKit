@@ -130,7 +130,7 @@ extension MirageHostService {
                 reason: .backgroundLeaseExpired,
                 message: "Background lease expired."
             )
-            self.delegate?.hostService(self, didDisconnectClient: client)
+            self.delegate?.didDisconnectClient(client)
         }
 
         MirageLogger.host(
@@ -229,7 +229,7 @@ extension MirageHostService {
                     sessionID: clientContext.sessionID,
                     notifyClient: false
                 )
-                delegate?.hostService(self, didDisconnectClient: clientContext.client)
+                delegate?.didDisconnectClient(clientContext.client)
             }
         }
     }

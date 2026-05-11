@@ -11,7 +11,6 @@ import AppKit
 import SwiftUI
 
 /// Observes macOS window focus changes for a stream session.
-/// Observes macOS window focus changes for a stream session.
 struct MirageWindowFocusObserver: NSViewRepresentable {
     /// Session ID used to track focus state.
     let sessionID: StreamSessionID
@@ -102,20 +101,20 @@ private final class FocusTrackingView: NSView {
     }
 
     @objc
-    private func windowDidBecomeKey(_: Notification) {
+    private func windowDidBecomeKey() {
         sessionStore?.setFocusedSession(sessionID)
         notifyHostWindowFocused()
     }
 
     @objc
-    private func windowDidResignKey(_: Notification) {
+    private func windowDidResignKey() {
         if sessionStore?.focusedSessionID == sessionID { sessionStore?.setFocusedSession(nil) }
         guard let streamID else { return }
         clientService?.sendInputFireAndForget(.flagsChanged([]), forStream: streamID)
     }
 
     @objc
-    private func windowWillClose(_: Notification) {
+    private func windowWillClose() {
         if sessionStore?.focusedSessionID == sessionID { sessionStore?.setFocusedSession(nil) }
         if let streamID {
             clientService?.sendInputFireAndForget(.flagsChanged([]), forStream: streamID)
@@ -132,7 +131,7 @@ private final class FocusTrackingView: NSView {
     }
 
     deinit {
-        detachWindowObservers()
+        NotificationCenter.default.removeObserver(self)
     }
 }
 #endif

@@ -95,28 +95,4 @@ struct ClientNetworkPathStatusTests {
 
         #expect(kind == .awdl)
     }
-
-    private func makeStatus(
-        kind: MirageNetworkPathKind = .wifi,
-        interfaceNames: [String] = ["en0"],
-        supportsIPv4: Bool = true,
-        supportsIPv6: Bool = true,
-        usesWired: Bool = false,
-        usesOther: Bool = false
-    ) -> MirageClientNetworkPathStatus {
-        MirageClientNetworkPathStatus(
-            kind: kind,
-            status: "satisfied",
-            interfaceNames: interfaceNames,
-            isExpensive: false,
-            isConstrained: false,
-            supportsIPv4: supportsIPv4,
-            supportsIPv6: supportsIPv6,
-            usesWiFi: kind == .wifi,
-            usesWired: usesWired,
-            usesCellular: kind == .cellular,
-            usesLoopback: kind == .loopback,
-            usesOther: usesOther
-        )
-    }
 }

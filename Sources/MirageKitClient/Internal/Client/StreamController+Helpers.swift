@@ -463,7 +463,7 @@ extension StreamController {
         MirageLogger
             .client(
                 "Waiting for first presented frame (\(reason)) for stream \(streamID), baseline cursor " +
-                    "\(snapshot.generation):\(snapshot.sequence)"
+                    "\(snapshot.cursor.generation):\(snapshot.cursor.sequence)"
             )
         startFirstPresentedFrameMonitorIfNeeded()
     }
@@ -745,8 +745,22 @@ extension StreamController {
         lastBackpressureLogTime = now
         MirageLogger.client(
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "continuing decode without keyframe recovery"
+                "requesting keyframe recovery"
         )
+    }
+
+    func handleDecodeQueueEviction(frameNumber: UInt32) async {
+        guard isRunning, !isStopping else { return }
+        clearQueuedFramesForRecovery()
+        reassembler.enterKeyframeOnlyMode()
+        await decoder.beginRecoveryTracking()
+        if presentationTier == .activeLive {
+            await startKeyframeRecoveryLoopIfNeeded()
+        }
+        MirageLogger.client(
+            "Decode queue evicted dependent frame \(frameNumber) for stream \(streamID); requesting recovery keyframe"
+        )
+        await requestKeyframeRecovery(reason: .frameLoss)
     }
 
     func handleFrameLossSignal(
@@ -773,31 +787,25 @@ extension StreamController {
             MirageLogger.client(
                 "Frame loss detected before first frame for stream \(streamID) reason=\(reason.rawValue); requesting bootstrap recovery keyframe"
             )
+            reassembler.enterKeyframeOnlyMode()
+            await decoder.beginRecoveryTracking()
             await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
             return
         }
 
         if presentationTier == .passiveSnapshot {
             reassembler.enterKeyframeOnlyMode()
+            await decoder.beginRecoveryTracking()
             MirageLogger.client(
                 "Frame loss detected for passive stream \(streamID); entering keyframe-only mode"
             )
             return
         }
 
-        if reason.requestsImmediateActiveRecovery {
-            reassembler.enterKeyframeOnlyMode()
-            MirageLogger.client(
-                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
-            )
-            await startKeyframeRecoveryLoopIfNeeded()
-            await requestKeyframeRecovery(reason: .frameLoss)
-            return
-        }
-
         if reason == .memoryBudget {
             reassembler.enterKeyframeOnlyMode()
             clearQueuedFramesForRecovery()
+            await decoder.beginRecoveryTracking()
             startFreezeMonitorIfNeeded()
             if memoryBudgetRecoveryTask != nil {
                 MirageLogger.client(
@@ -813,30 +821,14 @@ extension StreamController {
             return
         }
 
-        if reason == .timeout, reassembler.isAwaitingKeyframe() {
-            guard !hasPresentedFirstFrame else {
-                startFreezeMonitorIfNeeded()
-                MirageLogger.client(
-                    "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                        "reassembler is awaiting keyframe after presentation progress, waiting for freeze recovery"
-                )
-                return
-            }
-            MirageLogger.client(
-                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                    "reassembler is awaiting keyframe before first presentation, requesting bounded recovery"
-            )
-            await startKeyframeRecoveryLoopIfNeeded()
-            await requestKeyframeRecovery(reason: .frameLoss)
-            return
-        }
-
-        // Active streams avoid keyframe requests for non-blocking packet loss.
-        // Once the reassembler enters keyframe wait, the timeout branch above
-        // requests bounded recovery because dependent P-frames cannot resume decoding.
+        reassembler.enterKeyframeOnlyMode()
+        clearQueuedFramesForRecovery()
+        await decoder.beginRecoveryTracking()
+        await startKeyframeRecoveryLoopIfNeeded()
         MirageLogger.client(
-            "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); waiting for natural keyframe or decode error"
+            "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting recovery keyframe"
         )
+        await requestKeyframeRecovery(reason: .frameLoss)
     }
 
     nonisolated static func frameLossDiagnosticMessage(
@@ -996,7 +988,7 @@ extension StreamController {
             return
         }
 
-        if shouldAttemptPresentationAwaitDecodeErrorRecovery() {
+        if awaitingFirstPresentedFrame {
             firstPresentedFrameLastRecoveryRequestTime = now
             MirageLogger.client(
                 "Decode error threshold observed while awaiting presentation for stream \(streamID); requesting immediate recovery keyframe"
@@ -1104,10 +1096,6 @@ extension StreamController {
         await MainActor.run {
             onTerminalLiveRecoveryFailure(failure)
         }
-    }
-
-    func shouldAttemptPresentationAwaitDecodeErrorRecovery() -> Bool {
-        awaitingFirstPresentedFrame
     }
 
     func shouldAttemptDecodeErrorRecovery(now: CFAbsoluteTime) -> Bool {
@@ -1310,7 +1298,7 @@ extension StreamController {
         )
     }
 
-    private func startFreezeMonitorIfNeeded() {
+    func startFreezeMonitorIfNeeded() {
         guard freezeMonitorTask == nil else { return }
         freezeMonitorTask = Task { [weak self] in
             guard let self else { return }
@@ -1425,10 +1413,6 @@ extension StreamController {
         #else
         return true
         #endif
-    }
-
-    private func isApplicationActiveForFreezeMonitoring() async -> Bool {
-        await Self.defaultApplicationForegroundProvider()
     }
 
     private func maybeTriggerFreezeRecovery(
