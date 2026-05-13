@@ -11,18 +11,20 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    /// Unique key for a cancellable stream setup request within a client session.
     struct StreamSetupCancellationKey: Hashable {
         let clientSessionID: UUID
         let startupRequestID: UUID
     }
 
+    /// Tracks active and cancelled setup requests for one client session.
     struct StreamSetupSessionLifecycle {
         var activeRequestIDs: Set<UUID> = []
         var cancelledRequestIDs: Set<UUID> = []
         var sessionClosing = false
     }
 
-    @discardableResult
+    /// Registers a stream setup request and returns whether it may continue.
     func beginStreamSetup(
         clientSessionID: UUID,
         startupRequestID: UUID
@@ -41,6 +43,7 @@ extension MirageHostService {
         return !isCancelled
     }
 
+    /// Cancels one in-flight stream setup request.
     func cancelStreamSetup(
         clientSessionID: UUID,
         startupRequestID: UUID
@@ -54,6 +57,7 @@ extension MirageHostService {
         ))
     }
 
+    /// Cancels every active stream setup request for a client session.
     func cancelAllStreamSetup(clientSessionID: UUID) {
         var lifecycle = streamSetupLifecycleBySessionID[clientSessionID] ?? StreamSetupSessionLifecycle()
         lifecycle.cancelledRequestIDs.formUnion(lifecycle.activeRequestIDs)
@@ -66,6 +70,7 @@ extension MirageHostService {
         streamSetupLifecycleBySessionID[clientSessionID] = lifecycle
     }
 
+    /// Marks a client session as closing so all current and future setup requests fail closed.
     func markStreamSetupSessionClosing(clientSessionID: UUID) {
         var lifecycle = streamSetupLifecycleBySessionID[clientSessionID] ?? StreamSetupSessionLifecycle()
         lifecycle.sessionClosing = true
@@ -79,6 +84,7 @@ extension MirageHostService {
         streamSetupLifecycleBySessionID[clientSessionID] = lifecycle
     }
 
+    /// Returns whether a stream setup request has been cancelled or superseded.
     func isStreamSetupCancelled(
         clientSessionID: UUID,
         startupRequestID: UUID
@@ -93,6 +99,7 @@ extension MirageHostService {
         ))
     }
 
+    /// Completes stream setup bookkeeping and clears the cancellation marker.
     func finishStreamSetup(
         clientSessionID: UUID,
         startupRequestID: UUID

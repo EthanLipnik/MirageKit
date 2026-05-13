@@ -10,114 +10,7 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
-import AppKit
 import ApplicationServices
-
-enum PlacementBoundsDecisionOutcome: String, Equatable, Sendable {
-    case adoptRecomputedCachedOutsideDisplay = "adopt_recomputed_cached_outside_display"
-    case adoptRecomputedGrowth = "adopt_recomputed_growth"
-    case adoptRecomputedShrink = "adopt_recomputed_shrink"
-    case useCachedMismatch = "use_cached_mismatch"
-}
-
-struct PlacementBoundsDecisionConfig: Equatable, Sendable {
-    var sizeTolerance: CGFloat = 12
-    var originTolerance: CGFloat = 32
-    var minimumSignificantDelta: CGFloat = 24
-    var maximumAcceptedShrinkRatio: CGFloat = 0.35
-    var maximumAcceptedAbsoluteShrink: CGFloat = 140
-}
-
-struct PlacementBoundsDecision: Equatable, Sendable {
-    let outcome: PlacementBoundsDecisionOutcome
-    let resolvedBounds: CGRect
-}
-
-func placementBoundsSelectionDecision(
-    cachedBounds: CGRect,
-    recomputedBounds: CGRect,
-    displayBounds: CGRect,
-    config: PlacementBoundsDecisionConfig = .init()
-)
--> PlacementBoundsDecision {
-    let cached = cachedBounds.standardized
-    let recomputed = recomputedBounds.standardized
-    let display = displayBounds.standardized
-
-    guard cached.width > 0, cached.height > 0 else {
-        return PlacementBoundsDecision(outcome: .adoptRecomputedGrowth, resolvedBounds: recomputed)
-    }
-    guard recomputed.width > 0, recomputed.height > 0 else {
-        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
-    }
-
-    let displayContainmentBounds = display.insetBy(dx: -1, dy: -1)
-    let displayContainsCached = displayContainmentBounds.contains(cached)
-    let displayContainsRecomputed = displayContainmentBounds.contains(recomputed)
-    if displayContainsRecomputed, !displayContainsCached {
-        return PlacementBoundsDecision(
-            outcome: .adoptRecomputedCachedOutsideDisplay,
-            resolvedBounds: recomputed
-        )
-    }
-
-    let originClose = abs(recomputed.minX - cached.minX) <= config.originTolerance &&
-        abs(recomputed.minY - cached.minY) <= config.originTolerance
-    guard originClose, displayContainsRecomputed else {
-        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
-    }
-
-    let widthDelta = recomputed.width - cached.width
-    let heightDelta = recomputed.height - cached.height
-    let widthDeltaAbsolute = abs(widthDelta)
-    let heightDeltaAbsolute = abs(heightDelta)
-    let maxAbsoluteDelta = max(widthDeltaAbsolute, heightDeltaAbsolute)
-    let minimumDimension = max(1, min(cached.width, cached.height))
-    let maxRelativeDelta = maxAbsoluteDelta / minimumDimension
-    let isSignificantDelta = maxAbsoluteDelta >= config.minimumSignificantDelta
-
-    enum AxisTrend {
-        case growth
-        case shrink
-        case stable
-    }
-
-    func trend(for delta: CGFloat, tolerance: CGFloat) -> AxisTrend {
-        if delta > tolerance { return .growth }
-        if delta < -tolerance { return .shrink }
-        return .stable
-    }
-
-    let widthTrend = trend(for: widthDelta, tolerance: config.sizeTolerance)
-    let heightTrend = trend(for: heightDelta, tolerance: config.sizeTolerance)
-    let hasGrowth = widthTrend == .growth || heightTrend == .growth
-    let hasShrink = widthTrend == .shrink || heightTrend == .shrink
-
-    // Mixed growth/shrink typically indicates cross-display drift in visible-frame reads.
-    if hasGrowth, hasShrink, isSignificantDelta {
-        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
-    }
-
-    let exceedsAbsoluteCap = maxAbsoluteDelta > config.maximumAcceptedAbsoluteShrink
-    let exceedsRatioCap = maxRelativeDelta > config.maximumAcceptedShrinkRatio
-    if isSignificantDelta, (exceedsAbsoluteCap || exceedsRatioCap) {
-        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
-    }
-
-    if hasShrink {
-        return PlacementBoundsDecision(outcome: .adoptRecomputedShrink, resolvedBounds: recomputed)
-    }
-    if hasGrowth {
-        return PlacementBoundsDecision(outcome: .adoptRecomputedGrowth, resolvedBounds: recomputed)
-    }
-
-    let cachedArea = cached.width * cached.height
-    let recomputedArea = recomputed.width * recomputed.height
-    let outcome: PlacementBoundsDecisionOutcome = recomputedArea >= cachedArea
-        ? .adoptRecomputedGrowth
-        : .adoptRecomputedShrink
-    return PlacementBoundsDecision(outcome: outcome, resolvedBounds: recomputed)
-}
 
 /// Manages window placement ownership and restoration for Mirage streams.
 /// Dedicated virtual-display streams can move windows between spaces; mirrored
@@ -128,132 +21,6 @@ actor WindowSpaceManager {
     static let shared = WindowSpaceManager()
 
     private init() {}
-
-    // MARK: - Types
-
-    struct TrafficLightVisibilitySnapshot: Sendable {
-        let closeHidden: Bool?
-        let minimizeHidden: Bool?
-        let zoomHidden: Bool?
-
-        var hasRecordedState: Bool {
-            closeHidden != nil || minimizeHidden != nil || zoomHidden != nil
-        }
-    }
-
-    struct WindowBindingOwner: Sendable {
-        let streamID: StreamID
-        let windowID: WindowID
-        let displayID: CGDirectDisplayID
-        let generation: UInt64
-    }
-
-    /// Saved state for restoring a window to its original position
-    struct SavedWindowState: Sendable {
-        let windowID: WindowID
-        let originalFrame: CGRect
-        let originalSpaceIDs: [CGSSpaceID]
-        let trafficLightVisibilitySnapshot: TrafficLightVisibilitySnapshot?
-        let owner: WindowBindingOwner?
-        let savedAt: Date
-    }
-
-    /// Error types for window operations
-    enum WindowSpaceError: Error, LocalizedError {
-        case windowNotFound(WindowID)
-        case noOriginalState(WindowID)
-        case moveFailed(WindowID, String)
-        case ownerConflict(WindowID, existingStreamID: StreamID, requestedStreamID: StreamID)
-        case ownerMismatch(WindowID, expectedStreamID: StreamID, actualStreamID: StreamID)
-
-        var errorDescription: String? {
-            switch self {
-            case let .windowNotFound(id):
-                "Window \(id) not found"
-            case let .noOriginalState(id):
-                "No saved state for window \(id)"
-            case let .moveFailed(id, reason):
-                "Failed to move window \(id): \(reason)"
-            case let .ownerConflict(id, existingStreamID, requestedStreamID):
-                "Window \(id) already owned by stream \(existingStreamID); requested stream \(requestedStreamID)"
-            case let .ownerMismatch(id, expectedStreamID, actualStreamID):
-                "Window \(id) restore owner mismatch expected stream \(expectedStreamID), actual stream \(actualStreamID)"
-            }
-        }
-    }
-
-    enum RestoreOwnerValidationResult: Sendable, Equatable {
-        case allowed
-        case ownerMismatch(expectedStreamID: StreamID, actualStreamID: StreamID)
-    }
-
-    enum StaleOwnerRecoveryDecision: Sendable, Equatable {
-        case noOwner
-        case activeOwnerConflict(streamID: StreamID)
-        case recover(streamID: StreamID)
-    }
-
-    enum StaleOwnerRecoveryResult: Sendable, Equatable {
-        case noSavedState
-        case noOwner
-        case activeOwnerConflict(streamID: StreamID)
-        case staleOwnerRestoreSuccess(streamID: StreamID)
-        case staleOwnerClearedAfterRestoreFailure(streamID: StreamID)
-    }
-
-    nonisolated static func validateRestoreOwner(
-        expectedOwner: WindowBindingOwner?,
-        savedOwner: WindowBindingOwner?
-    ) -> RestoreOwnerValidationResult {
-        guard let expectedOwner else { return .allowed }
-        guard let savedOwner else {
-            return .ownerMismatch(
-                expectedStreamID: expectedOwner.streamID,
-                actualStreamID: StreamID(0)
-            )
-        }
-        guard savedOwner.streamID == expectedOwner.streamID else {
-            return .ownerMismatch(
-                expectedStreamID: expectedOwner.streamID,
-                actualStreamID: savedOwner.streamID
-            )
-        }
-        return .allowed
-    }
-
-    nonisolated static func staleOwnerRecoveryDecision(
-        savedOwner: WindowBindingOwner?,
-        activeStreamIDs: Set<StreamID>
-    ) -> StaleOwnerRecoveryDecision {
-        guard let savedOwner else { return .noOwner }
-        if activeStreamIDs.contains(savedOwner.streamID) {
-            return .activeOwnerConflict(streamID: savedOwner.streamID)
-        }
-        return .recover(streamID: savedOwner.streamID)
-    }
-
-    nonisolated static func claimedWindowIDsForActiveOwners(
-        from savedStates: [WindowID: SavedWindowState],
-        activeStreamIDs: Set<StreamID>
-    ) -> Set<WindowID> {
-        Set(savedStates.compactMap { windowID, state in
-            guard let owner = state.owner,
-                  activeStreamIDs.contains(owner.streamID) else {
-                return nil
-            }
-            return windowID
-        })
-    }
-
-    nonisolated static func windowIDsOwned(
-        by streamID: StreamID,
-        from savedStates: [WindowID: SavedWindowState]
-    ) -> Set<WindowID> {
-        Set(savedStates.compactMap { windowID, state in
-            guard state.owner?.streamID == streamID else { return nil }
-            return windowID
-        })
-    }
 
     // MARK: - State
 
@@ -266,12 +33,11 @@ actor WindowSpaceManager {
         owner: WindowBindingOwner?
     ) throws {
         if savedStates[windowID] == nil {
-            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+            let currentSpaces = CGSWindowSpaceBridge.spaces(for: windowID)
             let savedState = SavedWindowState(
                 windowID: windowID,
                 originalFrame: originalFrame,
                 originalSpaceIDs: currentSpaces,
-                trafficLightVisibilitySnapshot: nil,
                 owner: owner,
                 savedAt: Date()
             )
@@ -299,7 +65,6 @@ actor WindowSpaceManager {
                 windowID: existing.windowID,
                 originalFrame: existing.originalFrame,
                 originalSpaceIDs: existing.originalSpaceIDs,
-                trafficLightVisibilitySnapshot: existing.trafficLightVisibilitySnapshot,
                 owner: owner,
                 savedAt: existing.savedAt
             )
@@ -329,7 +94,7 @@ actor WindowSpaceManager {
     )
     async throws {
         // Get current window info
-        guard let windowInfo = getWindowInfo(windowID) else { throw WindowSpaceError.windowNotFound(windowID) }
+        guard let windowInfo = windowInfo(for: windowID) else { throw WindowSpaceError.windowNotFound(windowID) }
         try prepareSavedStateIfNeeded(
             for: windowID,
             originalFrame: windowInfo.frame,
@@ -350,7 +115,7 @@ actor WindowSpaceManager {
             // On retry, re-query the display's current space in case the virtual display
             // was reassigned to a new space by the window server.
             if attempt > 1 {
-                let refreshedSpaceID = CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
+                let refreshedSpaceID = CGSWindowSpaceBridge.currentSpace(for: displayID)
                 if refreshedSpaceID != 0, refreshedSpaceID != currentSpaceID {
                     MirageLogger.host(
                         "Display \(displayID) space changed from \(currentSpaceID) to \(refreshedSpaceID) on attempt \(attempt); adopting new space"
@@ -396,7 +161,7 @@ actor WindowSpaceManager {
             // Snap back to the true target origin after fitting so verification uses
             // the canonical position regardless of the retry offset.
             if retryOffset > 0 {
-                CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin)
+                _ = CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin)
             }
 
             if verifyWindowPlacement(
@@ -415,13 +180,21 @@ actor WindowSpaceManager {
                 MirageLogger.host(
                     "Window \(windowID) placement not yet confirmed on attempt \(attempt)/\(maxAttempts); retrying"
                 )
-                try? await Task.sleep(for: .milliseconds(Int64(100 * attempt)))
+                do {
+                    try await Task.sleep(for: .milliseconds(Int64(100 * attempt)))
+                } catch {
+                    return
+                }
             }
         }
 
         CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: currentSpaceID)
         centerWindow(windowID, on: resolvedDisplayBounds)
-        try? await Task.sleep(for: .milliseconds(40))
+        do {
+            try await Task.sleep(for: .milliseconds(40))
+        } catch {
+            return
+        }
 
         if let fallbackFrame = resolvedWindowFrame(windowID, axWindow: resolvedAXWindow) {
             let expandedBounds = resolvedDisplayBounds.insetBy(dx: -24, dy: -24)
@@ -444,7 +217,7 @@ actor WindowSpaceManager {
         owner: WindowBindingOwner? = nil
     )
     throws {
-        guard let windowInfo = getWindowInfo(windowID) else {
+        guard let windowInfo = windowInfo(for: windowID) else {
             throw WindowSpaceError.windowNotFound(windowID)
         }
         try prepareSavedStateIfNeeded(
@@ -452,142 +225,6 @@ actor WindowSpaceManager {
             originalFrame: windowInfo.frame,
             owner: owner
         )
-    }
-
-    private func resolvePlacementDisplayBounds(
-        displayID: CGDirectDisplayID,
-        fallbackBounds: CGRect
-    ) -> CGRect {
-        let fallback = fallbackBounds.standardized
-        let hasFallback = fallback.width > 0 && fallback.height > 0
-
-        let displayBounds: CGRect
-        if let modeLogicalResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID)?.logical {
-            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-                displayID,
-                knownResolution: modeLogicalResolution
-            )
-        } else if hasFallback {
-            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-                displayID,
-                knownResolution: fallback.size
-            )
-        } else {
-            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(displayID)
-        }
-
-        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
-            displayID,
-            knownBounds: displayBounds
-        )
-        visibleBounds = visibleBounds.intersection(displayBounds)
-        if visibleBounds.isEmpty {
-            return hasFallback ? fallback : displayBounds
-        }
-        guard hasFallback else {
-            return visibleBounds
-        }
-
-        let decision = placementBoundsSelectionDecision(
-            cachedBounds: fallback,
-            recomputedBounds: visibleBounds,
-            displayBounds: displayBounds
-        )
-        MirageLogger.host(
-            "event=placement_bounds_decision outcome=\(decision.outcome.rawValue) " +
-                "display=\(displayID) cached=\(fallback) recomputed=\(visibleBounds) " +
-                "resolved=\(decision.resolvedBounds) displayBounds=\(displayBounds)"
-        )
-        return decision.resolvedBounds
-    }
-
-    private func verifyWindowPlacement(
-        _ windowID: WindowID,
-        expectedSpaceID: CGSSpaceID,
-        displayBounds: CGRect,
-        targetOrigin: CGPoint,
-        axWindow: AXUIElement?,
-        targetContentAspectRatio: CGFloat?
-    ) -> Bool {
-        let spaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-        let expectedSpaceObserved = spaces.contains(expectedSpaceID)
-        if !spaces.isEmpty, !expectedSpaceObserved {
-            MirageLogger.debug(
-                .host,
-                "Window \(windowID) not yet in expected space \(expectedSpaceID); current spaces=\(spaces)"
-            )
-        }
-
-        let frame = resolvedWindowFrame(windowID, axWindow: axWindow)
-        guard let frame else {
-            if !expectedSpaceObserved {
-                MirageLogger.debug(
-                    .host,
-                    "verify_placement window=\(windowID) failed=space_mismatch " +
-                        "expected_space=\(expectedSpaceID) current_spaces=\(spaces) frame=nil"
-                )
-            }
-            return expectedSpaceObserved
-        }
-
-        let originTolerance: CGFloat = 16
-        let originMatches = abs(frame.origin.x - targetOrigin.x) <= originTolerance &&
-            abs(frame.origin.y - targetOrigin.y) <= originTolerance
-        let expandedBounds = displayBounds.insetBy(dx: -24, dy: -24)
-        let intersectsBounds = frame.intersects(expandedBounds)
-        let expectedFrame = aspectFittedFrame(displayBounds, targetContentAspectRatio: targetContentAspectRatio)
-        let minimumExpectedWidth = max(1, expectedFrame.width - 12)
-        let minimumExpectedHeight = max(1, expectedFrame.height - 12)
-        let maximumExpectedWidth = expectedFrame.width + 24
-        let maximumExpectedHeight = expectedFrame.height + 24
-        let sizeMatchesExpectation = frame.width >= minimumExpectedWidth &&
-            frame.height >= minimumExpectedHeight &&
-            frame.width <= maximumExpectedWidth &&
-            frame.height <= maximumExpectedHeight
-
-        if (originMatches || intersectsBounds), sizeMatchesExpectation {
-            return true
-        }
-
-        // Some CGS window queries can report local per-space coordinates. Accept that form only
-        // when space membership confirms the window is in the expected target space.
-        if expectedSpaceObserved {
-            let localExpectedFrame = aspectFittedFrame(
-                CGRect(origin: .zero, size: displayBounds.size),
-                targetContentAspectRatio: targetContentAspectRatio
-            )
-            let localCoordinateBounds = localExpectedFrame.insetBy(dx: -24, dy: -24)
-            let localOriginMatches = abs(frame.origin.x - localExpectedFrame.origin.x) <= 24 &&
-                abs(frame.origin.y - localExpectedFrame.origin.y) <= 24
-            let localSizeUpperBoundMatches = frame.width <= (localExpectedFrame.width + 24) &&
-                frame.height <= (localExpectedFrame.height + 24)
-            if (localOriginMatches || frame.intersects(localCoordinateBounds)),
-               localSizeUpperBoundMatches,
-               sizeMatchesExpectation {
-                return true
-            }
-        }
-
-        // Log detailed diagnostics about which checks failed to aid debugging.
-        var failedChecks: [String] = []
-        if !expectedSpaceObserved {
-            failedChecks.append("space(expected=\(expectedSpaceID),actual=\(spaces))")
-        }
-        if !originMatches {
-            failedChecks.append("origin(expected=\(targetOrigin),actual=\(frame.origin),dx=\(abs(frame.origin.x - targetOrigin.x)),dy=\(abs(frame.origin.y - targetOrigin.y)))")
-        }
-        if !intersectsBounds {
-            failedChecks.append("bounds_intersection(frame=\(frame),display=\(displayBounds))")
-        }
-        if !sizeMatchesExpectation {
-            failedChecks.append("size(actual=\(frame.width)x\(frame.height),expected=\(expectedFrame.width)x\(expectedFrame.height),range=\(minimumExpectedWidth)-\(maximumExpectedWidth)x\(minimumExpectedHeight)-\(maximumExpectedHeight))")
-        }
-        MirageLogger.debug(
-            .host,
-            "verify_placement window=\(windowID) failed_checks=[\(failedChecks.joined(separator: ", "))]"
-        )
-
-        return false
     }
 
     /// Restore a window to its original position and space
@@ -623,7 +260,7 @@ actor WindowSpaceManager {
 
         // Restore original position
         if let axWindow = resolveAXWindow(for: windowID) {
-            await resizeWindowViaAccessibility(
+            _ = await resizeWindowViaAccessibility(
                 windowID,
                 to: savedState.originalFrame.size,
                 axElement: axWindow
@@ -633,7 +270,6 @@ actor WindowSpaceManager {
             MirageLogger.debug(.host, "Failed to restore window \(windowID) position")
         }
 
-        restoreTrafficLightsIfNeeded(savedState.trafficLightVisibilitySnapshot, windowID: windowID)
         MirageLogger.host("Restored window \(windowID) to frame \(savedState.originalFrame)")
     }
 
@@ -664,7 +300,7 @@ actor WindowSpaceManager {
     ///   - windowID: The window to center
     ///   - displayBounds: The display bounds
     func centerWindow(_ windowID: WindowID, on displayBounds: CGRect) {
-        guard let windowInfo = getWindowInfo(windowID) else { return }
+        guard let windowInfo = windowInfo(for: windowID) else { return }
 
         let windowSize = windowInfo.frame.size
         let centerX = displayBounds.origin.x + (displayBounds.width - windowSize.width) / 2
@@ -673,476 +309,13 @@ actor WindowSpaceManager {
         positionWindow(windowID, at: CGPoint(x: centerX, y: centerY))
     }
 
-    private func hideTrafficLightsIfSupported(
-        windowID: WindowID,
-        axWindow: AXUIElement?
-    )
-    -> TrafficLightVisibilitySnapshot? {
-        guard let axWindow else {
-            MirageLogger.debug(.host, "Traffic lights hide unsupported for window \(windowID): AX window unavailable")
-            return nil
-        }
-
-        let closeHidden = hideTrafficLightButtonIfSupported(
-            in: axWindow,
-            buttonAttribute: kAXCloseButtonAttribute as CFString,
-            buttonLabel: "close",
-            windowID: windowID
-        )
-        let minimizeHidden = hideTrafficLightButtonIfSupported(
-            in: axWindow,
-            buttonAttribute: kAXMinimizeButtonAttribute as CFString,
-            buttonLabel: "minimize",
-            windowID: windowID
-        )
-        let zoomHidden = hideTrafficLightButtonIfSupported(
-            in: axWindow,
-            buttonAttribute: kAXZoomButtonAttribute as CFString,
-            buttonLabel: "zoom",
-            windowID: windowID
-        )
-
-        let snapshot = TrafficLightVisibilitySnapshot(
-            closeHidden: closeHidden,
-            minimizeHidden: minimizeHidden,
-            zoomHidden: zoomHidden
-        )
-
-        if snapshot.hasRecordedState {
-            MirageLogger.host("Applied traffic light hiding for streamed window \(windowID)")
-            return snapshot
-        }
-
-        MirageLogger.debug(.host, "Traffic lights hide unsupported for window \(windowID): no settable AXHidden buttons")
-        return nil
-    }
-
-    private func hideTrafficLightButtonIfSupported(
-        in axWindow: AXUIElement,
-        buttonAttribute: CFString,
-        buttonLabel: String,
-        windowID: WindowID
-    )
-    -> Bool? {
-        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights hide unsupported for window \(windowID): missing \(buttonLabel) button"
-            )
-            return nil
-        }
-
-        let hiddenAttribute = "AXHidden" as CFString
-        guard let existingValue = axBooleanAttributeValue(button, attribute: hiddenAttribute) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights hide unsupported for window \(windowID): \(buttonLabel) AXHidden unavailable"
-            )
-            return nil
-        }
-
-        guard isAXAttributeSettable(button, attribute: hiddenAttribute) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights hide unsupported for window \(windowID): \(buttonLabel) AXHidden not settable"
-            )
-            return nil
-        }
-
-        guard setAXBooleanAttributeValue(button, attribute: hiddenAttribute, value: true) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights hide failed for window \(windowID): \(buttonLabel) AXHidden set failed"
-            )
-            return nil
-        }
-
-        MirageLogger.host("Hid \(buttonLabel) traffic light for streamed window \(windowID)")
-        return existingValue
-    }
-
-    private func restoreTrafficLightsIfNeeded(_ snapshot: TrafficLightVisibilitySnapshot?, windowID: WindowID) {
-        guard let snapshot, snapshot.hasRecordedState else { return }
-        guard let axWindow = resolveAXWindow(for: windowID) else {
-            MirageLogger.debug(.host, "Traffic lights restore skipped for window \(windowID): AX window unavailable")
-            return
-        }
-
-        restoreTrafficLightButtonIfNeeded(
-            in: axWindow,
-            buttonAttribute: kAXCloseButtonAttribute as CFString,
-            buttonLabel: "close",
-            hiddenValue: snapshot.closeHidden,
-            windowID: windowID
-        )
-        restoreTrafficLightButtonIfNeeded(
-            in: axWindow,
-            buttonAttribute: kAXMinimizeButtonAttribute as CFString,
-            buttonLabel: "minimize",
-            hiddenValue: snapshot.minimizeHidden,
-            windowID: windowID
-        )
-        restoreTrafficLightButtonIfNeeded(
-            in: axWindow,
-            buttonAttribute: kAXZoomButtonAttribute as CFString,
-            buttonLabel: "zoom",
-            hiddenValue: snapshot.zoomHidden,
-            windowID: windowID
-        )
-
-        MirageLogger.host("Restored traffic light visibility for streamed window \(windowID)")
-    }
-
-    private func fitWindowToVisibleFrame(
-        _ windowID: WindowID,
-        visibleFrame: CGRect,
-        axWindow: AXUIElement?,
-        targetContentAspectRatio: CGFloat?
-    )
-    async {
-        guard visibleFrame.width > 0, visibleFrame.height > 0 else { return }
-        guard let axWindow = axWindow ?? resolveAXWindow(for: windowID) else { return }
-
-        func fitFrameForInset(_ inset: CGFloat) -> CGRect {
-            let unconstrained = CGRect(
-                x: visibleFrame.minX,
-                y: visibleFrame.minY - inset,
-                width: visibleFrame.width,
-                height: visibleFrame.height + inset
-            )
-            return aspectFittedFrame(
-                unconstrained,
-                targetContentAspectRatio: targetContentAspectRatio
-            )
-        }
-
-        let candidateInsets: [CGFloat] = [0]
-
-        let coverageTargetFrame = aspectFittedFrame(
-            visibleFrame,
-            targetContentAspectRatio: targetContentAspectRatio
-        )
-        let minimumCoverageHeight = max(1, coverageTargetFrame.height - 6)
-        let minimumCoverageWidth = max(1, coverageTargetFrame.width - 6)
-        var bestCoverageHeight: CGFloat = -1
-        var bestCoverageWidth: CGFloat = -1
-        var bestOrigin: CGPoint?
-        var bestSize: CGSize?
-        var bestInset: CGFloat = 0
-
-        for inset in candidateInsets {
-            let fitFrame = fitFrameForInset(inset)
-            let targetSize = CGSize(width: fitFrame.width, height: fitFrame.height)
-            if isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
-                await resizeWindowViaAccessibility(windowID, to: targetSize, axElement: axWindow)
-            }
-
-            let fittedSize = targetSize
-            let targetOrigin = CGPoint(
-                x: fitFrame.minX + (fitFrame.width - fittedSize.width) * 0.5,
-                y: fitFrame.minY
-            )
-
-            var mutablePoint = targetOrigin
-            if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
-                _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
-            }
-            if !CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin) {
-                MirageLogger.debug(.host, "Failed to place window \(windowID) at \(targetOrigin)")
-            }
-
-            let observedFrame = resolvedWindowFrame(windowID, axWindow: axWindow)
-            let requestedFrame = CGRect(origin: targetOrigin, size: fittedSize)
-            let resolvedFrame: CGRect
-            if let observedFrame {
-                resolvedFrame = observedFrame
-            } else {
-                resolvedFrame = requestedFrame
-            }
-            let coverageRect = resolvedFrame.intersection(visibleFrame)
-            let coverageHeight = max(0, coverageRect.height)
-            let coverageWidth = max(0, coverageRect.width)
-            if coverageHeight > bestCoverageHeight ||
-                (abs(coverageHeight - bestCoverageHeight) <= 0.5 && coverageWidth > bestCoverageWidth) {
-                bestCoverageHeight = coverageHeight
-                bestCoverageWidth = coverageWidth
-                bestOrigin = targetOrigin
-                bestSize = fittedSize
-                bestInset = inset
-            }
-
-            if coverageHeight >= minimumCoverageHeight, coverageWidth >= minimumCoverageWidth {
-                return
-            }
-        }
-
-        if let bestOrigin {
-            if let bestSize, isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
-                await resizeWindowViaAccessibility(windowID, to: bestSize, axElement: axWindow)
-            }
-            var mutablePoint = bestOrigin
-            if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
-                _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
-            }
-            CGSWindowSpaceBridge.moveWindow(windowID, to: bestOrigin)
-            MirageLogger.debug(
-                .host,
-                "Window \(windowID) best-fit content coverage within visible frame: \(Int(bestCoverageWidth))x\(Int(bestCoverageHeight)) (inset=\(Int(bestInset)))"
-            )
-        }
-    }
-
-    private func aspectFittedFrame(
-        _ frame: CGRect,
-        targetContentAspectRatio: CGFloat?
-    ) -> CGRect {
-        guard let requestedAspect = targetContentAspectRatio,
-              requestedAspect.isFinite,
-              requestedAspect > 0,
-              frame.width > 0,
-              frame.height > 0 else {
-            return frame
-        }
-
-        let containerAspect = frame.width / frame.height
-        guard abs(containerAspect - requestedAspect) > 0.0001 else { return frame }
-
-        var fittedWidth = frame.width
-        var fittedHeight = frame.height
-
-        if containerAspect > requestedAspect {
-            // Container is wider than requested, constrain width.
-            fittedWidth = floor(frame.height * requestedAspect)
-        } else {
-            // Container is taller than requested, constrain height.
-            fittedHeight = floor(frame.width / requestedAspect)
-        }
-
-        fittedWidth = max(1, fittedWidth)
-        fittedHeight = max(1, fittedHeight)
-
-        let originX = frame.minX + (frame.width - fittedWidth) * 0.5
-        let originY = frame.minY + (frame.height - fittedHeight) * 0.5
-
-        return CGRect(x: originX, y: originY, width: fittedWidth, height: fittedHeight)
-    }
-
-    private func raiseWindow(_ windowID: WindowID, axWindow: AXUIElement?) -> Bool {
-        let didRaiseWithCGS = CGSWindowSpaceBridge.bringWindowToFront(windowID)
-        if didRaiseWithCGS {
-            return true
-        }
-        guard let axWindow else { return false }
-        return AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString) == .success
-    }
-
-    private func restoreTrafficLightButtonIfNeeded(
-        in axWindow: AXUIElement,
-        buttonAttribute: CFString,
-        buttonLabel: String,
-        hiddenValue: Bool?,
-        windowID: WindowID
-    ) {
-        guard let hiddenValue else { return }
-        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights restore skipped for window \(windowID): missing \(buttonLabel) button"
-            )
-            return
-        }
-
-        let hiddenAttribute = "AXHidden" as CFString
-        guard isAXAttributeSettable(button, attribute: hiddenAttribute) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights restore skipped for window \(windowID): \(buttonLabel) AXHidden not settable"
-            )
-            return
-        }
-
-        guard setAXBooleanAttributeValue(button, attribute: hiddenAttribute, value: hiddenValue) else {
-            MirageLogger.debug(
-                .host,
-                "Traffic lights restore failed for window \(windowID): \(buttonLabel) AXHidden set failed"
-            )
-            return
-        }
-    }
-
-    private func resolveAXWindow(for windowID: WindowID) -> AXUIElement? {
-        guard let windowInfo = getWindowInfo(windowID) else { return nil }
-        guard let ownerPID = windowInfo.ownerPID else { return nil }
-
-        let appElement = AXUIElementCreateApplication(ownerPID)
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-        guard result == .success,
-              let axWindowsValue = windowsRef,
-              let axWindows = axWindowsValue as? [AXUIElement],
-              !axWindows.isEmpty else {
-            return nil
-        }
-
-        if axWindows.count == 1 {
-            return axWindows[0]
-        }
-
-        // Prefer exact window-ID matching so traffic-light changes and size/position writes
-        // target the streamed window even when an app has multiple similarly sized windows.
-        for axWindow in axWindows {
-            var candidateWindowID: CGWindowID = 0
-            if _AXUIElementGetWindow(axWindow, &candidateWindowID) == .success,
-               WindowID(candidateWindowID) == windowID {
-                return axWindow
-            }
-        }
-
-        let targetFrame = windowInfo.frame
-        for axWindow in axWindows {
-            guard let frame = axWindowFrame(axWindow) else { continue }
-            if abs(frame.origin.x - targetFrame.origin.x) <= 24,
-               abs(frame.origin.y - targetFrame.origin.y) <= 24,
-               abs(frame.size.width - targetFrame.size.width) <= 24,
-               abs(frame.size.height - targetFrame.size.height) <= 24 {
-                return axWindow
-            }
-        }
-
-        return axWindows.first
-    }
-
-    private func axWindowFrame(_ axWindow: AXUIElement) -> CGRect? {
-        var positionRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef) == .success,
-              AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let positionRef,
-              let sizeRef,
-              CFGetTypeID(positionRef) == AXValueGetTypeID(),
-              CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        let positionValue = unsafeDowncast(positionRef, to: AXValue.self)
-        let sizeValue = unsafeDowncast(sizeRef, to: AXValue.self)
-
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionValue, .cgPoint, &position),
-              AXValueGetValue(sizeValue, .cgSize, &size) else {
-            return nil
-        }
-
-        return CGRect(origin: position, size: size)
-    }
-
-    private func resolvedWindowFrame(_ windowID: WindowID, axWindow: AXUIElement?) -> CGRect? {
-        if let axWindow {
-            if let axFrame = axWindowFrame(axWindow) {
-                return axFrame
-            }
-        }
-        if let compositorFrame = getWindowInfo(windowID)?.frame {
-            return compositorFrame
-        }
-        return nil
-    }
-
-    private func axElementAttributeValue(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value,
-              CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            return nil
-        }
-
-        return unsafeDowncast(value, to: AXUIElement.self)
-    }
-
-    private func axBooleanAttributeValue(_ element: AXUIElement, attribute: CFString) -> Bool? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value else {
-            return nil
-        }
-
-        if let boolValue = value as? Bool {
-            return boolValue
-        }
-
-        if let numberValue = value as? NSNumber {
-            return numberValue.boolValue
-        }
-
-        return nil
-    }
-
-    private func isAXAttributeSettable(_ element: AXUIElement, attribute: CFString) -> Bool {
-        var isSettable: DarwinBoolean = false
-        let result = AXUIElementIsAttributeSettable(element, attribute, &isSettable)
-        return result == .success && isSettable.boolValue
-    }
-
-    private func setAXBooleanAttributeValue(_ element: AXUIElement, attribute: CFString, value: Bool) -> Bool {
-        let targetValue: CFBoolean = value ? kCFBooleanTrue : kCFBooleanFalse
-        return AXUIElementSetAttributeValue(element, attribute, targetValue) == .success
-    }
-
     // MARK: - State Queries
-
-    /// Check if we have saved state for a window
-    func hasSavedState(for windowID: WindowID) -> Bool {
-        savedStates[windowID] != nil
-    }
-
-    /// Get the saved state for a window
-    func getSavedState(for windowID: WindowID) -> SavedWindowState? {
-        savedStates[windowID]
-    }
-
-    func getSavedOwner(for windowID: WindowID) -> WindowBindingOwner? {
-        savedStates[windowID]?.owner
-    }
 
     func claimedWindowIDsForActiveOwners(activeStreamIDs: Set<StreamID>) -> Set<WindowID> {
         Self.claimedWindowIDsForActiveOwners(
             from: savedStates,
             activeStreamIDs: activeStreamIDs
         )
-    }
-
-    func attemptStaleOwnerRecovery(
-        for windowID: WindowID,
-        activeStreamIDs: Set<StreamID>
-    )
-    async -> StaleOwnerRecoveryResult {
-        guard let savedState = savedStates[windowID] else { return .noSavedState }
-
-        switch Self.staleOwnerRecoveryDecision(
-            savedOwner: savedState.owner,
-            activeStreamIDs: activeStreamIDs
-        ) {
-        case .noOwner:
-            return .noOwner
-        case let .activeOwnerConflict(streamID):
-            MirageLogger.host("active_owner_conflict window=\(windowID) ownerStreamID=\(streamID)")
-            return .activeOwnerConflict(streamID: streamID)
-        case let .recover(streamID):
-            do {
-                try await restoreWindow(windowID, expectedOwner: savedState.owner)
-                MirageLogger.host("stale_owner_restore_success window=\(windowID) ownerStreamID=\(streamID)")
-                return .staleOwnerRestoreSuccess(streamID: streamID)
-            } catch {
-                clearSavedState(for: windowID)
-                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
-                MirageLogger.host(
-                    "stale_owner_cleared_after_restore_failure window=\(windowID) ownerStreamID=\(streamID) error=\(renderedDetail)"
-                )
-                return .staleOwnerClearedAfterRestoreFailure(streamID: streamID)
-            }
-        }
     }
 
     func restoreAllWindowsOwned(by streamID: StreamID) async {
@@ -1172,17 +345,6 @@ actor WindowSpaceManager {
         }
     }
 
-    /// Get all windows with saved states
-    func windowsWithSavedStates() -> [WindowID] {
-        Array(savedStates.keys)
-    }
-
-    /// Get all window IDs that have been moved to the shared virtual display
-    /// Alias for windowsWithSavedStates() with clearer semantics for shared display usage
-    func getMovedWindowIDs() -> [WindowID] {
-        Array(savedStates.keys)
-    }
-
     // MARK: - Cleanup
 
     /// Clear saved state for a window without restoring
@@ -1191,20 +353,11 @@ actor WindowSpaceManager {
         savedStates.removeValue(forKey: windowID)
     }
 
-    /// Restore all windows and clear all saved states
-    /// Called during host shutdown
-    func restoreAllWindows() async {
-        let windowIDs = Array(savedStates.keys)
-        for windowID in windowIDs {
-            await restoreWindowSilently(windowID)
-        }
-        MirageLogger.host("Restored all \(windowIDs.count) windows")
-    }
-
     // MARK: - Helpers
 
-    /// Get information about a window from CGWindowList
-    private func getWindowInfo(_ windowID: WindowID) -> (frame: CGRect, title: String?, ownerPID: pid_t?)? {
+    /// Returns compositor metadata for a window from `CGWindowList`.
+    /// - Parameter windowID: Window identifier to query.
+    func windowInfo(for windowID: WindowID) -> (frame: CGRect, title: String?, ownerPID: pid_t?)? {
         let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[CFString: Any]]
 
         guard let info = windowList?.first else { return nil }
@@ -1222,117 +375,6 @@ actor WindowSpaceManager {
         let ownerPID = (info[kCGWindowOwnerPID] as? NSNumber).map { pid_t($0.int32Value) }
 
         return (frame, title, ownerPID)
-    }
-
-    /// Get all windows on a specific display
-    func getWindowsOnDisplay(_ displayID: CGDirectDisplayID) -> [WindowID] {
-        let displayBounds = CGDisplayBounds(displayID)
-
-        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[CFString: Any]] else { return [] }
-
-        var windowsOnDisplay: [WindowID] = []
-
-        for info in windowList {
-            guard let windowID = info[kCGWindowNumber] as? WindowID,
-                  let boundsDict = info[kCGWindowBounds] as? [String: CGFloat],
-                  let x = boundsDict["X"],
-                  let y = boundsDict["Y"] else {
-                continue
-            }
-
-            // Check if window origin is within display bounds
-            let windowOrigin = CGPoint(x: x, y: y)
-            if displayBounds.contains(windowOrigin) { windowsOnDisplay.append(windowID) }
-        }
-
-        return windowsOnDisplay
-    }
-}
-
-// MARK: - Accessibility Integration
-
-extension WindowSpaceManager {
-    /// Convenience: resize a window by resolving its AX element internally.
-    @discardableResult
-    func resizeWindow(
-        _ windowID: WindowID,
-        to size: CGSize
-    )
-    async -> Bool {
-        guard let axWindow = resolveAXWindow(for: windowID) else {
-            MirageLogger.debug(.host, "Cannot resize window \(windowID): no AXUIElement")
-            return false
-        }
-        return await resizeWindowViaAccessibility(windowID, to: size, axElement: axWindow)
-    }
-
-    /// Resize a window using Accessibility API
-    /// This is more reliable than CGS APIs for some apps
-    @discardableResult
-    func resizeWindowViaAccessibility(
-        _ windowID: WindowID,
-        to size: CGSize,
-        axElement: AXUIElement? = nil
-    )
-    async -> Bool {
-        // If no AX element provided, we can't resize via accessibility
-        guard let element = axElement else {
-            MirageLogger.debug(.host, "No AXUIElement provided for window \(windowID)")
-            return false
-        }
-
-        // Set size
-        var mutableSize = size
-        let sizeValue = AXValueCreate(.cgSize, &mutableSize)
-        let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
-
-        guard result == .success else {
-            MirageLogger.debug(.host, "Failed to resize window \(windowID) via Accessibility: \(result)")
-            return false
-        }
-
-        let tolerance: CGFloat = 3
-        let maxAttempts = 6
-        for attempt in 1 ... maxAttempts {
-            let compositorFrame = getWindowInfo(windowID)?.frame
-            let axFrame = axWindowFrame(element)
-            let compositorMatches = if let compositorFrame {
-                abs(compositorFrame.width - size.width) <= tolerance &&
-                    abs(compositorFrame.height - size.height) <= tolerance
-            } else {
-                false
-            }
-            let axMatches = if let axFrame {
-                abs(axFrame.width - size.width) <= tolerance &&
-                    abs(axFrame.height - size.height) <= tolerance
-            } else {
-                false
-            }
-
-            if compositorMatches || (compositorFrame == nil && axMatches) {
-                let observedCompositor = compositorFrame.map { "\($0.size)" } ?? "unknown"
-                let observedAX = axFrame.map { "\($0.size)" } ?? "unknown"
-                MirageLogger.host(
-                    "Resized window \(windowID) to \(size) via Accessibility (compositor=\(observedCompositor), ax=\(observedAX), attempt \(attempt))"
-                )
-                return true
-            }
-            if attempt < maxAttempts {
-                try? await Task.sleep(for: .milliseconds(20))
-            }
-        }
-
-        let observedCompositorSizeText = if let compositorFrame = getWindowInfo(windowID)?.frame {
-            "\(compositorFrame.size)"
-        } else {
-            "unknown"
-        }
-        let observedAXSizeText = axWindowFrame(element).map { "\($0.size)" } ?? "unknown"
-        MirageLogger.debug(
-            .host,
-            "Accessibility resize for window \(windowID) did not converge to \(size); compositor=\(observedCompositorSizeText), ax=\(observedAXSizeText)"
-        )
-        return false
     }
 }
 

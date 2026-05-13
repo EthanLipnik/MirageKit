@@ -10,6 +10,7 @@
 import CoreMedia
 import Foundation
 
+/// Tracks incremental and finalized dictation transcripts across Speech framework result callbacks.
 struct MirageDictationResultBuffer {
     private struct BufferedSegment {
         let range: CMTimeRange
@@ -19,11 +20,13 @@ struct MirageDictationResultBuffer {
     private var lastCommittedCumulativeText = ""
     private var bufferedSegmentsByStart: [RangeStartKey: BufferedSegment] = [:]
 
+    /// Clears both cumulative transcript state and pending finalized segments.
     mutating func reset() {
         lastCommittedCumulativeText = ""
         bufferedSegmentsByStart.removeAll(keepingCapacity: true)
     }
 
+    /// Returns only the newly appended suffix for a cumulative transcript update.
     mutating func delta(forCumulativeText fullText: String) -> String? {
         guard !fullText.isEmpty else { return nil }
 
@@ -38,6 +41,7 @@ struct MirageDictationResultBuffer {
         return fullText
     }
 
+    /// Stores a finalized transcript segment, replacing earlier segments that share the same start time.
     mutating func bufferFinalSegment(text: String, range: CMTimeRange) {
         guard !text.isEmpty else { return }
 
@@ -57,6 +61,7 @@ struct MirageDictationResultBuffer {
         }
     }
 
+    /// Returns buffered finalized segments in spoken order and clears the final-segment buffer.
     mutating func drainFinalSegments() -> [String] {
         let orderedTexts = bufferedSegmentsByStart.values
             .sorted(by: Self.areSegmentsOrdered)

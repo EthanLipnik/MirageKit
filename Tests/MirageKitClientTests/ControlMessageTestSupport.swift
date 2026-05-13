@@ -1,0 +1,26 @@
+//
+//  ControlMessageTestSupport.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 5/13/26.
+//
+
+import Foundation
+@testable import MirageKit
+
+private enum ControlMessageTestParseError: Error {
+    case needMoreData
+    case invalidFrame(String)
+}
+
+/// Parses a complete control message for tests that need a single-frame decode without a receive loop.
+func requireParsedControlMessage(from data: Data, offset: Int = 0) throws -> (ControlMessage, Int) {
+    switch ControlMessage.deserialize(from: data, offset: offset) {
+    case let .success(message, bytesConsumed):
+        return (message, bytesConsumed)
+    case .needMoreData:
+        throw ControlMessageTestParseError.needMoreData
+    case let .invalidFrame(reason):
+        throw ControlMessageTestParseError.invalidFrame(reason)
+    }
+}

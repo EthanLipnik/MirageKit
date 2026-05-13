@@ -14,51 +14,6 @@ import MirageKit
 extension StreamController {
     // MARK: - Resize Handling
 
-    /// Handle drawable size change from Metal layer
-    /// - Parameters:
-    ///   - pixelSize: New drawable size in pixels
-    ///   - screenBounds: Screen bounds in points
-    ///   - scaleFactor: Screen scale factor
-    func handleDrawableSizeChanged(
-        _ pixelSize: CGSize,
-        screenBounds: CGSize,
-        scaleFactor: CGFloat
-    )
-    async {
-        guard pixelSize.width > 0, pixelSize.height > 0 else { return }
-
-        // Only enter resize mode after first frame
-        if hasPresentedFirstFrame { await setResizeState(.awaiting(expectedSize: pixelSize)) }
-
-        // Cancel pending debounce
-        resizeDebounceTask?.cancel()
-
-        // Debounce resize
-        resizeDebounceTask = Task { [weak self] in
-            guard let self else { return }
-
-            do {
-                try await Task.sleep(for: Self.resizeDebounceDelay)
-            } catch {
-                return // Cancelled
-            }
-
-            await processResizeEvent(pixelSize: pixelSize, screenBounds: screenBounds, scaleFactor: scaleFactor)
-        }
-    }
-
-    /// Called when host confirms resize (sends new min size)
-    func confirmResize(newMinSize: CGSize) async {
-        if case .awaiting = resizeState {
-            await setResizeState(.confirmed(finalSize: newMinSize))
-            // Brief delay then return to idle
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(50))
-                await self?.setResizeState(.idle)
-            }
-        }
-    }
-
     /// Force clear resize state (e.g., when returning from background)
     func clearResizeState() async {
         resizeDebounceTask?.cancel()
@@ -85,10 +40,9 @@ extension StreamController {
             return
         }
         guard !hasTriggeredTerminalStartupFailure else { return }
-        guard !hasTriggeredTerminalLiveRecoveryFailure else { return }
         let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
         let shouldAwaitNextPresentedFrame = shouldRestartStartupBootstrap || awaitFirstPresentedFrame
-        let now = currentTime()
+        let now = currentTime
         if reason != .manualRecovery,
            !Self.shouldDispatchRecovery(
                lastDispatchTime: lastHardRecoveryStartTime,
@@ -110,7 +64,7 @@ extension StreamController {
             if restartRecoveryLoop, presentationTier == .activeLive {
                 await startKeyframeRecoveryLoopIfNeeded()
             }
-            await requestKeyframeRecovery(reason: reason)
+            await requestKeyframeRecoveryIfPossible(reason: reason)
             return
         }
 
@@ -120,13 +74,6 @@ extension StreamController {
                 return
             }
             startupHardRecoveryCount += 1
-        } else if await recordLiveRecoveryHardRecoveryAttemptIfNeeded(
-            reason: reason,
-            awaitFirstPresentedFrame: shouldAwaitNextPresentedFrame,
-            waitReason: firstPresentedFrameWaitReason,
-            now: now
-        ) {
-            return
         }
         lastHardRecoveryStartTime = now
 
@@ -135,10 +82,8 @@ extension StreamController {
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageRenderStreamStore.shared.clear(for: streamID)
-        MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
-        armRecoveryStabilizationTracking(baseline: MirageRenderStreamStore.shared.baselineCursor(for: streamID))
-        lastDecodedFrameTime = 0
-        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = shouldAwaitNextPresentedFrame
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
@@ -166,6 +111,6 @@ extension StreamController {
                 mode: awaitMode
             )
         }
-        await requestKeyframeRecovery(reason: reason)
+        await requestKeyframeRecoveryIfPossible(reason: reason)
     }
 }

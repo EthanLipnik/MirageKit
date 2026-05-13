@@ -8,7 +8,6 @@
 import Foundation
 #if os(iOS) || os(visionOS)
 import UIKit
-#endif
 
 struct InputCapturingActivationRecoveryDecision: Equatable {
     let shouldResetPresentationState: Bool
@@ -16,20 +15,15 @@ struct InputCapturingActivationRecoveryDecision: Equatable {
     let shouldResumeRenderingWithoutRecovery: Bool
 
     func merged(with other: Self) -> Self {
-        let shouldResetPresentationState = shouldResetPresentationState || other.shouldResetPresentationState
-        let shouldRequestStreamRecovery = shouldRequestStreamRecovery || other.shouldRequestStreamRecovery
+        let mergedShouldResetPresentationState = shouldResetPresentationState || other.shouldResetPresentationState
+        let mergedShouldRequestStreamRecovery = shouldRequestStreamRecovery || other.shouldRequestStreamRecovery
         return InputCapturingActivationRecoveryDecision(
-            shouldResetPresentationState: shouldResetPresentationState,
-            shouldRequestStreamRecovery: shouldRequestStreamRecovery,
-            shouldResumeRenderingWithoutRecovery: !shouldRequestStreamRecovery &&
+            shouldResetPresentationState: mergedShouldResetPresentationState,
+            shouldRequestStreamRecovery: mergedShouldRequestStreamRecovery,
+            shouldResumeRenderingWithoutRecovery: !mergedShouldRequestStreamRecovery &&
                 (shouldResumeRenderingWithoutRecovery || other.shouldResumeRenderingWithoutRecovery)
         )
     }
-}
-
-enum InputCapturingPendingActivationRecoveryDisposition: Equatable {
-    case applyPendingHandling
-    case clearPendingHandling
 }
 
 func inputCapturingActivationRecoveryDecision(
@@ -46,6 +40,23 @@ func inputCapturingActivationRecoveryDecision(
     )
 }
 
+func inputCapturingCanApplyPendingActivationHandling(
+    hasWindow: Bool,
+    sceneActivationState: UIScene.ActivationState?
+) -> Bool {
+    guard hasWindow else { return false }
+    return sceneActivationState == .foregroundActive
+}
+
+/// Outcome for a pending activation-recovery decision once the stream view is foregrounded again.
+enum InputCapturingPendingActivationRecoveryDisposition {
+    /// Apply the queued recovery handling to the active stream view.
+    case applyPendingHandling
+    /// Drop the queued handling because it no longer matches the active desktop session.
+    case discardPendingHandling
+}
+
+/// Resolves whether delayed activation recovery still applies to the active desktop session.
 func inputCapturingPendingActivationRecoveryDisposition(
     activationDecision: InputCapturingActivationRecoveryDecision,
     pendingDesktopSessionID: UUID?,
@@ -58,18 +69,9 @@ func inputCapturingPendingActivationRecoveryDisposition(
     guard let pendingDesktopSessionID else {
         return .applyPendingHandling
     }
-    guard activeDesktopSessionID == pendingDesktopSessionID, hasPresentedFrame else {
-        return .clearPendingHandling
+    guard pendingDesktopSessionID == activeDesktopSessionID else {
+        return .discardPendingHandling
     }
-    return .applyPendingHandling
-}
-
-#if os(iOS) || os(visionOS)
-func inputCapturingCanApplyPendingActivationHandling(
-    hasWindow: Bool,
-    sceneActivationState: UIScene.ActivationState?
-) -> Bool {
-    guard hasWindow else { return false }
-    return sceneActivationState == .foregroundActive
+    return hasPresentedFrame ? .applyPendingHandling : .discardPendingHandling
 }
 #endif

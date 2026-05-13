@@ -15,6 +15,7 @@ import Foundation
 extension AppStreamManager {
     // MARK: - Window Monitoring
 
+    /// Starts the polling loop that detects window additions, removals, and expired reservations.
     func startMonitoringIfNeeded() {
         guard !isMonitoring else { return }
         isMonitoring = true
@@ -26,6 +27,7 @@ extension AppStreamManager {
         logger.debug("Started window monitoring")
     }
 
+    /// Cancels the window polling loop.
     func stopMonitoring() {
         monitoringTask?.cancel()
         monitoringTask = nil
@@ -33,15 +35,21 @@ extension AppStreamManager {
         logger.debug("Stopped window monitoring")
     }
 
+    /// Polls tracked app sessions until monitoring stops or the task is cancelled.
     private func monitoringLoop() async {
         while !Task.isCancelled, isMonitoring {
             await checkForWindowChanges()
             await checkForExpiredReservations()
 
-            try? await Task.sleep(for: .milliseconds(500))
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                return
+            }
         }
     }
 
+    /// Compares the current window catalog with tracked app-stream sessions and emits lifecycle callbacks.
     private func checkForWindowChanges() async {
         guard !sessions.isEmpty else { return }
 
@@ -53,7 +61,7 @@ extension AppStreamManager {
                 guard let session = sessions[bundleID],
                       case .streaming = session.state else { continue }
 
-                let candidates = catalogByBundleID[bundleID.lowercased()] ?? []
+                let candidates = catalogByBundleID[bundleID] ?? []
                 let candidatesByWindowID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.window.id, $0) })
                 let currentValidIDs = Set(candidatesByWindowID.keys)
                 let knownWindowIDs = session.knownWindowIDs
@@ -136,7 +144,7 @@ extension AppStreamManager {
                         app.bundleIdentifier?.lowercased() == bundleID
                     }
 
-                    let hasActiveWindows = sessions[bundleID]?.hasActiveWindows ?? false
+                    let hasActiveWindows = sessions[bundleID]?.windowStreams.isEmpty == false
                     if !appIsRunning, hasActiveWindows {
                         logger.info("App terminated: \(bundleID)")
                         await onAppTerminated?(bundleID)
@@ -148,6 +156,7 @@ extension AppStreamManager {
         }
     }
 
+    /// Ends sessions whose startup reservation expired before a stream attached.
     private func checkForExpiredReservations() async {
         let expiredSessions = sessions.filter(\.value.reservationExpired)
 

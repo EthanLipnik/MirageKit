@@ -6,9 +6,6 @@
 //
 
 import CoreGraphics
-#if canImport(Darwin)
-import Darwin
-#endif
 import Foundation
 import Loom
 import MirageKit
@@ -27,425 +24,6 @@ import AppKit
 @Observable
 @MainActor
 public final class MirageClientService {
-    struct StreamStartAcknowledgement: Sendable, Equatable {
-        let width: Int
-        let height: Int
-        let dimensionToken: UInt16?
-    }
-
-    public enum ControlUpdatePolicy: Sendable {
-        case normal
-        case interactiveStreaming
-    }
-
-    public struct ForegroundStreamHealthSnapshot: Sendable, Equatable {
-        public let streamID: StreamID
-        public let hasController: Bool
-        public let hasVideoMediaStream: Bool
-        public let latestPacketTime: CFAbsoluteTime
-        public let submittedSequence: UInt64
-        public let isAwaitingKeyframe: Bool
-        public let decodedFPS: Double
-        public let layerEnqueueFPS: Double
-        public let uniqueLayerEnqueueFPS: Double
-        public let visibleFrameFPS: Double
-        public let visibleFrameCadenceKnown: Bool
-        public let decodeHealthy: Bool
-        public let severeDecodeUnderrun: Bool
-        public let clientRecoveryStatus: MirageStreamClientRecoveryStatus
-        public let hostTargetFrameRate: Int
-        public let hostEncodedFPS: Double
-
-        public init(
-            streamID: StreamID,
-            hasController: Bool,
-            hasVideoMediaStream: Bool,
-            latestPacketTime: CFAbsoluteTime,
-            submittedSequence: UInt64,
-            isAwaitingKeyframe: Bool,
-            decodedFPS: Double = 0,
-            layerEnqueueFPS: Double = 0,
-            uniqueLayerEnqueueFPS: Double = 0,
-            visibleFrameFPS: Double = 0,
-            visibleFrameCadenceKnown: Bool = false,
-            decodeHealthy: Bool = true,
-            severeDecodeUnderrun: Bool = false,
-            clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
-            hostTargetFrameRate: Int = 0,
-            hostEncodedFPS: Double = 0
-        ) {
-            self.streamID = streamID
-            self.hasController = hasController
-            self.hasVideoMediaStream = hasVideoMediaStream
-            self.latestPacketTime = latestPacketTime
-            self.submittedSequence = submittedSequence
-            self.isAwaitingKeyframe = isAwaitingKeyframe
-            self.decodedFPS = decodedFPS
-            self.layerEnqueueFPS = layerEnqueueFPS
-            self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
-            self.visibleFrameFPS = visibleFrameFPS
-            self.visibleFrameCadenceKnown = visibleFrameCadenceKnown
-            self.decodeHealthy = decodeHealthy
-            self.severeDecodeUnderrun = severeDecodeUnderrun
-            self.clientRecoveryStatus = clientRecoveryStatus
-            self.hostTargetFrameRate = hostTargetFrameRate
-            self.hostEncodedFPS = hostEncodedFPS
-        }
-    }
-
-    public enum ForegroundStreamHealthProbeDisposition: Sendable, Equatable {
-        case healthy
-        case failed(reason: String)
-    }
-
-    public struct LiveStreamRecoveryFailure: Sendable, Equatable {
-        public enum StreamKind: Sendable, Equatable {
-            case desktop
-            case app(bundleIdentifier: String?)
-            case window
-        }
-
-        public let streamID: StreamID
-        public let kind: StreamKind
-        public let reason: String
-        public let hardRecoveryAttempts: Int
-
-        public init(
-            streamID: StreamID,
-            kind: StreamKind,
-            reason: String,
-            hardRecoveryAttempts: Int
-        ) {
-            self.streamID = streamID
-            self.kind = kind
-            self.reason = reason
-            self.hardRecoveryAttempts = hardRecoveryAttempts
-        }
-    }
-
-    public struct DesktopStreamRestartRequest: Sendable, Equatable {
-        public let failedStreamID: StreamID
-        public let startupRequestID: UUID
-        public let attempt: Int
-
-        public init(
-            failedStreamID: StreamID,
-            startupRequestID: UUID,
-            attempt: Int
-        ) {
-            self.failedStreamID = failedStreamID
-            self.startupRequestID = startupRequestID
-            self.attempt = attempt
-        }
-    }
-
-    public nonisolated static func foregroundStreamHealthProbeDisposition(
-        initial: ForegroundStreamHealthSnapshot,
-        final: ForegroundStreamHealthSnapshot
-    ) -> ForegroundStreamHealthProbeDisposition {
-        guard final.hasController, final.hasVideoMediaStream else {
-            return .failed(reason: "media pipeline disappeared during probe")
-        }
-
-        let packetAdvanced = final.latestPacketTime > initial.latestPacketTime
-        let submissionAdvanced = final.submittedSequence > initial.submittedSequence
-        guard packetAdvanced, submissionAdvanced else {
-            return .failed(reason: "media packets or frame submissions did not advance")
-        }
-        guard !final.isAwaitingKeyframe else {
-            return .failed(reason: "stream is still awaiting a keyframe")
-        }
-        guard final.clientRecoveryStatus == .idle else {
-            return .failed(reason: "client stream recovery is still active")
-        }
-        guard !Self.hasSevereForegroundDecodePresentationUnderrun(final) else {
-            return .failed(
-                reason: "client decode/presentation is still underrunning " +
-                    "(decoded=\(Self.formatForegroundFPS(final.decodedFPS))fps, " +
-                    "layer=\(Self.formatForegroundFPS(final.layerEnqueueFPS))fps, " +
-                    "unique=\(Self.formatForegroundFPS(final.uniqueLayerEnqueueFPS))fps, " +
-                    "visible=\(final.visibleFrameCadenceKnown ? Self.formatForegroundFPS(final.visibleFrameFPS) : "--")fps, " +
-                    "host=\(Self.formatForegroundFPS(final.hostEncodedFPS))fps)"
-            )
-        }
-
-        return .healthy
-    }
-
-    private nonisolated static func hasSevereForegroundDecodePresentationUnderrun(
-        _ snapshot: ForegroundStreamHealthSnapshot
-    ) -> Bool {
-        let expectedFPS = max(snapshot.hostTargetFrameRate, Int(snapshot.hostEncodedFPS.rounded()))
-        guard expectedFPS >= 20 else { return false }
-        let minimumDecodedFPS = max(2.0, Double(expectedFPS) * 0.10)
-        let minimumPresentedFPS = 2.0
-        let visibleFPS = snapshot.visibleFrameCadenceKnown ? snapshot.visibleFrameFPS : 0
-        if snapshot.severeDecodeUnderrun, visibleFPS < minimumPresentedFPS {
-            return true
-        }
-        return snapshot.decodedFPS < minimumDecodedFPS ||
-            !snapshot.visibleFrameCadenceKnown ||
-            visibleFPS < minimumPresentedFPS
-    }
-
-    private nonisolated static func formatForegroundFPS(_ value: Double) -> String {
-        String(format: "%.1f", value)
-    }
-
-    public struct DeferredControlRefreshRequirements: Sendable {
-        public var needsAppListRefresh: Bool
-        public var needsWindowListRefresh: Bool
-        public var needsHostSoftwareUpdateRefresh: Bool
-
-        public static let none = DeferredControlRefreshRequirements(
-            needsAppListRefresh: false,
-            needsWindowListRefresh: false,
-            needsHostSoftwareUpdateRefresh: false
-        )
-
-        public var hasAny: Bool {
-            needsAppListRefresh || needsWindowListRefresh || needsHostSoftwareUpdateRefresh
-        }
-    }
-
-    struct RetiredStreamDiagnosticsSummary: Sendable {
-        let streamID: StreamID
-        let reason: String
-        let retiredAt: CFAbsoluteTime
-        let renderGeneration: UInt64
-        let renderSequence: UInt64
-        let layerEnqueueFPS: Double?
-        let uniqueLayerEnqueueFPS: Double?
-        let visibleFrameFPS: Double?
-        let visibleFrameCadenceKnown: Bool?
-        let pendingFrameCount: Int?
-        let renderStoreClearCount: UInt64
-        let presenterTimingResetCount: UInt64
-        let displayLayerLivenessResetCount: UInt64
-        let presentationRecoveryRequestCount: UInt64
-        let lastPresentationRecoveryOutcome: String?
-    }
-
-    public enum AdaptiveFallbackMode: Equatable, Sendable {
-        case disabled
-        case adaptive
-    }
-
-    public enum StreamStopOrigin: Sendable {
-        case clientWindowClosed
-        case remoteCommand
-    }
-
-    public enum HostSoftwareUpdateChannel: String, Sendable, Codable {
-        case release
-        case nightly
-    }
-
-    public enum HostSoftwareUpdateAutomationMode: String, Sendable, Codable {
-        case metadataOnly
-        case autoDownload
-        case autoInstall
-    }
-
-    public enum HostSoftwareUpdateInstallDisposition: String, Sendable, Codable {
-        case idle
-        case checking
-        case updateAvailable
-        case downloading
-        case installing
-        case completed
-        case blocked
-        case failed
-    }
-
-    public enum HostSoftwareUpdateBlockReason: String, Sendable, Codable {
-        case clientUpdatesDisabled
-        case hostUpdaterBusy
-        case unattendedInstallUnsupported
-        case insufficientPermissions
-        case authorizationRequired
-        case serviceUnavailable
-        case policyDenied
-        case unknown
-    }
-
-    public enum HostSoftwareUpdateInstallResultCode: String, Sendable, Codable {
-        case started
-        case alreadyInProgress
-        case noUpdateAvailable
-        case denied
-        case blocked
-        case failed
-        case unavailable
-    }
-
-    public enum HostSoftwareUpdateReleaseNotesFormat: String, Sendable, Codable {
-        case plainText
-        case html
-    }
-
-    public enum HostSoftwareUpdateInstallTrigger: String, Sendable, Codable {
-        case manual
-        case protocolMismatch
-    }
-
-    public struct HostSoftwareUpdateStatus: Sendable, Equatable, Codable {
-        public let isSparkleAvailable: Bool
-        public let isCheckingForUpdates: Bool
-        public let isInstallInProgress: Bool
-        public let channel: HostSoftwareUpdateChannel
-        public let automationMode: HostSoftwareUpdateAutomationMode?
-        public let installDisposition: HostSoftwareUpdateInstallDisposition?
-        public let lastBlockReason: HostSoftwareUpdateBlockReason?
-        public let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
-        public let canCancelUpdate: Bool
-        public let downloadExpectedBytes: UInt64?
-        public let downloadReceivedBytes: UInt64
-        public let extractionProgress: Double?
-        public let lastErrorSummary: String?
-        public let lastErrorDetails: String?
-        public let currentVersion: String
-        public let availableVersion: String?
-        public let availableVersionTitle: String?
-        public let releaseNotesSummary: String?
-        public let releaseNotesBody: String?
-        public let releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?
-        public let lastCheckedAtMs: Int64?
-
-        public init(
-            isSparkleAvailable: Bool,
-            isCheckingForUpdates: Bool,
-            isInstallInProgress: Bool,
-            channel: HostSoftwareUpdateChannel,
-            automationMode: HostSoftwareUpdateAutomationMode?,
-            installDisposition: HostSoftwareUpdateInstallDisposition?,
-            lastBlockReason: HostSoftwareUpdateBlockReason?,
-            lastInstallResultCode: HostSoftwareUpdateInstallResultCode?,
-            canCancelUpdate: Bool,
-            downloadExpectedBytes: UInt64?,
-            downloadReceivedBytes: UInt64,
-            extractionProgress: Double?,
-            lastErrorSummary: String?,
-            lastErrorDetails: String?,
-            currentVersion: String,
-            availableVersion: String?,
-            availableVersionTitle: String?,
-            releaseNotesSummary: String?,
-            releaseNotesBody: String?,
-            releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?,
-            lastCheckedAtMs: Int64?
-        ) {
-            self.isSparkleAvailable = isSparkleAvailable
-            self.isCheckingForUpdates = isCheckingForUpdates
-            self.isInstallInProgress = isInstallInProgress
-            self.channel = channel
-            self.automationMode = automationMode
-            self.installDisposition = installDisposition
-            self.lastBlockReason = lastBlockReason
-            self.lastInstallResultCode = lastInstallResultCode
-            self.canCancelUpdate = canCancelUpdate
-            self.downloadExpectedBytes = downloadExpectedBytes
-            self.downloadReceivedBytes = downloadReceivedBytes
-            self.extractionProgress = extractionProgress
-            self.lastErrorSummary = lastErrorSummary
-            self.lastErrorDetails = lastErrorDetails
-            self.currentVersion = currentVersion
-            self.availableVersion = availableVersion
-            self.availableVersionTitle = availableVersionTitle
-            self.releaseNotesSummary = releaseNotesSummary
-            self.releaseNotesBody = releaseNotesBody
-            self.releaseNotesFormat = releaseNotesFormat
-            self.lastCheckedAtMs = lastCheckedAtMs
-        }
-    }
-
-    public struct HostSoftwareUpdateInstallResult: Sendable, Equatable, Codable {
-        public let accepted: Bool
-        public let message: String
-        public let resultCode: HostSoftwareUpdateInstallResultCode?
-        public let blockReason: HostSoftwareUpdateBlockReason?
-        public let remediationHint: String?
-        public let status: HostSoftwareUpdateStatus?
-
-        public init(
-            accepted: Bool,
-            message: String,
-            resultCode: HostSoftwareUpdateInstallResultCode?,
-            blockReason: HostSoftwareUpdateBlockReason?,
-            remediationHint: String?,
-            status: HostSoftwareUpdateStatus?
-        ) {
-            self.accepted = accepted
-            self.message = message
-            self.resultCode = resultCode
-            self.blockReason = blockReason
-            self.remediationHint = remediationHint
-            self.status = status
-        }
-    }
-
-    public struct AppStreamStartupFailure: Sendable, Equatable, Codable {
-        public let bundleIdentifier: String?
-        public let message: String
-
-        public init(bundleIdentifier: String?, message: String) {
-            self.bundleIdentifier = bundleIdentifier
-            self.message = message
-        }
-    }
-
-    public struct HostApplicationRestartResult: Sendable, Equatable, Codable {
-        public let accepted: Bool
-        public let message: String
-
-        public init(
-            accepted: Bool,
-            message: String
-        ) {
-            self.accepted = accepted
-            self.message = message
-        }
-    }
-
-    public struct ProtocolMismatchInfo: Sendable, Equatable, Codable {
-        public enum Reason: String, Sendable, Codable {
-            case protocolVersionMismatch
-            case protocolFeaturesMismatch
-            case hostBusy
-            case hostUpdateInProgress
-            case rejected
-            case unauthorized
-            case unknown
-        }
-
-        public let reason: Reason
-        public let hostProtocolVersion: Int?
-        public let clientProtocolVersion: Int?
-        public let hostUpdateTriggerAccepted: Bool?
-        public let hostUpdateTriggerMessage: String?
-
-        public init(
-            reason: Reason,
-            hostProtocolVersion: Int?,
-            clientProtocolVersion: Int?,
-            hostUpdateTriggerAccepted: Bool?,
-            hostUpdateTriggerMessage: String?
-        ) {
-            self.reason = reason
-            self.hostProtocolVersion = hostProtocolVersion
-            self.clientProtocolVersion = clientProtocolVersion
-            self.hostUpdateTriggerAccepted = hostUpdateTriggerAccepted
-            self.hostUpdateTriggerMessage = hostUpdateTriggerMessage
-        }
-    }
-
-    public enum AuthorizationState: String, Sendable, Codable, Equatable {
-        case idle
-        case verifyingTrust
-        case awaitingManualApproval
-        case approved
-    }
-
     /// Current connection state
     public internal(set) var connectionState: ConnectionState = .disconnected
     /// Last completed disconnect reason from the host or local client lifecycle.
@@ -472,8 +50,6 @@ public final class MirageClientService {
     public internal(set) var sharedClipboardEnabled: Bool = false
     /// Whether the client sends its clipboard to the host before forwarding paste commands.
     public var clientClipboardSharingEnabled: Bool = true
-    /// Selected protocol features from handshake negotiation.
-    var negotiatedFeatures: MirageFeatureSet = []
     /// Whether media payload encryption is active for the current host session.
     public internal(set) var mediaPayloadEncryptionEnabled: Bool = true
 
@@ -505,19 +81,6 @@ public final class MirageClientService {
     public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
-    struct PendingEncoderReconfiguration: Sendable, Equatable {
-        let requestID: UUID
-        let streamID: StreamID
-        let requestedStreamScale: CGFloat?
-        let requestedFrameRate: Int?
-        let requestedColorDepth: MirageStreamColorDepth?
-    }
-    /// Request-correlated encoder-only reconfigurations awaiting host ACK.
-    var pendingEncoderReconfigurationsByRequestID: [UUID: PendingEncoderReconfiguration] = [:]
-    /// Latest request-correlated encoder-only reconfiguration per stream.
-    var pendingEncoderReconfigurationRequestIDByStream: [StreamID: UUID] = [:]
-    /// Last encoder-only stream scale requested for each stream.
-    var activeEncoderStreamScaleByStream: [StreamID: CGFloat] = [:]
     /// Last host-authoritative desktop presentation generation per active session.
     var desktopPresentationGenerationBySessionID: [UUID: UInt64] = [:]
     /// Last seen app/window stream dimension token per stream.
@@ -528,9 +91,6 @@ public final class MirageClientService {
     /// Stream scale for post-capture downscaling
     /// 1.0 = native resolution, lower values reduce encoded size
     public var resolutionScale: CGFloat = 1.0
-
-    /// Whether stream recovery is app-owned (`.adaptive`) or disabled.
-    public var adaptiveFallbackMode: AdaptiveFallbackMode = .adaptive
 
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
@@ -591,11 +151,13 @@ public final class MirageClientService {
     var pendingStreamSetupKind: StreamSetupKind?
     var pendingStreamSetupAppSessionID: UUID?
     var customStreamStartedContinuations: [UUID: CheckedContinuation<ClientStreamSession, Error>] = [:]
+    /// Custom stream descriptors keyed by active stream ID.
+    public internal(set) var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
     /// Policy controlling whether non-essential control updates should be processed.
-    public private(set) var controlUpdatePolicy: ControlUpdatePolicy = .normal
+    public internal(set) var controlUpdatePolicy: ControlUpdatePolicy = .normal
     /// Deferred refresh requirements gathered while non-essential updates are suppressed.
     var deferredControlRefreshRequirements: DeferredControlRefreshRequirements = .none
     /// Whether a connection or first-frame startup critical section is active.
@@ -632,8 +194,8 @@ public final class MirageClientService {
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
 
-    /// Callback when host wallpaper payload is received.
-    public var onHostWallpaperReceived: ((UUID, Data, Int, Int, Int) -> Void)?
+    /// Callback when host wallpaper image data is received.
+    public var onHostWallpaperReceived: ((UUID, Data) -> Void)?
 
     /// Callback when host software update status is received.
     public var onHostSoftwareUpdateStatus: ((HostSoftwareUpdateStatus) -> Void)?
@@ -647,17 +209,11 @@ public final class MirageClientService {
     /// Callback when a protocol mismatch rejection includes deterministic mismatch metadata.
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 
-    /// Callback when Mirage temporarily lowers stream workload to recover from a receiver-side freeze.
-    public var onEmergencyReceiverFallback: ((String) -> Void)?
-
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
 
     /// Callback when an app stream fails before any initial window becomes active.
     public var onAppStreamStartupFailed: ((AppStreamStartupFailure) -> Void)?
-
-    /// Callback when an established stream exhausts bounded live recovery.
-    public var onLiveStreamRecoveryFailed: ((LiveStreamRecoveryFailure) -> Void)?
 
     /// Callback when a generic custom stream starts.
     public var onCustomStreamStarted: ((MirageCustomStreamStartedMessage) -> Void)?
@@ -693,9 +249,6 @@ public final class MirageClientService {
 
     /// Callback when menu bar structure is received from host
     public var onMenuBarUpdate: ((StreamID, MirageMenuBar?) -> Void)?
-
-    /// Callback when menu action result is received
-    public var onMenuActionResult: ((StreamID, Bool, String?) -> Void)?
 
     /// Callback when the host requests a status-overlay change on the client.
     public var onRemoteClientStreamStatusOverlayCommand: ((Bool) -> Void)?
@@ -756,23 +309,39 @@ public final class MirageClientService {
     public let metricsStore = MirageClientMetricsStore()
     /// Cursor store for pointer updates (decoupled from SwiftUI).
     public let cursorStore = MirageClientCursorStore()
+    /// Sender that serializes input events onto the active control channel.
     public nonisolated let inputEventSender = MirageInputEventSender()
     nonisolated let fastPathState = MirageClientFastPathState()
 
+    /// Loom node used for discovery, authenticated control sessions, and media streams.
     public let loomNode: LoomNode
+    /// Local network path monitor used to label connection candidates and diagnose path changes.
     let localNetworkMonitor = MirageLocalNetworkMonitor(label: "client")
+    /// Loom network configuration used by discovery and outgoing authenticated sessions.
     var networkConfig: LoomNetworkConfiguration
+    /// Framed control stream for the active host session.
     var controlChannel: MirageControlChannel?
+    /// Active authenticated Loom session, when connected.
     public internal(set) var loomSession: LoomAuthenticatedSession?
+    /// Transfer engine attached to the current Loom session for out-of-band payloads.
     @ObservationIgnored var transferEngine: LoomTransferEngine?
+    /// Task observing incoming transfer announcements from the active transfer engine.
     @ObservationIgnored var transferObserverTask: Task<Void, Never>?
+    /// Incoming transfers retained until the matching request path consumes them.
     var pendingIncomingTransfersByKey: [String: LoomIncomingTransfer] = [:]
+    /// Continuations waiting for a transfer announcement keyed by transfer purpose.
     var transferWaitersByKey: [String: CheckedContinuation<LoomIncomingTransfer, Error>] = [:]
+    /// Task mirroring Loom control-session state into client connection state.
     @ObservationIgnored var controlSessionStateObserverTask: Task<Void, Never>?
+    /// Task mirroring Loom path changes into network path status and history.
     @ObservationIgnored var controlSessionPathObserverTask: Task<Void, Never>?
+    /// In-flight connection attempt that owns session establishment until bootstrap completes.
     @ObservationIgnored var pendingConnectTask: Task<LoomAuthenticatedSession, Error>?
+    /// Attempt identifier associated with `pendingConnectTask`.
     @ObservationIgnored var pendingConnectTaskAttemptID: UUID?
+    /// Current connection attempt identifier used to ignore late async completions.
     @ObservationIgnored var currentConnectAttemptID: UUID?
+    /// Host peer for the active connection.
     public internal(set) var connectedHost: LoomPeer?
     /// Stable device identifier for the client, persisted in UserDefaults.
     public let deviceID: UUID
@@ -781,40 +350,53 @@ public final class MirageClientService {
     var isProcessingReceivedData = false
     var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
-    typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
+
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
+    /// Current local network path kind observed by the client monitor.
     public var currentLocalPathKind: MirageNetworkPathKind {
-        localNetworkMonitor.snapshot().currentPathKind
+        localNetworkMonitor.snapshot.currentPathKind
     }
+
+    /// Current network path kind used by the active control session.
     public var currentControlPathKind: MirageNetworkPathKind? {
         controlPathSnapshot?.kind
     }
+
+    /// Current control-session path status exposed to app UI.
     public var currentControlPathStatus: MirageClientNetworkPathStatus? {
         controlPathSnapshot.map { snapshot in
             MirageClientNetworkPathStatus(snapshot: snapshot)
         }
     }
+
+    /// Recent control-session path history entries.
     public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
+    /// Last successful direct host endpoint remembered per device for Bonjour fallback.
     @ObservationIgnored var rememberedDirectEndpointHostByDeviceID: [UUID: NWEndpoint.Host] = [:]
+    /// Number of observed control-session path switches onto AWDL.
     var awdlPathSwitches: UInt64 = 0
-    var registrationRefreshCount: UInt64 = 0
+    /// Count of requested transport refreshes after path or stall diagnostics.
     var transportRefreshRequests: UInt64 = 0
+    /// Count of receiver-side stall events observed during the active session.
     var stallEvents: UInt64 = 0
+    /// Current jitter hold applied to smooth receiver playback under transport pressure.
     var activeJitterHoldMs: Int = 0
-    var emergencyReceiverFallbackLastAppliedTimeByStream: [StreamID: CFAbsoluteTime] = [:]
+    /// Runtime frame-rate caps applied by workload safety by stream.
     var runtimeWorkloadSafetyFrameRateCapsByStream: [StreamID: RuntimeWorkloadSafetyFrameRateCap] = [:]
+    /// Last runtime workload safety fallback reason shown to diagnostics/UI.
     var runtimeWorkloadSafetyLastFallbackReason: String?
+    /// Number of memory-pressure events that affected runtime workload safety.
     var runtimeWorkloadSafetyMemoryPressureCount: Int = 0
+    /// Wall-clock time of the most recent workload safety memory-pressure event.
     var runtimeWorkloadSafetyLastMemoryPressureTime: CFAbsoluteTime?
+    /// Recent stall timestamps by stream for runtime workload safety decisions.
     var runtimeWorkloadSafetyStallTimesByStream: [StreamID: [CFAbsoluteTime]] = [:]
+    /// Last time AWDL telemetry was logged, used to rate-limit diagnostics.
     var lastAwdlTelemetryLogTime: CFAbsoluteTime = 0
-    var registrationRefreshTask: Task<Void, Never>?
-    let registrationRefreshIntervalMs: UInt64 = 750
-    let registrationRefreshJitterMs: UInt64 = 80
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
     let controlSessionConnectTimeout: Duration = .seconds(30)
@@ -823,46 +405,71 @@ public final class MirageClientService {
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(45)
 
-    // Media stream listener (receives video/audio via Loom multiplexed streams)
+    /// Task accepting incoming Loom multiplexed media streams.
     @ObservationIgnored var mediaStreamListenerTask: Task<Void, Never>?
+
+    /// Active Loom media streams keyed by transport stream name.
     var activeMediaStreams: [String: LoomMultiplexedStream] = [:]
+
+    /// Per-video-stream receive loops.
     var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
-    var videoPacketIngressProcessors: [StreamID: ClientVideoPacketIngressProcessor] = [:]
+
+    /// Receive loop for the current audio media stream.
     var audioStreamReceiveTask: Task<Void, Never>?
+
+    /// Receive loops for quality-test media streams keyed by test ID.
     var qualityTestStreamReceiveTasks: [UUID: Task<Void, Never>] = [:]
 
-    // Audio receiving state
+    /// Stream ID currently registered for host audio playback.
     var audioRegisteredStreamID: StreamID?
+
+    /// Latest audio stream-start message received from the host.
     var activeAudioStreamMessage: AudioStreamStartedMessage?
+
+    /// Generation counter for host audio configuration changes.
     var audioStreamConfigurationGeneration: UInt64 = 0
+
+    /// Decoded PCM frames waiting for playback, keyed by source stream ID.
     var pendingDecodedAudioFramesByStreamID: [StreamID: [DecodedPCMFrame]] = [:]
+
+    /// Pending decoded audio duration by source stream ID.
     var pendingDecodedAudioDurationByStreamID: [StreamID: Double] = [:]
+
+    /// Maximum decoded audio duration retained before trimming.
     let maxPendingDecodedAudioDuration: Double = 0.5
+
+    /// Number of audio frames dropped to keep audio/video sync.
     var audioSyncDropCount: UInt64 = 0
+
+    /// Video stream IDs currently gating audio startup.
     var audioVideoGateActiveStreamIDs: Set<StreamID> = []
-    struct AudioStaleVideoGateState: Sendable {
-        var consecutiveDecisionCount: Int
-        var maxSnapshotAgeSeconds: CFAbsoluteTime
-    }
-    struct AudioStaleVideoDiagnostics: Sendable, Equatable {
-        var gateCount: UInt64 = 0
-        var softHoldCount: UInt64 = 0
-        var confirmedGateCount: UInt64 = 0
-        var maxSnapshotAgeSeconds: CFAbsoluteTime = 0
-    }
-    var audioStaleVideoGateStateByStreamID: [StreamID: AudioStaleVideoGateState] = [:]
-    var audioStaleVideoDiagnosticsByStreamID: [StreamID: AudioStaleVideoDiagnostics] = [:]
+
+    /// Last log time for audio sync drop diagnostics.
     var lastAudioSyncDropLogTime: CFAbsoluteTime = 0
+
+    /// Last log time for audio-ahead diagnostics.
     var lastAudioSyncAheadLogTime: CFAbsoluteTime = 0
+
+    /// Audio decode pipeline shared with the packet ingress queue.
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
+
+    /// Serial ingress queue that decodes audio packets off the main actor.
     nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
-    @ObservationIgnored private var lazyAudioPlaybackController: AudioPlaybackController?
-    @ObservationIgnored public var audioPlaybackControllerIfInitialized: AudioPlaybackController? {
-        lazyAudioPlaybackController
-    }
+
+    /// Lazily initialized playback controller storage.
+    @ObservationIgnored var audioPlaybackControllerIfInitialized: AudioPlaybackController?
+
+    /// Audio playback controller, created on first access when audio streaming needs playback state.
     @ObservationIgnored public var audioPlaybackController: AudioPlaybackController {
-        resolveAudioPlaybackController()
+        if let audioPlaybackControllerIfInitialized {
+            return audioPlaybackControllerIfInitialized
+        }
+        let playbackController = AudioPlaybackController()
+        audioPlaybackControllerIfInitialized = playbackController
+        return playbackController
     }
+
+    /// Audio streaming configuration negotiated for future and active streams.
     public var audioConfiguration: MirageAudioConfiguration = .default {
         didSet {
             guard oldValue != audioConfiguration else { return }
@@ -870,223 +477,181 @@ public final class MirageClientService {
         }
     }
 
-    /// Per-stream controllers for lifecycle management
-    /// StreamController owns decoder, reassembler, and resize state machine
+    /// Per-stream controllers for decoder, reassembler, and resize lifecycle management.
     var controllersByStream: [StreamID: StreamController] = [:]
+
+    /// Negotiated media packet size limit by stream.
     var mediaMaxPacketSizeByStream: [StreamID: Int] = [:]
 
-    // Track which streams have been registered with the host (prevents duplicate registrations)
+    /// Streams already registered with the host for media delivery.
     var registeredStreamIDs: Set<StreamID> = []
+
+    /// Last keyframe request timestamp by stream for cooldown enforcement.
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
+
+    /// Minimum spacing between recovery keyframe requests.
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75
+
+    /// Active retry tasks for recovery keyframe requests.
     var recoveryKeyframeRetryTasks: [StreamID: (token: UUID, task: Task<Void, Never>)] = [:]
+
+    /// Delay between recovery keyframe retry attempts.
     let recoveryKeyframeRetryInterval: Duration = .seconds(1)
+
+    /// Maximum number of recovery keyframe retry attempts.
     let recoveryKeyframeRetryLimit: Int = 2
+
+    /// Wall-clock time for the current desktop stream request.
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
+
+    /// Last desktop start request retained for one bounded restart attempt.
     var lastDesktopStreamStartRequest: StartDesktopStreamMessage?
+
+    /// Number of desktop stream restart attempts for the current request.
     var desktopStreamRestartAttempts: Int = 0
+
+    /// Maximum desktop stream restart attempts for startup recovery.
     let desktopStreamRestartLimit: Int = 1
+
+    /// Timeout task for desktop stream startup.
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
+
+    /// Timeout task for desktop stream stop acknowledgements.
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
+
+    /// Delay that lets host-side desktop resize settle before reconciling the window.
     @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .seconds(3)
+
+    /// Maximum time to keep post-resize transition UI before clearing it locally.
     @ObservationIgnored var desktopPostResizeTransitionTimeout: Duration = .seconds(10)
+
+    /// Post-resize transition timeout tasks keyed by stream.
     var postResizeTransitionTimeoutTasks: [StreamID: Task<Void, Never>] = [:]
+
+    /// Local desktop stop stream ID awaiting host acknowledgement.
     var pendingLocalDesktopStopStreamID: StreamID?
+
+    /// Local desktop stop session ID awaiting host acknowledgement.
     var pendingLocalDesktopStopSessionID: UUID?
+
+    /// Desktop session IDs that should ignore late host updates.
     var retiredDesktopSessionIDs: Set<UUID> = []
+
+    /// Streams waiting for host app activation recovery after startup.
     var pendingApplicationActivationRecoveryStreamIDs: Set<StreamID> = []
+
+    /// Timeout for desktop stream stop acknowledgements.
     let desktopStreamStopTimeout: Duration = .seconds(2)
+
+    /// Startup baseline timestamps keyed by stream.
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
+
+    /// Streams that already sent their first registration packet.
     var streamStartupFirstRegistrationSent: Set<StreamID> = []
+
+    /// Streams that received their first media packet during startup.
     var streamStartupFirstPacketReceived: Set<StreamID> = []
-    var retiredStreamDiagnosticsSummaries: [RetiredStreamDiagnosticsSummary] = []
-    let retiredStreamDiagnosticsSummaryLimit: Int = 4
-    public internal(set) var lastAutomaticDesktopWorkloadReconfigurationSummary: String?
 
     // MARK: - Quality Test State
 
+    /// Continuation waiting for a quality-test benchmark result from the host.
     var qualityTestBenchmarkContinuation: CheckedContinuation<QualityTestBenchmarkMessage?, Never>?
+    /// Continuation waiting for the next quality-test stage completion.
     var qualityTestStageCompletionContinuation: CheckedContinuation<QualityTestStageCompleteMessage?, Never>?
+    /// Stage completion messages that arrived before a waiter was installed.
     var qualityTestStageCompletionBuffer: [QualityTestStageCompleteMessage] = []
+    /// Quality-test identifier currently awaiting benchmark or stage-completion responses.
     var qualityTestPendingTestID: UUID?
+    /// Monotonic waiter token used to invalidate stale benchmark timeouts.
     var qualityTestBenchmarkWaiterID: UInt64 = 0
+    /// Monotonic waiter token used to invalidate stale stage-completion timeouts.
     var qualityTestStageCompletionWaiterID: UInt64 = 0
+    /// Timeout task for the active quality-test benchmark waiter.
     var qualityTestBenchmarkTimeoutTask: Task<Void, Never>?
+    /// Timeout task for the active quality-test stage-completion waiter.
     var qualityTestStageCompletionTimeoutTask: Task<Void, Never>?
+    /// Continuation waiting for the host support-log archive URL.
     var hostSupportLogArchiveContinuation: CheckedContinuation<URL, Error>?
+    /// Request identifier for the active host support-log archive transfer.
     var hostSupportLogArchiveRequestID: UUID?
+    /// Task consuming the active host support-log archive transfer.
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
+    /// Timeout task for host support-log archive transfer setup and delivery.
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
+    /// Maximum time to wait for a support-log archive transfer.
     let hostSupportLogArchiveTimeout: Duration = .seconds(45)
+    /// Request identifier for the active host wallpaper transfer.
     var hostWallpaperRequestID: UUID?
+    /// Continuation waiting for the active host wallpaper payload.
     var hostWallpaperContinuation: CheckedContinuation<Void, Error>?
+    /// Timeout task for the active host wallpaper request.
     var hostWallpaperTimeoutTask: Task<Void, Never>?
+    /// Maximum time to wait for host wallpaper payload delivery.
     let hostWallpaperTimeout: Duration = .seconds(45)
+    /// Ping waiters currently awaiting host pong responses.
     var pingContinuations: [CheckedContinuation<Void, Error>] = []
+    /// Monotonic ping request identifier.
     var pingRequestID: UInt64 = 0
+    /// Timeout task for active ping waiters.
     var pingTimeoutTask: Task<Void, Never>?
 
     // MARK: - Heartbeat State
+
+    /// Periodic host heartbeat task and grace deadline for disconnect detection.
     @ObservationIgnored var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored var heartbeatGraceDeadline: ContinuousClock.Instant?
 
-    /// Thread-safe property to check if a stream is active from nonisolated contexts
-    nonisolated var activeStreamIDsForFiltering: Set<StreamID> {
-        fastPathState.activeStreamIDsSnapshot()
-    }
-
-    /// Stream IDs that currently participate in interactive playback and
-    /// should receive runtime encoder-setting updates.
-    public var activeInteractiveStreamIDs: [StreamID] {
-        var streamIDs: [StreamID] = []
-        if let desktopStreamID {
-            streamIDs.append(desktopStreamID)
-        }
-        streamIDs.append(contentsOf: activeStreams.map(\.id))
-
-        var seen = Set<StreamID>()
-        return streamIDs.filter { seen.insert($0).inserted }
-    }
-
-    public func handleMemoryPressure() async {
-        await handleRuntimeWorkloadSafetyMemoryPressure()
-    }
-
+    /// Retry tasks that request keyframes while a stream startup packet is still pending.
     var startupRegistrationRetryTasks: [StreamID: Task<Void, Never>] = [:]
+
+    /// Interval between startup registration retry requests.
     let startupRegistrationRetryInterval: Duration = .seconds(1)
+
+    /// Maximum startup registration retries before giving up.
     let startupRegistrationRetryLimit: Int = 5
 
-    nonisolated func isStartupPacketPending(_ streamID: StreamID) -> Bool {
-        fastPathState.isStartupPacketPending(streamID)
-    }
-
-    func markStartupPacketPending(_ streamID: StreamID) {
-        fastPathState.markStartupPacketPending(streamID)
-    }
-
-    func clearStartupPacketPending(_ streamID: StreamID) {
-        fastPathState.clearStartupPacketPending(streamID)
-    }
-
-    func resolveAudioPlaybackController() -> AudioPlaybackController {
-        if let lazyAudioPlaybackController {
-            return lazyAudioPlaybackController
-        }
-        let audioPlaybackController = AudioPlaybackController()
-        lazyAudioPlaybackController = audioPlaybackController
-        return audioPlaybackController
-    }
-
-    func setActiveAudioStreamIDForFiltering(_ streamID: StreamID?) {
-        fastPathState.setActiveAudioStreamID(streamID)
-    }
-
-    func setAudioDecodeTargetChannelCountForPipeline(_ count: Int) {
-        fastPathState.setAudioDecodeTargetChannelCount(count)
-    }
-
-    nonisolated var mediaSecurityContextForNetworking: MirageMediaSecurityContext? {
-        fastPathState.mediaSecurityContext()
-    }
-
-    nonisolated var mediaSecurityPacketKeyForNetworking: MirageMediaPacketKey? {
-        fastPathState.mediaSecurityPacketKey()
-    }
-
-    func setMediaSecurityContext(_ context: MirageMediaSecurityContext?) {
-        mediaSecurityContext = context
-        fastPathState.setMediaSecurityContext(context)
-    }
-
-    func startStartupRegistrationRetry(streamID: StreamID) {
-        startupRegistrationRetryTasks[streamID]?.cancel()
-        startupRegistrationRetryTasks[streamID] = Task { [weak self] in
-            guard let self else { return }
-            var attempt = 0
-            while !Task.isCancelled, attempt < self.startupRegistrationRetryLimit {
-                try? await Task.sleep(for: self.startupRegistrationRetryInterval)
-                if Task.isCancelled { return }
-                if !self.isStartupPacketPending(streamID) { return }
-                attempt += 1
-                MirageLogger.client(
-                    "Startup packet pending for stream \(streamID); requesting keyframe (\(attempt)/\(self.startupRegistrationRetryLimit))"
-                )
-                self.sendKeyframeRequest(for: streamID)
-            }
-        }
-    }
-
-    func cancelStartupRegistrationRetry(streamID: StreamID) {
-        if let task = startupRegistrationRetryTasks.removeValue(forKey: streamID) {
-            task.cancel()
-        }
-    }
-
-    /// Stream start synchronization - waits for server to assign stream ID
+    /// Continuation waiting for the host-assigned stream ID during startup.
     var streamStartedContinuation: CheckedContinuation<StreamID, Error>?
 
-    /// Minimum window sizes per stream (from host)
+    /// Minimum window sizes per stream received from the host.
     var streamMinSizes: [StreamID: (minWidth: Int, minHeight: Int)] = [:]
 
-    // Per-stream refresh rate overrides keyed by stream ID.
+    /// Per-stream refresh-rate override state and fallback counters.
     var refreshRateOverridesByStream: [StreamID: Int] = [:]
     var refreshRateMismatchCounts: [StreamID: Int] = [:]
     var refreshRateFallbackTargets: [StreamID: Int] = [:]
 
+    /// Decoder color-depth fallback state used after repeated decode failures.
     var decoderCompatibilityCurrentColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
     var decoderCompatibilityBaselineColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
-    var decoderCompatibilityFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
+
+    /// Requested color depth and latency modes retained while a stream setup is in flight.
     var pendingRequestedColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
     var pendingDesktopRequestedColorDepth: MirageStreamColorDepth?
     var pendingAppRequestedColorDepth: MirageStreamColorDepth?
     var pendingDesktopRequestedLatencyMode: MirageStreamLatencyMode?
     var pendingAppRequestedLatencyMode: MirageStreamLatencyMode?
     var pendingStreamSetupLatencyMode: MirageStreamLatencyMode?
+
+    /// Render latency mode currently applied per active stream.
     var renderLatencyModeByStream: [StreamID: MirageStreamLatencyMode] = [:]
-    let decoderCompatibilityFallbackCooldown: CFAbsoluteTime = 15.0
+
+    /// Diagnostics context registration token for appending client runtime state to Loom diagnostics.
     @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
-    // Internal for low-power policy extension.
+
+    /// Power-state monitor backing decoder low-power policy.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
+
+    /// Latest power-state snapshot used by decoder low-power policy.
     var decoderPowerStateSnapshot = MiragePowerStateSnapshot(
         isSystemLowPowerModeEnabled: false,
         isOnBattery: nil
     )
 
-    public enum ConnectionState: Equatable {
-        case disconnected
-        case connecting
-        case handshaking(host: String)
-        case connected(host: String)
-        case reconnecting
-        case error(String)
+    /// Client protocol version used for session bootstrap.
+    public static let clientProtocolVersion = Int(MirageKit.protocolVersion)
 
-        public static func == (lhs: ConnectionState, rhs: ConnectionState) -> Bool {
-            switch (lhs, rhs) {
-            case (.disconnected, .disconnected): true
-            case (.connecting, .connecting): true
-            case let (.handshaking(a), .handshaking(b)): a == b
-            case let (.connected(a), .connected(b)): a == b
-            case (.reconnecting, .reconnecting): true
-            case let (.error(a), .error(b)): a == b
-            default: false
-            }
-        }
-
-        /// Whether this state allows starting a new connection
-        public var canConnect: Bool {
-            switch self {
-            case .disconnected,
-                 .error: true
-            default: false
-            }
-        }
-    }
-
-    /// Client protocol version used for hello negotiation.
-    public static var clientProtocolVersion: Int {
-        Int(MirageKit.protocolVersion)
-    }
-
+    /// Creates a client service with optional device, transport, and session-store overrides.
     public init(
         deviceName: String? = nil,
         loomConfiguration: LoomNetworkConfiguration = .default,
@@ -1095,15 +660,10 @@ public final class MirageClientService {
         #if os(macOS)
         self.deviceName = deviceName ?? Host.current().localizedName ?? "Mac"
         #else
-        self.deviceName = deviceName ?? MirageSupportInfo.deviceDisplayName()
+        self.deviceName = deviceName ?? MirageSupportInfo.deviceDisplayName
         #endif
 
-        var resolvedConfiguration = loomConfiguration
-        if resolvedConfiguration.serviceType == Loom.serviceType {
-            resolvedConfiguration.serviceType = MirageKit.serviceType
-        }
-        resolvedConfiguration.quicALPN = ["mirage-v2"]
-
+        let resolvedConfiguration = Self.resolvedNetworkConfiguration(from: loomConfiguration)
         networkConfig = resolvedConfiguration
         loomNode = LoomNode(
             configuration: resolvedConfiguration,
@@ -1117,18 +677,9 @@ public final class MirageClientService {
         deviceID = persistedDeviceID
         MirageLogger.client("Loaded shared device ID: \(persistedDeviceID)")
         audioPacketIngressQueue = ClientAudioPacketIngressQueue(pipeline: audioDecodePipeline)
-        audioPacketIngressQueue.setDeliverHandler { [weak self] decodedFrames, streamID in
-            self?.enqueueDecodedAudioFrames(decodedFrames, for: streamID)
-        }
+        configureAudioPacketIngressQueue()
         identityManager = MirageKit.identityManager
-        self.sessionStore.clientService = self
-        self.sessionStore.onStreamPresentationTierChanged = { [weak self] streamID, tier in
-            guard let self else { return }
-            Task { [weak self] in
-                guard let self else { return }
-                await self.applyStreamPresentationTier(tier, to: streamID)
-            }
-        }
+        configureSessionStoreCallbacks()
         registerControlMessageHandlers()
         registerDiagnosticsContextProvider()
         configureDecoderLowPowerMonitoring()
@@ -1144,366 +695,4 @@ public final class MirageClientService {
             await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
         }
     }
-
-    private func registerDiagnosticsContextProvider() {
-        Task { [weak self] in
-            guard let self else { return }
-            diagnosticsContextProviderToken = await LoomDiagnostics.registerContextProvider { [weak self] in
-                guard let self else { return [:] }
-                return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
-            }
-        }
-    }
-
-    func recordRetiredStreamDiagnosticsSummary(streamID: StreamID, reason: String) {
-        let renderSubmissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        let renderDiagnostics = MirageRenderStreamStore.shared.diagnosticsSnapshot(for: streamID)
-        let metricsSnapshot = metricsStore.snapshot(for: streamID)
-        let summary = RetiredStreamDiagnosticsSummary(
-            streamID: streamID,
-            reason: reason,
-            retiredAt: CFAbsoluteTimeGetCurrent(),
-            renderGeneration: renderSubmissionSnapshot.cursor.generation,
-            renderSequence: renderSubmissionSnapshot.cursor.sequence,
-            layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS,
-            uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS,
-            visibleFrameFPS: metricsSnapshot?.clientVisibleFrameFPS,
-            visibleFrameCadenceKnown: metricsSnapshot?.clientVisibleFrameCadenceKnown,
-            pendingFrameCount: metricsSnapshot?.pendingFrameCount,
-            renderStoreClearCount: renderDiagnostics.clearCount,
-            presenterTimingResetCount: renderDiagnostics.presenterTimingResetCount,
-            displayLayerLivenessResetCount: renderDiagnostics.displayLayerLivenessResetCount,
-            presentationRecoveryRequestCount: renderDiagnostics.presentationRecoveryRequestCount,
-            lastPresentationRecoveryOutcome: renderDiagnostics.lastPresentationRecoveryOutcome
-        )
-        retiredStreamDiagnosticsSummaries.append(summary)
-        if retiredStreamDiagnosticsSummaries.count > retiredStreamDiagnosticsSummaryLimit {
-            retiredStreamDiagnosticsSummaries.removeFirst(
-                retiredStreamDiagnosticsSummaries.count - retiredStreamDiagnosticsSummaryLimit
-            )
-        }
-    }
-
-    private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
-        let primarySnapshot = diagnosticsPrimaryStreamSnapshot()
-        let primaryStreamID = diagnosticsPrimaryStreamID()
-        let renderSubmissionSnapshot = primaryStreamID.map {
-            MirageRenderStreamStore.shared.submissionSnapshot(for: $0)
-        }
-        let renderDiagnosticsSnapshot = primaryStreamID.map {
-            MirageRenderStreamStore.shared.diagnosticsSnapshot(for: $0)
-        }
-        let processPhysicalFootprintBytes = Self.processPhysicalFootprintBytes()
-        return [
-            "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
-            "client.authorizationState": .string(authorizationState.rawValue),
-            "client.awaitingManualApproval": .bool(isAwaitingManualApproval),
-            "client.mediaPayloadEncryptionEnabled": .bool(mediaPayloadEncryptionEnabled),
-            "client.availableWindowsCount": .int(availableWindows.count),
-            "client.activeStreamsCount": .int(activeStreams.count),
-            "client.availableAppsCount": .int(availableApps.count),
-            "client.hasReceivedWindowList": .bool(hasReceivedWindowList),
-            "client.hasReceivedAppList": .bool(hasReceivedAppList),
-            "client.desktopStreamActive": .bool(desktopStreamID != nil),
-            "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
-            "client.maxRefreshRateOverride": maxRefreshRateOverride.map(LoomDiagnosticsValue.int) ?? .null,
-            "client.memoryPressureCount": .int(runtimeWorkloadSafetyMemoryPressureCount),
-            "client.memoryPressureLastAgeSeconds": runtimeWorkloadSafetyLastMemoryPressureTime
-                .map { LoomDiagnosticsValue.double(max(0, CFAbsoluteTimeGetCurrent() - $0)) } ?? .null,
-            "client.runtimeWorkloadFrameRateCap": runtimeWorkloadSafetyEffectiveFrameRateCap()
-                .map(LoomDiagnosticsValue.int) ?? .null,
-            "client.runtimeWorkloadFallbackReason": runtimeWorkloadSafetyLastFallbackReason.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
-            "client.primaryStreamID": primaryStreamID.map { .int(Int($0)) } ?? .null,
-            "client.primaryStream.renderGeneration": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.cursor.generation)) } ?? .null,
-            "client.primaryStream.renderSequence": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.cursor.sequence)) } ?? .null,
-            "client.primaryStream.visibleRenderSequence": renderSubmissionSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.visibleCursor.sequence)) } ?? .null,
-            "client.primaryStream.layerEnqueueFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.layerEnqueueFPS) } ?? .null,
-            "client.primaryStream.uniqueLayerEnqueueFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.uniqueLayerEnqueueFPS) } ?? .null,
-            "client.primaryStream.visibleFrameFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientVisibleFrameFPS) } ?? .null,
-            "client.primaryStream.visibleFrameCadenceKnown": primarySnapshot
-                .map { LoomDiagnosticsValue.bool($0.clientVisibleFrameCadenceKnown) } ?? .null,
-            "client.primaryStream.renderStoreClearCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clearCount)) } ?? .null,
-            "client.primaryStream.renderGenerationBumpCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.generationBumpCount)) } ?? .null,
-            "client.primaryStream.renderMemoryTrimClearCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.memoryTrimClearCount)) } ?? .null,
-            "client.primaryStream.presenterTimingResetCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presenterTimingResetCount)) } ?? .null,
-            "client.primaryStream.presenterTimingResetReasons": renderDiagnosticsSnapshot?
-                .presenterTimingResetReasons.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.primaryStream.displayLayerLivenessResetCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.displayLayerLivenessResetCount)) } ?? .null,
-            "client.primaryStream.displayLayerLivenessResetReasons": renderDiagnosticsSnapshot?
-                .displayLayerLivenessResetReasons.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.primaryStream.presentationRecoveryRequestCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presentationRecoveryRequestCount)) } ?? .null,
-            "client.primaryStream.presentationRecoveryHandlerDispatchCount": renderDiagnosticsSnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.presentationRecoveryHandlerDispatchCount)) } ?? .null,
-            "client.primaryStream.lastRenderGenerationBumpReason": renderDiagnosticsSnapshot?
-                .lastGenerationBumpReason.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.primaryStream.lastPresentationRecoveryOutcome": renderDiagnosticsSnapshot?
-                .lastPresentationRecoveryOutcome.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.lastRetiredStreamSummaries": retiredStreamDiagnosticsSummaryText()
-                .map(LoomDiagnosticsValue.string) ?? .null,
-            "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,
-            "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
-                primarySnapshot?.clientUsingHardwareDecoder
-            ),
-            "client.primaryStream.reassemblerPendingFrameCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingFrameCount) } ?? .null,
-            "client.primaryStream.reassemblerPendingKeyframeCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingKeyframeCount) } ?? .null,
-            "client.primaryStream.reassemblerPendingBytes": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientReassemblerPendingBytes) } ?? .null,
-            "client.primaryStream.frameBufferPoolRetainedBytes": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientFrameBufferPoolRetainedBytes) } ?? .null,
-            "client.primaryStream.reassemblerBudgetEvictions": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientReassemblerBudgetEvictions)) } ?? .null,
-            "client.process.physicalFootprintBytes": processPhysicalFootprintBytes
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0)) } ?? .null,
-            "client.primaryStream.hostEncoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
-                primarySnapshot?.hostUsingHardwareEncoder
-            ),
-            "client.primaryStream.receivedWorstGapMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientReceivedWorstGapMs) } ?? .null,
-            "client.primaryStream.receivedFrameIntervalP95Ms": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP95Ms) } ?? .null,
-            "client.primaryStream.receivedFrameIntervalP99Ms": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientReceivedFrameIntervalP99Ms) } ?? .null,
-            "client.primaryStream.loomStreamDeliveryFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientLoomStreamDeliveryFPS) } ?? .null,
-            "client.primaryStream.loomStreamDeliveryGapMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientLoomStreamDeliveryGapMaxMs) } ?? .null,
-            "client.primaryStream.rawMediaPacketIngressFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientRawMediaPacketIngressFPS) } ?? .null,
-            "client.primaryStream.incomingMediaBatchFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchFPS) } ?? .null,
-            "client.primaryStream.incomingMediaBatchIntervalMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchIntervalMaxMs) } ?? .null,
-            "client.primaryStream.incomingMediaBatchMaxSize": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientIncomingMediaBatchMaxSize) } ?? .null,
-            "client.primaryStream.incomingMediaBatchAverageSize": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientIncomingMediaBatchAverageSize) } ?? .null,
-            "client.primaryStream.videoIngressQueuedBatchCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientVideoIngressQueuedBatchCount) } ?? .null,
-            "client.primaryStream.videoIngressQueuedPacketCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int($0.clientVideoIngressQueuedPacketCount) } ?? .null,
-            "client.primaryStream.videoIngressQueueAgeMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientVideoIngressQueueAgeMaxMs) } ?? .null,
-            "client.primaryStream.videoIngressProcessorWakeDelayMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientVideoIngressProcessorWakeDelayMaxMs) } ?? .null,
-            "client.primaryStream.videoIngressStalePacketDropCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientVideoIngressStalePacketDropCount)) } ?? .null,
-            "client.primaryStream.acceptedMediaMaxPacketSize": primarySnapshot?.clientAcceptedMediaMaxPacketSize
-                .map(LoomDiagnosticsValue.int) ?? .null,
-            "client.primaryStream.mediaPayloadEncryptionEnabled": primarySnapshot?.clientMediaPayloadEncryptionEnabled
-                .map(LoomDiagnosticsValue.bool) ?? .null,
-            "client.primaryStream.displayLinkCallbackFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientDisplayLinkCallbackFPS) } ?? .null,
-            "client.primaryStream.displayTickWorkerFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientDisplayTickWorkerFPS) } ?? .null,
-            "client.primaryStream.displayTickMainRelayFPS": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientDisplayTickMainRelayFPS) } ?? .null,
-            "client.primaryStream.frameIntervalMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientFrameIntervalMaxMs) } ?? .null,
-            "client.primaryStream.displayTickIntervalMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientDisplayTickIntervalMaxMs) } ?? .null,
-            "client.primaryStream.displayTickMainDelayMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientDisplayTickMainDelayMaxMs) } ?? .null,
-            "client.primaryStream.renderWorkerSubmitDelayMaxMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientRenderWorkerSubmitDelayMaxMs) } ?? .null,
-            "client.primaryStream.sampleBufferRendererNotReadyCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientSampleBufferRendererNotReadyCount)) } ?? .null,
-            "client.primaryStream.displayImmediatelySubmittedCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientDisplayImmediatelySubmittedCount)) } ?? .null,
-            "client.primaryStream.rendererReadyDrainPassCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyDrainPassCount)) } ?? .null,
-            "client.primaryStream.rendererReadyDrainSubmittedCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyDrainSubmittedCount)) } ?? .null,
-            "client.primaryStream.rendererReadyRearmCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientRendererReadyRearmCount)) } ?? .null,
-            "client.primaryStream.oldestUnsubmittedAgeMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientOldestUnsubmittedAgeMs) } ?? .null,
-            "client.primaryStream.newestUnsubmittedAgeMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientNewestUnsubmittedAgeMs) } ?? .null,
-            "client.primaryStream.audioStaleVideoGateCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoGateCount)) } ?? .null,
-            "client.primaryStream.audioStaleVideoSoftHoldCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoSoftHoldCount)) } ?? .null,
-            "client.primaryStream.audioStaleVideoConfirmedGateCount": primarySnapshot
-                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientAudioStaleVideoConfirmedGateCount)) } ?? .null,
-            "client.primaryStream.audioStaleVideoMaxSnapshotAgeMs": primarySnapshot
-                .map { LoomDiagnosticsValue.double($0.clientAudioStaleVideoMaxSnapshotAgeMs) } ?? .null,
-            "client.primaryStream.hostSendStartDelayMaxMs": primarySnapshot?.hostSendStartDelayMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostSendCompletionMaxMs": primarySnapshot?.hostSendCompletionMaxMs.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostPacketPacerTotalSleepMs": primarySnapshot?.hostPacketPacerTotalSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
-            "client.primaryStream.hostPacketPacerMaxSleepMs": primarySnapshot?.hostPacketPacerMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
-            "client.primaryStream.hostPacketPacerFrameMaxSleepMs": primarySnapshot?.hostPacketPacerFrameMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
-            "client.primaryStream.hostCaptureDeliveredGapP99Ms": primarySnapshot?.hostCaptureDeliveredFrameGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostCaptureDeliveredGapWorstMs": primarySnapshot?.hostCaptureDeliveredFrameGapWorstMs.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostCaptureWallGapP99Ms": primarySnapshot?.hostCaptureWallClockGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostCaptureDisplayTimeGapP99Ms": primarySnapshot?.hostCaptureDisplayTimeGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostCaptureLongFrameGaps": primarySnapshot?.hostCaptureLongFrameGapCount.map { .int(Int($0)) } ?? .null,
-            "client.primaryStream.hostCaptureDisplayTimeDrifts": primarySnapshot?.hostCaptureDisplayTimeDriftCount.map { .int(Int($0)) } ?? .null,
-            "client.primaryStream.hostCaptureVirtualTimingSuspect": primarySnapshot?.hostCaptureVirtualDisplayTimingSuspect.map(LoomDiagnosticsValue.bool) ?? .null,
-            "client.primaryStream.hostVirtualDisplayID": primarySnapshot?.hostVirtualDisplayID.map { .int(Int($0)) } ?? .null,
-            "client.primaryStream.hostVirtualDisplayRefreshRate": primarySnapshot?.hostVirtualDisplayRefreshRate.map(LoomDiagnosticsValue.double) ?? .null,
-            "client.primaryStream.hostVirtualDisplayScaleFactor": primarySnapshot?.hostVirtualDisplayScaleFactor.map(LoomDiagnosticsValue.double) ?? .null
-        ]
-    }
-
-    private func diagnosticsPrimaryStreamID() -> StreamID? {
-        if let desktopStreamID {
-            return desktopStreamID
-        }
-        return activeStreams.first?.id
-    }
-
-    private func diagnosticsPrimaryStreamSnapshot() -> MirageClientMetricsSnapshot? {
-        guard let streamID = diagnosticsPrimaryStreamID() else { return nil }
-        return metricsStore.snapshot(for: streamID)
-    }
-
-    private func retiredStreamDiagnosticsSummaryText() -> String? {
-        guard !retiredStreamDiagnosticsSummaries.isEmpty else { return nil }
-        let now = CFAbsoluteTimeGetCurrent()
-        return retiredStreamDiagnosticsSummaries
-            .suffix(retiredStreamDiagnosticsSummaryLimit)
-            .map { summary in
-                let ageSeconds = max(0, now - summary.retiredAt)
-                let layerEnqueueFPS = summary.layerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
-                let uniqueLayerEnqueueFPS = summary.uniqueLayerEnqueueFPS.map { String(format: "%.1f", $0) } ?? "nil"
-                let visibleFrameFPS = summary.visibleFrameCadenceKnown == true
-                    ? summary.visibleFrameFPS.map { String(format: "%.1f", $0) } ?? "nil"
-                    : "unknown"
-                let pending = summary.pendingFrameCount.map(String.init) ?? "nil"
-                let outcome = summary.lastPresentationRecoveryOutcome ?? "nil"
-                return [
-                    "stream=\(summary.streamID)",
-                    "reason=\(summary.reason)",
-                    "ageSeconds=\(String(format: "%.1f", ageSeconds))",
-                    "renderGeneration=\(summary.renderGeneration)",
-                    "renderSequence=\(summary.renderSequence)",
-                    "layerEnqueueFPS=\(layerEnqueueFPS)",
-                    "uniqueLayerEnqueueFPS=\(uniqueLayerEnqueueFPS)",
-                    "visibleFrameFPS=\(visibleFrameFPS)",
-                    "pending=\(pending)",
-                    "clears=\(summary.renderStoreClearCount)",
-                    "presenterTimingResets=\(summary.presenterTimingResetCount)",
-                    "displayLayerLivenessResets=\(summary.displayLayerLivenessResetCount)",
-                    "recoveryRequests=\(summary.presentationRecoveryRequestCount)",
-                    "lastRecoveryOutcome=\(outcome)"
-                ].joined(separator: ",")
-            }
-            .joined(separator: " | ")
-    }
-
-    private func diagnosticsHardwareAccelerationState(_ enabled: Bool?) -> LoomDiagnosticsValue {
-        guard let enabled else { return .string("unknown") }
-        return .string(enabled ? "active" : "software_fallback")
-    }
-
-    private static func processPhysicalFootprintBytes() -> UInt64? {
-        #if canImport(Darwin)
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { reboundPointer in
-                task_info(
-                    mach_task_self_,
-                    task_flavor_t(TASK_VM_INFO),
-                    reboundPointer,
-                    &count
-                )
-            }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        return UInt64(info.phys_footprint)
-        #else
-        return nil
-        #endif
-    }
-
-    private static func diagnosticsConnectionStateName(_ state: ConnectionState) -> String {
-        switch state {
-        case .disconnected:
-            return "disconnected"
-        case .connecting:
-            return "connecting"
-        case .handshaking:
-            return "handshaking"
-        case .connected:
-            return "connected"
-        case .reconnecting:
-            return "reconnecting"
-        case .error:
-            return "error"
-        }
-    }
-
-    private func diagnosticsAdaptiveFallbackModeName(_ mode: AdaptiveFallbackMode) -> String {
-        switch mode {
-        case .disabled:
-            return "disabled"
-        case .adaptive:
-            return "adaptive"
-        }
-    }
-
-    /// Applies runtime network-policy updates used by discovery and hello validation.
-    /// Existing connections keep their current transport/path settings until reconnect.
-    public func updateNetworkPolicy(
-        enableBonjour: Bool,
-        enablePeerToPeer: Bool,
-        requireEncryptedMediaOnLocalNetwork: Bool
-    ) {
-        guard networkConfig.enableBonjour != enableBonjour ||
-            networkConfig.enablePeerToPeer != enablePeerToPeer ||
-            networkConfig.requireEncryptedMediaOnLocalNetwork != requireEncryptedMediaOnLocalNetwork else {
-            return
-        }
-
-        networkConfig.enableBonjour = enableBonjour
-        networkConfig.enablePeerToPeer = enablePeerToPeer
-        networkConfig.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
-        loomNode.configuration = networkConfig
-        MirageLogger.client(
-            "Updated network policy (bonjour=\(enableBonjour), p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
-        )
-    }
-
-    /// Sets client control-update policy for active-stream workload isolation.
-    public func setControlUpdatePolicy(_ policy: ControlUpdatePolicy) {
-        guard controlUpdatePolicy != policy else { return }
-        controlUpdatePolicy = policy
-    }
-
-    /// Consumes and clears deferred control refresh requirements accumulated while policy was suppressed.
-    public func consumeDeferredControlRefreshRequirements() -> DeferredControlRefreshRequirements {
-        let requirements = deferredControlRefreshRequirements
-        deferredControlRefreshRequirements = .none
-        return requirements
-    }
-
-    #if os(iOS) || os(visionOS)
-    /// Cached drawable size from the sample-buffer view.
-    public static var lastKnownViewSize: CGSize = .zero
-    public static var lastKnownDrawablePixelSize: CGSize = .zero
-    /// Cached active screen bounds in points.
-    public static var lastKnownScreenPointSize: CGSize = .zero
-    /// Cached active screen scale factor.
-    public static var lastKnownScreenScale: CGFloat = 0
-    /// Cached active screen native pixel size.
-    public static var lastKnownScreenNativePixelSize: CGSize = .zero
-    /// Cached active screen native scale factor.
-    public static var lastKnownScreenNativeScale: CGFloat = 0
-    #endif
 }

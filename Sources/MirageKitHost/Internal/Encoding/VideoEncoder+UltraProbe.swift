@@ -14,13 +14,22 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-package struct VideoEncoderUltraProbeResult: Sendable {
-    package let captureAcceptsXF44: Bool
-    package let encoderSessionCreated: Bool
-    package let encodedChromaSampling: MirageStreamChromaSampling?
-    package let usingHardwareEncoder: Bool?
+/// Result of probing whether the current host can capture and encode Ultra 4:4:4 streams.
+struct VideoEncoderUltraProbeResult {
+    /// Whether ScreenCaptureKit accepted an `XF44` capture configuration.
+    let captureAcceptsXF44: Bool
 
-    package var supportsUltra444: Bool {
+    /// Whether VideoToolbox created a matching HEVC compression session.
+    let encoderSessionCreated: Bool
+
+    /// Chroma sampling detected from the encoded probe bitstream.
+    let encodedChromaSampling: MirageStreamChromaSampling?
+
+    /// Whether the probe encoder reported hardware acceleration.
+    let usingHardwareEncoder: Bool?
+
+    /// Whether every required capture and hardware-encode check passed for Ultra 4:4:4.
+    var supportsUltra444: Bool {
         captureAcceptsXF44 &&
             encoderSessionCreated &&
             encodedChromaSampling == .yuv444 &&
@@ -29,7 +38,7 @@ package struct VideoEncoderUltraProbeResult: Sendable {
 }
 
 extension VideoEncoder {
-    package static func probeProRes4444Support() -> Bool {
+    static func probeProRes4444Support() -> Bool {
         guard captureAcceptsXF44() else { return false }
 
         let width = 128
@@ -62,9 +71,9 @@ extension VideoEncoder {
         return true
     }
 
-    package static func probeStrictUltra444Support() -> VideoEncoderUltraProbeResult {
-        let captureAcceptsXF44 = captureAcceptsXF44()
-        guard captureAcceptsXF44 else {
+    static func probeStrictUltra444Support() -> VideoEncoderUltraProbeResult {
+        let canCaptureXF44 = captureAcceptsXF44()
+        guard canCaptureXF44 else {
             return VideoEncoderUltraProbeResult(
                 captureAcceptsXF44: false,
                 encoderSessionCreated: false,
@@ -92,8 +101,6 @@ extension VideoEncoder {
             codecType: kCMVideoCodecType_HEVC,
             encoderSpecification: VideoEncoder.encoderSpecification(
                 latencyMode: .lowestLatency,
-                width: width,
-                height: height,
                 streamKind: .window
             ) as CFDictionary,
             imageBufferAttributes: imageBufferAttributes,
@@ -105,7 +112,7 @@ extension VideoEncoder {
 
         guard sessionStatus == noErr, let session else {
             return VideoEncoderUltraProbeResult(
-                captureAcceptsXF44: captureAcceptsXF44,
+                captureAcceptsXF44: canCaptureXF44,
                 encoderSessionCreated: false,
                 encodedChromaSampling: nil,
                 usingHardwareEncoder: nil
@@ -141,7 +148,7 @@ extension VideoEncoder {
             pixelFormat: pixelFormat
         ) else {
             return VideoEncoderUltraProbeResult(
-                captureAcceptsXF44: captureAcceptsXF44,
+                captureAcceptsXF44: canCaptureXF44,
                 encoderSessionCreated: true,
                 encodedChromaSampling: nil,
                 usingHardwareEncoder: hardwareEncoderStatus(session)
@@ -178,7 +185,7 @@ extension VideoEncoder {
         }
 
         return VideoEncoderUltraProbeResult(
-            captureAcceptsXF44: captureAcceptsXF44,
+            captureAcceptsXF44: canCaptureXF44,
             encoderSessionCreated: true,
             encodedChromaSampling: callbackState.withLock { $0 },
             usingHardwareEncoder: hardwareEncoderStatus(session)
@@ -192,15 +199,16 @@ extension VideoEncoder {
     }
 
     private static func hardwareEncoderStatus(_ session: VTCompressionSession) -> Bool? {
-        var value: Unmanaged<CFTypeRef>?
-        let status = VTSessionCopyProperty(
-            session,
-            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            allocator: kCFAllocatorDefault,
-            valueOut: &value
-        )
-        guard status == noErr,
-              let value = value?.takeRetainedValue() else { return nil }
+        var value: CFTypeRef?
+        let status = withUnsafeMutablePointer(to: &value) { valuePointer in
+            VTSessionCopyProperty(
+                session,
+                key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+                allocator: kCFAllocatorDefault,
+                valueOut: valuePointer
+            )
+        }
+        guard status == noErr else { return nil }
         return value as? Bool
     }
 

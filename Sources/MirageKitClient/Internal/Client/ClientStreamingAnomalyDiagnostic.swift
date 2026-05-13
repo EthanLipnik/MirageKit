@@ -8,7 +8,7 @@
 import Foundation
 import MirageKit
 
-struct ClientStreamingAnomalySample: Sendable {
+struct ClientStreamingAnomalySample {
     let streamID: StreamID
     let trigger: String
     let decodedFPS: Double
@@ -17,22 +17,14 @@ struct ClientStreamingAnomalySample: Sendable {
     let receivedFrameIntervalP95Ms: Double
     let receivedFrameIntervalP99Ms: Double
     let displayTickFPS: Double
-    let presentationPassFPS: Double
     let submitAttemptFPS: Double
-    let layerEnqueueFPS: Double
-    let uniqueLayerEnqueueFPS: Double
-    let visibleFrameFPS: Double
-    let visibleFrameCadenceKnown: Bool
-    let visibleFrameIntervalP99Ms: Double
-    let visibleWorstPresentationGapMs: Double
-    let repeatedSourceFrameCount: UInt64
-    let framesSubmittedPerPassAverage: Double
-    let framesSubmittedPerPassMax: UInt64
+    let layerAcceptedFPS: Double
+    let presentedFPS: Double
+    let submittedFPS: Double
+    let uniqueSubmittedFPS: Double
     let pendingFrameCount: Int
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
-    let renderStoreOverwriteFPS: Double
-    let lowestLatencyFreshBacklogDrops: UInt64
     let lateFrameDrops: UInt64
     let coalescedBeforeSubmitCount: UInt64
     let duplicateRemoteTimestampCount: UInt64
@@ -40,8 +32,6 @@ struct ClientStreamingAnomalySample: Sendable {
     let displayLayerNotReadyCount: UInt64
     let repeatedFrameCount: UInt64
     let missedVSyncCount: UInt64
-    let smoothestOneFrameHoldCount: UInt64
-    let displayCadenceBelowSourceCount: UInt64
     let displayTickIntervalP95Ms: Double
     let displayTickIntervalP99Ms: Double
     let playoutDelayFrames: Int
@@ -73,22 +63,18 @@ struct ClientStreamingAnomalySample: Sendable {
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
         displayTickFPS: Double = 0,
-        presentationPassFPS: Double = 0,
         submitAttemptFPS: Double = 0,
-        layerEnqueueFPS: Double,
-        uniqueLayerEnqueueFPS: Double,
-        visibleFrameFPS: Double = 0,
-        visibleFrameCadenceKnown: Bool = false,
-        visibleFrameIntervalP99Ms: Double = 0,
-        visibleWorstPresentationGapMs: Double = 0,
-        repeatedSourceFrameCount: UInt64 = 0,
-        framesSubmittedPerPassAverage: Double = 0,
-        framesSubmittedPerPassMax: UInt64 = 0,
+        layerAcceptedFPS: Double = 0,
+        presentedFPS: Double = 0,
+        layerEnqueueFPS: Double? = nil,
+        uniqueLayerEnqueueFPS: Double? = nil,
+        visibleFrameFPS: Double? = nil,
+        visibleFrameCadenceKnown: Bool = true,
+        submittedFPS: Double? = nil,
+        uniqueSubmittedFPS: Double? = nil,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
-        renderStoreOverwriteFPS: Double = 0,
-        lowestLatencyFreshBacklogDrops: UInt64 = 0,
         lateFrameDrops: UInt64 = 0,
         coalescedBeforeSubmitCount: UInt64 = 0,
         duplicateRemoteTimestampCount: UInt64 = 0,
@@ -96,8 +82,6 @@ struct ClientStreamingAnomalySample: Sendable {
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
         missedVSyncCount: UInt64 = 0,
-        smoothestOneFrameHoldCount: UInt64 = 0,
-        displayCadenceBelowSourceCount: UInt64 = 0,
         displayTickIntervalP95Ms: Double = 0,
         displayTickIntervalP99Ms: Double = 0,
         playoutDelayFrames: Int = 0,
@@ -128,22 +112,15 @@ struct ClientStreamingAnomalySample: Sendable {
         self.receivedFrameIntervalP95Ms = receivedFrameIntervalP95Ms
         self.receivedFrameIntervalP99Ms = receivedFrameIntervalP99Ms
         self.displayTickFPS = displayTickFPS
-        self.presentationPassFPS = presentationPassFPS
         self.submitAttemptFPS = submitAttemptFPS
-        self.layerEnqueueFPS = layerEnqueueFPS
-        self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS
-        self.visibleFrameFPS = visibleFrameFPS
-        self.visibleFrameCadenceKnown = visibleFrameCadenceKnown
-        self.visibleFrameIntervalP99Ms = visibleFrameIntervalP99Ms
-        self.visibleWorstPresentationGapMs = visibleWorstPresentationGapMs
-        self.repeatedSourceFrameCount = repeatedSourceFrameCount
-        self.framesSubmittedPerPassAverage = framesSubmittedPerPassAverage
-        self.framesSubmittedPerPassMax = framesSubmittedPerPassMax
+        self.layerAcceptedFPS = layerAcceptedFPS
+        self.presentedFPS = visibleFrameFPS ?? presentedFPS
+        _ = visibleFrameCadenceKnown
+        self.submittedFPS = submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
+        self.uniqueSubmittedFPS = uniqueSubmittedFPS ?? uniqueLayerEnqueueFPS ?? submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
-        self.renderStoreOverwriteFPS = renderStoreOverwriteFPS
-        self.lowestLatencyFreshBacklogDrops = lowestLatencyFreshBacklogDrops
         self.lateFrameDrops = lateFrameDrops
         self.coalescedBeforeSubmitCount = coalescedBeforeSubmitCount
         self.duplicateRemoteTimestampCount = duplicateRemoteTimestampCount
@@ -151,8 +128,6 @@ struct ClientStreamingAnomalySample: Sendable {
         self.displayLayerNotReadyCount = displayLayerNotReadyCount
         self.repeatedFrameCount = repeatedFrameCount
         self.missedVSyncCount = missedVSyncCount
-        self.smoothestOneFrameHoldCount = smoothestOneFrameHoldCount
-        self.displayCadenceBelowSourceCount = displayCadenceBelowSourceCount
         self.displayTickIntervalP95Ms = displayTickIntervalP95Ms
         self.displayTickIntervalP99Ms = displayTickIntervalP99Ms
         self.playoutDelayFrames = playoutDelayFrames
@@ -176,7 +151,7 @@ struct ClientStreamingAnomalySample: Sendable {
         self.hostMetrics = hostMetrics
     }
 
-    fileprivate func metricsSnapshot() -> MirageClientMetricsSnapshot {
+    fileprivate var metricsSnapshot: MirageClientMetricsSnapshot {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: decodedFPS,
             receivedFPS: receivedFPS,
@@ -184,28 +159,18 @@ struct ClientStreamingAnomalySample: Sendable {
             clientReceivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
             clientReceivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms,
             clientDisplayTickFPS: displayTickFPS,
-            clientPresentationPassFPS: presentationPassFPS,
             clientSubmitAttemptFPS: submitAttemptFPS,
-            layerEnqueueFPS: layerEnqueueFPS,
-            uniqueLayerEnqueueFPS: uniqueLayerEnqueueFPS,
-            clientVisibleFrameFPS: visibleFrameFPS,
-            clientVisibleFrameCadenceKnown: visibleFrameCadenceKnown,
-            clientVisibleWorstPresentationGapMs: visibleWorstPresentationGapMs,
-            clientVisibleFrameIntervalP99Ms: visibleFrameIntervalP99Ms,
-            clientRepeatedSourceFrameCount: repeatedSourceFrameCount,
-            clientFramesSubmittedPerPassAverage: framesSubmittedPerPassAverage,
-            clientFramesSubmittedPerPassMax: framesSubmittedPerPassMax,
+            clientLayerAcceptedFPS: layerAcceptedFPS,
+            clientPresentedFPS: presentedFPS,
+            submittedFPS: submittedFPS,
+            uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
-            clientRenderStoreOverwriteFPS: renderStoreOverwriteFPS,
-            clientLowestLatencyFreshBacklogDrops: lowestLatencyFreshBacklogDrops,
             clientLateFrameDrops: lateFrameDrops,
             clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
             clientRepeatedFrameCount: repeatedFrameCount,
             clientMissedVSyncCount: missedVSyncCount,
-            clientSmoothestOneFrameHoldCount: smoothestOneFrameHoldCount,
-            clientDisplayCadenceBelowSourceCount: displayCadenceBelowSourceCount,
             clientDisplayTickIntervalP95Ms: displayTickIntervalP95Ms,
             clientDisplayTickIntervalP99Ms: displayTickIntervalP99Ms,
             clientPlayoutDelayFrames: playoutDelayFrames,
@@ -254,24 +219,11 @@ struct ClientStreamingAnomalySample: Sendable {
             clientUsingHardwareDecoder: usingHardwareDecoder,
             hasHostMetrics: hostMetrics != nil
         )
-        snapshot.clientCoalescedBeforeSubmitCount = coalescedBeforeSubmitCount
-        snapshot.clientDuplicateRemoteTimestampCount = duplicateRemoteTimestampCount
-        snapshot.clientCorrectedStreamTimestampCount = correctedStreamTimestampCount
-        snapshot.hostCaptureIngressAverageMs = hostMetrics?.captureIngressAverageMs
-        snapshot.hostCaptureIngressMaxMs = hostMetrics?.captureIngressMaxMs
-        snapshot.hostPreEncodeWaitAverageMs = hostMetrics?.preEncodeWaitAverageMs
-        snapshot.hostPreEncodeWaitMaxMs = hostMetrics?.preEncodeWaitMaxMs
-        snapshot.hostCaptureCallbackAverageMs = hostMetrics?.captureCallbackAverageMs
-        snapshot.hostCaptureCallbackMaxMs = hostMetrics?.captureCallbackMaxMs
         snapshot.hostSendQueueBytes = hostMetrics?.sendQueueBytes
         snapshot.hostSendStartDelayAverageMs = hostMetrics?.sendStartDelayAverageMs
         snapshot.hostSendStartDelayMaxMs = hostMetrics?.sendStartDelayMaxMs
         snapshot.hostSendCompletionAverageMs = hostMetrics?.sendCompletionAverageMs
         snapshot.hostSendCompletionMaxMs = hostMetrics?.sendCompletionMaxMs
-        snapshot.hostNonKeyframeSendStartDelayAverageMs = hostMetrics?.nonKeyframeSendStartDelayAverageMs
-        snapshot.hostNonKeyframeSendStartDelayMaxMs = hostMetrics?.nonKeyframeSendStartDelayMaxMs
-        snapshot.hostNonKeyframeSendCompletionAverageMs = hostMetrics?.nonKeyframeSendCompletionAverageMs
-        snapshot.hostNonKeyframeSendCompletionMaxMs = hostMetrics?.nonKeyframeSendCompletionMaxMs
         snapshot.hostPacketPacerAverageSleepMs = hostMetrics?.packetPacerAverageSleepMs
         snapshot.hostPacketPacerTotalSleepMs = hostMetrics?.packetPacerTotalSleepMs
         snapshot.hostPacketPacerMaxSleepMs = hostMetrics?.packetPacerMaxSleepMs
@@ -285,7 +237,7 @@ struct ClientStreamingAnomalySample: Sendable {
     }
 }
 
-struct ClientStreamingAnomalyDiagnostic: Sendable, Equatable {
+struct ClientStreamingAnomalyDiagnostic: Equatable {
     let bottleneckKind: MirageStreamBottleneckKind
     let label: String
     let message: String
@@ -298,7 +250,7 @@ struct ClientStreamingAnomalyDiagnostic: Sendable, Equatable {
 func clientStreamingAnomalyDiagnostic(
     sample: ClientStreamingAnomalySample
 ) -> ClientStreamingAnomalyDiagnostic {
-    let snapshot = sample.metricsSnapshot()
+    let snapshot = sample.metricsSnapshot
     let hostCadencePressure: HostCadencePressureDiagnostic? = if let hostMetrics = sample.hostMetrics {
         hostCadencePressureDiagnostic(sample: HostCadencePressureDiagnosticSample(metrics: hostMetrics))
     } else {
@@ -313,7 +265,9 @@ func clientStreamingAnomalyDiagnostic(
         bottleneckKind: bottleneckKind,
         hostCadencePressure: hostCadencePressure
     )
-    let hostTransportDrops = resolvedTransportDropCount(metrics: sample.hostMetrics)
+    let hostTransportDrops = (sample.hostMetrics?.stalePacketDrops ?? 0) +
+        (sample.hostMetrics?.generationAbortDrops ?? 0) +
+        (sample.hostMetrics?.nonKeyframeHoldDrops ?? 0)
     let hostQueueText = sample.hostMetrics?.sendQueueBytes.map { "\((Double($0) / 1024.0).rounded())KB" } ?? "--"
     let hostCaptureText = formattedFPS(sample.hostMetrics?.captureFPS)
     let hostEncodedText = formattedFPS(sample.hostMetrics?.encodedFPS)
@@ -331,26 +285,19 @@ func clientStreamingAnomalyDiagnostic(
         "decoded=\(formattedFPS(sample.decodedFPS))fps received=\(formattedFPS(sample.receivedFPS))fps " +
         "receivedWorstGap=\(formattedMs(sample.receivedWorstGapMs))ms " +
         "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
-        "displayTick=\(formattedFPS(sample.displayTickFPS))fps pass=\(formattedFPS(sample.presentationPassFPS))fps " +
-        "framesPerPassAvg=\(String(format: "%.2f", sample.framesSubmittedPerPassAverage)) " +
-        "framesPerPassMax=\(sample.framesSubmittedPerPassMax) tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
+        "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
-        "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps " +
-        "layerEnqueueFPS=\(formattedFPS(sample.layerEnqueueFPS))fps " +
-        "uniqueLayerEnqueueFPS=\(formattedFPS(sample.uniqueLayerEnqueueFPS))fps " +
-        "visibleFrameFPS=\(sample.visibleFrameCadenceKnown ? formattedFPS(sample.visibleFrameFPS) : "--")fps " +
-        "visibleP99=\(formattedMs(sample.visibleFrameIntervalP99Ms))ms visibleWorst=\(formattedMs(sample.visibleWorstPresentationGapMs))ms " +
+        "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
+        "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
+        "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
-        "overwritten=\(sample.overwrittenPendingFrames) overwriteFPS=\(formattedFPS(sample.renderStoreOverwriteFPS))fps " +
-        "freshBacklogDrops=\(sample.lowestLatencyFreshBacklogDrops) lateDrops=\(sample.lateFrameDrops) " +
+        "overwritten=\(sample.overwrittenPendingFrames) lateDrops=\(sample.lateFrameDrops) " +
         "coalesced=\(sample.coalescedBeforeSubmitCount) duplicateCapturePTS=\(sample.duplicateRemoteTimestampCount) " +
         "correctedStreamPTS=\(sample.correctedStreamTimestampCount) " +
-        "repeated=\(sample.repeatedFrameCount) repeatedSource=\(sample.repeatedSourceFrameCount) " +
-        "smoothestHolds=\(sample.smoothestOneFrameHoldCount) " +
-        "displayBelowSource=\(sample.displayCadenceBelowSourceCount) playoutDelay=\(sample.playoutDelayFrames) " +
+        "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
         "layerBackpressure=\(sample.displayLayerNotReadyCount) " +
         "decodeHealthy=\(sample.decodeHealthy) limit=\(sample.decodeSubmissionLimit) " +
         "tier=\(sample.presentationTier.rawValue) sourceTarget=\(sample.sourceTargetFrameRate) " +
@@ -403,40 +350,30 @@ private func resolvedAnomalyBottleneckKind(
     let targetFPS = Double(max(1, sample.targetFrameRate))
     let decodeGapGrace = max(5.0, targetFPS * 0.10)
     let presentationGapGrace = max(4.0, targetFPS * 0.10)
-    let pendingAgeThresholdMs = max(20.0, (1_000.0 / targetFPS) * 1.5)
+    let pendingAgeThresholdMs = max(20.0, (1000.0 / targetFPS) * 1.5)
     let decodeGap = max(0, sample.receivedFPS - sample.decodedFPS)
     if sample.receivedFPS > 0, decodeGap >= decodeGapGrace {
         return .decodeBound
     }
 
-    let staleLayerEnqueueLoop = sample.layerEnqueueFPS >= targetFPS * 0.75 &&
-        sample.uniqueLayerEnqueueFPS < max(1.0, targetFPS * 0.10) &&
-        sample.pendingFrameCount > 0 &&
-        sample.pendingFrameAgeMs >= pendingAgeThresholdMs
-    if staleLayerEnqueueLoop {
-        return .presentationBound
-    }
-
     let decodeKeepsUp = sample.decodeHealthy &&
         sample.decodedFPS >= targetFPS * 0.75 &&
         (sample.receivedFPS <= 0 || sample.decodedFPS + decodeGapGrace >= sample.receivedFPS)
-    let presentationFPS = sample.visibleFrameCadenceKnown ? sample.visibleFrameFPS : sample.uniqueLayerEnqueueFPS
-    let submissionLaggingDecode = presentationFPS + presentationGapGrace < sample.decodedFPS
+    let submissionLaggingDecode =
+        sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
+        sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
     let presentationBackpressure = sample.overwrittenPendingFrames > 0 ||
         sample.lateFrameDrops > 0 ||
         sample.displayLayerNotReadyCount > 0 ||
         sample.pendingFrameAgeMs >= pendingAgeThresholdMs
-    let targetFrameIntervalMs = 1_000.0 / targetFPS
+    let targetFrameIntervalMs = 1000.0 / targetFPS
     let severeUnevenPresentationCadence =
-        max(sample.worstPresentationGapMs, sample.visibleWorstPresentationGapMs) >=
-            max(180.0, targetFrameIntervalMs * 8.0) ||
-        max(sample.frameIntervalP99Ms, sample.visibleFrameIntervalP99Ms) >=
-            max(100.0, targetFrameIntervalMs * 6.0) ||
+        sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
+        sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
         sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
-    if decodeKeepsUp && (
-        submissionLaggingDecode && presentationBackpressure ||
-            severeUnevenPresentationCadence && presentationFPS >= targetFPS * 0.90
-    ) {
+    if decodeKeepsUp,
+       submissionLaggingDecode && presentationBackpressure ||
+       severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90 {
         return .presentationBound
     }
 
@@ -469,12 +406,6 @@ private func anomalyLabel(
         }
         return "unknown"
     }
-}
-
-private func resolvedTransportDropCount(metrics: StreamMetricsMessage?) -> UInt64 {
-    (metrics?.stalePacketDrops ?? 0) +
-        (metrics?.generationAbortDrops ?? 0) +
-        (metrics?.nonKeyframeHoldDrops ?? 0)
 }
 
 private func formattedFPS(_ value: Double?) -> String {

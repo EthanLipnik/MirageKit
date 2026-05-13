@@ -11,8 +11,9 @@ import CoreGraphics
 import Foundation
 
 package enum InputEventBinaryCodec {
+    /// Binary payload format version for high-rate input control messages.
     package static let formatVersion: UInt8 = 1
-    private static let maxStringLength = 4096
+    static let maxStringLength = 4096
 
     private enum EventType: UInt8 {
         case keyDown = 0x01
@@ -140,578 +141,51 @@ package enum InputEventBinaryCodec {
     private static func decode(eventType: EventType, reader: inout Reader) throws -> MirageInputEvent {
         switch eventType {
         case .keyDown:
-            .keyDown(try reader.readKeyEvent())
+            try .keyDown(reader.readKeyEvent())
         case .keyUp:
-            .keyUp(try reader.readKeyEvent())
+            try .keyUp(reader.readKeyEvent())
         case .flagsChanged:
-            .flagsChanged(MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try reader.readUInt64())))
+            try .flagsChanged(MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: reader.readUInt64())))
         case .hostSystemAction:
-            .hostSystemAction(try reader.readHostSystemActionRequest())
+            try .hostSystemAction(reader.readHostSystemActionRequest())
         case .mouseDown:
-            .mouseDown(try reader.readMouseEvent())
+            try .mouseDown(reader.readMouseEvent())
         case .mouseUp:
-            .mouseUp(try reader.readMouseEvent())
+            try .mouseUp(reader.readMouseEvent())
         case .mouseMoved:
-            .mouseMoved(try reader.readMouseEvent())
+            try .mouseMoved(reader.readMouseEvent())
         case .mouseDragged:
-            .mouseDragged(try reader.readMouseEvent())
+            try .mouseDragged(reader.readMouseEvent())
         case .pointerSampleBatch:
-            .pointerSampleBatch(try reader.readPointerSampleBatch())
+            try .pointerSampleBatch(reader.readPointerSampleBatch())
         case .rightMouseDown:
-            .rightMouseDown(try reader.readMouseEvent())
+            try .rightMouseDown(reader.readMouseEvent())
         case .rightMouseUp:
-            .rightMouseUp(try reader.readMouseEvent())
+            try .rightMouseUp(reader.readMouseEvent())
         case .rightMouseDragged:
-            .rightMouseDragged(try reader.readMouseEvent())
+            try .rightMouseDragged(reader.readMouseEvent())
         case .otherMouseDown:
-            .otherMouseDown(try reader.readMouseEvent())
+            try .otherMouseDown(reader.readMouseEvent())
         case .otherMouseUp:
-            .otherMouseUp(try reader.readMouseEvent())
+            try .otherMouseUp(reader.readMouseEvent())
         case .otherMouseDragged:
-            .otherMouseDragged(try reader.readMouseEvent())
+            try .otherMouseDragged(reader.readMouseEvent())
         case .scrollWheel:
-            .scrollWheel(try reader.readScrollEvent())
+            try .scrollWheel(reader.readScrollEvent())
         case .magnify:
-            .magnify(try reader.readMagnifyEvent())
+            try .magnify(reader.readMagnifyEvent())
         case .rotate:
-            .rotate(try reader.readRotateEvent())
+            try .rotate(reader.readRotateEvent())
         case .swipe:
-            .swipe(try reader.readSwipeEvent())
+            try .swipe(reader.readSwipeEvent())
         case .windowResize:
-            .windowResize(try reader.readResizeEvent())
+            try .windowResize(reader.readResizeEvent())
         case .relativeResize:
-            .relativeResize(try reader.readRelativeResizeEvent())
+            try .relativeResize(reader.readRelativeResizeEvent())
         case .pixelResize:
-            .pixelResize(try reader.readPixelResizeEvent())
+            try .pixelResize(reader.readPixelResizeEvent())
         case .windowFocus:
             .windowFocus
-        }
-    }
-
-    private struct Writer {
-        var data = Data()
-
-        mutating func appendUInt8(_ value: UInt8) {
-            data.append(value)
-        }
-
-        mutating func appendUInt16(_ value: UInt16) {
-            appendFixedWidth(value)
-        }
-
-        mutating func appendUInt32(_ value: UInt32) {
-            appendFixedWidth(value)
-        }
-
-        mutating func appendUInt64(_ value: UInt64) {
-            appendFixedWidth(value)
-        }
-
-        mutating func appendInt32(_ value: Int) throws {
-            guard let raw = Int32(exactly: value) else {
-                throw MirageError.protocolError("Input payload integer overflow for Int32 field")
-            }
-            appendFixedWidth(raw)
-        }
-
-        mutating func appendBool(_ value: Bool) {
-            appendUInt8(value ? 1 : 0)
-        }
-
-        mutating func appendDouble(_ value: Double) {
-            appendFixedWidth(value.bitPattern)
-        }
-
-        mutating func appendCGPoint(_ point: CGPoint) {
-            appendDouble(Double(point.x))
-            appendDouble(Double(point.y))
-        }
-
-        mutating func appendCGSize(_ size: CGSize) {
-            appendDouble(Double(size.width))
-            appendDouble(Double(size.height))
-        }
-
-        mutating func appendOptionalString(_ value: String?) throws {
-            guard let value else {
-                appendBool(false)
-                return
-            }
-            appendBool(true)
-            try appendString(value)
-        }
-
-        mutating func appendString(_ value: String) throws {
-            let utf8 = Data(value.utf8)
-            guard utf8.count <= InputEventBinaryCodec.maxStringLength else {
-                throw MirageError.protocolError("Input string field exceeds \(InputEventBinaryCodec.maxStringLength) bytes")
-            }
-            guard let length = UInt16(exactly: utf8.count) else {
-                throw MirageError.protocolError("Input string field length overflow")
-            }
-            appendUInt16(length)
-            data.append(utf8)
-        }
-
-        mutating func appendKeyEvent(_ event: MirageKeyEvent) throws {
-            appendUInt16(event.keyCode)
-            try appendOptionalString(event.characters)
-            try appendOptionalString(event.charactersIgnoringModifiers)
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendBool(event.isRepeat)
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendHostSystemActionRequest(_ request: MirageHostSystemActionRequest) throws {
-            appendUInt8(request.action.rawValue)
-            appendBool(request.fallbackKeyEvent != nil)
-            if let fallbackKeyEvent = request.fallbackKeyEvent {
-                try appendKeyEvent(fallbackKeyEvent)
-            }
-        }
-
-        mutating func appendMouseEvent(_ event: MirageMouseEvent) {
-            appendUInt8(UInt8(clamping: event.button.rawValue))
-            appendCGPoint(event.location)
-            appendUInt32(UInt32(clamping: event.clickCount))
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendDouble(Double(event.pressure))
-            appendStylusEvent(event.stylus)
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendPointerSampleBatch(_ batch: MiragePointerSampleBatch) throws {
-            appendUInt8(batch.phase.rawValue)
-            appendUInt8(UInt8(clamping: batch.button.rawValue))
-            appendUInt64(UInt64(truncatingIfNeeded: batch.modifiers.rawValue))
-            appendUInt32(UInt32(clamping: batch.clickCount))
-            appendBool(batch.isButtonPressed)
-            appendDouble(batch.timestamp)
-            guard let sampleCount = UInt16(exactly: batch.samples.count) else {
-                throw MirageError.protocolError("Pointer sample batch exceeds \(UInt16.max) samples")
-            }
-            appendUInt16(sampleCount)
-            for sample in batch.samples {
-                appendPointerSample(sample)
-            }
-        }
-
-        mutating func appendPointerSample(_ sample: MiragePointerSample) {
-            appendCGPoint(sample.location)
-            appendDouble(Double(sample.pressure))
-            appendStylusEvent(sample.stylus)
-            appendDouble(sample.timestamp)
-        }
-
-        mutating func appendStylusEvent(_ event: MirageStylusEvent?) {
-            guard let event else {
-                appendBool(false)
-                return
-            }
-            appendBool(true)
-            appendDouble(Double(event.altitudeAngle))
-            appendDouble(Double(event.azimuthAngle))
-            appendDouble(Double(event.tiltX))
-            appendDouble(Double(event.tiltY))
-            appendBool(event.rollAngle != nil)
-            if let rollAngle = event.rollAngle {
-                appendDouble(Double(rollAngle))
-            }
-            appendBool(event.zOffset != nil)
-            if let zOffset = event.zOffset {
-                appendDouble(Double(zOffset))
-            }
-            appendBool(event.isHovering)
-        }
-
-        mutating func appendScrollEvent(_ event: MirageScrollEvent) {
-            appendDouble(Double(event.deltaX))
-            appendDouble(Double(event.deltaY))
-            appendBool(event.location != nil)
-            if let location = event.location {
-                appendCGPoint(location)
-            }
-            appendUInt8(UInt8(clamping: event.phase.rawValue))
-            appendUInt8(UInt8(clamping: event.momentumPhase.rawValue))
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendBool(event.isPrecise)
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendMagnifyEvent(_ event: MirageMagnifyEvent) {
-            appendDouble(Double(event.magnification))
-            appendBool(event.location != nil)
-            if let location = event.location {
-                appendCGPoint(location)
-            }
-            appendUInt8(UInt8(clamping: event.phase.rawValue))
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendRotateEvent(_ event: MirageRotateEvent) {
-            appendDouble(Double(event.rotation))
-            appendBool(event.location != nil)
-            if let location = event.location {
-                appendCGPoint(location)
-            }
-            appendUInt8(UInt8(clamping: event.phase.rawValue))
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendSwipeEvent(_ event: MirageSwipeEvent) {
-            appendDouble(Double(event.deltaX))
-            appendDouble(Double(event.deltaY))
-            appendBool(event.location != nil)
-            if let location = event.location {
-                appendCGPoint(location)
-            }
-            appendUInt8(UInt8(clamping: event.phase.rawValue))
-            appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendResizeEvent(_ event: MirageResizeEvent) {
-            appendUInt32(event.windowID)
-            appendCGSize(event.newSize)
-            appendDouble(Double(event.scaleFactor))
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendRelativeResizeEvent(_ event: MirageRelativeResizeEvent) throws {
-            appendUInt32(event.windowID)
-            appendDouble(Double(event.aspectRatio))
-            appendDouble(Double(event.relativeScale))
-            appendCGSize(event.clientScreenSize)
-            try appendInt32(event.pixelWidth)
-            try appendInt32(event.pixelHeight)
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendPixelResizeEvent(_ event: MiragePixelResizeEvent) throws {
-            appendUInt32(event.windowID)
-            try appendInt32(event.pixelWidth)
-            try appendInt32(event.pixelHeight)
-            appendDouble(event.timestamp)
-        }
-
-        mutating func appendFixedWidth<T: FixedWidthInteger>(_ value: T) {
-            var littleEndian = value.littleEndian
-            withUnsafeBytes(of: &littleEndian) { bytes in
-                data.append(contentsOf: bytes)
-            }
-        }
-    }
-
-    private struct Reader {
-        let data: Data
-        var offset: Int = 0
-
-        mutating func readUInt8() throws -> UInt8 {
-            guard offset < data.count else {
-                throw MirageError.protocolError("Input payload truncated at offset \(offset)")
-            }
-            let value = data[data.index(data.startIndex, offsetBy: offset)]
-            offset += 1
-            return value
-        }
-
-        mutating func readUInt16() throws -> UInt16 {
-            try readFixedWidth(UInt16.self)
-        }
-
-        mutating func readUInt32() throws -> UInt32 {
-            try readFixedWidth(UInt32.self)
-        }
-
-        mutating func readUInt64() throws -> UInt64 {
-            try readFixedWidth(UInt64.self)
-        }
-
-        mutating func readInt32() throws -> Int32 {
-            try readFixedWidth(Int32.self)
-        }
-
-        mutating func readBool() throws -> Bool {
-            let raw = try readUInt8()
-            return raw != 0
-        }
-
-        mutating func readDouble() throws -> Double {
-            Double(bitPattern: try readUInt64())
-        }
-
-        mutating func readCGPoint() throws -> CGPoint {
-            CGPoint(x: CGFloat(try readDouble()), y: CGFloat(try readDouble()))
-        }
-
-        mutating func readCGSize() throws -> CGSize {
-            CGSize(width: CGFloat(try readDouble()), height: CGFloat(try readDouble()))
-        }
-
-        mutating func readOptionalString() throws -> String? {
-            guard try readBool() else { return nil }
-            return try readString()
-        }
-
-        mutating func readString() throws -> String {
-            let length = Int(try readUInt16())
-            guard length <= InputEventBinaryCodec.maxStringLength else {
-                throw MirageError.protocolError("Input string field exceeds \(InputEventBinaryCodec.maxStringLength) bytes")
-            }
-            guard offset + length <= data.count else {
-                throw MirageError.protocolError("Input string field exceeds payload bounds")
-            }
-            let start = data.index(data.startIndex, offsetBy: offset)
-            let end = data.index(start, offsetBy: length)
-            let utf8 = data[start ..< end]
-            offset += length
-            guard let value = String(data: utf8, encoding: .utf8) else {
-                throw MirageError.protocolError("Input string field is not valid UTF-8")
-            }
-            return value
-        }
-
-        mutating func readKeyEvent() throws -> MirageKeyEvent {
-            let keyCode = try readUInt16()
-            let characters = try readOptionalString()
-            let charactersIgnoringModifiers = try readOptionalString()
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let isRepeat = try readBool()
-            let timestamp = try readDouble()
-            return MirageKeyEvent(
-                keyCode: keyCode,
-                characters: characters,
-                charactersIgnoringModifiers: charactersIgnoringModifiers,
-                modifiers: modifiers,
-                isRepeat: isRepeat,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readHostSystemActionRequest() throws -> MirageHostSystemActionRequest {
-            let actionRawValue = try readUInt8()
-            guard let action = MirageHostSystemAction(rawValue: actionRawValue) else {
-                throw MirageError.protocolError("Unknown host system action \(actionRawValue)")
-            }
-            let fallbackKeyEvent: MirageKeyEvent? = try readBool() ? try readKeyEvent() : nil
-            return MirageHostSystemActionRequest(
-                action: action,
-                fallbackKeyEvent: fallbackKeyEvent
-            )
-        }
-
-        mutating func readMouseEvent() throws -> MirageMouseEvent {
-            let buttonRaw = Int(try readUInt8())
-            let location = try readCGPoint()
-            let clickCount = Int(try readUInt32())
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let pressure = CGFloat(try readDouble())
-            let stylus = try readStylusEvent()
-            let timestamp = try readDouble()
-            return MirageMouseEvent(
-                button: MirageMouseButton(rawValue: buttonRaw) ?? .left,
-                location: location,
-                clickCount: clickCount,
-                modifiers: modifiers,
-                pressure: pressure,
-                stylus: stylus,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readPointerSampleBatch() throws -> MiragePointerSampleBatch {
-            let phaseRaw = try readUInt8()
-            guard let phase = MiragePointerSampleBatchPhase(rawValue: phaseRaw) else {
-                throw MirageError.protocolError("Unknown pointer sample batch phase \(phaseRaw)")
-            }
-            let buttonRaw = Int(try readUInt8())
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let clickCount = Int(try readUInt32())
-            let isButtonPressed = try readBool()
-            let timestamp = try readDouble()
-            let sampleCount = Int(try readUInt16())
-            var samples: [MiragePointerSample] = []
-            samples.reserveCapacity(sampleCount)
-            for _ in 0 ..< sampleCount {
-                samples.append(try readPointerSample())
-            }
-            return MiragePointerSampleBatch(
-                phase: phase,
-                button: MirageMouseButton(rawValue: buttonRaw) ?? .left,
-                modifiers: modifiers,
-                clickCount: clickCount,
-                isButtonPressed: isButtonPressed,
-                samples: samples,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readPointerSample() throws -> MiragePointerSample {
-            let location = try readCGPoint()
-            let pressure = CGFloat(try readDouble())
-            guard let stylus = try readStylusEvent() else {
-                throw MirageError.protocolError("Pointer sample is missing stylus metadata")
-            }
-            let timestamp = try readDouble()
-            return MiragePointerSample(
-                location: location,
-                pressure: pressure,
-                stylus: stylus,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readStylusEvent() throws -> MirageStylusEvent? {
-            guard try readBool() else { return nil }
-            let altitudeAngle = CGFloat(try readDouble())
-            let azimuthAngle = CGFloat(try readDouble())
-            let tiltX = CGFloat(try readDouble())
-            let tiltY = CGFloat(try readDouble())
-            let rollAngle: CGFloat? = try readBool() ? CGFloat(try readDouble()) : nil
-            let zOffset: CGFloat? = try readBool() ? CGFloat(try readDouble()) : nil
-            let isHovering = try readBool()
-            return MirageStylusEvent(
-                altitudeAngle: altitudeAngle,
-                azimuthAngle: azimuthAngle,
-                tiltX: tiltX,
-                tiltY: tiltY,
-                rollAngle: rollAngle,
-                zOffset: zOffset,
-                isHovering: isHovering
-            )
-        }
-
-        mutating func readScrollEvent() throws -> MirageScrollEvent {
-            let deltaX = CGFloat(try readDouble())
-            let deltaY = CGFloat(try readDouble())
-            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
-            let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
-            let momentumPhase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let isPrecise = try readBool()
-            let timestamp = try readDouble()
-            return MirageScrollEvent(
-                deltaX: deltaX,
-                deltaY: deltaY,
-                location: location,
-                phase: phase,
-                momentumPhase: momentumPhase,
-                modifiers: modifiers,
-                isPrecise: isPrecise,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readMagnifyEvent() throws -> MirageMagnifyEvent {
-            let magnification = CGFloat(try readDouble())
-            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
-            let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let timestamp = try readDouble()
-            return MirageMagnifyEvent(
-                magnification: magnification,
-                location: location,
-                phase: phase,
-                modifiers: modifiers,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readRotateEvent() throws -> MirageRotateEvent {
-            let rotation = CGFloat(try readDouble())
-            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
-            let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let timestamp = try readDouble()
-            return MirageRotateEvent(
-                rotation: rotation,
-                location: location,
-                phase: phase,
-                modifiers: modifiers,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readSwipeEvent() throws -> MirageSwipeEvent {
-            let deltaX = CGFloat(try readDouble())
-            let deltaY = CGFloat(try readDouble())
-            let location: CGPoint? = try readBool() ? try readCGPoint() : nil
-            let phase = MirageScrollPhase(rawValue: Int(try readUInt8())) ?? .none
-            let modifiers = MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try readUInt64()))
-            let timestamp = try readDouble()
-            return MirageSwipeEvent(
-                deltaX: deltaX,
-                deltaY: deltaY,
-                location: location,
-                phase: phase,
-                modifiers: modifiers,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readResizeEvent() throws -> MirageResizeEvent {
-            let windowID = try readUInt32()
-            let newSize = try readCGSize()
-            let scaleFactor = CGFloat(try readDouble())
-            let timestamp = try readDouble()
-            return MirageResizeEvent(
-                windowID: windowID,
-                newSize: newSize,
-                scaleFactor: scaleFactor,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readRelativeResizeEvent() throws -> MirageRelativeResizeEvent {
-            let windowID = try readUInt32()
-            let aspectRatio = CGFloat(try readDouble())
-            let relativeScale = CGFloat(try readDouble())
-            let clientScreenSize = try readCGSize()
-            let pixelWidth = Int(try readInt32())
-            let pixelHeight = Int(try readInt32())
-            let timestamp = try readDouble()
-            return MirageRelativeResizeEvent(
-                windowID: windowID,
-                aspectRatio: aspectRatio,
-                relativeScale: relativeScale,
-                clientScreenSize: clientScreenSize,
-                pixelWidth: pixelWidth,
-                pixelHeight: pixelHeight,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readPixelResizeEvent() throws -> MiragePixelResizeEvent {
-            let windowID = try readUInt32()
-            let pixelWidth = Int(try readInt32())
-            let pixelHeight = Int(try readInt32())
-            let timestamp = try readDouble()
-            return MiragePixelResizeEvent(
-                windowID: windowID,
-                pixelWidth: pixelWidth,
-                pixelHeight: pixelHeight,
-                timestamp: timestamp
-            )
-        }
-
-        mutating func readFixedWidth<T: FixedWidthInteger>(_: T.Type) throws -> T {
-            let size = MemoryLayout<T>.size
-            guard offset + size <= data.count else {
-                throw MirageError.protocolError("Input payload truncated at offset \(offset)")
-            }
-            let value = data.withUnsafeBytes { ptr in
-                ptr.loadUnaligned(fromByteOffset: offset, as: T.self)
-            }
-            offset += size
-            return T(littleEndian: value)
-        }
-
-        mutating func requireFinished() throws {
-            guard offset == data.count else {
-                throw MirageError.protocolError("Input payload has trailing bytes (\(data.count - offset))")
-            }
         }
     }
 }

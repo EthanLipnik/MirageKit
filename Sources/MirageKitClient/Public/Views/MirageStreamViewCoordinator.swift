@@ -9,11 +9,18 @@ import CoreGraphics
 import Foundation
 import MirageKit
 
+/// Bridges platform stream views to Mirage input, metrics, and keyboard callbacks.
 public final class MirageStreamViewCoordinator {
+    #if os(iOS) || os(visionOS)
+    /// Minimum interval between repeated representable update diagnostics.
+    private static let representableUpdateLogInterval: CFTimeInterval = 5.0
+    #endif
+
     var onInputEvent: ((MirageInputEvent) -> Void)?
     var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
     var onContainerSizeChanged: ((CGSize) -> Void)?
     var onRefreshRateOverrideChange: ((Int) -> Void)?
+    #if os(iOS) || os(visionOS)
     var onBecomeActive: (() -> Void)?
     var onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
     var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
@@ -22,13 +29,28 @@ public final class MirageStreamViewCoordinator {
     var onDictationError: ((String) -> Void)?
     var onDictationInputLevelChanged: ((Float) -> Void)?
     var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
+    #endif
     weak var sampleBufferView: MirageSampleBufferView?
+    #if os(iOS) || os(visionOS)
     private var representableUpdateCount: UInt64 = 0
     private var representableUpdateLogStreamID: StreamID?
     private var lastRepresentableUpdateLogTime: CFAbsoluteTime = 0
-    private let representableUpdateLogInterval: CFTimeInterval = 5.0
+    #endif
 
     init(
+        onInputEvent: ((MirageInputEvent) -> Void)?,
+        onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
+        onContainerSizeChanged: ((CGSize) -> Void)?,
+        onRefreshRateOverrideChange: ((Int) -> Void)? = nil
+    ) {
+        self.onInputEvent = onInputEvent
+        self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onContainerSizeChanged = onContainerSizeChanged
+        self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
+    }
+
+    #if os(iOS) || os(visionOS)
+    convenience init(
         onInputEvent: ((MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
         onContainerSizeChanged: ((CGSize) -> Void)?,
@@ -42,10 +64,12 @@ public final class MirageStreamViewCoordinator {
         onDictationInputLevelChanged: ((Float) -> Void)? = nil,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil
     ) {
-        self.onInputEvent = onInputEvent
-        self.onDrawableMetricsChanged = onDrawableMetricsChanged
-        self.onContainerSizeChanged = onContainerSizeChanged
-        self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
+        self.init(
+            onInputEvent: onInputEvent,
+            onDrawableMetricsChanged: onDrawableMetricsChanged,
+            onContainerSizeChanged: onContainerSizeChanged,
+            onRefreshRateOverrideChange: onRefreshRateOverrideChange
+        )
         self.onBecomeActive = onBecomeActive
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
@@ -55,55 +79,9 @@ public final class MirageStreamViewCoordinator {
         self.onDictationInputLevelChanged = onDictationInputLevelChanged
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
     }
+    #endif
 
-    func handleInputEvent(_ event: MirageInputEvent) {
-        onInputEvent?(event)
-    }
-
-    func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
-        onDrawableMetricsChanged?(metrics)
-    }
-
-    func handleContainerSizeChanged(_ size: CGSize) {
-        onContainerSizeChanged?(size)
-    }
-
-    func handleRefreshRateOverrideChange(_ override: Int) {
-        onRefreshRateOverrideChange?(override)
-    }
-
-    func handleBecomeActive() {
-        onBecomeActive?()
-    }
-
-    func handleHardwareKeyboardPresenceChanged(_ isPresent: Bool) {
-        onHardwareKeyboardPresenceChanged?(isPresent)
-    }
-
-    func handleSoftwareKeyboardVisibilityChanged(_ isVisible: Bool) {
-        onSoftwareKeyboardVisibilityChanged?(isVisible)
-    }
-
-    func handleDirectTouchActivity() {
-        onDirectTouchActivity?()
-    }
-
-    func handleDictationStateChanged(_ isActive: Bool) {
-        onDictationStateChanged?(isActive)
-    }
-
-    func handleDictationError(_ message: String) {
-        onDictationError?(message)
-    }
-
-    func handleDictationInputLevelChanged(_ level: Float) {
-        onDictationInputLevelChanged?(level)
-    }
-
-    func handleResolvedPointerLockStateChanged(_ state: MirageResolvedPointerLockState) {
-        onResolvedPointerLockStateChanged?(state)
-    }
-
+    #if os(iOS) || os(visionOS)
     func noteRepresentableUpdate(for streamID: StreamID) {
         guard MirageSteadyStateDiagnostics.isEnabled else { return }
         if representableUpdateLogStreamID != streamID {
@@ -118,7 +96,7 @@ public final class MirageStreamViewCoordinator {
             lastRepresentableUpdateLogTime = now
             return
         }
-        guard now - lastRepresentableUpdateLogTime >= representableUpdateLogInterval else {
+        guard now - lastRepresentableUpdateLogTime >= Self.representableUpdateLogInterval else {
             return
         }
 
@@ -129,4 +107,5 @@ public final class MirageStreamViewCoordinator {
             "Stream view representable updates: stream=\(streamID), updates=\(updates), windowSeconds=5"
         )
     }
+    #endif
 }

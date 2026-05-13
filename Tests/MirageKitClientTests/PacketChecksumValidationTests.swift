@@ -16,35 +16,11 @@ import Testing
 #if os(macOS)
 @Suite("Client Packet Checksum Validation")
 struct PacketChecksumValidationTests {
-    @Test("Encrypted video packet with zero checksum bypasses CRC validation")
-    func encryptedVideoZeroChecksumBypassesCRC() {
+    @Test("Encrypted video packet bypasses CRC validation")
+    func encryptedVideoBypassesCRC() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let delivered = LockedCounter()
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            delivered.increment()
-            release()
-        }
-
-        let payload = Data([0x01, 0x02, 0x03, 0x04, 0x05])
-        reassembler.processPacket(
-            payload,
-            header: makeVideoHeader(
-                flags: [.keyframe, .endOfFrame, .encryptedPayload],
-                frameNumber: 1,
-                payload: payload,
-                checksum: 0
-            )
-        )
-
-        #expect(delivered.value == 1)
-        #expect(reassembler.packetsDiscardedCRC == 0)
-    }
-
-    @Test("Encrypted video packet with non-zero checksum still validates CRC")
-    func encryptedVideoNonZeroChecksumStillValidatesCRC() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let delivered = LockedCounter()
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             delivered.increment()
             release()
         }
@@ -60,15 +36,15 @@ struct PacketChecksumValidationTests {
             )
         )
 
-        #expect(delivered.value == 0)
-        #expect(reassembler.packetsDiscardedCRC == 1)
+        #expect(delivered.value == 1)
+        #expect(reassembler.packetsDiscardedCRC == 0)
     }
 
     @Test("Unencrypted video packets keep mandatory CRC validation")
     func unencryptedVideoChecksumRemainsMandatory() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let delivered = LockedCounter()
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             delivered.increment()
             release()
         }
@@ -86,13 +62,6 @@ struct PacketChecksumValidationTests {
 
         #expect(delivered.value == 0)
         #expect(reassembler.packetsDiscardedCRC == 1)
-    }
-
-    @Test("Audio checksum validation bypass only applies to encrypted zero checksum packets")
-    func audioChecksumValidationPolicy() {
-        #expect(!MirageClientService.shouldValidateAudioChecksum(flags: [.encryptedPayload], checksum: 0))
-        #expect(MirageClientService.shouldValidateAudioChecksum(flags: [.encryptedPayload], checksum: 7))
-        #expect(MirageClientService.shouldValidateAudioChecksum(flags: [], checksum: 0))
     }
 
     private func makeVideoHeader(

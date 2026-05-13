@@ -7,27 +7,27 @@
 
 import Foundation
 
-/// Represents a keyboard event
+/// Keyboard event payload forwarded from the client to the host.
 public struct MirageKeyEvent: Codable, Sendable, Hashable {
     /// Reserved key code for Unicode-only injection when no physical macOS key maps cleanly.
     public static let unicodeScalarFallbackKeyCode = UInt16.max
 
-    /// Virtual key code
+    /// macOS virtual key code.
     public let keyCode: UInt16
 
-    /// Characters produced by the key (with modifiers)
+    /// Characters produced by the key with modifiers applied.
     public let characters: String?
 
-    /// Characters ignoring modifiers
+    /// Characters produced by the key without modifier transformation.
     public let charactersIgnoringModifiers: String?
 
-    /// Active modifier flags
+    /// Active modifier flags.
     public let modifiers: MirageModifierFlags
 
-    /// Whether this is a key repeat
+    /// Whether this event comes from key-repeat behavior.
     public let isRepeat: Bool
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Whether this event should be injected through the Unicode fallback path.

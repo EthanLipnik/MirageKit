@@ -10,25 +10,25 @@
 import Foundation
 
 #if os(macOS)
-package struct MirageRuntimeQualityAdjustmentState: Sendable, Equatable {
-    package var activeQuality: Float
-    package var qualityOverBudgetCount: Int
-    package var qualityUnderBudgetCount: Int
+struct MirageRuntimeQualityAdjustmentState: Sendable, Equatable {
+    var activeQuality: Float
+    var qualityOverBudgetCount: Int
+    var qualityUnderBudgetCount: Int
 }
 
-package enum MirageRuntimeQualityAdjustmentAction: Sendable, Equatable {
+enum MirageRuntimeQualityAdjustmentAction: Sendable, Equatable {
     case hold
     case drop(reason: String)
     case raise
 }
 
-package struct MirageRuntimeQualityAdjustmentDecision: Sendable, Equatable {
-    package let state: MirageRuntimeQualityAdjustmentState
-    package let action: MirageRuntimeQualityAdjustmentAction
+struct MirageRuntimeQualityAdjustmentDecision: Sendable, Equatable {
+    let state: MirageRuntimeQualityAdjustmentState
+    let action: MirageRuntimeQualityAdjustmentAction
 }
 
-package enum MirageRuntimeQualityAdjustmentPolicy {
-    package static func decide(
+enum MirageRuntimeQualityAdjustmentPolicy {
+    static func decide(
         state: MirageRuntimeQualityAdjustmentState,
         qualityFloor: Float,
         qualityCeiling: Float,

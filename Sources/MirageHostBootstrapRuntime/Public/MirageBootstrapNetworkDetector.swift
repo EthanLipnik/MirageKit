@@ -79,7 +79,15 @@ public struct MirageBootstrapNetworkSnapshot: Equatable, Sendable {
     }
 }
 
+/// Builds network metadata used by the bootstrap daemon and host handoff.
 public enum MirageBootstrapNetworkDetector {
+    private static let virtualOUIPrefixes: Set<String> = [
+        "de6e68",
+        "005056",
+        "080027",
+    ]
+
+    /// Builds a bootstrap network snapshot from the host's current hardware and `ifconfig` state.
     public static func detect(defaultPort: UInt16) -> MirageBootstrapNetworkSnapshot {
         let ifconfigText = runCommand(executablePath: "/sbin/ifconfig", arguments: [])
         return snapshot(
@@ -89,6 +97,7 @@ public enum MirageBootstrapNetworkDetector {
         )
     }
 
+    /// Merges hardware interface metadata with live `ifconfig` output for deterministic testing.
     public static func snapshot(
         hardwareInterfaces: [MirageBootstrapNetworkInterface],
         ifconfigText: String,
@@ -129,7 +138,8 @@ public enum MirageBootstrapNetworkDetector {
 
         let currentMAC = wakeInterface.currentMACAddress?.trimmingCharacters(in: .whitespacesAndNewlines)
         let hardwareMAC = wakeInterface.hardwareMACAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        let wakeMAC = currentMAC?.isEmpty == false ? currentMAC! : hardwareMAC
+        let nonEmptyCurrentMAC = currentMAC?.isEmpty == false ? currentMAC : nil
+        let wakeMAC = nonEmptyCurrentMAC ?? hardwareMAC
         let broadcasts = dedupe(
             wakeInterface.broadcastAddresses.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },
@@ -137,8 +147,7 @@ public enum MirageBootstrapNetworkDetector {
         )
         let isWiFi = wakeInterface.kind == .wifi
         let hasPrivateAddressWarning = isWiFi &&
-            currentMAC?.isEmpty == false &&
-            !macAddressesEqual(currentMAC!, hardwareMAC)
+            nonEmptyCurrentMAC.map { normalizedMACAddress($0) != normalizedMACAddress(hardwareMAC) } == true
 
         return MirageBootstrapNetworkSnapshot(
             endpoints: endpoints,
@@ -151,6 +160,7 @@ public enum MirageBootstrapNetworkDetector {
         )
     }
 
+    /// Returns whether a user-supplied wake-on-LAN MAC address is syntactically usable.
     public static func isValidWakeMACAddress(_ macAddress: String) -> Bool {
         let separators = CharacterSet(charactersIn: ":-.")
         let allowedCharacters = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
@@ -170,13 +180,12 @@ public enum MirageBootstrapNetworkDetector {
                     !interface.broadcastAddresses.isEmpty &&
                     isWakeCandidate(interface)
             }
-            .sorted { lhs, rhs in
+            .min { lhs, rhs in
                 let leftRank = wakeRank(lhs)
                 let rightRank = wakeRank(rhs)
                 if leftRank != rightRank { return leftRank < rightRank }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
-            .first
     }
 
     private static func isWakeCandidate(_ interface: MirageBootstrapNetworkInterface) -> Bool {
@@ -191,29 +200,23 @@ public enum MirageBootstrapNetworkDetector {
     private static func wakeRank(_ interface: MirageBootstrapNetworkInterface) -> Int {
         switch interface.kind {
         case .ethernet:
-            return 0
+            0
         case .wifi:
-            return 1
+            1
         case .bridge, .other:
-            return 2
+            2
         }
     }
 
     private static func hasVirtualOUI(_ macAddress: String) -> Bool {
         let normalized = normalizedMACAddress(macAddress)
-        return normalized.hasPrefix("de6e68") ||
-            normalized.hasPrefix("005056") ||
-            normalized.hasPrefix("080027")
-    }
-
-    private static func macAddressesEqual(_ lhs: String, _ rhs: String) -> Bool {
-        normalizedMACAddress(lhs) == normalizedMACAddress(rhs)
+        return virtualOUIPrefixes.contains { normalized.hasPrefix($0) }
     }
 
     private static func normalizedMACAddress(_ macAddress: String) -> String {
         macAddress
             .lowercased()
-            .filter { $0.isHexDigit }
+            .filter(\.isHexDigit)
     }
 
     private static func hardwareInterfaces() -> [MirageBootstrapNetworkInterface] {
@@ -263,7 +266,7 @@ public enum MirageBootstrapNetworkDetector {
 
         for rawLine in text.split(whereSeparator: \.isNewline) {
             let line = String(rawLine)
-            if !line.hasPrefix("\t") && !line.hasPrefix(" ") {
+            if !line.hasPrefix("\t"), !line.hasPrefix(" ") {
                 guard let colon = line.firstIndex(of: ":") else {
                     activeInterface = nil
                     continue
@@ -288,8 +291,8 @@ public enum MirageBootstrapNetworkDetector {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } else if trimmed.hasPrefix("inet ") {
                 let components = trimmed.split(separator: " ")
-                if components.count >= 2 {
-                    let ip = String(components[1])
+                if let ipComponent = components.dropFirst().first {
+                    let ip = String(ipComponent)
                     if ip != "127.0.0.1" {
                         entry.ipAddresses.append(ip)
                     }

@@ -62,7 +62,7 @@ struct HostSingleClientTests {
 
         #expect(host.reserveSingleClientSlot(for: staleSessionID))
         host.singleClientReservationStartedAt = CFAbsoluteTimeGetCurrent() - (host.connectionApprovalTimeoutSeconds + 1)
-        host.state = .advertising(controlPort: 61_000)
+        host.state = .advertising(controlPort: 61000)
 
         await host.publishCurrentAdvertisement()
 
@@ -173,7 +173,6 @@ struct HostSingleClientTests {
         )
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures,
             clientRequiresMediaEncryption: false,
             requestTakeoverIfBusy: true
         )
@@ -211,7 +210,6 @@ struct HostSingleClientTests {
         )
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures,
             clientRequiresMediaEncryption: false
         )
 
@@ -231,7 +229,6 @@ struct HostSingleClientTests {
         let host = MirageHostService()
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures,
             clientRequiresMediaEncryption: false,
             requestTakeoverIfBusy: true
         )

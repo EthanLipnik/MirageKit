@@ -14,6 +14,7 @@ import Network
 
 @MainActor
 extension MirageClientService {
+    /// Returns the active control channel or throws when the client is not connected.
     func requireConnectedControlChannel() throws -> MirageControlChannel {
         guard case .connected = connectionState,
               let controlChannel else {
@@ -22,58 +23,60 @@ extension MirageClientService {
         return controlChannel
     }
 
+    /// Sends an already-encoded control message on the connected control channel.
     func sendControlMessage(_ message: ControlMessage) async throws {
         try await requireConnectedControlChannel().send(message)
     }
 
+    /// Encodes and sends a typed control message on the connected control channel.
     func sendControlMessage(_ type: ControlMessageType, content: some Encodable) async throws {
         let message = try ControlMessage(type: type, content: content)
         try await sendControlMessage(message)
     }
 
-    func sendSerializedControlMessage(_ data: Data) async throws {
-        try await requireConnectedControlChannel().sendSerialized(data)
-    }
-
-    func sendControlMessageBestEffort(_ message: ControlMessage) {
+    /// Attempts to enqueue a control message without throwing when the control channel is unavailable.
+    func sendControlMessageBestEffort(_ message: ControlMessage) -> Bool {
         guard case .connected = connectionState,
               let controlChannel else {
-            return
+            return false
         }
         controlChannel.sendBestEffort(message)
+        return true
     }
 
-    func sendControlMessageBestEffort(_ type: ControlMessageType) {
-        sendControlMessageBestEffort(ControlMessage(type: type))
-    }
-
-    func sendControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) {
+    /// Encodes and attempts to enqueue a control message without throwing on encode or send failure.
+    func sendControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
         guard let message = try? ControlMessage(type: type, content: content) else {
-            return
+            return false
         }
-        sendControlMessageBestEffort(message)
+        return sendControlMessageBestEffort(message)
     }
 
-    func currentControlRemoteEndpoint() async -> NWEndpoint? {
-        if let loomSession {
-            return await loomSession.remoteEndpoint
-        }
-        return connectedHost?.endpoint
+    /// Enqueues a best-effort control message and intentionally ignores unavailable-channel failures.
+    func queueControlMessageBestEffort(_ message: ControlMessage) {
+        _ = sendControlMessageBestEffort(message)
     }
 
-    func currentControlPathSnapshot() async -> LoomSessionNetworkPathSnapshot? {
-        guard let loomSession else { return nil }
-        return await loomSession.pathSnapshot
+    /// Encodes and enqueues a best-effort control message while intentionally ignoring failures.
+    func queueControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) {
+        _ = sendControlMessageBestEffort(type, content: content)
     }
 
     /// Refresh the cached control-path classification from the active Loom session.
     /// This is useful immediately before automatic stream startup so the first
     /// request does not rely on an `.unknown` path while the observer is still warming up.
-    public func refreshCurrentControlPathKind() async {
-        guard let snapshot = await currentControlPathSnapshot() else {
-            return
+    public func refreshCurrentControlPathKind() async -> MirageNetworkPathKind? {
+        guard let loomSession,
+              let snapshot = await loomSession.pathSnapshot else {
+            return currentControlPathKind
         }
         let classifiedSnapshot = MirageNetworkPathClassifier.classify(snapshot)
         handleControlPathUpdate(classifiedSnapshot)
+        return classifiedSnapshot.kind
+    }
+
+    /// Refreshes the cached control-path classification and discards the resulting kind.
+    public func updateCurrentControlPathKind() async {
+        _ = await refreshCurrentControlPathKind()
     }
 }

@@ -9,6 +9,7 @@ import CoreGraphics
 
 #if os(macOS)
 extension AppAtlasMediaCoordinator {
+    /// Returns a finite source rectangle clamped to the captured pixel buffer.
     nonisolated static func normalizedSourceRect(contentRect: CGRect, pixelSize: CGSize) -> CGRect {
         guard pixelSize.width.isFinite,
               pixelSize.height.isFinite,
@@ -35,6 +36,7 @@ extension AppAtlasMediaCoordinator {
         return clamped
     }
 
+    /// Projects an auxiliary host frame into the parent capture surface.
     nonisolated static func auxiliaryOverlayDestinationRect(
         parentFrame: CGRect,
         parentSourceRect: CGRect,
@@ -65,6 +67,7 @@ extension AppAtlasMediaCoordinator {
         return clampedOverlayRect(proposedRect, inside: parentBounds)
     }
 
+    /// Converts an overlay destination rectangle into a normalized parent input-routing rectangle.
     nonisolated static func normalizedOverlayInputRect(
         destinationRect: CGRect,
         parentSourceRect: CGRect
@@ -83,6 +86,7 @@ extension AppAtlasMediaCoordinator {
         )
     }
 
+    /// Returns whether a rectangle has finite origin and positive finite size.
     nonisolated static func isFiniteNonEmptyRect(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite &&
             rect.origin.y.isFinite &&
@@ -92,6 +96,7 @@ extension AppAtlasMediaCoordinator {
             rect.height > 0
     }
 
+    /// Clamps an overlay rectangle inside the parent bounds, scaling oversized overlays to fit.
     private nonisolated static func clampedOverlayRect(_ rect: CGRect, inside bounds: CGRect) -> CGRect {
         guard isFiniteNonEmptyRect(rect),
               isFiniteNonEmptyRect(bounds) else {

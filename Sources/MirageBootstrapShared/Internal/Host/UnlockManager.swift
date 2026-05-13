@@ -15,43 +15,13 @@ import Loom
 #if os(macOS)
 import IOKit.pwr_mgt
 
-package struct UnlockEnvironment: Sendable {
-    package let displayBoundsProvider: @Sendable () async -> CGRect
-    package let prepareForCredentialEntry: @Sendable () async -> Void
-    package let cleanupAfterCredentialEntry: @Sendable () async -> Void
-    package let postHIDEvent: @Sendable (CGEvent) -> Void
-
-    package init(
-        displayBoundsProvider: @escaping @Sendable () async -> CGRect = { CGDisplayBounds(CGMainDisplayID()) },
-        prepareForCredentialEntry: @escaping @Sendable () async -> Void = {},
-        cleanupAfterCredentialEntry: @escaping @Sendable () async -> Void = {},
-        postHIDEvent: @escaping @Sendable (CGEvent) -> Void = { event in
-            event.post(tap: .cghidEventTap)
-        }
-    ) {
-        self.displayBoundsProvider = displayBoundsProvider
-        self.prepareForCredentialEntry = prepareForCredentialEntry
-        self.cleanupAfterCredentialEntry = cleanupAfterCredentialEntry
-        self.postHIDEvent = postHIDEvent
-    }
-}
-
-/// Dynamically call `SLSSessionSwitchToUser` from the private SkyLight framework.
-func callSLSSessionSwitchToUser(_ username: String) -> Int32? {
-    guard let skylight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY) else { return nil }
-    defer { dlclose(skylight) }
-
-    guard let sym = dlsym(skylight, "SLSSessionSwitchToUser") else { return nil }
-
-    typealias SLSSessionSwitchToUserFunc = @convention(c) (UnsafePointer<CChar>) -> Int32
-    let functionPointer = unsafeBitCast(sym, to: SLSSessionSwitchToUserFunc.self)
-
-    return username.withCString { usernamePtr in
-        functionPointer(usernamePtr)
-    }
-}
-
 package actor UnlockManager {
+    /// Number of failed unlock attempts allowed per client within the rate-limit window.
+    private static let maxAttempts = 5
+
+    /// Rolling window used to rate-limit repeated unlock attempts from one client.
+    private static let rateLimitWindow: TimeInterval = 300
+
     package enum UnlockResult: Equatable {
         case success
         case failure(LoomCredentialSubmissionErrorCode, String)
@@ -68,8 +38,6 @@ package actor UnlockManager {
 
     private let environment: UnlockEnvironment
     private var attemptsByClient: [UUID: [Date]] = [:]
-    private let maxAttempts = 5
-    private let rateLimitWindow: TimeInterval = 300
     private var powerAssertionID: IOPMAssertionID = 0
 
     package init(
@@ -105,7 +73,7 @@ package actor UnlockManager {
         }
 
         recordAttempt(clientID: clientID)
-        let remaining = getRemainingAttempts(clientID: clientID)
+        let remaining = remainingAttempts(for: clientID)
 
         let resolvedUsername: String
         if requiresUsernameForAttempt {
@@ -115,7 +83,7 @@ package actor UnlockManager {
             }
             resolvedUsername = requestedUser
         } else {
-            guard let consoleUser = getConsoleUser() else {
+            guard let consoleUser = MirageLoginSessionState.currentConsoleUser(ignoringRoot: true) else {
                 MirageLogger.error(.host, "No console user found")
                 return (.failure(.notAuthorized, "No user session to unlock"), remaining, nil)
             }
@@ -150,7 +118,11 @@ package actor UnlockManager {
         }
 
         wakeDisplayNonBlocking()
-        try? await Task.sleep(for: .milliseconds(400))
+        do {
+            try await Task.sleep(for: .milliseconds(400))
+        } catch {
+            return (.failure(.internalError, "Unlock was cancelled."), remaining, nil)
+        }
 
         let loginReadyAfterWake = await waitForLoginWindowReady(timeout: 6.0)
         if !loginReadyAfterWake {
@@ -162,7 +134,11 @@ package actor UnlockManager {
         MirageLogger.host("Trying SkyLight session switch...")
         let skylightResult = trySkyLightUnlock(username: resolvedUsername)
         if skylightResult {
-            try? await Task.sleep(for: .milliseconds(300))
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return (.failure(.internalError, "Unlock was cancelled."), remaining, nil)
+            }
             if await sessionMonitor.refreshState() == .ready {
                 unlocked = true
             }
@@ -174,11 +150,10 @@ package actor UnlockManager {
                 MirageLogger.host("Skipping HID unlock because host session became active")
                 unlocked = true
             } else {
-                let lockUIReady: Bool
-                if loginReadyAfterWake {
-                    lockUIReady = true
+                let lockUIReady: Bool = if loginReadyAfterWake {
+                    true
                 } else {
-                    lockUIReady = await waitForLoginWindowReady(timeout: 1.5)
+                    await waitForLoginWindowReady(timeout: 1.5)
                 }
                 guard lockUIReady else {
                     MirageLogger.error(.host, "Skipping HID unlock because lock UI is not visible")
@@ -225,99 +200,15 @@ package actor UnlockManager {
         }
     }
 
-    private enum CredentialVerificationResult: Equatable {
-        case valid
-        case invalid
-        case timedOut
-        case failedToRun(String)
-    }
-
-    private func verifyCredentialsViaAuthorization(
-        username: String,
-        password: String,
-        timeout: Duration = .seconds(8)
-    ) async -> CredentialVerificationResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/dscl")
-        process.arguments = ["/Local/Default", "-authonly", username, password]
-
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
-        process.standardOutput = FileHandle.nullDevice
-
-        do {
-            try process.run()
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to run dscl: ")
-            return .failedToRun(error.localizedDescription)
-        }
-
-        let result = await waitForProcessExitOrTimeout(process, timeout: timeout)
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorOutput = String(data: errorData, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if result.timedOut {
-            MirageLogger.error(.host, "dscl auth timed out after \(timeout)")
-            return .timedOut
-        }
-
-        if result.status == 0 {
-            return .valid
-        }
-
-        if let errorOutput, !errorOutput.isEmpty {
-            MirageLogger.error(.host, "dscl auth failed: \(errorOutput)")
-        } else {
-            MirageLogger.error(.host, "dscl auth failed with status \(result.status)")
-        }
-        return .invalid
-    }
-
-    private func waitForProcessExitOrTimeout(
-        _ process: Process,
-        timeout: Duration
-    ) async -> (status: Int32, timedOut: Bool) {
-        let timeoutTask = Task<Bool, Never> { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return false }
-            guard process.isRunning else { return false }
-            await self?.terminateProcess(process)
-            return true
-        }
-
-        let status = await waitForProcessExit(process)
-        timeoutTask.cancel()
-        let didTimeout = await timeoutTask.value
-        return (status, didTimeout)
-    }
-
-    private func waitForProcessExit(_ process: Process) async -> Int32 {
-        await withCheckedContinuation { continuation in
-            if !process.isRunning {
-                continuation.resume(returning: process.terminationStatus)
-                return
-            }
-
-            process.terminationHandler = { proc in
-                continuation.resume(returning: proc.terminationStatus)
-            }
-        }
-    }
-
-    private func terminateProcess(_ process: Process) async {
-        guard process.isRunning else { return }
-        process.terminate()
-        try? await Task.sleep(for: .milliseconds(250))
-        guard process.isRunning else { return }
-        kill(process.processIdentifier, SIGKILL)
-    }
-
     private func wakeDisplayNonBlocking() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
         process.arguments = ["-u", "-t", "3"]
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to wake display with caffeinate: ")
+        }
 
         if powerAssertionID == 0 {
             let assertionName = "MirageUnlock" as CFString
@@ -336,35 +227,15 @@ package actor UnlockManager {
         }
     }
 
-    private func getConsoleUser() -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/stat")
-        task.arguments = ["-f", "%Su", "/dev/console"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let user = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !user.isEmpty,
-               user != "root" {
-                return user
-            }
-        } catch {
-        }
-
-        return NSUserName()
-    }
-
     private func focusLoginField() async {
         let bounds = await environment.displayBoundsProvider()
         let point = CGPoint(x: bounds.midX, y: bounds.midY)
         postMouseClick(at: point)
-        try? await Task.sleep(for: .milliseconds(120))
+        do {
+            try await Task.sleep(for: .milliseconds(120))
+        } catch {
+            return
+        }
     }
 
     private func postMouseClick(at point: CGPoint) {
@@ -391,12 +262,16 @@ package actor UnlockManager {
 
         for char in text {
             postKeyEvent(for: char)
-            try? await Task.sleep(for: .milliseconds(30))
+            do {
+                try await Task.sleep(for: .milliseconds(30))
+            } catch {
+                return
+            }
         }
     }
 
     private func postKeyEvent(for character: Character) {
-        guard let keyInfo = keyCodeForCharacter(character) else { return }
+        guard let keyInfo = UnlockKeyCodeMapper.keyCode(for: character) else { return }
         postKeyEvent(keyCode: keyInfo.keyCode, shift: keyInfo.needsShift)
     }
 
@@ -420,98 +295,12 @@ package actor UnlockManager {
         }
     }
 
-    private func keyCodeForCharacter(_ char: Character) -> (keyCode: UInt16, needsShift: Bool)? {
-        let charString = String(char)
-
-        if let num = Int(charString), num >= 0, num <= 9 {
-            let codes: [UInt16] = [
-                UInt16(kVK_ANSI_0), UInt16(kVK_ANSI_1), UInt16(kVK_ANSI_2), UInt16(kVK_ANSI_3), UInt16(kVK_ANSI_4),
-                UInt16(kVK_ANSI_5), UInt16(kVK_ANSI_6), UInt16(kVK_ANSI_7), UInt16(kVK_ANSI_8), UInt16(kVK_ANSI_9),
-            ]
-            return (codes[num], false)
-        }
-
-        let lowerChar = char.lowercased().first!
-        let needsShift = char.isUppercase
-
-        let letterCodes: [Character: UInt16] = [
-            "a": UInt16(kVK_ANSI_A), "b": UInt16(kVK_ANSI_B), "c": UInt16(kVK_ANSI_C), "d": UInt16(kVK_ANSI_D),
-            "e": UInt16(kVK_ANSI_E), "f": UInt16(kVK_ANSI_F), "g": UInt16(kVK_ANSI_G), "h": UInt16(kVK_ANSI_H),
-            "i": UInt16(kVK_ANSI_I), "j": UInt16(kVK_ANSI_J), "k": UInt16(kVK_ANSI_K), "l": UInt16(kVK_ANSI_L),
-            "m": UInt16(kVK_ANSI_M), "n": UInt16(kVK_ANSI_N), "o": UInt16(kVK_ANSI_O), "p": UInt16(kVK_ANSI_P),
-            "q": UInt16(kVK_ANSI_Q), "r": UInt16(kVK_ANSI_R), "s": UInt16(kVK_ANSI_S), "t": UInt16(kVK_ANSI_T),
-            "u": UInt16(kVK_ANSI_U), "v": UInt16(kVK_ANSI_V), "w": UInt16(kVK_ANSI_W), "x": UInt16(kVK_ANSI_X),
-            "y": UInt16(kVK_ANSI_Y), "z": UInt16(kVK_ANSI_Z),
-        ]
-
-        if let code = letterCodes[lowerChar] {
-            return (code, needsShift)
-        }
-
-        let specialCodes: [Character: (UInt16, Bool)] = [
-            " ": (UInt16(kVK_Space), false),
-            "-": (UInt16(kVK_ANSI_Minus), false),
-            "=": (UInt16(kVK_ANSI_Equal), false),
-            "[": (UInt16(kVK_ANSI_LeftBracket), false),
-            "]": (UInt16(kVK_ANSI_RightBracket), false),
-            "\\": (UInt16(kVK_ANSI_Backslash), false),
-            ";": (UInt16(kVK_ANSI_Semicolon), false),
-            "'": (UInt16(kVK_ANSI_Quote), false),
-            ",": (UInt16(kVK_ANSI_Comma), false),
-            ".": (UInt16(kVK_ANSI_Period), false),
-            "/": (UInt16(kVK_ANSI_Slash), false),
-            "`": (UInt16(kVK_ANSI_Grave), false),
-            "!": (UInt16(kVK_ANSI_1), true),
-            "@": (UInt16(kVK_ANSI_2), true),
-            "#": (UInt16(kVK_ANSI_3), true),
-            "$": (UInt16(kVK_ANSI_4), true),
-            "%": (UInt16(kVK_ANSI_5), true),
-            "^": (UInt16(kVK_ANSI_6), true),
-            "&": (UInt16(kVK_ANSI_7), true),
-            "*": (UInt16(kVK_ANSI_8), true),
-            "(": (UInt16(kVK_ANSI_9), true),
-            ")": (UInt16(kVK_ANSI_0), true),
-            "_": (UInt16(kVK_ANSI_Minus), true),
-            "+": (UInt16(kVK_ANSI_Equal), true),
-            "{": (UInt16(kVK_ANSI_LeftBracket), true),
-            "}": (UInt16(kVK_ANSI_RightBracket), true),
-            "|": (UInt16(kVK_ANSI_Backslash), true),
-            ":": (UInt16(kVK_ANSI_Semicolon), true),
-            "\"": (UInt16(kVK_ANSI_Quote), true),
-            "<": (UInt16(kVK_ANSI_Comma), true),
-            ">": (UInt16(kVK_ANSI_Period), true),
-            "?": (UInt16(kVK_ANSI_Slash), true),
-            "~": (UInt16(kVK_ANSI_Grave), true),
-        ]
-
-        return specialCodes[char]
-    }
-
     private func isLoginWindowVisible() -> Bool {
-        let shieldingLevel = CGShieldingWindowLevel()
-        let screenSaverLevel = CGWindowLevelForKey(.screenSaverWindow)
-
-        func containsLoginWindow(in windowList: [[String: Any]]) -> Bool {
-            for window in windowList {
-                guard let ownerName = window[kCGWindowOwnerName as String] as? String else { continue }
-                let layer = window[kCGWindowLayer as String] as? Int ?? 0
-
-                if ownerName == "loginwindow" || ownerName == "LoginWindow" {
-                    if layer >= shieldingLevel { return true }
-                }
-
-                if ownerName == "ScreenSaverEngine", layer >= screenSaverLevel { return true }
-            }
-            return false
-        }
-
-        if let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]],
-           containsLoginWindow(in: onScreen) {
+        if MirageLoginSessionState.isLoginWindowVisible() {
             return true
         }
 
-        if let allWindows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
-           containsLoginWindow(in: allWindows) {
+        if MirageLoginSessionState.isLoginWindowVisible(includeOffscreenWindows: true) {
             MirageLogger.host("Login window detected in off-screen window list")
             return true
         }
@@ -531,7 +320,11 @@ package actor UnlockManager {
                 MirageLogger.host("Login window ready after \(pollCount) polls")
                 return true
             }
-            try? await Task.sleep(for: .milliseconds(200))
+            do {
+                try await Task.sleep(for: .milliseconds(200))
+            } catch {
+                return false
+            }
         }
 
         MirageLogger.error(.host, "Login window not detected after \(timeout)s (\(pollCount) polls)")
@@ -560,7 +353,11 @@ package actor UnlockManager {
         if requiresUserIdentifier, let username {
             await typeStringViaCGEvent(username)
             postKeyEvent(keyCode: UInt16(kVK_Tab), shift: false)
-            try? await Task.sleep(for: .milliseconds(80))
+            do {
+                try await Task.sleep(for: .milliseconds(80))
+            } catch {
+                return false
+            }
         }
 
         await typeStringViaCGEvent(password)
@@ -580,7 +377,11 @@ package actor UnlockManager {
         MirageLogger.host("Starting unlock polling (timeout: \(timeout)s, interval: \(pollInterval)s)")
 
         while Date().timeIntervalSince(startTime) < timeout {
-            try? await Task.sleep(for: .milliseconds(Int(pollInterval * 1000)))
+            do {
+                try await Task.sleep(for: .milliseconds(Int(pollInterval * 1000)))
+            } catch {
+                return lastState
+            }
             pollCount += 1
 
             let newState = await sessionMonitor.refreshState(notify: false)
@@ -603,33 +404,33 @@ package actor UnlockManager {
 
     private func checkRateLimit(clientID: UUID) -> (isLimited: Bool, remaining: Int?, retryAfter: Int?) {
         let now = Date()
-        let windowStart = now.addingTimeInterval(-rateLimitWindow)
+        let windowStart = now.addingTimeInterval(-Self.rateLimitWindow)
         let recentAttempts = attemptsByClient[clientID]?.filter { $0 > windowStart } ?? []
 
-        if recentAttempts.count >= maxAttempts {
+        if recentAttempts.count >= Self.maxAttempts {
             if let oldest = recentAttempts.min() {
-                let retryAfter = Int(oldest.addingTimeInterval(rateLimitWindow).timeIntervalSince(now)) + 1
+                let retryAfter = Int(oldest.addingTimeInterval(Self.rateLimitWindow).timeIntervalSince(now)) + 1
                 return (true, 0, retryAfter)
             }
-            return (true, 0, Int(rateLimitWindow))
+            return (true, 0, Int(Self.rateLimitWindow))
         }
 
-        return (false, maxAttempts - recentAttempts.count, nil)
+        return (false, Self.maxAttempts - recentAttempts.count, nil)
     }
 
     private func recordAttempt(clientID: UUID) {
         let now = Date()
-        let windowStart = now.addingTimeInterval(-rateLimitWindow)
+        let windowStart = now.addingTimeInterval(-Self.rateLimitWindow)
         var attempts = attemptsByClient[clientID]?.filter { $0 > windowStart } ?? []
         attempts.append(now)
         attemptsByClient[clientID] = attempts
     }
 
-    private func getRemainingAttempts(clientID: UUID) -> Int {
+    private func remainingAttempts(for clientID: UUID) -> Int {
         let now = Date()
-        let windowStart = now.addingTimeInterval(-rateLimitWindow)
+        let windowStart = now.addingTimeInterval(-Self.rateLimitWindow)
         let recentAttempts = attemptsByClient[clientID]?.filter { $0 > windowStart } ?? []
-        return max(0, maxAttempts - recentAttempts.count)
+        return max(0, Self.maxAttempts - recentAttempts.count)
     }
 }
 

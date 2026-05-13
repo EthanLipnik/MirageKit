@@ -17,10 +17,6 @@ import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
-    nonisolated static func shouldAllowLightsOut(for sessionState: LoomSessionAvailability) -> Bool {
-        sessionState != .unavailable
-    }
-
     nonisolated static func shouldEnableLightsOut(
         hasAppStreams: Bool,
         hasDesktopStream: Bool,
@@ -101,7 +97,7 @@ extension MirageHostService {
     }
 
     func updateLightsOutState() async {
-        guard Self.shouldAllowLightsOut(for: sessionState) else {
+        guard sessionState != .unavailable else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return
@@ -161,7 +157,7 @@ extension MirageHostService {
 
         for attempt in 1 ... attempts {
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                let content = try await SCShareableContent.mirageHostContent()
                 let windows = content.windows.filter { overlayIDs.contains($0.windowID) }
                 if windows.count == overlayIDs.count || attempt == attempts {
                     return windows.map { SCWindowWrapper(window: $0) }
@@ -173,14 +169,18 @@ extension MirageHostService {
                 }
             }
 
-            try? await Task.sleep(for: .milliseconds(delayMs))
+            do {
+                try await Task.sleep(for: .milliseconds(delayMs))
+            } catch {
+                return []
+            }
             delayMs = min(200, Int(Double(delayMs) * 1.6))
         }
 
         return []
     }
 
-    nonisolated static func shouldLockHostWhenStreamingStops(
+    private nonisolated static func shouldLockHostWhenStreamingStops(
         lockHostWhenStreamingStops: Bool,
         sessionState: LoomSessionAvailability,
         hasAppStreams: Bool,

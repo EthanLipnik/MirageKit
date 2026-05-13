@@ -8,25 +8,24 @@
 import CoreGraphics
 import Foundation
 
-/// Represents the state of an app streaming session
-/// An app stream session manages streaming all windows from a single app to a single client
+/// State for streaming one app's windows to a single client.
 public struct MirageAppStreamSession: Identifiable, Sendable {
-    /// Unique identifier for this session
+    /// Unique identifier for this session.
     public let id: UUID
 
-    /// Bundle identifier of the app being streamed
+    /// Bundle identifier of the app being streamed.
     public let bundleIdentifier: String
 
-    /// Display name of the app
+    /// Display name of the app.
     public let appName: String
 
-    /// Path to the app bundle
+    /// Path to the app bundle.
     public let appPath: String
 
-    /// The client receiving this stream
+    /// The client receiving this stream.
     public let clientID: UUID
 
-    /// Client's display name
+    /// Client's display name.
     public let clientName: String
 
     /// Logical client display resolution requested for app-stream virtual displays.
@@ -43,10 +42,10 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Policy describing how shared bitrate budget is distributed among visible windows.
     package var bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy
 
-    /// Current state of the session
+    /// Current state of the session.
     public var state: AppStreamState
 
-    /// Active window streams (WindowID → StreamSession info)
+    /// Active window streams keyed by host window ID.
     public var windowStreams: [WindowID: WindowStreamInfo]
 
     /// Hidden candidate windows that are eligible for slot swap/start.
@@ -61,12 +60,13 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Last bitrate targets applied by the host governor for visible stream IDs.
     package var streamBitrateTargetsByStreamID: [StreamID: Int]
 
-    /// When this session started
+    /// When this session started.
     public let startTime: Date
 
-    /// When the client disconnected unexpectedly (for reservation period)
+    /// When the client disconnected unexpectedly during the reservation period.
     public var disconnectedAt: Date?
 
+    /// Creates an app stream session, clamping the visible slot count to at least one.
     public init(
         id: UUID = UUID(),
         bundleIdentifier: String,
@@ -139,8 +139,9 @@ public struct WindowStreamInfo: Sendable {
     /// Window title
     public var title: String?
 
-    /// Current window dimensions
+    /// Current window width in points.
     public var width: Int
+    /// Current window height in points.
     public var height: Int
 
     /// Whether the window can be resized
@@ -161,9 +162,10 @@ public struct WindowStreamInfo: Sendable {
     /// When this stream started
     public let startTime: Date
 
+    /// Creates metadata for one visible window stream within an app stream session.
     public init(
         streamID: StreamID,
-        mediaStreamID: StreamID? = nil,
+        mediaStreamID: StreamID,
         slotIndex: Int = 0,
         title: String? = nil,
         width: Int,
@@ -176,7 +178,7 @@ public struct WindowStreamInfo: Sendable {
         startTime: Date = Date()
     ) {
         self.streamID = streamID
-        self.mediaStreamID = mediaStreamID ?? streamID
+        self.mediaStreamID = mediaStreamID
         self.slotIndex = slotIndex
         self.title = title
         self.width = width
@@ -190,12 +192,18 @@ public struct WindowStreamInfo: Sendable {
     }
 }
 
+/// Metadata for a hidden app window that can later be promoted into a visible stream slot.
 public struct AppStreamHiddenWindowInfo: Sendable {
+    /// Last known window title.
     public var title: String?
+    /// Last known logical width.
     public var width: Int
+    /// Last known logical height.
     public var height: Int
+    /// Whether the host can resize the window before streaming it.
     public var isResizable: Bool
 
+    /// Creates metadata for a hidden app window that can later fill a visible slot.
     public init(
         title: String? = nil,
         width: Int,
@@ -212,19 +220,15 @@ public struct AppStreamHiddenWindowInfo: Sendable {
 // MARK: - Convenience Extensions
 
 public extension MirageAppStreamSession {
-    /// Whether this session has any active (non-cooldown) windows
-    var hasActiveWindows: Bool { !windowStreams.isEmpty }
-
-    /// Whether this session is in a reservation period (client disconnected)
+    /// Whether this session is in a reservation period after client disconnect.
     var isReserved: Bool {
         if case .disconnected = state { return true }
         return false
     }
 
-    /// Whether the reservation has expired
+    /// Whether the reservation has expired.
     var reservationExpired: Bool {
         guard case let .disconnected(expiresAt) = state else { return false }
         return Date() > expiresAt
     }
-
 }

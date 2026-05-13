@@ -22,7 +22,7 @@ struct AudioLiveSyncPolicyTests {
             makeFrame(timestampNs: 940_000_000),
         ]
 
-        let filtered = MirageClientService.filterLiveAudioFramesForLiveSync(
+        let filtered = LiveAudioSyncPolicy.filterFramesBehindVideo(
             frames,
             videoTimestampNs: 1_000_000_000,
             maxBehindNs: 180_000_000
@@ -30,22 +30,6 @@ struct AudioLiveSyncPolicyTests {
 
         #expect(filtered.droppedCount == 1)
         #expect(filtered.frames.map(\.timestampNs) == [820_000_000, 940_000_000])
-    }
-
-    @Test("Frames are preserved when video timing is unavailable")
-    func preservesFramesWithoutVideoTiming() {
-        let frames = [
-            makeFrame(timestampNs: 100),
-            makeFrame(timestampNs: 200),
-        ]
-
-        let filtered = MirageClientService.filterLiveAudioFramesForLiveSync(
-            frames,
-            videoTimestampNs: nil
-        )
-
-        #expect(filtered.droppedCount == 0)
-        #expect(filtered.frames.count == frames.count)
     }
 
     @Test("Policy gates playback and retains only live tail before first video frame")
@@ -86,46 +70,6 @@ struct AudioLiveSyncPolicyTests {
         #expect(decision.shouldGatePlayback)
         #expect(decision.reason == "stale-video-presentation")
         #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
-    }
-
-    @Test("Single stale video decision becomes soft hold after presentation")
-    func singleStaleVideoDecisionBecomesSoftHoldAfterPresentation() {
-        let frames = [
-            makeFrame(timestampNs: 1_000_000_000),
-            makeFrame(timestampNs: 1_100_000_000),
-            makeFrame(timestampNs: 1_200_000_000),
-        ]
-        let staleDecision = LiveAudioSyncPolicy.decide(
-            frames: frames,
-            videoState: .staleAfterPresentation,
-            liveTailDurationSeconds: 0.150
-        )
-
-        let decision = MirageClientService.audioDecisionAfterStaleVideoHysteresis(
-            staleDecision,
-            confirmGate: false
-        )
-
-        #expect(!decision.shouldGatePlayback)
-        #expect(decision.reason == "stale-video-presentation-soft")
-        #expect(decision.droppedCount == 1)
-        #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
-    }
-
-    @Test("Stale video gate confirmation requires repeated stale decisions or hard age")
-    func staleVideoGateConfirmationRequiresRepeatedStaleDecisionsOrHardAge() {
-        #expect(!MirageClientService.shouldConfirmStaleVideoGate(
-            consecutiveDecisionCount: 1,
-            staleSnapshotAgeSeconds: 0.300
-        ))
-        #expect(MirageClientService.shouldConfirmStaleVideoGate(
-            consecutiveDecisionCount: 2,
-            staleSnapshotAgeSeconds: 0.300
-        ))
-        #expect(MirageClientService.shouldConfirmStaleVideoGate(
-            consecutiveDecisionCount: 1,
-            staleSnapshotAgeSeconds: 0.750
-        ))
     }
 
     @Test("Policy resumes near live video without gate")
@@ -172,7 +116,7 @@ struct AudioLiveSyncPolicyTests {
             makeFrame(timestampNs: 820_000_000),
         ]
 
-        let filtered = MirageClientService.filterLiveAudioFramesForLiveSync(
+        let filtered = LiveAudioSyncPolicy.filterFramesBehindVideo(
             frames,
             videoTimestampNs: 1_000_000_000
         )
@@ -183,11 +127,11 @@ struct AudioLiveSyncPolicyTests {
 
     private func makeFrame(timestampNs: UInt64) -> DecodedPCMFrame {
         DecodedPCMFrame(
-            sampleRate: 48_000,
+            sampleRate: 48000,
             channelCount: 2,
-            frameCount: 4_800,
+            frameCount: 4800,
             timestampNs: timestampNs,
-            pcmData: Data(count: 4_800 * 2 * MemoryLayout<Float>.size)
+            pcmData: Data(count: 4800 * 2 * MemoryLayout<Float>.size)
         )
     }
 }

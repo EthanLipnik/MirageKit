@@ -12,49 +12,46 @@ import MirageKit
 import AppKit
 import ApplicationServices
 
-private final class WindowActivatorOpenResult: @unchecked Sendable {
-    var error: Error?
-}
-
-/// Result of an activation attempt
+/// Result of an activation attempt.
 public enum ActivationResult {
+    /// Activation completed with the named method.
     case success(method: String)
+    /// Activation partially completed with a caller-visible warning.
     case partialSuccess(method: String, message: String)
+    /// Activation failed for the named method.
     case failure(method: String, error: String)
 }
 
 /// Robust window activation utility that works on headless Macs.
 /// Tries multiple activation methods in sequence until one succeeds.
 public final class WindowActivator {
-    /// Activation methods in priority order
+    /// Activation methods in priority order.
     public enum ActivationMethod: CaseIterable, Sendable {
-        case nsRunningApplication // Standard AppKit activation
-        case axFrontmostAttribute // Set AXFrontmost on app element
-        case axRaiseAndFocus // Raise window + set focused window
-        case nsWorkspaceOpen // NSWorkspace.open with activation config
+        /// Activate through `NSRunningApplication`.
+        case nsRunningApplication
+        /// Set `AXFrontmost` on the app accessibility element.
+        case axFrontmostAttribute
+        /// Raise the window and set it as the focused accessibility window.
+        case axRaiseAndFocus
+        /// Open the app through `NSWorkspace` with activation configuration.
+        case nsWorkspaceOpen
     }
 
-    /// Configuration for activation attempts
+    /// Configuration for activation attempts.
     public struct Configuration: Sendable {
-        /// Methods to try, in order
+        /// Methods to try, in order.
         public var methods: [ActivationMethod]
 
-        /// Maximum time to wait for activation to take effect (per method)
+        /// Maximum time to wait for activation to take effect for each method.
         public var verificationTimeout: TimeInterval
 
-        /// Whether to log detailed debug info
+        /// Whether to log detailed activation attempts.
         public var verbose: Bool
 
+        /// Standard activation configuration for interactive hosts.
         public static let `default` = Configuration(
             methods: ActivationMethod.allCases,
             verificationTimeout: 0.1,
-            verbose: false
-        )
-
-        /// Fast configuration - skips heavyweight relaunch attempts.
-        public static let fast = Configuration(
-            methods: [.nsRunningApplication, .axFrontmostAttribute, .axRaiseAndFocus],
-            verificationTimeout: 0.05,
             verbose: false
         )
 
@@ -65,6 +62,7 @@ public final class WindowActivator {
             verbose: false
         )
 
+        /// Creates an activation configuration with a method order, verification timeout, and logging mode.
         public init(methods: [ActivationMethod], verificationTimeout: TimeInterval, verbose: Bool) {
             self.methods = methods
             self.verificationTimeout = verificationTimeout
@@ -74,6 +72,7 @@ public final class WindowActivator {
 
     private let configuration: Configuration
 
+    /// Creates a window activator using the supplied activation configuration.
     public init(configuration: Configuration = .default) {
         self.configuration = configuration
     }
@@ -83,13 +82,10 @@ public final class WindowActivator {
     /// Activate an application and optionally raise a specific window
     /// - Parameters:
     ///   - app: The MirageApplication to activate
-    ///   - window: Optional specific window to raise (if nil, just activates app)
     ///   - axWindow: Pre-fetched AXUIElement for the window (optional, avoids re-lookup)
     /// - Returns: Result indicating which method succeeded or all failures
-    @discardableResult
     public func activate(
         app: MirageApplication,
-        window: MirageWindow? = nil,
         axWindow: AXUIElement? = nil
     )
     -> ActivationResult {
@@ -252,17 +248,19 @@ public final class WindowActivator {
         configuration.hidesOthers = false
 
         let semaphore = DispatchSemaphore(value: 0)
-        let result = WindowActivatorOpenResult()
+        let openError = Locked<Error?>(nil)
 
         NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, error in
-            result.error = error
+            openError.withLock { $0 = error }
             semaphore.signal()
         }
 
         let timeout = DispatchTime.now() + .milliseconds(500)
         if semaphore.wait(timeout: timeout) == .timedOut { return .failure(method: "NSWorkspace", error: "Timed out") }
 
-        if let error = result.error { return .failure(method: "NSWorkspace", error: error.localizedDescription) }
+        if let error = openError.read({ $0 }) {
+            return .failure(method: "NSWorkspace", error: error.localizedDescription)
+        }
 
         return .success(method: "NSWorkspace")
     }
@@ -271,12 +269,9 @@ public final class WindowActivator {
 // MARK: - Headless Detection
 
 public extension WindowActivator {
-    /// Returns true if running without any connected displays
-    static var isHeadless: Bool { NSScreen.screens.isEmpty }
-
-    /// Creates a WindowActivator with configuration appropriate for the current display state
+    /// Creates a window activator tuned for the current display state.
     static func forCurrentEnvironment() -> WindowActivator {
-        WindowActivator(configuration: isHeadless ? .headless : .default)
+        WindowActivator(configuration: NSScreen.screens.isEmpty ? .headless : .default)
     }
 }
 #endif

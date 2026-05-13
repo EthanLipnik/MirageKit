@@ -28,24 +28,6 @@ enum DisplayMirroringTargetStabilityDecision: Equatable {
     case waitForResidualMirageDisplays([CGDirectDisplayID])
 }
 
-enum ResidualMirageDisplayCreationDecision: Equatable {
-    case allow
-    case block([CGDirectDisplayID])
-}
-
-func residualMirageDisplayCreationDecision(
-    onlineDisplayIDs: [CGDirectDisplayID],
-    ownedDisplayIDs: Set<CGDirectDisplayID>,
-    isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
-)
--> ResidualMirageDisplayCreationDecision {
-    let residualDisplayIDs = onlineDisplayIDs
-        .filter { isMirageDisplay($0) && !ownedDisplayIDs.contains($0) }
-        .sorted()
-    guard residualDisplayIDs.isEmpty else { return .block(residualDisplayIDs) }
-    return .allow
-}
-
 func displayMirroringTargetStabilityDecision(
     targetDisplayID: CGDirectDisplayID,
     onlineDisplayIDs: [CGDirectDisplayID],
@@ -116,25 +98,6 @@ func displaySeparationAnchorDisplayID(
     return candidates.max(by: rightmostDisplayComparator)
 }
 
-func shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
-    virtualDisplayID: CGDirectDisplayID,
-    displays: [CGDirectDisplayID],
-    isHeadless: Bool,
-    virtualDisplayBounds: CGRect,
-    mirrorSource: CGDirectDisplayID
-) -> Bool {
-    guard isHeadless,
-          displays.count == 1,
-          displays.first == virtualDisplayID,
-          mirrorSource == kCGNullDirectDisplay else {
-        return false
-    }
-
-    return virtualDisplayBounds.origin == .zero &&
-        virtualDisplayBounds.width > 0 &&
-        virtualDisplayBounds.height > 0
-}
-
 extension CGVirtualDisplayBridge {
     // MARK: - Display Separation Configuration
 
@@ -173,14 +136,13 @@ extension CGVirtualDisplayBridge {
         return !hasPhysicalDisplay
     }
 
-    /// Get all displays to mirror during desktop streaming.
+    /// Returns the online displays that should mirror the shared desktop stream.
     /// Full-desktop mode should fan the shared Mirage display out to every other
     /// online display, even if a vendor heuristic would otherwise classify the
     /// endpoint as "virtual". Only Mirage-managed displays are excluded to avoid
     /// self-mirroring the capture target or stale Mirage orphan displays.
     /// - Parameter excludingDisplayID: The virtual display ID to exclude (the one we're mirroring TO)
-    /// - Returns: Array of display IDs to mirror
-    static func getDisplaysToMirror(excludingDisplayID: CGDirectDisplayID) -> [CGDirectDisplayID] {
+    static func displaysToMirror(excludingDisplayID: CGDirectDisplayID) -> [CGDirectDisplayID] {
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &displayCount)
         guard displayCount > 0 else { return [] }
@@ -195,7 +157,7 @@ extension CGVirtualDisplayBridge {
 
         MirageLogger
             .host(
-                "getDisplaysToMirror: \(displays.count) online displays, \(result.count) to mirror (excluding Mirage display \(excludingDisplayID))"
+                "displaysToMirror: \(displays.count) online displays, \(result.count) to mirror (excluding Mirage display \(excludingDisplayID))"
             )
 
         return result
@@ -237,21 +199,6 @@ extension CGVirtualDisplayBridge {
         let isHeadless = isHeadlessEnvironment()
         MirageLogger
             .host("Environment: headless=\(isHeadless), originalMain=\(originalMainDisplayID), displays=\(displays)")
-
-        let virtualBoundsBeforeConfiguration = CGDisplayBounds(virtualDisplayID)
-        if shouldSkipHeadlessOnlyDisplaySeparationConfiguration(
-            virtualDisplayID: virtualDisplayID,
-            displays: displays,
-            isHeadless: isHeadless,
-            virtualDisplayBounds: virtualBoundsBeforeConfiguration,
-            mirrorSource: CGDisplayMirrorsDisplay(virtualDisplayID)
-        ) {
-            configuredDisplayOrigins[virtualDisplayID] = .zero
-            MirageLogger.host("Display configuration skipped for headless-only Mirage display at origin")
-            MirageLogger.host("Final virtual display bounds: \(virtualBoundsBeforeConfiguration)")
-            MirageLogger.host("=== END CONFIGURATION ===")
-            return
-        }
 
         let success = performDisplayConfiguration(
             virtualDisplayID: virtualDisplayID,

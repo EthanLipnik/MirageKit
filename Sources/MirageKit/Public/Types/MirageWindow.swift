@@ -6,31 +6,31 @@
 //
 
 import CoreGraphics
-import Foundation
 
-/// Represents a capturable window on the host system
+/// Capturable host window advertised to Mirage clients.
 public struct MirageWindow: Identifiable, Hashable, Sendable, Codable {
-    /// Unique window identifier
+    /// Unique host window identifier.
     public let id: WindowID
 
-    /// Window title (may be nil for some windows)
+    /// Window title, when the host can resolve one.
     public let title: String?
 
-    /// The application that owns this window
+    /// Application that owns this window.
     public let application: MirageApplication?
 
-    /// Window frame in screen coordinates
+    /// Window frame in host screen coordinates.
     public let frame: CGRect
 
-    /// Whether the window is currently visible on screen
+    /// Whether the window is currently visible on screen.
     public let isOnScreen: Bool
 
-    /// Window layer (higher = more in front)
+    /// Window layer, where higher values are closer to the front.
     public let windowLayer: Int
 
-    /// Number of tabs in this window (1 for non-tabbed windows)
+    /// Number of tabs in this window. Non-tabbed windows use `1`.
     public let tabCount: Int
 
+    /// Creates capturable host-window metadata for clients.
     public init(
         id: WindowID,
         title: String?,
@@ -49,7 +49,7 @@ public struct MirageWindow: Identifiable, Hashable, Sendable, Codable {
         self.tabCount = tabCount
     }
 
-    /// Creates a copy of this window with the specified tab count
+    /// Creates a copy of this window with a new tab count.
     public func withTabCount(_ count: Int) -> MirageWindow {
         MirageWindow(
             id: id,
@@ -62,7 +62,7 @@ public struct MirageWindow: Identifiable, Hashable, Sendable, Codable {
         )
     }
 
-    /// Display name for the window (uses app name if title is empty)
+    /// Display name for the window, falling back to the owning app name.
     public var displayName: String {
         if let title, !title.isEmpty { return title }
         return application?.name ?? "Untitled Window"

@@ -125,11 +125,7 @@ struct QualityTestWaiterTests {
 
         let expectedResult = QualityTestBenchmarkMessage(
             testID: secondTestID,
-            benchmarkWidth: 3_840,
-            benchmarkHeight: 2_160,
-            benchmarkFrameRate: 60,
-            encodeMs: 4.2,
-            benchmarkVersion: 1
+            encodeMs: 4.2
         )
         let message = try ControlMessage(
             type: .qualityTestResult,
@@ -139,7 +135,7 @@ struct QualityTestWaiterTests {
 
         let secondResult = await secondWaiter.value
         #expect(secondResult?.testID == secondTestID)
-        #expect(secondResult?.benchmarkWidth == expectedResult.benchmarkWidth)
+        #expect(secondResult?.encodeMs == expectedResult.encodeMs)
     }
 
     @MainActor
@@ -153,11 +149,8 @@ struct QualityTestWaiterTests {
             testID: testID,
             stageID: 4,
             probeKind: .streamingReplay,
-            targetBitrateBps: 181_000_000,
-            configuredDurationMs: 1_500,
             startedAtTimestampNs: 100,
             measurementEndedAtTimestampNs: 1_500_000_100,
-            completedAtTimestampNs: 1_500_000_200,
             sentPacketCount: 256,
             sentPayloadBytes: 1_024 * 1_024,
             deliveryWindowMissed: false
@@ -217,11 +210,8 @@ struct QualityTestWaiterTests {
             testID: secondTestID,
             stageID: 2,
             probeKind: .transport,
-            targetBitrateBps: 64_000_000,
-            configuredDurationMs: 1_500,
             startedAtTimestampNs: 300,
             measurementEndedAtTimestampNs: 1_500_000_300,
-            completedAtTimestampNs: 1_500_000_600,
             sentPacketCount: 1_024,
             sentPayloadBytes: 2_048 * 1_024,
             deliveryWindowMissed: false
@@ -268,11 +258,8 @@ struct QualityTestWaiterTests {
             testID: testID,
             stageID: 7,
             probeKind: .transport,
-            targetBitrateBps: 32_000_000,
-            configuredDurationMs: 1_500,
             startedAtTimestampNs: 10,
             measurementEndedAtTimestampNs: 1_500_000_010,
-            completedAtTimestampNs: 1_500_000_020,
             sentPacketCount: 100,
             sentPayloadBytes: 12_800,
             deliveryWindowMissed: false
@@ -285,7 +272,6 @@ struct QualityTestWaiterTests {
 
         #expect(service.qualityTestStageCompletionBuffer.isEmpty)
     }
-
 }
 
 @MainActor

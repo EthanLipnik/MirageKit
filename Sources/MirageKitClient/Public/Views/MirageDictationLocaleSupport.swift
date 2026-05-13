@@ -11,7 +11,9 @@
 import Foundation
 import Speech
 
+/// Resolves dictation locales supported by the active Apple speech stack.
 public enum MirageDictationLocaleSupport {
+    /// Returns unique supported dictation locales sorted by locale identifier.
     public static func supportedLocales() async -> [Locale] {
         let locales: [Locale]
 
@@ -32,6 +34,7 @@ public enum MirageDictationLocaleSupport {
             }
     }
 
+    /// Returns the best available dictation locale for the stored preference and current locale.
     public static func resolvedLocale(
         for preference: MirageDictationLocalePreference,
         currentLocale: Locale = .autoupdatingCurrent

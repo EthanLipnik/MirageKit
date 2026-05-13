@@ -13,7 +13,6 @@ import Testing
 
 @Suite("App Stream Window Catalog")
 struct AppStreamWindowCatalogTests {
-
     @Test("Captured window cluster includes auxiliary descendants")
     func capturedWindowClusterIncludesAuxiliaryDescendants() {
         let primary = makeCandidate(
@@ -21,7 +20,6 @@ struct AppStreamWindowCatalogTests {
             frame: CGRect(x: 40, y: 60, width: 900, height: 700)
         )
         let auxiliary = AppStreamWindowCandidate(
-            bundleIdentifier: primary.bundleIdentifier,
             window: makeWindow(
                 id: 101,
                 frame: CGRect(x: 720, y: 80, width: 260, height: 300)
@@ -32,7 +30,6 @@ struct AppStreamWindowCatalogTests {
             parentWindowID: primary.window.id
         )
         let nestedAuxiliary = AppStreamWindowCandidate(
-            bundleIdentifier: primary.bundleIdentifier,
             window: makeWindow(
                 id: 102,
                 frame: CGRect(x: 760, y: 320, width: 220, height: 180)
@@ -53,7 +50,6 @@ struct AppStreamWindowCatalogTests {
         )
 
         #expect(cluster?.windowIDs == [100, 101, 102])
-        #expect(cluster?.sourceRect == CGRect(x: 40, y: 60, width: 940, height: 700))
     }
 
     @Test("Small visible alerts are eligible as auxiliaries below primary size")
@@ -136,7 +132,6 @@ struct AppStreamWindowCatalogTests {
     @Test("Startup selection does not allocate slots to auxiliary-only candidates")
     func startupSelectionDoesNotAllocateSlotsToAuxiliaryOnlyCandidates() {
         let auxiliary = AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(
                 id: 201,
                 frame: CGRect(x: 40, y: 40, width: 80, height: 48)
@@ -150,10 +145,9 @@ struct AppStreamWindowCatalogTests {
             isModal: true
         )
 
-        let selection = AppStreamWindowCatalog.startupCandidateSelection(from: [auxiliary])
+        let candidates = AppStreamWindowCatalog.startupCandidateSelection(from: [auxiliary])
 
-        #expect(selection.candidates.isEmpty)
-        #expect(!selection.usedFallback)
+        #expect(candidates.isEmpty)
     }
 
     private func makeCandidate(
@@ -161,7 +155,6 @@ struct AppStreamWindowCatalogTests {
         frame: CGRect
     ) -> AppStreamWindowCandidate {
         AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(id: windowID, frame: frame),
             classification: .primary,
             role: "AXWindow",

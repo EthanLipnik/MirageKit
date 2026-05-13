@@ -9,17 +9,24 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Tracks active ownership and runtime encoder policies for multi-window app streams.
 actor AppStreamRuntimeOrchestrator {
-    struct RuntimePolicySnapshot: Sendable {
-        let bundleIdentifier: String
+    /// Current policy state for an app bundle's visible streams.
+    struct RuntimePolicySnapshot {
+        /// Monotonic value that changes when generated policies change.
         let epoch: UInt64
+        /// Stream currently receiving active-live priority.
         let activeStreamID: StreamID?
+        /// Whether the active stream changed while producing this snapshot.
         let activeChanged: Bool
+        /// Time at which an inactive stream's demotion grace expires, if any.
         let nextPolicyTransitionAt: CFAbsoluteTime?
+        /// Per-stream policies to apply to the encoder and inventory.
         let policies: [MirageStreamPolicy]
     }
 
-    private struct BundleState: Sendable {
+    /// Mutable runtime state for one app bundle.
+    private struct BundleState {
         var streamIDs: Set<StreamID> = []
         var activeStreamID: StreamID?
         var lastOwnershipSignalAt: CFAbsoluteTime = 0
@@ -40,6 +47,7 @@ actor AppStreamRuntimeOrchestrator {
     private var streamToBundle: [StreamID: String] = [:]
     private var bundleStatesByIdentifier: [String: BundleState] = [:]
 
+    /// Returns whether an input event should claim active ownership for its stream.
     nonisolated static func isOwnershipSwitchSignal(_ event: MirageInputEvent) -> Bool {
         switch event {
         case .windowFocus,
@@ -48,11 +56,11 @@ actor AppStreamRuntimeOrchestrator {
              .otherMouseDown,
              .hostSystemAction,
              .keyDown:
-            return true
+            true
         case let .scrollWheel(event):
-            return isScrollOwnershipSwitchSignal(event)
+            isScrollOwnershipSwitchSignal(event)
         case let .pointerSampleBatch(batch):
-            return batch.phase == .began
+            batch.phase == .began
         case .flagsChanged,
              .mouseMoved,
              .mouseDragged,
@@ -68,15 +76,17 @@ actor AppStreamRuntimeOrchestrator {
              .relativeResize,
              .pixelResize,
              .keyUp:
-            return false
+            false
         }
     }
 
+    /// Returns whether a scroll event begins or resumes active stream ownership.
     nonisolated static func isScrollOwnershipSwitchSignal(_ event: MirageScrollEvent) -> Bool {
         if event.phase == .began { return true }
         return event.phase == .none && event.momentumPhase == .none
     }
 
+    /// Registers a visible stream under a normalized app bundle identifier.
     func registerStream(bundleIdentifier: String, streamID: StreamID) {
         let key = bundleIdentifier.lowercased()
         var state = bundleStatesByIdentifier[key] ?? BundleState()
@@ -88,6 +98,7 @@ actor AppStreamRuntimeOrchestrator {
         streamToBundle[streamID] = key
     }
 
+    /// Removes a stream from ownership tracking.
     func unregisterStream(streamID: StreamID) {
         guard let key = streamToBundle.removeValue(forKey: streamID),
               var state = bundleStatesByIdentifier[key] else {
@@ -97,7 +108,7 @@ actor AppStreamRuntimeOrchestrator {
         state.streamIDs.remove(streamID)
         state.demotionGraceDeadlineByStreamID.removeValue(forKey: streamID)
         if state.activeStreamID == streamID {
-            state.activeStreamID = state.streamIDs.sorted().first
+            state.activeStreamID = state.streamIDs.min()
         }
 
         if state.streamIDs.isEmpty {
@@ -107,6 +118,7 @@ actor AppStreamRuntimeOrchestrator {
         bundleStatesByIdentifier[key] = state
     }
 
+    /// Requests active ownership for a stream, applying debounce and dwell guards.
     func requestOwnershipSwitch(streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
         guard let key = streamToBundle[streamID],
               var state = bundleStatesByIdentifier[key],
@@ -140,6 +152,7 @@ actor AppStreamRuntimeOrchestrator {
         return true
     }
 
+    /// Forces active ownership for a stream without debounce or dwell checks.
     func forceOwnership(streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
         guard let key = streamToBundle[streamID],
               var state = bundleStatesByIdentifier[key],
@@ -155,6 +168,7 @@ actor AppStreamRuntimeOrchestrator {
         bundleStatesByIdentifier[key] = state
     }
 
+    /// Produces current runtime policies for the visible streams in an app bundle.
     func makeRuntimePolicySnapshot(
         bundleIdentifier: String,
         visibleStreamIDs: [StreamID],
@@ -179,7 +193,7 @@ actor AppStreamRuntimeOrchestrator {
             state.demotionGraceDeadlineByStreamID.removeAll()
         } else {
             state.demotionGraceDeadlineByStreamID = Self.trimDemotionGraceDeadlines(
-                state.demotionGraceDeadlineByStreamID,
+                deadlines: state.demotionGraceDeadlineByStreamID,
                 validStreamIDs: state.streamIDs,
                 now: now
             )
@@ -225,7 +239,6 @@ actor AppStreamRuntimeOrchestrator {
 
         bundleStatesByIdentifier[key] = state
         return RuntimePolicySnapshot(
-            bundleIdentifier: key,
             epoch: state.epoch,
             activeStreamID: state.activeStreamID,
             activeChanged: activeChanged,
@@ -234,6 +247,7 @@ actor AppStreamRuntimeOrchestrator {
         )
     }
 
+    /// Builds a compact identity for policy changes that should bump the epoch.
     private nonisolated static func policyFingerprint(
         activeStreamID: StreamID?,
         policies: [MirageStreamPolicy]
@@ -246,6 +260,7 @@ actor AppStreamRuntimeOrchestrator {
         return "\(activeText)#\(streamText)"
     }
 
+    /// Allocates a shared bitrate budget between active and passive app streams.
     private nonisolated static func allocateBitrateTargets(
         streamIDs: [StreamID],
         activeStreamID: StreamID?,
@@ -285,6 +300,7 @@ actor AppStreamRuntimeOrchestrator {
         return targets
     }
 
+    /// Applies an ownership switch and gives the previous active stream a demotion grace period.
     private nonisolated static func applyOwnershipSwitch(
         state: inout BundleState,
         streamID: StreamID,
@@ -300,8 +316,9 @@ actor AppStreamRuntimeOrchestrator {
         state.demotionGraceDeadlineByStreamID[previousActive] = now + Self.inactiveDemotionGrace
     }
 
+    /// Drops expired or no-longer-visible demotion grace deadlines.
     private nonisolated static func trimDemotionGraceDeadlines(
-        _ deadlines: [StreamID: CFAbsoluteTime],
+        deadlines: [StreamID: CFAbsoluteTime],
         validStreamIDs: Set<StreamID>,
         now: CFAbsoluteTime
     ) -> [StreamID: CFAbsoluteTime] {

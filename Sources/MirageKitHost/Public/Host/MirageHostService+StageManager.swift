@@ -14,8 +14,9 @@ import MirageKit
 import AppKit
 @MainActor
 extension MirageHostService {
+    /// Disables Stage Manager before app streaming starts when it would interfere with window placement.
     func prepareStageManagerForAppStreamingIfNeeded() async {
-        let sessions = await appStreamManager.getAllSessions()
+        let sessions = await appStreamManager.allSessions()
         guard sessions.isEmpty else { return }
         guard !appStreamingStageManagerNeedsRestore else { return }
         guard !appStreamingStageManagerPreparationInProgress else { return }
@@ -23,7 +24,7 @@ extension MirageHostService {
         appStreamingStageManagerPreparationInProgress = true
         defer { appStreamingStageManagerPreparationInProgress = false }
 
-        let state = await stageManagerController.readState()
+        let state = await stageManagerController.readCurrentState()
         switch state {
         case .disabled:
             MirageLogger.host("Stage Manager is already off for app streaming")
@@ -50,11 +51,12 @@ extension MirageHostService {
         }
     }
 
+    /// Restores Stage Manager after app streaming no longer needs it disabled.
     func restoreStageManagerAfterAppStreamingIfNeeded(force: Bool = false) async {
         guard appStreamingStageManagerNeedsRestore else { return }
 
         if !force {
-            let sessions = await appStreamManager.getAllSessions()
+            let sessions = await appStreamManager.allSessions()
             guard sessions.isEmpty else { return }
         }
 
@@ -67,11 +69,12 @@ extension MirageHostService {
         }
     }
 
+    /// Removes a stopped stream's window from its app session and ends the session if it is idle.
     func removeStoppedWindowFromAppSessionIfNeeded(
         streamID: StreamID,
         fallbackWindowID: WindowID
     ) async {
-        guard let session = await appStreamManager.getSessionForStreamID(streamID) else { return }
+        guard let session = await appStreamManager.sessionForStreamID(streamID) else { return }
         let windowID = await appStreamManager.windowIDForStream(
             bundleIdentifier: session.bundleIdentifier,
             streamID: streamID
@@ -84,12 +87,13 @@ extension MirageHostService {
         await endAppSessionIfIdle(bundleIdentifier: session.bundleIdentifier)
     }
 
+    /// Ends an app-stream session once it has no streamed windows remaining.
     func endAppSessionIfIdle(
         bundleIdentifier: String,
         keepAliveIfAppRunning: Bool = false
     )
     async {
-        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return }
+        guard let session = await appStreamManager.session(bundleIdentifier: bundleIdentifier) else { return }
         guard session.windowStreams.isEmpty else { return }
 
         if keepAliveIfAppRunning {

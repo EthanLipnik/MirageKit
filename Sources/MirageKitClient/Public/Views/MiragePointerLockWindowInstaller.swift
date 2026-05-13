@@ -10,12 +10,17 @@ import GameController
 import SwiftUI
 import UIKit
 
+/// Hosts SwiftUI content inside a controller that can request iPadOS pointer lock.
 private final class MiragePointerLockRootController: UIViewController {
     private let contentController: UIViewController
+    /// Mouse connection observer used to re-evaluate pointer-lock eligibility.
     nonisolated(unsafe) private var mouseConnectObserver: NSObjectProtocol?
+    /// Mouse disconnection observer used to release or re-check pointer lock.
     nonisolated(unsafe) private var mouseDisconnectObserver: NSObjectProtocol?
+    /// Polls pointer-lock state while UIKit reports a lock or the app still wants one.
     nonisolated(unsafe) private var pollTimer: Timer?
 
+    /// Whether the stream UI currently wants pointer lock.
     var pointerLockRequested: Bool = false {
         didSet {
             guard pointerLockRequested != oldValue else { return }
@@ -29,10 +34,11 @@ private final class MiragePointerLockRootController: UIViewController {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Whether GameController currently exposes a mouse with usable movement input.
     private var hasUsableMouseInput: Bool {
         GCMouse.mice().contains { $0.mouseInput != nil }
     }
@@ -123,10 +129,10 @@ private final class MiragePointerLockRootController: UIViewController {
                 timer.invalidate()
                 return
             }
-            self.setNeedsUpdateOfPrefersPointerLocked()
-            if !self.shouldKeepPointerLockPolling {
+            setNeedsUpdateOfPrefersPointerLocked()
+            if !shouldKeepPointerLockPolling {
                 timer.invalidate()
-                self.pollTimer = nil
+                pollTimer = nil
             }
         }
     }
@@ -192,7 +198,7 @@ private final class MiragePointerLockWindowInstallerController: UIViewController
 private struct MiragePointerLockWindowInstallerRepresentable: UIViewControllerRepresentable {
     let pointerLockRequested: Bool
 
-    func makeUIViewController(context: Context) -> MiragePointerLockWindowInstallerController {
+    func makeUIViewController(context _: Context) -> MiragePointerLockWindowInstallerController {
         let controller = MiragePointerLockWindowInstallerController()
         controller.pointerLockRequested = pointerLockRequested
         return controller
@@ -200,22 +206,24 @@ private struct MiragePointerLockWindowInstallerRepresentable: UIViewControllerRe
 
     func updateUIViewController(
         _ uiViewController: MiragePointerLockWindowInstallerController,
-        context: Context
+        context _: Context
     ) {
         uiViewController.pointerLockRequested = pointerLockRequested
     }
 
     static func dismantleUIViewController(
         _ uiViewController: MiragePointerLockWindowInstallerController,
-        coordinator: ()
+        coordinator _: ()
     ) {
         uiViewController.clearPointerLockIfNeeded()
     }
 }
 
+/// Invisible SwiftUI helper that installs or removes the iPadOS pointer-lock window.
 public struct MiragePointerLockWindowInstaller: View {
     let pointerLockRequested: Bool
 
+    /// Creates a pointer-lock installer that follows the requested lock state.
     public init(pointerLockRequested: Bool) {
         self.pointerLockRequested = pointerLockRequested
     }

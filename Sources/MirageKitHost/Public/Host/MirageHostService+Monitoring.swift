@@ -14,7 +14,7 @@ import AppKit
 // MARK: - Cursor and Window Activity Monitoring
 
 extension MirageHostService {
-    /// Start monitoring cursor state for active streams
+    /// Starts cursor monitoring for active app and desktop streams.
     func startCursorMonitoring() {
         cursorMonitor = CursorMonitor(
             pollingRate: Double(MirageInteractionCadence.targetFPS120),
@@ -35,14 +35,22 @@ extension MirageHostService {
                     }
                     streams.append(contentsOf: appStreams)
 
-                    // Include desktop stream if active
                     if let desktopID = desktopStreamID {
                         if desktopStreamMode == .secondary {
                             if let bounds = resolveDesktopDisplayBoundsForCursorMonitor() {
                                 streams.append((desktopID, bounds))
                             }
-                        } else if let bounds = resolveMirroredDesktopDisplayBoundsForCursorMonitor() {
-                            streams.append((desktopID, bounds))
+                        } else {
+                            let physicalBounds = desktopPrimaryPhysicalBounds ?? refreshDesktopPrimaryPhysicalBounds()
+                            let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
+                            streams.append((
+                                desktopID,
+                                Self.resolvedMirroredDesktopCursorMonitorBounds(
+                                    physicalBounds: physicalBounds,
+                                    virtualResolution: desktopMirroredVirtualResolution,
+                                    primaryHeight: primaryHeight
+                                )
+                            ))
                         }
                     }
 
@@ -69,9 +77,8 @@ extension MirageHostService {
         }
     }
 
-    /// Send cursor update to the client for a specific stream
+    /// Sends a cursor shape or visibility update to the client that owns the stream.
     func sendCursorUpdate(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) {
-        // Find the client context - check both app streams and desktop stream
         let clientContext: ClientContext?
         if let session = activeSessionByStreamID[streamID] {
             clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id })
@@ -96,7 +103,7 @@ extension MirageHostService {
         }
     }
 
-    /// Send cursor position update to the client for a specific stream
+    /// Sends a normalized cursor position update for the active desktop stream.
     func sendCursorPositionUpdate(streamID: StreamID, position: CGPoint, isVisible: Bool) {
         guard streamID == desktopStreamID else { return }
         guard let clientContext = desktopStreamClientContext else { return }
@@ -127,16 +134,6 @@ extension MirageHostService {
             y: primaryHeight - frame.origin.y - frame.height,
             width: frame.width,
             height: frame.height
-        )
-    }
-
-    private func resolveMirroredDesktopDisplayBoundsForCursorMonitor() -> CGRect? {
-        let physicalBounds = desktopPrimaryPhysicalBounds ?? refreshDesktopPrimaryPhysicalBounds()
-        let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
-        return Self.resolvedMirroredDesktopCursorMonitorBounds(
-            physicalBounds: physicalBounds,
-            virtualResolution: desktopMirroredVirtualResolution,
-            primaryHeight: primaryHeight
         )
     }
 

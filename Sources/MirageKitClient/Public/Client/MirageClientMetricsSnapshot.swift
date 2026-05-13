@@ -1,0 +1,529 @@
+//
+//  MirageClientMetricsSnapshot.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 5/13/26.
+//
+
+import Foundation
+import MirageKit
+
+/// Point-in-time client and host telemetry for one rendered stream.
+public struct MirageClientMetricsSnapshot: Sendable, Equatable {
+    /// Frames decoded per second by the client video decoder.
+    public var decodedFPS: Double
+    /// Media frames received per second from the host.
+    public var receivedFPS: Double
+    /// Worst inter-arrival gap observed in received client frames, in milliseconds.
+    public var clientReceivedWorstGapMs: Double
+    /// 95th percentile received-frame interval, in milliseconds.
+    public var clientReceivedFrameIntervalP95Ms: Double
+    /// 99th percentile received-frame interval, in milliseconds.
+    public var clientReceivedFrameIntervalP99Ms: Double
+    /// Display-clock ticks per second observed by the client renderer.
+    public var clientDisplayTickFPS: Double
+    /// Frame submission attempts per second made by the client renderer.
+    public var clientSubmitAttemptFPS: Double
+    /// Submitted frames per second accepted by the display layer.
+    public var clientLayerAcceptedFPS: Double
+    /// Frames per second presented by the client display layer.
+    public var clientPresentedFPS: Double
+    /// Frame submissions per second, including repeated frames.
+    public var submittedFPS: Double
+    /// Unique frame submissions per second.
+    public var uniqueSubmittedFPS: Double
+    /// Number of decoded frames waiting for presentation.
+    public var pendingFrameCount: Int
+    /// Age of the oldest pending decoded frame, in milliseconds.
+    public var clientPendingFrameAgeMs: Double
+    /// Number of pending decoded frames overwritten before presentation.
+    public var clientOverwrittenPendingFrames: UInt64
+    /// Number of frames dropped because they arrived too late for presentation.
+    public var clientLateFrameDrops: UInt64
+    /// Number of times the display layer rejected submission because it was not ready.
+    public var clientDisplayLayerNotReadyCount: UInt64
+    /// Number of repeated-frame presentations used to preserve cadence.
+    public var clientRepeatedFrameCount: UInt64
+    /// Number of expected display ticks that did not present a new frame.
+    public var clientMissedVSyncCount: UInt64
+    /// 95th percentile display-tick interval, in milliseconds.
+    public var clientDisplayTickIntervalP95Ms: Double
+    /// 99th percentile display-tick interval, in milliseconds.
+    public var clientDisplayTickIntervalP99Ms: Double
+    /// Current playout delay measured in frames.
+    public var clientPlayoutDelayFrames: Int
+    /// Number of detected presentation stalls.
+    public var clientPresentationStallCount: UInt64
+    /// Worst gap between presented frames, in milliseconds.
+    public var clientWorstPresentationGapMs: Double
+    /// 95th percentile presented-frame interval, in milliseconds.
+    public var clientFrameIntervalP95Ms: Double
+    /// 99th percentile presented-frame interval, in milliseconds.
+    public var clientFrameIntervalP99Ms: Double
+    /// Whether the decode pipeline currently appears healthy.
+    public var decodeHealthy: Bool
+    /// Total frames dropped by client-side decode or render admission.
+    public var clientDroppedFrames: UInt64
+    /// Number of incomplete frames currently retained by the packet reassembler.
+    public var clientReassemblerPendingFrameCount: Int
+    /// Number of pending reassembled frames that are keyframes.
+    public var clientReassemblerPendingKeyframeCount: Int
+    /// Bytes retained by the packet reassembler for incomplete frames.
+    public var clientReassemblerPendingBytes: Int
+    /// Bytes retained by the decoded frame buffer pool.
+    public var clientFrameBufferPoolRetainedBytes: Int
+    /// Number of packet reassembler evictions caused by memory budget pressure.
+    public var clientReassemblerBudgetEvictions: UInt64
+    /// Frames encoded per second by the host encoder.
+    public var hostEncodedFPS: Double
+    /// Idle frames per second emitted by the host when no new capture content is available.
+    public var hostIdleFPS: Double
+    /// Total frames dropped by the host capture or encoding pipeline.
+    public var hostDroppedFrames: UInt64
+    /// Active host encoder quality value.
+    public var hostActiveQuality: Double
+    /// Host target frame rate for the active stream.
+    public var hostTargetFrameRate: Int
+    /// User-entered host bitrate, in bits per second.
+    public var hostEnteredBitrate: Int?
+    /// Current host encoder bitrate, in bits per second.
+    public var hostCurrentBitrate: Int?
+    /// Most recent client-requested target bitrate, in bits per second.
+    public var hostRequestedTargetBitrate: Int?
+    /// Current host-side bitrate adaptation ceiling, in bits per second.
+    public var hostBitrateAdaptationCeiling: Int?
+    /// Startup bitrate selected by the host encoder, in bits per second.
+    public var hostStartupBitrate: Int?
+    /// Number of frames rejected by host capture admission control.
+    public var hostCaptureAdmissionDrops: UInt64?
+    /// Host frame budget, in milliseconds.
+    public var hostFrameBudgetMs: Double?
+    /// Average host encode duration, in milliseconds.
+    public var hostAverageEncodeMs: Double?
+    /// Frames per second entering the host capture pipeline.
+    public var hostCaptureIngressFPS: Double?
+    /// Frames per second delivered by host capture.
+    public var hostCaptureFPS: Double?
+    /// Host encode attempts per second.
+    public var hostEncodeAttemptFPS: Double?
+    /// Whether the host is using hardware video encoding.
+    public var hostUsingHardwareEncoder: Bool?
+    /// Registry identifier for the GPU used by the host encoder.
+    public var hostEncoderGPURegistryID: UInt64?
+    /// Width of encoded host frames, in pixels.
+    public var hostEncodedWidth: Int?
+    /// Height of encoded host frames, in pixels.
+    public var hostEncodedHeight: Int?
+    /// Pixel format reported by host capture.
+    public var hostCapturePixelFormat: String?
+    /// Color primaries reported by host capture.
+    public var hostCaptureColorPrimaries: String?
+    /// Pixel format emitted by the host encoder.
+    public var hostEncoderPixelFormat: String?
+    /// Chroma sampling emitted by the host encoder.
+    public var hostEncoderChromaSampling: String?
+    /// Codec profile used by the host encoder.
+    public var hostEncoderProfile: String?
+    /// Color primaries emitted by the host encoder.
+    public var hostEncoderColorPrimaries: String?
+    /// Transfer function emitted by the host encoder.
+    public var hostEncoderTransferFunction: String?
+    /// YCbCr matrix emitted by the host encoder.
+    public var hostEncoderYCbCrMatrix: String?
+    /// Host validation status for Display P3 coverage.
+    public var hostDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus?
+    /// Whether the host validated ten-bit Display P3 output.
+    public var hostTenBitDisplayP3Validated: Bool?
+    /// Whether the host validated Ultra 4:4:4 output.
+    public var hostUltra444Validated: Bool?
+    /// Pixel format emitted by the client decoder.
+    public var clientDecoderOutputPixelFormat: String?
+    /// Whether the client is using hardware video decoding.
+    public var clientUsingHardwareDecoder: Bool?
+    /// Worst host capture wall-clock frame gap, in milliseconds.
+    public var hostCaptureWallClockGapWorstMs: Double?
+    /// 95th percentile host capture wall-clock frame gap, in milliseconds.
+    public var hostCaptureWallClockGapP95Ms: Double?
+    /// 99th percentile host capture wall-clock frame gap, in milliseconds.
+    public var hostCaptureWallClockGapP99Ms: Double?
+    /// Worst host capture display-time frame gap, in milliseconds.
+    public var hostCaptureDisplayTimeGapWorstMs: Double?
+    /// 95th percentile host capture display-time frame gap, in milliseconds.
+    public var hostCaptureDisplayTimeGapP95Ms: Double?
+    /// 99th percentile host capture display-time frame gap, in milliseconds.
+    public var hostCaptureDisplayTimeGapP99Ms: Double?
+    /// Worst delivered-frame gap from host capture, in milliseconds.
+    public var hostCaptureDeliveredFrameGapWorstMs: Double?
+    /// 95th percentile delivered-frame gap from host capture, in milliseconds.
+    public var hostCaptureDeliveredFrameGapP95Ms: Double?
+    /// 99th percentile delivered-frame gap from host capture, in milliseconds.
+    public var hostCaptureDeliveredFrameGapP99Ms: Double?
+    /// 95th percentile host capture callback interval, in milliseconds.
+    public var hostCaptureCallbackP95Ms: Double?
+    /// 99th percentile host capture callback interval, in milliseconds.
+    public var hostCaptureCallbackP99Ms: Double?
+    /// Number of long frame gaps observed by host capture.
+    public var hostCaptureLongFrameGapCount: UInt64?
+    /// Number of host capture display-time drift events.
+    public var hostCaptureDisplayTimeDriftCount: UInt64?
+    /// Whether host capture timing appears suspicious for a virtual display.
+    public var hostCaptureVirtualDisplayTimingSuspect: Bool?
+    /// Whether host capture is paced by display refresh cadence.
+    public var hostCaptureUsesDisplayRefreshCadence: Bool?
+    /// Whether host capture uses the native refresh rate as its minimum frame interval.
+    public var hostCaptureUsesNativeRefreshMinimumFrameInterval: Bool?
+    /// Minimum frame interval rate reported by host capture, in hertz.
+    public var hostCaptureMinimumFrameIntervalRate: Int?
+    /// Display refresh rate reported by host capture, in hertz.
+    public var hostCaptureDisplayRefreshRate: Int?
+    /// Identifier of the host virtual display used for capture.
+    public var hostVirtualDisplayID: UInt32?
+    /// Refresh rate of the host virtual display, in hertz.
+    public var hostVirtualDisplayRefreshRate: Double?
+    /// Scale factor of the host virtual display.
+    public var hostVirtualDisplayScaleFactor: Double?
+    /// Bytes currently queued for host packet sending.
+    public var hostSendQueueBytes: Int?
+    /// Average delay before host packet sending starts, in milliseconds.
+    public var hostSendStartDelayAverageMs: Double?
+    package var hostSendStartDelayMaxMs: Double?
+    /// Average host packet send completion duration, in milliseconds.
+    public var hostSendCompletionAverageMs: Double?
+    package var hostSendCompletionMaxMs: Double?
+    /// Average packet-pacer sleep duration on the host, in milliseconds.
+    public var hostPacketPacerAverageSleepMs: Double?
+    /// Total packet-pacer sleep time on the host, in milliseconds.
+    public var hostPacketPacerTotalSleepMs: Int?
+    /// Maximum packet-pacer sleep duration on the host, in milliseconds.
+    public var hostPacketPacerMaxSleepMs: Int?
+    /// Maximum per-frame packet-pacer sleep duration on the host, in milliseconds.
+    public var hostPacketPacerFrameMaxSleepMs: Int?
+    /// Number of stale packets dropped by the host sender.
+    public var hostStalePacketDrops: UInt64?
+    package var hostSenderLocalDeadlineDrops: UInt64?
+    /// Number of packets dropped because their stream generation was aborted.
+    public var hostGenerationAbortDrops: UInt64?
+    /// Number of non-keyframes dropped while waiting for a keyframe.
+    public var hostNonKeyframeHoldDrops: UInt64?
+    /// Whether this snapshot includes host-side metrics.
+    public var hasHostMetrics: Bool
+
+    /// Creates a metrics snapshot with client presentation data and optional host telemetry.
+    public init(
+        decodedFPS: Double = 0,
+        receivedFPS: Double = 0,
+        clientReceivedWorstGapMs: Double = 0,
+        clientReceivedFrameIntervalP95Ms: Double = 0,
+        clientReceivedFrameIntervalP99Ms: Double = 0,
+        clientDisplayTickFPS: Double = 0,
+        clientSubmitAttemptFPS: Double = 0,
+        clientLayerAcceptedFPS: Double = 0,
+        clientPresentedFPS: Double = 0,
+        submittedFPS: Double = 0,
+        uniqueSubmittedFPS: Double = 0,
+        pendingFrameCount: Int = 0,
+        clientPendingFrameAgeMs: Double = 0,
+        clientOverwrittenPendingFrames: UInt64 = 0,
+        clientLateFrameDrops: UInt64 = 0,
+        clientDisplayLayerNotReadyCount: UInt64 = 0,
+        clientRepeatedFrameCount: UInt64 = 0,
+        clientMissedVSyncCount: UInt64 = 0,
+        clientDisplayTickIntervalP95Ms: Double = 0,
+        clientDisplayTickIntervalP99Ms: Double = 0,
+        clientPlayoutDelayFrames: Int = 0,
+        clientPresentationStallCount: UInt64 = 0,
+        clientWorstPresentationGapMs: Double = 0,
+        clientFrameIntervalP95Ms: Double = 0,
+        clientFrameIntervalP99Ms: Double = 0,
+        decodeHealthy: Bool = true,
+        clientDroppedFrames: UInt64 = 0,
+        clientReassemblerPendingFrameCount: Int = 0,
+        clientReassemblerPendingKeyframeCount: Int = 0,
+        clientReassemblerPendingBytes: Int = 0,
+        clientFrameBufferPoolRetainedBytes: Int = 0,
+        clientReassemblerBudgetEvictions: UInt64 = 0,
+        hostEncodedFPS: Double = 0,
+        hostIdleFPS: Double = 0,
+        hostDroppedFrames: UInt64 = 0,
+        hostActiveQuality: Double = 0,
+        hostTargetFrameRate: Int = 0,
+        hostEnteredBitrate: Int? = nil,
+        hostCurrentBitrate: Int? = nil,
+        hostRequestedTargetBitrate: Int? = nil,
+        hostBitrateAdaptationCeiling: Int? = nil,
+        hostStartupBitrate: Int? = nil,
+        hostCaptureAdmissionDrops: UInt64? = nil,
+        hostFrameBudgetMs: Double? = nil,
+        hostAverageEncodeMs: Double? = nil,
+        hostCaptureIngressFPS: Double? = nil,
+        hostCaptureFPS: Double? = nil,
+        hostEncodeAttemptFPS: Double? = nil,
+        hostUsingHardwareEncoder: Bool? = nil,
+        hostEncoderGPURegistryID: UInt64? = nil,
+        hostEncodedWidth: Int? = nil,
+        hostEncodedHeight: Int? = nil,
+        hostCapturePixelFormat: String? = nil,
+        hostCaptureColorPrimaries: String? = nil,
+        hostEncoderPixelFormat: String? = nil,
+        hostEncoderChromaSampling: String? = nil,
+        hostEncoderProfile: String? = nil,
+        hostEncoderColorPrimaries: String? = nil,
+        hostEncoderTransferFunction: String? = nil,
+        hostEncoderYCbCrMatrix: String? = nil,
+        hostDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus? = nil,
+        hostTenBitDisplayP3Validated: Bool? = nil,
+        hostUltra444Validated: Bool? = nil,
+        clientDecoderOutputPixelFormat: String? = nil,
+        clientUsingHardwareDecoder: Bool? = nil,
+        hasHostMetrics: Bool = false
+    ) {
+        self.decodedFPS = decodedFPS
+        self.receivedFPS = receivedFPS
+        self.clientReceivedWorstGapMs = clientReceivedWorstGapMs
+        self.clientReceivedFrameIntervalP95Ms = clientReceivedFrameIntervalP95Ms
+        self.clientReceivedFrameIntervalP99Ms = clientReceivedFrameIntervalP99Ms
+        self.clientDisplayTickFPS = clientDisplayTickFPS
+        self.clientSubmitAttemptFPS = clientSubmitAttemptFPS
+        self.clientLayerAcceptedFPS = clientLayerAcceptedFPS
+        self.clientPresentedFPS = clientPresentedFPS
+        self.submittedFPS = submittedFPS
+        self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.pendingFrameCount = pendingFrameCount
+        self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
+        self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
+        self.clientLateFrameDrops = clientLateFrameDrops
+        self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
+        self.clientRepeatedFrameCount = clientRepeatedFrameCount
+        self.clientMissedVSyncCount = clientMissedVSyncCount
+        self.clientDisplayTickIntervalP95Ms = clientDisplayTickIntervalP95Ms
+        self.clientDisplayTickIntervalP99Ms = clientDisplayTickIntervalP99Ms
+        self.clientPlayoutDelayFrames = clientPlayoutDelayFrames
+        self.clientPresentationStallCount = clientPresentationStallCount
+        self.clientWorstPresentationGapMs = clientWorstPresentationGapMs
+        self.clientFrameIntervalP95Ms = clientFrameIntervalP95Ms
+        self.clientFrameIntervalP99Ms = clientFrameIntervalP99Ms
+        self.decodeHealthy = decodeHealthy
+        self.clientDroppedFrames = clientDroppedFrames
+        self.clientReassemblerPendingFrameCount = clientReassemblerPendingFrameCount
+        self.clientReassemblerPendingKeyframeCount = clientReassemblerPendingKeyframeCount
+        self.clientReassemblerPendingBytes = clientReassemblerPendingBytes
+        self.clientFrameBufferPoolRetainedBytes = clientFrameBufferPoolRetainedBytes
+        self.clientReassemblerBudgetEvictions = clientReassemblerBudgetEvictions
+        self.hostEncodedFPS = hostEncodedFPS
+        self.hostIdleFPS = hostIdleFPS
+        self.hostDroppedFrames = hostDroppedFrames
+        self.hostActiveQuality = hostActiveQuality
+        self.hostTargetFrameRate = hostTargetFrameRate
+        self.hostEnteredBitrate = hostEnteredBitrate
+        self.hostCurrentBitrate = hostCurrentBitrate
+        self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
+        self.hostBitrateAdaptationCeiling = hostBitrateAdaptationCeiling
+        self.hostStartupBitrate = hostStartupBitrate
+        self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
+        self.hostFrameBudgetMs = hostFrameBudgetMs
+        self.hostAverageEncodeMs = hostAverageEncodeMs
+        self.hostCaptureIngressFPS = hostCaptureIngressFPS
+        self.hostCaptureFPS = hostCaptureFPS
+        self.hostEncodeAttemptFPS = hostEncodeAttemptFPS
+        self.hostUsingHardwareEncoder = hostUsingHardwareEncoder
+        self.hostEncoderGPURegistryID = hostEncoderGPURegistryID
+        self.hostEncodedWidth = hostEncodedWidth
+        self.hostEncodedHeight = hostEncodedHeight
+        self.hostCapturePixelFormat = hostCapturePixelFormat
+        self.hostCaptureColorPrimaries = hostCaptureColorPrimaries
+        self.hostEncoderPixelFormat = hostEncoderPixelFormat
+        self.hostEncoderChromaSampling = hostEncoderChromaSampling
+        self.hostEncoderProfile = hostEncoderProfile
+        self.hostEncoderColorPrimaries = hostEncoderColorPrimaries
+        self.hostEncoderTransferFunction = hostEncoderTransferFunction
+        self.hostEncoderYCbCrMatrix = hostEncoderYCbCrMatrix
+        self.hostDisplayP3CoverageStatus = hostDisplayP3CoverageStatus
+        self.hostTenBitDisplayP3Validated = hostTenBitDisplayP3Validated
+        self.hostUltra444Validated = hostUltra444Validated
+        self.clientDecoderOutputPixelFormat = clientDecoderOutputPixelFormat
+        self.clientUsingHardwareDecoder = clientUsingHardwareDecoder
+        self.hasHostMetrics = hasHostMetrics
+    }
+
+    /// Applies host capture cadence telemetry while preserving existing client and encoder metrics.
+    mutating func applyHostCaptureCadence(_ cadence: StreamCaptureCadenceMetrics?) {
+        hostCaptureWallClockGapWorstMs = cadence?.wallClockGapWorstMs
+        hostCaptureWallClockGapP95Ms = cadence?.wallClockGapP95Ms
+        hostCaptureWallClockGapP99Ms = cadence?.wallClockGapP99Ms
+        hostCaptureDisplayTimeGapWorstMs = cadence?.displayTimeGapWorstMs
+        hostCaptureDisplayTimeGapP95Ms = cadence?.displayTimeGapP95Ms
+        hostCaptureDisplayTimeGapP99Ms = cadence?.displayTimeGapP99Ms
+        hostCaptureDeliveredFrameGapWorstMs = cadence?.deliveredFrameGapWorstMs
+        hostCaptureDeliveredFrameGapP95Ms = cadence?.deliveredFrameGapP95Ms
+        hostCaptureDeliveredFrameGapP99Ms = cadence?.deliveredFrameGapP99Ms
+        hostCaptureCallbackP95Ms = cadence?.callbackDurationP95Ms
+        hostCaptureCallbackP99Ms = cadence?.callbackDurationP99Ms
+        hostCaptureLongFrameGapCount = cadence?.longFrameGapCount
+        hostCaptureDisplayTimeDriftCount = cadence?.displayTimeDriftCount
+        hostCaptureVirtualDisplayTimingSuspect = cadence?.virtualDisplayTimingSuspect
+        hostCaptureUsesDisplayRefreshCadence = cadence?.usesDisplayRefreshCadence
+        hostCaptureUsesNativeRefreshMinimumFrameInterval = cadence?.usesNativeRefreshMinimumFrameInterval
+        hostCaptureMinimumFrameIntervalRate = cadence?.minimumFrameIntervalRate
+        hostCaptureDisplayRefreshRate = cadence?.displayRefreshRate
+        hostVirtualDisplayID = cadence?.virtualDisplayID
+        hostVirtualDisplayRefreshRate = cadence?.virtualDisplayRefreshRate
+        hostVirtualDisplayScaleFactor = cadence?.virtualDisplayScaleFactor
+    }
+}
+
+public extension MirageClientMetricsSnapshot {
+    init(
+        decodedFPS: Double = 0,
+        receivedFPS: Double = 0,
+        layerEnqueueFPS: Double = 0,
+        uniqueLayerEnqueueFPS: Double = 0,
+        clientVisibleFrameFPS: Double = 0,
+        clientVisibleFrameCadenceKnown: Bool = false,
+        pendingFrameCount: Int = 0,
+        decodeHealthy: Bool = true,
+        hostEncodedFPS: Double = 0,
+        hostActiveQuality: Double = 0,
+        hostTargetFrameRate: Int = 0,
+        hostFrameBudgetMs: Double? = nil,
+        hostAverageEncodeMs: Double? = nil,
+        hostCaptureIngressFPS: Double? = nil,
+        hostCaptureFPS: Double? = nil,
+        hostEncodeAttemptFPS: Double? = nil,
+        hasHostMetrics: Bool = false
+    ) {
+        self.init(
+            decodedFPS: decodedFPS,
+            receivedFPS: receivedFPS,
+            clientSubmitAttemptFPS: layerEnqueueFPS,
+            clientLayerAcceptedFPS: layerEnqueueFPS,
+            clientPresentedFPS: clientVisibleFrameFPS,
+            submittedFPS: layerEnqueueFPS,
+            uniqueSubmittedFPS: uniqueLayerEnqueueFPS,
+            pendingFrameCount: pendingFrameCount,
+            decodeHealthy: decodeHealthy,
+            hostEncodedFPS: hostEncodedFPS,
+            hostActiveQuality: hostActiveQuality,
+            hostTargetFrameRate: hostTargetFrameRate,
+            hostFrameBudgetMs: hostFrameBudgetMs,
+            hostAverageEncodeMs: hostAverageEncodeMs,
+            hostCaptureIngressFPS: hostCaptureIngressFPS,
+            hostCaptureFPS: hostCaptureFPS,
+            hostEncodeAttemptFPS: hostEncodeAttemptFPS,
+            hasHostMetrics: hasHostMetrics
+        )
+        self.clientVisibleFrameCadenceKnown = clientVisibleFrameCadenceKnown
+    }
+
+    var layerEnqueueFPS: Double {
+        get { submittedFPS }
+        set {
+            submittedFPS = newValue
+            clientSubmitAttemptFPS = newValue
+            clientLayerAcceptedFPS = newValue
+        }
+    }
+
+    var uniqueLayerEnqueueFPS: Double {
+        get { uniqueSubmittedFPS }
+        set { uniqueSubmittedFPS = newValue }
+    }
+
+    var clientRendererEnqueueFPS: Double {
+        get { submittedFPS }
+        set { layerEnqueueFPS = newValue }
+    }
+
+    var clientUniqueRendererEnqueueFPS: Double {
+        get { uniqueSubmittedFPS }
+        set { uniqueSubmittedFPS = newValue }
+    }
+
+    var clientVisibleFrameFPS: Double {
+        get { clientPresentedFPS }
+        set { clientPresentedFPS = newValue }
+    }
+
+    var clientUniqueDeliveredSourceFrameFPS: Double {
+        get { clientPresentedFPS }
+        set { clientPresentedFPS = newValue }
+    }
+
+    var clientVisibleFrameCadenceKnown: Bool {
+        get { clientPresentedFPS > 0 || uniqueSubmittedFPS > 0 }
+        set {
+            if !newValue {
+                clientPresentedFPS = 0
+            }
+        }
+    }
+
+    var clientDeliveredSourceFrameCadenceKnown: Bool {
+        get { clientVisibleFrameCadenceKnown }
+        set { clientVisibleFrameCadenceKnown = newValue }
+    }
+
+    var clientVisibleWorstPresentationGapMs: Double {
+        get { clientWorstPresentationGapMs }
+        set { clientWorstPresentationGapMs = newValue }
+    }
+
+    var clientVisibleFrameIntervalP99Ms: Double {
+        get { clientFrameIntervalP99Ms }
+        set { clientFrameIntervalP99Ms = newValue }
+    }
+
+    var clientRepeatedDeliveredSourceFrameCount: UInt64 {
+        get { clientRepeatedFrameCount }
+        set { clientRepeatedFrameCount = newValue }
+    }
+
+    var clientRepeatedSourceFrameCount: UInt64 {
+        get { clientRepeatedFrameCount }
+        set { clientRepeatedFrameCount = newValue }
+    }
+
+    var clientRepeatedDisplayTickFrameCount: UInt64 {
+        get { clientRepeatedFrameCount }
+        set { clientRepeatedFrameCount = newValue }
+    }
+
+    var clientDisplayRefreshTickFPS: Double {
+        get { clientDisplayTickFPS }
+        set { clientDisplayTickFPS = newValue }
+    }
+
+    var clientRenderQueueBacklogFrames: Int {
+        get { pendingFrameCount }
+        set { pendingFrameCount = newValue }
+    }
+
+    var clientDecodeQueueBacklogFrames: Int {
+        get { pendingFrameCount }
+        set { pendingFrameCount = newValue }
+    }
+
+    var clientUnsubmittedPendingFrameCount: Int {
+        get { pendingFrameCount }
+        set { pendingFrameCount = newValue }
+    }
+
+    var clientDecodeBacklogFrames: Int {
+        get { pendingFrameCount }
+        set { pendingFrameCount = newValue }
+    }
+
+    var clientDecodeSubmissionInFlightCount: Int {
+        get { 0 }
+        set { _ = newValue }
+    }
+
+    var clientDecodeSubmissionLimit: Int {
+        get { 0 }
+        set { _ = newValue }
+    }
+
+    var clientIncomingMediaBatchIntervalMaxMs: Double {
+        get { clientReceivedWorstGapMs }
+        set { clientReceivedWorstGapMs = newValue }
+    }
+}

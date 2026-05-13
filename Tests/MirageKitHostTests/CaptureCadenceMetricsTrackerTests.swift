@@ -18,16 +18,12 @@ struct CaptureCadenceMetricsTrackerTests {
 
         for time in times {
             tracker.recordScreenCallback(at: time)
-            tracker.recordFrameTiming(
-                presentationTime: time,
-                displayTime: time,
-                wallTime: time
-            )
+            tracker.recordFrameTiming(displayTime: time)
             tracker.recordDeliveredFrame(at: time)
             tracker.recordCallbackDuration((time - 9.9) * 0.1)
         }
 
-        let snapshot = tracker.snapshot()
+        let snapshot = tracker.snapshot
         #expect(snapshot.wallClockGapWorstMs > 99.9)
         #expect(snapshot.wallClockGapP95Ms > 99.9)
         #expect(snapshot.displayTimeGapP99Ms > 99.9)
@@ -35,6 +31,5 @@ struct CaptureCadenceMetricsTrackerTests {
         #expect(snapshot.longFrameGapCount == 2)
         #expect(snapshot.callbackDurationP99Ms > 0)
     }
-
 }
 #endif

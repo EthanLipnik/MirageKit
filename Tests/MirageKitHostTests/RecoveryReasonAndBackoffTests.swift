@@ -13,34 +13,6 @@ import MirageKit
 import Foundation
 import Testing
 
-@Suite("Capture Restart Scheduling")
-struct CaptureRestartSchedulingTests {
-    @Test("Resumed stall signal cancels pending capture restart")
-    func resumedStallSignalCancelsPendingRestart() async {
-        let engine = WindowCaptureEngine(
-            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
-            latencyMode: .lowestLatency,
-            captureFrameRate: 60
-        )
-        await engine.setCaptureStateForTesting(isCapturing: true, captureMode: .display)
-        await engine.scheduleCaptureRestart(reason: "test-stall", debounce: 1.0)
-        #expect(await engine.hasScheduledCaptureRestartForTesting())
-
-        await engine.handleCaptureStallSignal(
-            CaptureStreamOutput.StallSignal(
-                stage: .resumed,
-                message: "stall resumed",
-                gapMs: "1200.0",
-                softThresholdMs: "1000.0",
-                hardThresholdMs: "1200.0",
-                restartEligible: false
-            )
-        )
-
-        #expect(await engine.hasScheduledCaptureRestartForTesting() == false)
-    }
-}
-
 @Suite("Recovery Reason Mapping")
 struct RecoveryReasonMappingTests {
     @Test("Fallback resume keyframe is urgent without reset or flush")
@@ -120,49 +92,17 @@ struct RecoveryReasonMappingTests {
             noteLoss: true,
             ignoreExistingInFlight: true
         )
-        await context.requestKeyframe()
+        await context.requestKeyframeRecoveryIfPossible()
 
         #expect(await context.pendingKeyframeReason == "Desktop resize reset")
         #expect(await context.softRecoveryCount == 0)
-    }
-
-    @Test("Background pause resets host metrics baselines")
-    func backgroundPauseResetsHostMetricsBaselines() async {
-        let context = makeContext()
-        let oldStatsTime = CFAbsoluteTimeGetCurrent() - 120
-        await context.seedStreamingStatsForTesting(
-            encodedFrames: 120,
-            captureIngressFrames: 120,
-            lastStreamStatsLogTime: oldStatsTime,
-            lastPipelineStatsLogTime: oldStatsTime
-        )
-
-        await context.pauseForClientBackground()
-
-        let baseline = await context.streamingStatsBaselineForTesting()
-        #expect(baseline.encodedFrames == 0)
-        #expect(baseline.captureIngressFrames == 0)
-        #expect(baseline.lastStreamStatsLogTime > oldStatsTime)
-        #expect(baseline.lastPipelineStatsLogTime > oldStatsTime)
-    }
-
-    @Test("Paused streams ignore receiver media feedback")
-    func pausedStreamsIgnoreReceiverMediaFeedback() async {
-        let context = makeContext()
-        await context.setShouldEncodeFramesForTesting(true)
-        await context.recordReceiverMediaFeedback(makeFeedback(sequence: 1))
-        #expect(await context.realtimeMediaSession.latestFeedback?.sequence == 1)
-
-        await context.pauseForClientBackground()
-        await context.recordReceiverMediaFeedback(makeFeedback(sequence: 2))
-
-        #expect(await context.realtimeMediaSession.latestFeedback?.sequence == 1)
     }
 
     private func makeContext() -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
+            colorDepth: .pro,
             colorSpace: .displayP3,
             pixelFormat: .bgr10a2,
             bitrate: 600_000_000
@@ -172,31 +112,6 @@ struct RecoveryReasonMappingTests {
             windowID: 9,
             encoderConfig: encoderConfig,
             streamScale: 1.0
-        )
-    }
-
-    private func makeFeedback(sequence: UInt64) -> ReceiverMediaFeedbackMessage {
-        ReceiverMediaFeedbackMessage(
-            streamID: 9,
-            sequence: sequence,
-            sentAtUptime: 10,
-            targetFPS: 60,
-            ackRanges: [],
-            lostFrameCount: 0,
-            discardedPacketCount: 0,
-            jitterP95Ms: 0,
-            jitterP99Ms: 0,
-            queueEstimateFrames: 0,
-            reassemblyBacklogFrames: 0,
-            reassemblyBacklogKeyframes: 0,
-            reassemblyBacklogBytes: 0,
-            decodeBacklogFrames: 0,
-            presentationBacklogFrames: 0,
-            decodedFPS: 60,
-            receivedFPS: 60,
-            rendererAcceptedFPS: 60,
-            rendererPresentedFPS: 60,
-            recoveryState: .idle
         )
     }
 }

@@ -5,14 +5,38 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
-import CoreMedia
-import CoreVideo
 import Foundation
 @testable import MirageKit
 import Testing
 
 @Suite("MirageKit Tests")
 struct MirageKitTests {
+    @Test("Stream statistics drop rate uses total observed frames")
+    func streamStatisticsDropRateUsesTotalObservedFrames() {
+        #expect(MirageStreamStatistics(processedFrames: 0, droppedFrames: 0).dropRate == 0)
+        #expect(MirageStreamStatistics(processedFrames: 0, droppedFrames: 3).dropRate == 1)
+        #expect(MirageStreamStatistics(processedFrames: 7, droppedFrames: 3).dropRate == 0.3)
+        #expect(MirageStreamStatistics(processedFrames: .max, droppedFrames: .max).dropRate == 0.5)
+    }
+
+    @Test("Host capture capability pixel counts avoid integer overflow")
+    func hostCaptureCapabilityPixelCountsAvoidIntegerOverflow() {
+        let capability = MirageHostCaptureCapability(
+            targetFrameRate: 120,
+            validThresholdFPS: 60,
+            sustainThresholdFPS: 115,
+            highestValidPixelWidth: 3840,
+            highestValidPixelHeight: 2160,
+            highestValidFrameRate: 120,
+            highestSustainedPixelWidth: .max,
+            highestSustainedPixelHeight: 2,
+            highestSustainedFrameRate: 120
+        )
+
+        #expect(capability.highestValidPixelCount == 8_294_400)
+        #expect(capability.highestSustainedPixelCount == nil)
+    }
+
     @Test("Protocol header serialization")
     func frameHeaderSerialization() {
         let header = FrameHeader(
@@ -43,7 +67,6 @@ struct MirageKitTests {
     func controlMessageSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures,
             clientRequiresMediaEncryption: true
         )
 
@@ -56,84 +79,14 @@ struct MirageKitTests {
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
-        #expect(decodedBootstrap.requestedFeatures == mirageSupportedFeatures)
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
-    }
-
-    @Test("Receiver media feedback serializes on control channel")
-    func receiverMediaFeedbackSerialization() throws {
-        let feedback = ReceiverMediaFeedbackMessage(
-            streamID: 42,
-            sequence: 7,
-            sentAtUptime: 123.5,
-            targetFPS: 120,
-            ackRanges: [MediaFeedbackFrameRange(startFrame: 100, endFrame: 100)],
-            lostFrameCount: 2,
-            discardedPacketCount: 3,
-            jitterP95Ms: 4.5,
-            jitterP99Ms: 6.5,
-            queueEstimateFrames: 4,
-            reassemblyBacklogFrames: 1,
-            reassemblyBacklogKeyframes: 1,
-            reassemblyBacklogBytes: 2048,
-            decodeBacklogFrames: 1,
-            presentationBacklogFrames: 2,
-            decodedFPS: 118,
-            receivedFPS: 120,
-            rendererAcceptedFPS: 117,
-            rendererPresentedFPS: 116,
-            recoveryState: .keyframeRecovery
-        )
-
-        let message = try ControlMessage(type: .receiverMediaFeedback, content: feedback)
-        let (parsed, consumed) = try requireParsedControlMessage(from: message.serialize())
-        let decoded = try parsed.decode(ReceiverMediaFeedbackMessage.self)
-
-        #expect(consumed == message.serialize().count)
-        #expect(parsed.type == .receiverMediaFeedback)
-        #expect(decoded == feedback)
-    }
-
-    @Test("Realtime media session keeps target frame rate host owned")
-    func realtimeMediaSessionKeepsTargetFrameRateHostOwned() {
-        var session = RealtimeMediaSession(streamID: 42, targetFrameRate: 30)
-        let feedback = ReceiverMediaFeedbackMessage(
-            streamID: 42,
-            sequence: 1,
-            sentAtUptime: 10,
-            targetFPS: 60,
-            ackRanges: [],
-            lostFrameCount: 0,
-            discardedPacketCount: 0,
-            jitterP95Ms: 1,
-            jitterP99Ms: 2,
-            queueEstimateFrames: 0,
-            reassemblyBacklogFrames: 0,
-            reassemblyBacklogKeyframes: 0,
-            reassemblyBacklogBytes: 0,
-            decodeBacklogFrames: 0,
-            presentationBacklogFrames: 0,
-            decodedFPS: 30,
-            receivedFPS: 30,
-            rendererAcceptedFPS: 30,
-            rendererPresentedFPS: 30,
-            recoveryState: .idle
-        )
-
-        session.recordFeedback(feedback)
-
-        #expect(session.targetFrameRate == 30)
-        #expect(session.latestFeedback?.targetFPS == 60)
     }
 
     @Test("Keyframe recovery ack serializes on control channel")
     func keyframeRecoveryAckSerialization() throws {
         let ack = KeyframeRecoveryAckMessage(
             streamID: 9,
-            accepted: true,
-            hostEpoch: 4,
-            deadlineMilliseconds: 350,
-            reason: "Keyframe request (soft)"
+            deadlineMilliseconds: 350
         )
 
         let message = try ControlMessage(type: .keyframeRecoveryAck, content: ack)
@@ -145,14 +98,15 @@ struct MirageKitTests {
         #expect(decoded == ack)
     }
 
-    @Test("Desktop stream start ignores unknown optional preferences")
-    func desktopStreamStartIgnoresUnknownOptionalPreferences() throws {
+    @Test("Desktop stream start rejects unknown optional enum preferences")
+    func desktopStreamStartRejectsUnknownOptionalPreferences() {
         let payload = Data(
             """
             {
+              "startupRequestID": "00000000-0000-0000-0000-000000000101",
               "displayWidth": 1366,
               "displayHeight": 1024,
-              "targetFrameRate": "future",
+              "targetFrameRate": 60,
               "mode": "future-mode",
               "colorDepth": "future-depth",
               "latencyMode": "future-latency",
@@ -168,37 +122,28 @@ struct MirageKitTests {
             """.utf8
         )
 
-        let decoded = try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
-
-        #expect(decoded.displayWidth == 1366)
-        #expect(decoded.displayHeight == 1024)
-        #expect(decoded.targetFrameRate == 60)
-        #expect(decoded.mode == nil)
-        #expect(decoded.colorDepth == nil)
-        #expect(decoded.latencyMode == nil)
-        #expect(decoded.audioConfiguration == nil)
-        #expect(decoded.codec == nil)
-        #expect(decoded.upscalingMode == nil)
-        #expect(decoded.disableResolutionCap == true)
+        #expect(throws: Error.self) {
+            try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+        }
     }
 
-    @Test("Desktop stream start treats removed auto latency as unknown")
-    func desktopStreamStartTreatsRemovedAutoLatencyAsUnknown() throws {
+    @Test("Desktop stream start rejects removed auto latency")
+    func desktopStreamStartRejectsRemovedAutoLatency() {
         let payload = Data(
             """
             {
+              "startupRequestID": "00000000-0000-0000-0000-000000000102",
               "displayWidth": 1366,
               "displayHeight": 1024,
+              "targetFrameRate": 60,
               "latencyMode": "auto"
             }
             """.utf8
         )
 
-        let decoded = try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
-
-        #expect(decoded.displayWidth == 1366)
-        #expect(decoded.displayHeight == 1024)
-        #expect(decoded.latencyMode == nil)
+        #expect(throws: Error.self) {
+            try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+        }
     }
 
     @Test("Latency mode rejects removed auto value")
@@ -400,8 +345,7 @@ struct MirageKitTests {
             requestID: UUID(),
             imageData: imageData,
             pixelWidth: 854,
-            pixelHeight: 480,
-            bytesPerPixelEstimate: 4
+            pixelHeight: 480
         )
 
         let envelope = try ControlMessage(type: .hostWallpaper, content: wallpaper)
@@ -414,22 +358,6 @@ struct MirageKitTests {
         #expect(decoded.imageData == imageData)
         #expect(decoded.pixelWidth == 854)
         #expect(decoded.pixelHeight == 480)
-        #expect(decoded.bytesPerPixelEstimate == 4)
-    }
-
-    @Test("Bootstrap request optional mismatch update flag serialization")
-    func bootstrapRequestOptionalMismatchUpdateFlagSerialization() throws {
-        let bootstrap = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures,
-            clientRequiresMediaEncryption: false,
-            requestHostUpdateOnProtocolMismatch: true
-        )
-
-        let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: message.serialize())
-        let decodedBootstrap = try decodedEnvelope.decode(MirageSessionBootstrapRequest.self)
-        #expect(decodedBootstrap.requestHostUpdateOnProtocolMismatch == true)
     }
 
     @Test("Bootstrap response mismatch metadata serialization")
@@ -438,14 +366,11 @@ struct MirageKitTests {
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            selectedFeatures: [],
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
-            protocolMismatchClientVersion: 2,
-            protocolMismatchUpdateTriggerAccepted: true,
-            protocolMismatchUpdateTriggerMessage: "Update accepted"
+            protocolMismatchClientVersion: 2
         )
 
         let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
@@ -454,8 +379,6 @@ struct MirageKitTests {
         #expect(decoded.rejectionReason == .protocolVersionMismatch)
         #expect(decoded.protocolMismatchHostVersion == 1)
         #expect(decoded.protocolMismatchClientVersion == 2)
-        #expect(decoded.protocolMismatchUpdateTriggerAccepted == true)
-        #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update accepted")
     }
 
     @Test("Accepted bootstrap response off-LAN access metadata serialization")
@@ -464,7 +387,6 @@ struct MirageKitTests {
             accepted: true,
             hostID: UUID(),
             hostName: "Host",
-            selectedFeatures: mirageSupportedFeatures,
             mediaEncryptionEnabled: true,
             udpRegistrationToken: Data(
                 repeating: 0xAB,
@@ -486,7 +408,7 @@ struct MirageKitTests {
         let started = AudioStreamStartedMessage(
             streamID: 42,
             codec: .aacLC,
-            sampleRate: 48_000,
+            sampleRate: 48000,
             channelCount: 2
         )
         let startedEnvelope = try ControlMessage(type: .audioStreamStarted, content: started)
@@ -507,8 +429,7 @@ struct MirageKitTests {
     func transportRefreshRequestMessageSerialization() throws {
         let refresh = TransportRefreshRequestMessage(
             streamID: 7,
-            reason: "send-error-burst",
-            requestedAtNs: 12_345
+            reason: "send-error-burst"
         )
         let envelope = try ControlMessage(type: .transportRefreshRequest, content: refresh)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
@@ -516,1179 +437,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(TransportRefreshRequestMessage.self)
         #expect(decoded.streamID == 7)
         #expect(decoded.reason == "send-error-burst")
-        #expect(decoded.requestedAtNs == 12_345)
-    }
-
-    @Test("Select app message includes max visible slot count")
-    func selectAppMessageMaxVisibleSlotsSerialization() throws {
-        let request = SelectAppMessage(
-            bundleIdentifier: "com.apple.mail",
-            targetFrameRate: 60,
-            maxConcurrentVisibleWindows: 8,
-            bitrateAllocationPolicy: .splitEvenly
-        )
-        let envelope = try ControlMessage(type: .selectApp, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
-        #expect(decoded.bundleIdentifier == "com.apple.mail")
-        #expect(decoded.maxConcurrentVisibleWindows == 8)
-        #expect(decoded.bitrateAllocationPolicy == .splitEvenly)
-    }
-
-    @Test("App list request supports icon reset and priority ordering")
-    func appListRequestSerialization() throws {
-        let request = AppListRequestMessage(
-            forceRefresh: true,
-            forceIconReset: true,
-            priorityBundleIdentifiers: [
-                "com.apple.mail",
-                "com.apple.safari",
-            ],
-            knownIconBundleIdentifiers: ["com.apple.mail"],
-            requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
-        )
-
-        let envelope = try ControlMessage(type: .appListRequest, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppListRequestMessage.self)
-
-        #expect(decoded.forceRefresh)
-        #expect(decoded.forceIconReset)
-        #expect(decoded.priorityBundleIdentifiers == ["com.apple.mail", "com.apple.safari"])
-        #expect(decoded.knownIconBundleIdentifiers == ["com.apple.mail"])
-        #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
-    }
-
-    @Test("App list progress with inline icons serializes")
-    func appListProgressWithInlineIconsSerialization() throws {
-        let progressApps = [
-            MirageInstalledApp(
-                bundleIdentifier: "com.apple.mail",
-                name: "Mail",
-                path: "/Applications/Mail.app",
-                iconData: Data([0x01, 0x02, 0x03]),
-                version: "1.0",
-                isRunning: true,
-                isBeingStreamed: false
-            ),
-        ]
-        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000321")!
-        let appListCompletion = AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
-        let appListCompletionEnvelope = try ControlMessage(type: .appListComplete, content: appListCompletion)
-        let (decodedAppListCompletionEnvelope, _) = try requireParsedControlMessage(
-            from: appListCompletionEnvelope.serialize()
-        )
-        let decodedAppListCompletion = try decodedAppListCompletionEnvelope.decode(AppListCompleteMessage.self)
-        #expect(decodedAppListCompletion.requestID == requestID)
-        #expect(decodedAppListCompletion.totalAppCount == 1)
-
-        let progress = AppListProgressMessage(requestID: requestID, apps: progressApps)
-        let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)
-        let (decodedProgressEnvelope, _) = try requireParsedControlMessage(from: progressEnvelope.serialize())
-        let decodedProgress = try decodedProgressEnvelope.decode(AppListProgressMessage.self)
-        #expect(decodedProgress.requestID == requestID)
-        #expect(decodedProgress.apps.count == 1)
-        #expect(decodedProgress.apps[0].bundleIdentifier == "com.apple.mail")
-        #expect(decodedProgress.apps[0].iconData == Data([0x01, 0x02, 0x03]))
-    }
-
-    @Test("App window inventory and swap messages serialize")
-    func appWindowInventoryAndSwapSerialization() throws {
-        let atlasRegion = MirageAppAtlasRegion(
-            windowID: 9001,
-            x: 32,
-            y: 48,
-            width: 1440,
-            height: 900,
-            zIndex: 1
-        )
-        let atlasLayout = MirageAppAtlasLayout(
-            mediaStreamID: 41,
-            width: 2048,
-            height: 1536,
-            regions: [atlasRegion]
-        )
-        let metadata = AppWindowInventoryMessage.WindowMetadata(
-            windowID: 9001,
-            title: "Inbox",
-            width: 1440,
-            height: 900,
-            isResizable: true
-        )
-        let inventory = AppWindowInventoryMessage(
-            bundleIdentifier: "com.apple.mail",
-            maxVisibleSlots: 8,
-            slots: [
-                .init(slotIndex: 0, streamID: 141, mediaStreamID: 41, window: metadata, atlasRegion: atlasRegion),
-            ],
-            hiddenWindows: [
-                .init(
-                    windowID: 9002,
-                    title: "Draft",
-                    width: 1280,
-                    height: 860,
-                    isResizable: true
-                ),
-            ],
-            atlasLayouts: [atlasLayout]
-        )
-        let inventoryEnvelope = try ControlMessage(type: .appWindowInventory, content: inventory)
-        let (decodedInventoryEnvelope, _) = try requireParsedControlMessage(from: inventoryEnvelope.serialize())
-        let decodedInventory = try decodedInventoryEnvelope.decode(AppWindowInventoryMessage.self)
-        #expect(decodedInventory.bundleIdentifier == "com.apple.mail")
-        #expect(decodedInventory.maxVisibleSlots == 8)
-        #expect(decodedInventory.slots.count == 1)
-        #expect(decodedInventory.slots[0].mediaStreamID == 41)
-        #expect(decodedInventory.slots[0].streamID == 141)
-        #expect(decodedInventory.slots[0].window.windowID == 9001)
-        #expect(decodedInventory.slots[0].atlasRegion == atlasRegion)
-        #expect(decodedInventory.hiddenWindows.count == 1)
-        #expect(decodedInventory.atlasLayouts == [atlasLayout])
-
-        let swapRequest = AppWindowSwapRequestMessage(
-            bundleIdentifier: "com.apple.mail",
-            targetSlotStreamID: 141,
-            targetWindowID: 9002
-        )
-        let requestEnvelope = try ControlMessage(type: .appWindowSwapRequest, content: swapRequest)
-        let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
-        let decodedSwapRequest = try decodedRequestEnvelope.decode(AppWindowSwapRequestMessage.self)
-        #expect(decodedSwapRequest.targetSlotStreamID == 141)
-        #expect(decodedSwapRequest.targetWindowID == 9002)
-
-        let swappedRegion = MirageAppAtlasRegion(
-            windowID: 9002,
-            x: 32,
-            y: 48,
-            width: 1280,
-            height: 860,
-            zIndex: 1
-        )
-        let swappedLayout = MirageAppAtlasLayout(
-            mediaStreamID: 41,
-            width: 2048,
-            height: 1536,
-            regions: [swappedRegion]
-        )
-        let swapResult = AppWindowSwapResultMessage(
-            bundleIdentifier: "com.apple.mail",
-            targetSlotStreamID: 141,
-            mediaStreamID: 41,
-            windowID: 9002,
-            success: true,
-            reason: nil,
-            atlasRegion: swappedRegion,
-            atlasLayouts: [swappedLayout]
-        )
-        let resultEnvelope = try ControlMessage(type: .appWindowSwapResult, content: swapResult)
-        let (decodedResultEnvelope, _) = try requireParsedControlMessage(from: resultEnvelope.serialize())
-        let decodedSwapResult = try decodedResultEnvelope.decode(AppWindowSwapResultMessage.self)
-        #expect(decodedSwapResult.success == true)
-        #expect(decodedSwapResult.targetSlotStreamID == 141)
-        #expect(decodedSwapResult.mediaStreamID == 41)
-        #expect(decodedSwapResult.windowID == 9002)
-        #expect(decodedSwapResult.atlasRegion == swappedRegion)
-        #expect(decodedSwapResult.atlasLayouts == [swappedLayout])
-    }
-
-    @Test("App atlas payload keeps logical and media stream keys distinct")
-    func appAtlasPayloadKeepsLogicalAndMediaStreamKeysDistinct() throws {
-        let window = AppStreamStartedMessage.AppStreamWindow(
-            streamID: 141,
-            mediaStreamID: 41,
-            windowID: 9001,
-            title: "Inbox",
-            width: 1440,
-            height: 900,
-            isResizable: true
-        )
-
-        let encoded = try JSONEncoder().encode(window)
-        let object = try #require(
-            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        )
-
-        #expect((object["streamID"] as? NSNumber)?.uint64Value == 141)
-        #expect((object["mediaStreamID"] as? NSNumber)?.uint64Value == 41)
-    }
-
-    @Test("App atlas media update serializes startup and layout metadata")
-    func appAtlasMediaUpdateSerialization() throws {
-        let startupAttemptID = UUID(uuidString: "00000000-0000-0000-0000-0000000009F0")!
-        let region = MirageAppAtlasRegion(
-            windowID: 9001,
-            x: 128,
-            y: 64,
-            width: 1440,
-            height: 900,
-            zIndex: 2,
-            isFocused: true
-        )
-        let layout = MirageAppAtlasLayout(
-            mediaStreamID: 41,
-            layoutEpoch: 7,
-            width: 4096,
-            height: 2304,
-            regions: [region]
-        )
-        let update = AppAtlasMediaUpdateMessage(
-            mediaStreamID: 41,
-            width: 4096,
-            height: 2304,
-            codec: .hevc,
-            frameRate: 120,
-            dimensionToken: 12,
-            layoutEpoch: 7,
-            acceptedPacketSize: 1180,
-            layout: layout,
-            startupAttemptID: startupAttemptID
-        )
-
-        let envelope = try ControlMessage(type: .appAtlasMediaUpdate, content: update)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppAtlasMediaUpdateMessage.self)
-
-        #expect(decodedEnvelope.type == .appAtlasMediaUpdate)
-        #expect(decoded.mediaStreamID == 41)
-        #expect(decoded.width == 4096)
-        #expect(decoded.height == 2304)
-        #expect(decoded.codec == .hevc)
-        #expect(decoded.frameRate == 120)
-        #expect(decoded.dimensionToken == 12)
-        #expect(decoded.layoutEpoch == 7)
-        #expect(decoded.acceptedPacketSize == 1180)
-        #expect(decoded.layout == layout)
-        #expect(decoded.startupAttemptID == startupAttemptID)
-    }
-
-    @Test("Host software update control message serialization")
-    func hostSoftwareUpdateControlMessageSerialization() throws {
-        let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
-        let requestEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: statusRequest)
-        let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
-        let decodedStatusRequest = try decodedRequestEnvelope.decode(HostSoftwareUpdateStatusRequestMessage.self)
-        #expect(decodedStatusRequest.forceRefresh == true)
-
-        let status = HostSoftwareUpdateStatusMessage(
-            isSparkleAvailable: true,
-            isCheckingForUpdates: false,
-            isInstallInProgress: true,
-            channel: .nightly,
-            automationMode: .autoDownload,
-            installDisposition: .installing,
-            lastBlockReason: nil,
-            lastInstallResultCode: .started,
-            canCancelUpdate: true,
-            downloadExpectedBytes: 1_000,
-            downloadReceivedBytes: 250,
-            extractionProgress: 0.25,
-            lastErrorSummary: nil,
-            lastErrorDetails: nil,
-            currentVersion: "1.2.0",
-            availableVersion: "1.3.0",
-            availableVersionTitle: "Mirage 1.3",
-            releaseNotesSummary: "Maintenance release",
-            releaseNotesBody: "<ul><li>Improved reliability</li></ul>",
-            releaseNotesFormat: .html,
-            lastCheckedAtMs: 1_700_000_000_000
-        )
-        let statusEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
-        let (decodedStatusEnvelope, _) = try requireParsedControlMessage(from: statusEnvelope.serialize())
-        let decodedStatus = try decodedStatusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
-        #expect(decodedStatus.channel == .nightly)
-        #expect(decodedStatus.availableVersion == "1.3.0")
-        #expect(decodedStatus.isInstallInProgress == true)
-        #expect(decodedStatus.automationMode == .autoDownload)
-        #expect(decodedStatus.installDisposition == .installing)
-        #expect(decodedStatus.canCancelUpdate == true)
-        #expect(decodedStatus.downloadExpectedBytes == 1_000)
-        #expect(decodedStatus.downloadReceivedBytes == 250)
-        #expect(decodedStatus.extractionProgress == 0.25)
-        #expect(decodedStatus.releaseNotesFormat == .html)
-
-        let installRequest = HostSoftwareUpdateInstallRequestMessage(trigger: .protocolMismatch)
-        let installRequestEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallRequest, content: installRequest)
-        let (decodedInstallRequestEnvelope, _) = try requireParsedControlMessage(from: installRequestEnvelope.serialize())
-        let decodedInstallRequest = try decodedInstallRequestEnvelope.decode(HostSoftwareUpdateInstallRequestMessage.self)
-        #expect(decodedInstallRequest.trigger == .protocolMismatch)
-
-        let installResult = HostSoftwareUpdateInstallResultMessage(
-            accepted: false,
-            message: "Denied",
-            resultCode: .denied,
-            blockReason: .policyDenied,
-            remediationHint: nil,
-            status: status
-        )
-        let installResultEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
-        let (decodedInstallResultEnvelope, _) = try requireParsedControlMessage(from: installResultEnvelope.serialize())
-        let decodedInstallResult = try decodedInstallResultEnvelope.decode(HostSoftwareUpdateInstallResultMessage.self)
-        #expect(decodedInstallResult.accepted == false)
-        #expect(decodedInstallResult.status?.currentVersion == "1.2.0")
-        #expect(decodedInstallResult.message == "Denied")
-        #expect(decodedInstallResult.resultCode == .denied)
-        #expect(decodedInstallResult.blockReason == .policyDenied)
-
-        let restartRequest = HostApplicationRestartRequestMessage()
-        let restartRequestEnvelope = try ControlMessage(type: .hostApplicationRestartRequest, content: restartRequest)
-        let (decodedRestartRequestEnvelope, _) = try requireParsedControlMessage(from: restartRequestEnvelope.serialize())
-        _ = try decodedRestartRequestEnvelope.decode(HostApplicationRestartRequestMessage.self)
-
-        let restartResult = HostApplicationRestartResultMessage(
-            accepted: true,
-            message: "Restarting Mirage Host."
-        )
-        let restartResultEnvelope = try ControlMessage(type: .hostApplicationRestartResult, content: restartResult)
-        let (decodedRestartResultEnvelope, _) = try requireParsedControlMessage(from: restartResultEnvelope.serialize())
-        let decodedRestartResult = try decodedRestartResultEnvelope.decode(HostApplicationRestartResultMessage.self)
-        #expect(decodedRestartResult.accepted == true)
-        #expect(decodedRestartResult.message == "Restarting Mirage Host.")
-    }
-
-    @Test("Audio packet header serialization")
-    func audioPacketHeaderSerialization() {
-        let header = AudioPacketHeader(
-            codec: .pcm16LE,
-            flags: [.discontinuity],
-            streamID: 7,
-            sequenceNumber: 12,
-            timestamp: 987_654_321,
-            frameNumber: 33,
-            fragmentIndex: 0,
-            fragmentCount: 1,
-            payloadLength: 256,
-            frameByteCount: 256,
-            sampleRate: 48_000,
-            channelCount: 2,
-            samplesPerFrame: 512,
-            checksum: 0xABCD_1234
-        )
-
-        let serialized = header.serialize()
-        #expect(serialized.count == mirageAudioHeaderSize)
-        let decoded = AudioPacketHeader.deserialize(from: serialized)
-        #expect(decoded != nil)
-        #expect(decoded?.codec == .pcm16LE)
-        #expect(decoded?.flags.contains(.discontinuity) == true)
-        #expect(decoded?.streamID == 7)
-        #expect(decoded?.sampleRate == 48_000)
-        #expect(decoded?.channelCount == 2)
-        #expect(decoded?.checksum == 0xABCD_1234)
-    }
-
-    @Test("Stream encoder settings message serialization")
-    func streamEncoderSettingsSerialization() throws {
-        let requestID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
-        let request = StreamEncoderSettingsChangeMessage(
-            requestID: requestID,
-            streamID: 7,
-            colorDepth: .pro,
-            bitrate: 120_000_000,
-            streamScale: 0.75,
-            targetFrameRate: 30
-        )
-
-        let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
-        let serialized = message.serialize()
-        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: serialized)
-        #expect(consumed == serialized.count)
-        #expect(decodedEnvelope.type == .streamEncoderSettingsChange)
-
-        let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
-        #expect(decodedRequest.requestID == requestID)
-        #expect(decodedRequest.streamID == 7)
-        #expect(decodedRequest.colorDepth == .pro)
-        #expect(decodedRequest.bitrate == 120_000_000)
-        #expect(decodedRequest.targetFrameRate == 30)
-        let scale = try #require(decodedRequest.streamScale)
-        #expect(abs(Double(scale) - 0.75) < 0.0001)
-    }
-
-    @Test("Stream encoder settings ack serialization")
-    func streamEncoderSettingsAckSerialization() throws {
-        let requestID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
-        let ack = StreamEncoderSettingsChangeAckMessage(
-            requestID: requestID,
-            streamID: 9,
-            encodedWidth: 1_920,
-            encodedHeight: 1_440,
-            frameRate: 60,
-            colorDepth: .standard,
-            dimensionToken: 12,
-            requiresReset: true
-        )
-
-        let message = try ControlMessage(type: .streamEncoderSettingsChangeAck, content: ack)
-        let serialized = message.serialize()
-        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: serialized)
-        #expect(consumed == serialized.count)
-        #expect(decodedEnvelope.type == .streamEncoderSettingsChangeAck)
-
-        let decodedAck = try decodedEnvelope.decode(StreamEncoderSettingsChangeAckMessage.self)
-        #expect(decodedAck == ack)
-    }
-
-    @Test("Start stream request latency mode serialization")
-    func startStreamLatencyModeSerialization() throws {
-        let request = StartStreamMessage(
-            windowID: 9,
-            dataPort: 5000,
-            targetFrameRate: 120,
-            scaleFactor: 2.0,
-            pixelWidth: 3840,
-            pixelHeight: 2160,
-            displayWidth: 1920,
-            displayHeight: 1080,
-            keyFrameInterval: 1800,
-            captureQueueDepth: 6,
-            colorDepth: .pro,
-            bitrate: 150_000_000,
-            latencyMode: .smoothest,
-            allowRuntimeQualityAdjustment: true,
-            lowLatencyHighResolutionCompressionBoost: false,
-            disableResolutionCap: true,
-            streamScale: 1.0,
-            audioConfiguration: .default
-        )
-
-        let envelope = try ControlMessage(type: .startStream, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
-        #expect(decoded.targetFrameRate == 120)
-        #expect(decoded.latencyMode == .smoothest)
-        #expect(decoded.colorDepth == .pro)
-        #expect(decoded.bitrate == 150_000_000)
-        #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
-    }
-
-    @Test("Select app request latency mode serialization")
-    func selectAppLatencyModeSerialization() throws {
-        let request = SelectAppMessage(
-            bundleIdentifier: "com.example.Editor",
-            dataPort: 6000,
-            targetFrameRate: 90,
-            scaleFactor: 2.0,
-            displayWidth: 1920,
-            displayHeight: 1200,
-            keyFrameInterval: 1800,
-            captureQueueDepth: 4,
-            colorDepth: .pro,
-            bitrate: 200_000_000,
-            latencyMode: .lowestLatency,
-            allowRuntimeQualityAdjustment: false,
-            lowLatencyHighResolutionCompressionBoost: true,
-            disableResolutionCap: false,
-            streamScale: 0.9,
-            audioConfiguration: .default
-        )
-
-        let envelope = try ControlMessage(type: .selectApp, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
-        #expect(decoded.targetFrameRate == 90)
-        #expect(decoded.latencyMode == .lowestLatency)
-        #expect(decoded.colorDepth == .pro)
-        #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
-    }
-
-    @Test("Stream startup requests serialize media packet sizing")
-    func streamStartupRequestsSerializeMediaPacketSizing() throws {
-        let startStream = StartStreamMessage(
-            windowID: 12,
-            dataPort: 5000,
-            targetFrameRate: 60,
-            mediaMaxPacketSize: 1400
-        )
-        let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
-        let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
-        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
-        #expect(decodedStartStream.mediaMaxPacketSize == 1400)
-
-        let selectApp = SelectAppMessage(
-            bundleIdentifier: "com.example.Editor",
-            targetFrameRate: 60,
-            maxConcurrentVisibleWindows: 2,
-            mediaMaxPacketSize: 1400
-        )
-        let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
-        let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
-        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
-        #expect(decodedSelectApp.mediaMaxPacketSize == 1400)
-
-        let startDesktop = StartDesktopStreamMessage(
-            scaleFactor: nil,
-            displayWidth: 3008,
-            displayHeight: 1692,
-            targetFrameRate: 60,
-            mediaMaxPacketSize: 1200
-        )
-        let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
-        let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
-        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
-        #expect(decodedStartDesktop.mediaMaxPacketSize == 1200)
-    }
-
-    @Test("Quality test and started messages serialize accepted media packet sizing")
-    func qualityTestAndStartedMessagesSerializeMediaPacketSizing() throws {
-        let qualityRequest = QualityTestRequestMessage(
-            testID: UUID(),
-            plan: MirageQualityTestPlan(stages: []),
-            payloadBytes: 1188,
-            mediaMaxPacketSize: 1400,
-            stopAfterFirstBreach: true
-        )
-        let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
-        let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
-        let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
-        #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
-        #expect(decodedQualityRequest.stopAfterFirstBreach)
-
-        let started = StreamStartedMessage(
-            streamID: 42,
-            windowID: 12,
-            width: 1920,
-            height: 1080,
-            frameRate: 60,
-            codec: .hevc,
-            acceptedMediaMaxPacketSize: 1400
-        )
-        let startedEnvelope = try ControlMessage(type: .streamStarted, content: started)
-        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
-        let decodedStarted = try decodedStartedEnvelope.decode(StreamStartedMessage.self)
-        #expect(decodedStarted.acceptedMediaMaxPacketSize == 1400)
-
-        let desktopStarted = DesktopStreamStartedMessage(
-            streamID: 77,
-            desktopSessionID: UUID(),
-            width: 3008,
-            height: 1692,
-            frameRate: 60,
-            codec: .hevc,
-            displayCount: 1,
-            acceptedMediaMaxPacketSize: 1200
-        )
-        let desktopStartedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
-        let (decodedDesktopStartedEnvelope, _) = try requireParsedControlMessage(from: desktopStartedEnvelope.serialize())
-        let decodedDesktopStarted = try decodedDesktopStartedEnvelope.decode(DesktopStreamStartedMessage.self)
-        #expect(decodedDesktopStarted.acceptedMediaMaxPacketSize == 1200)
-    }
-
-    @Test("Window removed from stream payload serialization")
-    func windowRemovedFromStreamSerialization() throws {
-        let payload = WindowRemovedFromStreamMessage(
-            bundleIdentifier: "com.apple.dt.Xcode",
-            streamID: 27,
-            windowID: 12615,
-            reason: .noLongerEligible
-        )
-
-        let envelope = try ControlMessage(type: .windowRemovedFromStream, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(WindowRemovedFromStreamMessage.self)
-        #expect(decoded.bundleIdentifier == "com.apple.dt.Xcode")
-        #expect(decoded.streamID == 27)
-        #expect(decoded.windowID == 12615)
-        #expect(decoded.reason == .noLongerEligible)
-    }
-
-    @Test("App window inventory removes closed windows from visible and hidden entries")
-    func appWindowInventoryRemovesClosedWindows() {
-        let inventory = AppWindowInventoryMessage(
-            bundleIdentifier: "com.apple.dt.Xcode",
-            maxVisibleSlots: 3,
-            slots: [
-                .init(
-                    slotIndex: 0,
-                    streamID: 27,
-                    window: .init(
-                        windowID: 12615,
-                        title: "Editor",
-                        width: 1440,
-                        height: 900,
-                        isResizable: true
-                    )
-                ),
-                .init(
-                    slotIndex: 1,
-                    streamID: 28,
-                    window: .init(
-                        windowID: 12616,
-                        title: "Canvas",
-                        width: 1440,
-                        height: 900,
-                        isResizable: true
-                    )
-                ),
-            ],
-            hiddenWindows: [
-                .init(
-                    windowID: 12617,
-                    title: "Welcome",
-                    width: 900,
-                    height: 700,
-                    isResizable: true
-                ),
-            ]
-        )
-
-        let visibleRemoval = inventory.removingWindow(windowID: 12615)
-        #expect(visibleRemoval?.slots.map(\.window.windowID) == [12616])
-        #expect(visibleRemoval?.hiddenWindows.map(\.windowID) == [12617])
-
-        let hiddenRemoval = inventory.removingWindow(windowID: 12617)
-        #expect(hiddenRemoval?.slots.map(\.window.windowID) == [12615, 12616])
-        #expect(hiddenRemoval?.hiddenWindows.isEmpty == true)
-
-        let emptyInventory = AppWindowInventoryMessage(
-            bundleIdentifier: "com.apple.dt.Xcode",
-            maxVisibleSlots: 1,
-            slots: [
-                .init(
-                    slotIndex: 0,
-                    streamID: 27,
-                    window: .init(
-                        windowID: 12615,
-                        title: "Editor",
-                        width: 1440,
-                        height: 900,
-                        isResizable: true
-                    )
-                ),
-            ],
-            hiddenWindows: []
-        )
-        #expect(emptyInventory.removingWindow(windowID: 12615) == nil)
-    }
-
-    @Test("App window inventory removal prunes atlas regions")
-    func appWindowInventoryRemovalPrunesAtlasRegions() {
-        let remainingRegion = MirageAppAtlasRegion(
-            windowID: 12616,
-            x: 0,
-            y: 0,
-            width: 1280,
-            height: 720
-        )
-        let removedRegion = MirageAppAtlasRegion(
-            windowID: 12615,
-            x: 1280,
-            y: 0,
-            width: 1280,
-            height: 720
-        )
-        let inventory = AppWindowInventoryMessage(
-            bundleIdentifier: "com.apple.dt.Xcode",
-            maxVisibleSlots: 2,
-            slots: [
-                .init(
-                    slotIndex: 0,
-                    streamID: 27,
-                    mediaStreamID: 99,
-                    window: .init(
-                        windowID: 12615,
-                        title: "Editor",
-                        width: 1280,
-                        height: 720,
-                        isResizable: true
-                    ),
-                    atlasRegion: removedRegion
-                ),
-                .init(
-                    slotIndex: 1,
-                    streamID: 28,
-                    mediaStreamID: 99,
-                    window: .init(
-                        windowID: 12616,
-                        title: "Canvas",
-                        width: 1280,
-                        height: 720,
-                        isResizable: true
-                    ),
-                    atlasRegion: remainingRegion
-                ),
-            ],
-            hiddenWindows: [],
-            atlasLayouts: [
-                MirageAppAtlasLayout(
-                    mediaStreamID: 99,
-                    layoutEpoch: 4,
-                    width: 2560,
-                    height: 720,
-                    regions: [remainingRegion, removedRegion]
-                ),
-            ]
-        )
-
-        let updated = inventory.removingWindow(windowID: 12615)
-
-        #expect(updated?.slots.map(\.streamID) == [28])
-        #expect(updated?.atlasLayouts?.first?.regions == [remainingRegion])
-    }
-
-    @Test("Window stream failed payload serialization")
-    func windowStreamFailedSerialization() throws {
-        let payload = WindowStreamFailedMessage(
-            bundleIdentifier: "com.apple.dt.Xcode",
-            windowID: 14674,
-            title: "PokeApp — CanvasGreetingOverlay.swift",
-            reason: "Dedicated display correction failed"
-        )
-
-        let envelope = try ControlMessage(type: .windowStreamFailed, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(WindowStreamFailedMessage.self)
-        #expect(decoded.bundleIdentifier == "com.apple.dt.Xcode")
-        #expect(decoded.windowID == 14674)
-        #expect(decoded.title == "PokeApp — CanvasGreetingOverlay.swift")
-        #expect(decoded.reason == "Dedicated display correction failed")
-    }
-
-    @Test("Desktop stream failed payload serialization")
-    func desktopStreamFailedSerialization() throws {
-        let payload = DesktopStreamFailedMessage(
-            reason: "Virtual display failed activation",
-            errorCode: .virtualDisplayStartFailed
-        )
-
-        let envelope = try ControlMessage(type: .desktopStreamFailed, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(DesktopStreamFailedMessage.self)
-        #expect(decoded.reason == "Virtual display failed activation")
-        #expect(decoded.errorCode == .virtualDisplayStartFailed)
-    }
-
-    @Test("App window close-blocked alert payload serialization")
-    func appWindowCloseBlockedAlertSerialization() throws {
-        let payload = AppWindowCloseBlockedAlertMessage(
-            bundleIdentifier: "com.apple.TextEdit",
-            sourceWindowID: 901,
-            presentingStreamID: 41,
-            alertToken: "token-123",
-            title: "Save changes?",
-            message: "Do you want to save the changes made to this document?",
-            actions: [
-                .init(id: "action-0", title: "Cancel"),
-                .init(id: "action-1", title: "Don't Save", isDestructive: true),
-                .init(id: "action-2", title: "Save")
-            ]
-        )
-
-        let envelope = try ControlMessage(type: .appWindowCloseBlockedAlert, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppWindowCloseBlockedAlertMessage.self)
-        #expect(decoded.bundleIdentifier == "com.apple.TextEdit")
-        #expect(decoded.sourceWindowID == 901)
-        #expect(decoded.presentingStreamID == 41)
-        #expect(decoded.alertToken == "token-123")
-        #expect(decoded.actions.count == 3)
-        #expect(decoded.actions[1].isDestructive)
-    }
-
-    @Test("App window close-alert action request payload serialization")
-    func appWindowCloseAlertActionRequestSerialization() throws {
-        let payload = AppWindowCloseAlertActionRequestMessage(
-            alertToken: "token-abc",
-            actionID: "action-2",
-            presentingStreamID: 73
-        )
-
-        let envelope = try ControlMessage(type: .appWindowCloseAlertActionRequest, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppWindowCloseAlertActionRequestMessage.self)
-        #expect(decoded.alertToken == "token-abc")
-        #expect(decoded.actionID == "action-2")
-        #expect(decoded.presentingStreamID == 73)
-    }
-
-    @Test("App window close-alert action result payload serialization")
-    func appWindowCloseAlertActionResultSerialization() throws {
-        let payload = AppWindowCloseAlertActionResultMessage(
-            alertToken: "token-result",
-            actionID: "action-1",
-            success: false,
-            reason: "Presenting stream mismatch"
-        )
-
-        let envelope = try ControlMessage(type: .appWindowCloseAlertActionResult, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(AppWindowCloseAlertActionResultMessage.self)
-        #expect(decoded.alertToken == "token-result")
-        #expect(decoded.actionID == "action-1")
-        #expect(decoded.success == false)
-        #expect(decoded.reason == "Presenting stream mismatch")
-    }
-
-    @Test("Stop stream origin serialization")
-    func stopStreamOriginSerialization() throws {
-        let payload = StopStreamMessage(
-            streamID: 55,
-            minimizeWindow: false,
-            origin: .clientWindowClosed
-        )
-
-        let envelope = try ControlMessage(type: .stopStream, content: payload)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StopStreamMessage.self)
-        #expect(decoded.streamID == 55)
-        #expect(decoded.minimizeWindow == false)
-        #expect(decoded.origin == .clientWindowClosed)
-    }
-
-    @Test("Start desktop request latency mode serialization")
-    func startDesktopLatencyModeSerialization() throws {
-        let request = StartDesktopStreamMessage(
-            scaleFactor: 2.0,
-            displayWidth: 3008,
-            displayHeight: 1692,
-            targetFrameRate: 120,
-            keyFrameInterval: 1800,
-            captureQueueDepth: 5,
-            colorDepth: .pro,
-            mode: .unified,
-            bitrate: 500_000_000,
-            latencyMode: .lowestLatency,
-            allowRuntimeQualityAdjustment: false,
-            lowLatencyHighResolutionCompressionBoost: false,
-            disableResolutionCap: true,
-            streamScale: 1.0,
-            audioConfiguration: .default,
-            dataPort: 63220
-        )
-
-        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
-        #expect(decoded.targetFrameRate == 120)
-        #expect(decoded.latencyMode == .lowestLatency)
-        #expect(decoded.displayWidth == 3008)
-        #expect(decoded.displayHeight == 1692)
-        #expect(decoded.colorDepth == .pro)
-        #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
-    }
-
-    @Test("Start desktop request cursor presentation serialization")
-    func startDesktopCursorPresentationSerialization() throws {
-        let request = StartDesktopStreamMessage(
-            scaleFactor: 2.0,
-            displayWidth: 3008,
-            displayHeight: 1692,
-            targetFrameRate: 60,
-            mode: .secondary,
-            cursorPresentation: MirageDesktopCursorPresentation(
-                source: .host,
-                lockClientCursorWhenUsingMirageCursor: true,
-                lockClientCursorWhenUsingHostCursor: false
-            ),
-            audioConfiguration: .default,
-            dataPort: 63220
-        )
-
-        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
-        #expect(decoded.cursorPresentation?.source == .host)
-        #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingMirageCursor == true)
-        #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingHostCursor == false)
-    }
-
-    @Test("Desktop cursor presentation change message serialization")
-    func desktopCursorPresentationChangeSerialization() throws {
-        let request = DesktopCursorPresentationChangeMessage(
-            streamID: 42,
-            cursorPresentation: MirageDesktopCursorPresentation(
-                source: .host,
-                lockClientCursorWhenUsingMirageCursor: false,
-                lockClientCursorWhenUsingHostCursor: true
-            )
-        )
-
-        let envelope = try ControlMessage(type: .desktopCursorPresentationChange, content: request)
-        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
-        #expect(consumed == envelope.serialize().count)
-        let decoded = try decodedEnvelope.decode(DesktopCursorPresentationChangeMessage.self)
-        #expect(decoded.streamID == 42)
-        #expect(decoded.cursorPresentation.source == .host)
-        #expect(decoded.cursorPresentation.lockClientCursorWhenUsingMirageCursor == false)
-        #expect(decoded.cursorPresentation.lockClientCursorWhenUsingHostCursor)
-    }
-
-    @Test("Stream metrics validation payload serialization")
-    func streamMetricsValidationPayloadSerialization() throws {
-        let captureCadence = StreamCaptureCadenceMetrics(
-            wallClockGapWorstMs: 80,
-            wallClockGapP95Ms: 40,
-            wallClockGapP99Ms: 60,
-            displayTimeGapWorstMs: 82,
-            displayTimeGapP95Ms: 41,
-            displayTimeGapP99Ms: 61,
-            deliveredFrameGapWorstMs: 84,
-            deliveredFrameGapP95Ms: 42,
-            deliveredFrameGapP99Ms: 62,
-            callbackDurationP95Ms: 2.5,
-            callbackDurationP99Ms: 4.5,
-            longFrameGapCount: 2,
-            displayTimeDriftCount: 3,
-            completeFrameStatusCount: 120,
-            cadenceDropCount: 1,
-            admissionDropCount: 4,
-            sampleOverwriteCount: 5,
-            usesDisplayRefreshCadence: true,
-            usesNativeRefreshMinimumFrameInterval: true,
-            minimumFrameIntervalRate: 60,
-            displayRefreshRate: 60,
-            virtualDisplayID: 62,
-            virtualDisplayRefreshRate: 60,
-            virtualDisplayScaleFactor: 2,
-            virtualDisplayGeneration: 7,
-            virtualDisplayTimingSuspect: true
-        )
-        let metrics = StreamMetricsMessage(
-            streamID: 1,
-            encodedFPS: 58.0,
-            idleEncodedFPS: 0.2,
-            droppedFrames: 12,
-            activeQuality: 0.74,
-            targetFrameRate: 60,
-            averageEncodeMs: 13.2,
-            captureIngressAverageMs: 4.1,
-            captureIngressMaxMs: 10.9,
-            preEncodeWaitAverageMs: 5.6,
-            preEncodeWaitMaxMs: 12.4,
-            captureCallbackAverageMs: 1.8,
-            captureCallbackMaxMs: 4.2,
-            captureCadence: captureCadence,
-            sendQueueBytes: 262_144,
-            sendStartDelayAverageMs: 3.7,
-            sendStartDelayMaxMs: 8.8,
-            sendCompletionAverageMs: 9.4,
-            sendCompletionMaxMs: 21.1,
-            nonKeyframeSendStartDelayAverageMs: 2.4,
-            nonKeyframeSendStartDelayMaxMs: 5.5,
-            nonKeyframeSendCompletionAverageMs: 7.1,
-            nonKeyframeSendCompletionMaxMs: 14.2,
-            packetPacerAverageSleepMs: 1.3,
-            packetPacerTotalSleepMs: 24,
-            packetPacerMaxSleepMs: 6,
-            packetPacerFrameMaxSleepMs: 8,
-            stalePacketDrops: 1,
-            generationAbortDrops: 0,
-            nonKeyframeHoldDrops: 4,
-            usingHardwareEncoder: true,
-            encoderGPURegistryID: 12345,
-            capturePixelFormat: "xf20",
-            captureColorPrimaries: kCVImageBufferColorPrimaries_P3_D65 as String,
-            encoderPixelFormat: "10-bit (P010)",
-            encoderProfile: "HEVC Main10 (4:2:0)",
-            encoderColorPrimaries: kCMFormatDescriptionColorPrimaries_P3_D65 as String,
-            encoderTransferFunction: kCMFormatDescriptionTransferFunction_sRGB as String,
-            encoderYCbCrMatrix: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String,
-            tenBitDisplayP3Validated: true
-        )
-
-        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
-        #expect(decoded.averageEncodeMs == 13.2)
-        #expect(decoded.captureIngressAverageMs == 4.1)
-        #expect(decoded.sendQueueBytes == 262_144)
-        #expect(decoded.sendCompletionMaxMs == 21.1)
-        #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)
-        #expect(decoded.packetPacerTotalSleepMs == 24)
-        #expect(decoded.packetPacerFrameMaxSleepMs == 8)
-        #expect(decoded.nonKeyframeHoldDrops == 4)
-        #expect(decoded.captureCadence?.deliveredFrameGapP99Ms == 62)
-        #expect(decoded.captureCadence?.displayTimeDriftCount == 3)
-        #expect(decoded.captureCadence?.virtualDisplayID == 62)
-        #expect(decoded.captureCadence?.virtualDisplayTimingSuspect == true)
-        #expect(decoded.usingHardwareEncoder == true)
-        #expect(decoded.encoderGPURegistryID == 12345)
-        #expect(decoded.capturePixelFormat == "xf20")
-        #expect(decoded.encoderProfile == "HEVC Main10 (4:2:0)")
-        #expect(decoded.tenBitDisplayP3Validated == true)
-    }
-
-    @Test("Stream metrics validation mismatch serialization")
-    func streamMetricsValidationMismatchSerialization() throws {
-        let metrics = StreamMetricsMessage(
-            streamID: 2,
-            encodedFPS: 42.0,
-            idleEncodedFPS: 0,
-            droppedFrames: 101,
-            activeQuality: 0.68,
-            targetFrameRate: 60,
-            capturePixelFormat: "420v",
-            captureColorPrimaries: kCVImageBufferColorPrimaries_ITU_R_709_2 as String,
-            encoderPixelFormat: "8-bit (NV12)",
-            encoderProfile: "HEVC Main (4:2:0)",
-            encoderColorPrimaries: kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String,
-            encoderTransferFunction: kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
-            encoderYCbCrMatrix: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String,
-            tenBitDisplayP3Validated: false
-        )
-
-        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
-        #expect(decoded.averageEncodeMs == nil)
-        #expect(decoded.usingHardwareEncoder == nil)
-        #expect(decoded.encoderGPURegistryID == nil)
-        #expect(decoded.capturePixelFormat == "420v")
-        #expect(decoded.encoderPixelFormat == "8-bit (NV12)")
-        #expect(decoded.tenBitDisplayP3Validated == false)
-    }
-
-    @Test("Peer advertisement TXT record")
-    func peerAdvertisementTXTRecord() {
-        let deviceID = UUID()
-        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
-            deviceID: deviceID,
-            identityKeyID: "test-key-id",
-            modelIdentifier: "Mac16,1",
-            iconName: "desktopcomputer",
-            machineFamily: "Mac",
-            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
-            supportedColorDepths: [.standard, .pro]
-        )
-
-        let txtRecord = advertisement.toTXTRecord()
-        #expect(txtRecord["proto"] == String(Int(MirageKit.protocolVersion)))
-        #expect(txtRecord["did"] == deviceID.uuidString)
-        #expect(txtRecord["ikid"] == "test-key-id")
-        #expect(txtRecord["dt"] == DeviceType.mac.rawValue)
-        #expect(txtRecord["model"] == "Mac16,1")
-        #expect(txtRecord["icon"] == "desktopcomputer")
-        #expect(txtRecord["family"] == "Mac")
-
-        let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
-        #expect(decoded.protocolVersion == Int(MirageKit.protocolVersion))
-        #expect(decoded.deviceID == deviceID)
-        #expect(decoded.identityKeyID == "test-key-id")
-        #expect(decoded.deviceType == .mac)
-        #expect(decoded.hostName == MiragePeerAdvertisementMetadata.advertisedBonjourHostName())
-        #expect(MiragePeerAdvertisementMetadata.maxStreams(from: decoded) == 4)
-        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == true)
-        #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
-        #expect(MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: decoded) == true)
-        #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
-        #expect(MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded) == false)
-        #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
-        #expect(decoded.mirageAcceptingConnections == true)
-    }
-
-    @Test("Peer advertisement ProRes support round trips separately from HEVC Ultra")
-    func peerAdvertisementProResSupportRoundTripsSeparatelyFromUltraColorDepth() {
-        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
-            deviceID: UUID(),
-            identityKeyID: "test-key-id",
-            modelIdentifier: "Mac16,1",
-            iconName: "desktopcomputer",
-            machineFamily: "Mac",
-            supportedColorDepths: [.standard, .pro],
-            supportsProRes4444: true
-        )
-
-        let decoded = LoomPeerAdvertisement.from(txtRecord: advertisement.toTXTRecord())
-
-        #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
-        #expect(MiragePeerAdvertisementMetadata.supportsProRes4444(in: decoded))
-        #expect(decoded.mirageSupportsProRes4444)
-    }
-
-    @Test("Peer advertisement busy flag round trips")
-    func peerAdvertisementBusyFlagRoundTrips() {
-        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
-            deviceID: UUID(),
-            identityKeyID: "test-key-id",
-            modelIdentifier: "Mac16,1",
-            iconName: "desktopcomputer",
-            machineFamily: "Mac",
-            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
-            acceptingConnections: false,
-            supportedColorDepths: [.standard]
-        )
-
-        let txtRecord = advertisement.toTXTRecord()
-        let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
-        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == false)
-        #expect(decoded.mirageAcceptingConnections == false)
-    }
-
-    @Test("Unknown video codec in stream requests decodes as nil")
-    func unknownVideoCodecInStreamRequestsDecodesAsNil() throws {
-        let startStream = try JSONDecoder().decode(
-            StartStreamMessage.self,
-            from: Data(#"{"windowID":1,"targetFrameRate":60,"codec":"future-codec"}"#.utf8)
-        )
-        let selectApp = try JSONDecoder().decode(
-            SelectAppMessage.self,
-            from: Data(#"{"bundleIdentifier":"com.example.Editor","targetFrameRate":60,"codec":"future-codec"}"#.utf8)
-        )
-        let customStream = try JSONDecoder().decode(
-            StartCustomStreamMessage.self,
-            from: Data(
-                #"{"kind":"com.example.custom","displayWidth":1280,"displayHeight":720,"targetFrameRate":60,"codec":"future-codec"}"#.utf8
-            )
-        )
-
-        #expect(startStream.codec == nil)
-        #expect(selectApp.codec == nil)
-        #expect(customStream.codec == nil)
-    }
-
-    @Test("Peer advertisement local network context round trips and preserves host fields")
-    func peerAdvertisementLocalNetworkContextRoundTrips() {
-        let advertisement = LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
-            deviceID: UUID(),
-            identityKeyID: "host-key",
-            deviceType: .mac,
-            modelIdentifier: "Mac16,1",
-            iconName: "desktopcomputer",
-            machineFamily: "Mac",
-            hostName: "Altair.local",
-            directTransports: [
-                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
-            ],
-            metadata: [
-                "mirage.accepting-connections": "1",
-            ]
-        )
-
-        let updated = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
-            MirageLocalNetworkSnapshot(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:wifi-a", "24:wifi-b"],
-                wiredSubnetSignatures: ["24:wired-a"]
-            ),
-            in: advertisement
-        )
-        let decoded = LoomPeerAdvertisement.from(txtRecord: updated.toTXTRecord())
-        let networkContext = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(from: decoded)
-
-        #expect(decoded.hostName == "Altair.local")
-        #expect(decoded.directTransports == advertisement.directTransports)
-        #expect(networkContext.wifiSubnetSignatures == ["24:wifi-a", "24:wifi-b"])
-        #expect(networkContext.wiredSubnetSignatures == ["24:wired-a"])
-    }
-
-    @Test("Host advertisement VPN access metadata serialization")
-    func hostAdvertisementVPNAccessMetadataSerialization() throws {
-        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
-            deviceID: UUID(),
-            identityKeyID: "host-key",
-            modelIdentifier: "Mac16,1",
-            iconName: "desktopcomputer",
-            machineFamily: "Mac",
-            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
-            acceptingConnections: true,
-            vpnAccessEnabled: true,
-            supportedColorDepths: [.standard, .pro]
-        )
-
-        let decoded = LoomPeerAdvertisement.from(txtRecord: advertisement.toTXTRecord())
-
-        #expect(decoded.mirageAcceptingConnections == true)
-        #expect(decoded.mirageVPNAccessEnabled == true)
     }
 
 }

@@ -49,10 +49,9 @@ struct DesktopStopFailureSuppressionTests {
 
     @MainActor
     @Test("Terminal startup desktop restart preserves request contract")
-    func terminalStartupDesktopRestartPreservesRequestContract() {
-        let service = MirageClientService(deviceName: "Test Device")
-        let originalRequestID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
-        let restartRequestID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+    func terminalStartupDesktopRestartPreservesRequestContract() throws {
+        let originalRequestID = try #require(UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
+        let restartRequestID = try #require(UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
         var request = StartDesktopStreamMessage(
             startupRequestID: originalRequestID,
             scaleFactor: 2,
@@ -82,10 +81,7 @@ struct DesktopStopFailureSuppressionTests {
         request.upscalingMode = .spatial
         request.codec = .hevc
 
-        let restarted = service.makeDesktopStreamRestartRequest(
-            from: request,
-            startupRequestID: restartRequestID
-        )
+        let restarted = StartDesktopStreamMessage(copying: request, startupRequestID: restartRequestID)
 
         #expect(restarted.startupRequestID == restartRequestID)
         #expect(restarted.startupRequestID != request.startupRequestID)
@@ -146,19 +142,52 @@ struct DesktopStopFailureSuppressionTests {
         #expect(lowered.bitrate == 24_000_000)
         #expect(lowered.disableResolutionCap == false)
         #expect(lowered.bitrateAdaptationCeiling == 80_000_000)
-        #expect(lowered.encoderMaxWidth == 1_920)
-        #expect(lowered.encoderMaxHeight == 1_080)
+        #expect(lowered.encoderMaxWidth == 1920)
+        #expect(lowered.encoderMaxHeight == 1080)
         #expect(lowered.startupRequestID == request.startupRequestID)
     }
 
+    @MainActor
+    @Test("Terminal startup desktop restart is bounded to one attempt")
+    func terminalStartupDesktopRestartIsBoundedToOneAttempt() {
+        let service = MirageClientService(deviceName: "Test Device")
+        let streamID: StreamID = 56
+        let request = StartDesktopStreamMessage(
+            startupRequestID: UUID(),
+            scaleFactor: 2,
+            displayWidth: 2732,
+            displayHeight: 2048,
+            targetFrameRate: 120,
+            streamScale: 1,
+            audioConfiguration: MirageAudioConfiguration(enabled: false),
+            dataPort: nil,
+            useHostResolution: false,
+            mediaMaxPacketSize: 1180
+        )
+
+        service.desktopStreamID = streamID
+        service.lastDesktopStreamStartRequest = request
+        service.desktopStreamRestartAttempts = 0
+
+        #expect(service.hasDesktopStreamRestartBudget(streamID: streamID))
+        service.desktopStreamRestartAttempts = service.desktopStreamRestartLimit
+        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID))
+        #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID + 1))
+    }
 }
 
 private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
     private(set) var errorCount = 0
 
     @MainActor
+    func didDisconnectFromHost(_: String) {}
+
+    @MainActor
     func didEncounterError(_: Error) {
         errorCount += 1
     }
+
+    @MainActor
+    func hostSessionStateChanged(_: LoomSessionAvailability) {}
 }
 #endif

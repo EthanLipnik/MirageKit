@@ -27,7 +27,7 @@ struct MirageInterceptedShortcutResponderTests {
                 keyDownEvents.append(keyEvent)
             case .keyUp(let keyEvent):
                 keyUpEvents.append(keyEvent)
-            case .flagsChanged(_):
+            case .flagsChanged:
                 flagsChangedCount += 1
             default:
                 break

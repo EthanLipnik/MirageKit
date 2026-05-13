@@ -10,7 +10,7 @@ import Foundation
 enum MirageRenderPreferences {
     private static let frameRatePresetKey = "frameratePreset"
 
-    static func preferredMaximumRefreshRate() -> Int {
+    static var preferredMaximumRefreshRate: Int {
         preferredMaximumRefreshRate(frameratePresetRawValue: UserDefaults.standard.string(forKey: frameRatePresetKey))
     }
 

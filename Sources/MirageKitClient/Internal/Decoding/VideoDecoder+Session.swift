@@ -42,7 +42,7 @@ extension VideoDecoder {
 
         outputPixelFormat = activeOutputPixelFormat
 
-        let sessionGeneration = nextDecodeCallbackGeneration()
+        let sessionGeneration = advanceDecodeCallbackGeneration()
         pendingOutputTelemetryGeneration = sessionGeneration
         lastDecodedOutputPixelFormat = nil
 
@@ -89,7 +89,7 @@ extension VideoDecoder {
         decoderHardwareStatusRefreshAttempts = 0
         usingHardwareDecoder = nil
         VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-        applyMaximizePowerEfficiency(session)
+        applyMaximizePowerEfficiencyIfPossible(session)
         logHardwareDecoderStatus(session, reason: "session_create")
         decompressionSession = session
     }
@@ -102,7 +102,7 @@ extension VideoDecoder {
         if resetFormatDescription {
             formatDescription = nil
         }
-        advanceDecodeCallbackGeneration()
+        invalidateDecodeCallbacks()
         pendingOutputTelemetryGeneration = 0
         lastDecodedOutputPixelFormat = nil
         usingHardwareDecoder = nil
@@ -174,25 +174,37 @@ extension VideoDecoder {
         logHardwareDecoderStatus(session, reason: reason)
     }
 
-    @discardableResult
     func applyMaximizePowerEfficiency(_ session: VTDecompressionSession) -> Bool {
+        let status = setMaximizePowerEfficiency(session)
+        logMaximizePowerEfficiencyStatus(status)
+        return status == noErr
+    }
+
+    func applyMaximizePowerEfficiencyIfPossible(_ session: VTDecompressionSession) {
+        let status = setMaximizePowerEfficiency(session)
+        logMaximizePowerEfficiencyStatus(status)
+    }
+
+    private func setMaximizePowerEfficiency(_ session: VTDecompressionSession) -> OSStatus {
         let value: CFTypeRef = maximizePowerEfficiencyEnabled ? kCFBooleanTrue : kCFBooleanFalse
-        let status = VTSessionSetProperty(
+        return VTSessionSetProperty(
             session,
             key: kVTDecompressionPropertyKey_MaximizePowerEfficiency,
             value: value
         )
+    }
+
+    private func logMaximizePowerEfficiencyStatus(_ status: OSStatus) {
         guard status == noErr else {
             MirageLogger.error(
                 .decoder,
                 "Failed to set decoder power preference maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled): \(status)"
             )
-            return false
+            return
         }
         MirageLogger.decoder(
             "Decoder power preference applied: maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled)"
         )
-        return true
     }
 
     private func logHardwareDecoderStatus(_ session: VTDecompressionSession, reason: String) {

@@ -13,9 +13,11 @@ import AVFoundation
 import QuartzCore
 import UIKit
 
+/// UIKit view that renders decoded stream frames through an `AVSampleBufferDisplayLayer`.
 public class MirageSampleBufferView: UIView {
     // MARK: - Safe Area Override
 
+    /// Whether the display layer should ignore platform safe-area insets.
     public var ignoresSafeArea: Bool = true {
         didSet {
             guard ignoresSafeArea != oldValue else { return }
@@ -33,9 +35,12 @@ public class MirageSampleBufferView: UIView {
 
     // MARK: - Public API
 
+    /// Callback fired when drawable pixel size or scale changes.
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
+    /// Callback fired when the renderer requests a platform refresh-rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
+    /// Host-authoritative maximum render frame rate for this stream.
     public var preferredMaximumRenderFPS: Int? {
         didSet {
             guard preferredMaximumRenderFPS != oldValue else { return }
@@ -44,6 +49,7 @@ public class MirageSampleBufferView: UIView {
         }
     }
 
+    /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize? {
         didSet {
             guard maxDrawableSize != oldValue else { return }
@@ -51,6 +57,7 @@ public class MirageSampleBufferView: UIView {
         }
     }
 
+    /// Whether local presentation should aspect-fit frames instead of filling the view.
     public var prefersLocalAspectFitPresentation: Bool = false {
         didSet {
             guard prefersLocalAspectFitPresentation != oldValue else { return }
@@ -58,6 +65,7 @@ public class MirageSampleBufferView: UIView {
         }
     }
 
+    /// Pixel-space crop override for logical app windows packed into a shared media stream.
     public var contentRectOverride: CGRect? {
         didSet {
             guard contentRectOverride != oldValue else { return }
@@ -65,12 +73,14 @@ public class MirageSampleBufferView: UIView {
         }
     }
 
+    /// Logical stream identifier used for renderer diagnostics and preferences.
     public var streamID: StreamID? {
         didSet {
             applyRenderConfiguration()
         }
     }
 
+    /// Presentation tier that controls active-live versus passive rendering behavior.
     public var streamPresentationTier: StreamPresentationTier = .activeLive {
         didSet {
             guard streamPresentationTier != oldValue else { return }
@@ -130,7 +140,7 @@ public class MirageSampleBufferView: UIView {
         if superview != nil {
             refreshRateMonitor.start()
             resumeRendering()
-            requestImmediateSubmission()
+            presentationPipeline.requestImmediateSubmission()
         } else {
             stopPresentationDisplayLink()
             suspendRendering()
@@ -157,40 +167,36 @@ public class MirageSampleBufferView: UIView {
         presentationPipeline.layoutDisplayLayer(
             bounds: bounds,
             scale: effectiveScale,
-            metricsContext: currentDrawableMetricsContext()
+            metricsContext: currentDrawableMetricsContext
         )
     }
 
     // MARK: - Public Controls
 
+    /// Suspends rendering and clears the current frame.
     public func suspendRendering() {
         suspendRendering(clearCurrentFrame: true)
     }
 
+    /// Resumes rendering after a suspension.
     public func resumeRendering() {
         presentationPipeline.resumeRendering()
-    }
-
-    func activateStreamPresentation() {
-        presentationPipeline.activateStreamPresentation()
     }
 
     func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
         presentationPipeline.resumeRenderingAfterApplicationActivation(resetPresentationState: resetPresentationState)
     }
 
+    /// Whether the display layer has reported a rendering failure.
     public var hasDisplayLayerFailure: Bool {
         presentationPipeline.hasDisplayLayerFailure
-    }
-
-    var currentPresentationReferenceSize: CGSize? {
-        presentationPipeline.currentPresentationReferenceSize
     }
 
     func resolvedPresentedContentRect(in bounds: CGRect) -> CGRect {
         presentationPipeline.resolvedPresentedContentRect(in: bounds)
     }
 
+    /// Suspends rendering and optionally clears the currently displayed frame.
     public func suspendRendering(clearCurrentFrame: Bool) {
         stopPresentationDisplayLink()
         presentationPipeline.suspendRendering(clearCurrentFrame: clearCurrentFrame)
@@ -201,7 +207,7 @@ public class MirageSampleBufferView: UIView {
     private func setup() {
         insetsLayoutMarginsFromSafeArea = false
 
-        let displayLayer = self.displayLayer
+        let displayLayer = displayLayer
         presentationPipeline = MirageSampleBufferPresentationPipeline(
             displayLayer: displayLayer,
             platformName: "iOS",
@@ -232,7 +238,7 @@ public class MirageSampleBufferView: UIView {
         applyRenderConfiguration()
 
         refreshRateMonitor.onOverrideChange = { [weak self] override in
-            self?.applyRefreshRateOverride(override)
+            self?.presentationPipeline.applyResolvedRenderFPS(override)
         }
 
         applyRenderPreferences()
@@ -240,10 +246,6 @@ public class MirageSampleBufferView: UIView {
     }
 
     // MARK: - Draw Path
-
-    func requestImmediateSubmission() {
-        presentationPipeline.requestImmediateSubmission()
-    }
 
     private func startPresentationDisplayLink(
         targetFPS: Int,
@@ -279,10 +281,6 @@ public class MirageSampleBufferView: UIView {
 
     @objc private func handlePresentationDisplayLinkTick(_ displayLink: CADisplayLink) {
         let referenceTime = displayLink.targetTimestamp > 0 ? displayLink.targetTimestamp : CACurrentMediaTime()
-        if let streamID {
-            let delayMs = max(0, CACurrentMediaTime() - referenceTime) * 1000
-            MirageRenderStreamStore.shared.noteDisplayTickMainRelay(for: streamID, delayMs: delayMs)
-        }
         presentationDisplayTickHandler?(referenceTime)
     }
 }

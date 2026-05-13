@@ -5,12 +5,9 @@
 //  Created by Ethan Lipnik on 4/11/26.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
-import ScreenCaptureKit
-
 @MainActor
 public extension MirageHostService {
     /// Runs a short hidden display capture to flush any follow-on screen-recording prompts.
@@ -31,7 +28,7 @@ public extension MirageHostService {
                 showsCursor: false,
                 onFrame: { _ in }
             )
-            try? await Task.sleep(for: duration)
+            try await Task.sleep(for: duration)
             await captureEngine.stopCapture()
         } catch {
             await captureEngine.stopCapture()

@@ -93,7 +93,8 @@ enum MirageClientKeyEventBuilder {
         "~": "`",
     ]
 
-    static let keyCommandInputToMacKeyCodeMap: [String: UInt16] = [
+    #if os(iOS) || os(visionOS)
+    private static let keyCommandInputToMacKeyCodeMap: [String: UInt16] = [
         "\n": 0x24,
         "\r": 0x24,
         "\t": 0x30,
@@ -109,6 +110,7 @@ enum MirageClientKeyEventBuilder {
         "UIKeyInputUpArrow": 0x7E,
         "UIKeyInputDeleteForward": 0x75,
     ]
+    #endif
 
     private static let nonTextHardwareKeyCodes: Set<UInt16> = [
         0x24, // Return
@@ -134,9 +136,11 @@ enum MirageClientKeyEventBuilder {
         characterToMacKeyCodeMap[character.lowercased()]
     }
 
+    #if os(iOS) || os(visionOS)
     static func keyCommandInputToMacKeyCode(_ input: String) -> UInt16? {
         keyCommandInputToMacKeyCodeMap[input]
     }
+    #endif
 
     static func softwareKeyEvent(
         for character: String,
@@ -230,12 +234,8 @@ enum MirageClientKeyEventBuilder {
 
     private static func normalizedHardwareCharacters(_ string: String?) -> String? {
         guard let string else { return nil }
-        if isUIKitSpecialKeyInput(string) { return nil }
+        if string.hasPrefix("UIKeyInput") { return nil }
         return string
-    }
-
-    private static func isUIKitSpecialKeyInput(_ string: String) -> Bool {
-        string.hasPrefix("UIKeyInput")
     }
 
     private static func isPrintableText(_ string: String) -> Bool {

@@ -12,11 +12,11 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
-    func resolvedQualityCeiling() -> Float {
+    var resolvedQualityCeiling: Float {
         min(steadyQualityCeiling, compressionQualityCeiling)
     }
 
-    func enterLatencyBurst(now: CFAbsoluteTime, reason: String) async {
+    func enterLatencyBurst(reason: String) async {
         let clearedBacklog = frameInbox.clear()
         if clearedBacklog > 0 {
             MirageLogger.metrics(
@@ -64,7 +64,7 @@ extension StreamContext {
             "Latency burst exited for stream \(streamID): reason=\(reason), restoredQueueDepth=\(restoredQueueDepthText), inFlight=\(maxInFlightFrames)"
         )
 
-        qualityCeiling = resolvedQualityCeiling()
+        qualityCeiling = resolvedQualityCeiling
         lastInFlightAdjustmentTime = now
     }
 

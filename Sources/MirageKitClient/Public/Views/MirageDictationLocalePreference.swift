@@ -9,10 +9,17 @@
 
 import Foundation
 
+/// User preference for dictation locale selection.
 public enum MirageDictationLocalePreference: RawRepresentable, Sendable, Hashable {
+    /// UserDefaults key for the selected dictation locale preference.
+    public static let defaultsKey = "dictationLocale"
+
+    /// Use the system-selected locale.
     case system
+    /// Use a specific locale identifier.
     case locale(Locale)
 
+    /// Creates a preference from the persisted locale identifier.
     public init(rawValue: String) {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -22,6 +29,7 @@ public enum MirageDictationLocalePreference: RawRepresentable, Sendable, Hashabl
         self = .locale(Locale(identifier: Self.canonicalIdentifier(from: trimmed)))
     }
 
+    /// Persisted locale identifier, or an empty string for ``system``.
     public var rawValue: String {
         switch self {
         case .system:
@@ -31,6 +39,7 @@ public enum MirageDictationLocalePreference: RawRepresentable, Sendable, Hashabl
         }
     }
 
+    /// Concrete locale when a specific locale is selected.
     public var locale: Locale? {
         switch self {
         case .system:
@@ -40,21 +49,13 @@ public enum MirageDictationLocalePreference: RawRepresentable, Sendable, Hashabl
         }
     }
 
-    public var isSystemDefault: Bool {
-        switch self {
-        case .system:
-            true
-        case .locale:
-            false
-        }
-    }
-
     static func canonicalIdentifier(from identifier: String) -> String {
         Components(identifier: identifier).canonicalIdentifier
     }
 }
 
-struct MirageDictationLocaleMatcher {
+#if os(iOS) || os(visionOS)
+enum MirageDictationLocaleMatcher {
     static func bestSupportedLocale<S: Sequence>(
         for requestedLocale: Locale,
         within supportedLocales: S
@@ -107,13 +108,16 @@ private struct ScoredLocale {
     let score: Int
     let canonicalIdentifier: String
 }
+#endif
 
 private struct Components {
     let canonicalIdentifier: String
+    #if os(iOS) || os(visionOS)
     let languageCode: String?
     let scriptCode: String?
     let regionCode: String?
     let specificity: Int
+    #endif
 
     init(identifier: String) {
         let normalizedIdentifier = identifier
@@ -139,21 +143,24 @@ private struct Components {
             }
 
             if parsedRegionCode == nil,
-               ((subtag.count == 2 && subtag.allSatisfy(\.isLetter)) ||
-               (subtag.count == 3 && subtag.allSatisfy(\.isNumber))) {
+               subtag.count == 2 && subtag.allSatisfy(\.isLetter) ||
+               subtag.count == 3 && subtag.allSatisfy(\.isNumber) {
                 parsedRegionCode = subtag.uppercased()
             }
         }
 
+        #if os(iOS) || os(visionOS)
         languageCode = parsedLanguageCode
         scriptCode = parsedScriptCode?.lowercased()
         regionCode = parsedRegionCode?.lowercased()
+        specificity = [scriptCode, regionCode].compactMap { $0 }.count
+        #endif
 
         let canonicalParts = [parsedLanguageCode, parsedScriptCode, parsedRegionCode].compactMap { $0 }
         canonicalIdentifier = canonicalParts.isEmpty ? normalizedIdentifier : canonicalParts.joined(separator: "-")
-        specificity = [scriptCode, regionCode].compactMap { $0 }.count
     }
 
+    #if os(iOS) || os(visionOS)
     init(locale: Locale) {
         self.init(identifier: locale.identifier)
     }
@@ -190,4 +197,5 @@ private struct Components {
         score -= abs(specificity - candidate.specificity)
         return score
     }
+    #endif
 }

@@ -60,7 +60,7 @@ struct MirageClientAudioSessionCoordinatorTests {
         #expect(driver.events.isEmpty)
 
         await coordinator.releasePlaybackSession()
-        driver.isApplicationActiveValue = true
+        driver.setApplicationActive(true)
 
         #expect(await coordinator.requestPlaybackSession())
         #expect(driver.events == [.activate(.playback)])
@@ -69,14 +69,11 @@ struct MirageClientAudioSessionCoordinatorTests {
     @MainActor
     @Test("Dictation request waits briefly for app activation")
     func dictationRequestWaitsBrieflyForAppActivation() async {
-        let driver = RecordingAudioSessionDriver(isApplicationActive: false)
+        let driver = RecordingAudioSessionDriver(
+            isApplicationActive: false,
+            activateAfterInactiveChecks: 2
+        )
         let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
-
-        Task.detached {
-            try? await Task.sleep(for: .milliseconds(150))
-            driver.isApplicationActiveValue = true
-            await coordinator.handleApplicationDidBecomeActive()
-        }
 
         #expect(await coordinator.requestDictationSession())
         #expect(driver.events == [.activate(.dictation)])
@@ -92,23 +89,64 @@ private final class RecordingAudioSessionDriver: MirageClientAudioSessionDriving
         case deactivate
     }
 
-    var isApplicationActiveValue: Bool
-    private(set) var events: [Event] = []
+    private let lock = NSLock()
+    private var isApplicationActiveValue: Bool
+    private var remainingInactiveChecksBeforeActivation: Int?
+    private var recordedEvents: [Event] = []
 
-    init(isApplicationActive: Bool = true) {
+    var events: [Event] {
+        lock.withLock {
+            recordedEvents
+        }
+    }
+
+    init(
+        isApplicationActive: Bool = true,
+        activateAfterInactiveChecks: Int? = nil
+    ) {
         self.isApplicationActiveValue = isApplicationActive
+        self.remainingInactiveChecksBeforeActivation = activateAfterInactiveChecks
     }
 
-    func isApplicationActive() async -> Bool {
-        isApplicationActiveValue
+    func setApplicationActive(_ isActive: Bool) {
+        lock.withLock {
+            isApplicationActiveValue = isActive
+        }
     }
 
-    func activate(_ configuration: MirageClientAudioSessionConfiguration) async throws {
-        events.append(.activate(configuration))
+    var isApplicationActive: Bool {
+        get async {
+            lock.withLock {
+                if !isApplicationActiveValue,
+                   let remainingInactiveChecksBeforeActivation {
+                    if remainingInactiveChecksBeforeActivation <= 0 {
+                        isApplicationActiveValue = true
+                        self.remainingInactiveChecksBeforeActivation = nil
+                    } else {
+                        self.remainingInactiveChecksBeforeActivation = remainingInactiveChecksBeforeActivation - 1
+                    }
+                }
+                return isApplicationActiveValue
+            }
+        }
+    }
+
+    func activatePlaybackSession() async throws {
+        lock.withLock {
+            recordedEvents.append(.activate(.playback))
+        }
+    }
+
+    func activateDictationSession() async throws {
+        lock.withLock {
+            recordedEvents.append(.activate(.dictation))
+        }
     }
 
     func deactivate() async throws {
-        events.append(.deactivate)
+        lock.withLock {
+            recordedEvents.append(.deactivate)
+        }
     }
 }
 #endif

@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,6 +17,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Mouse Event Injection (runs on accessibilityQueue)
 
+    /// Refreshes modifier state before pointer injection.
     func refreshPointerModifierState(
         _ modifiers: MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
@@ -34,6 +34,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Applies click count and modifier metadata to a pointer event.
     func applyPointerEventMetadata(
         _ cgEvent: CGEvent,
         from event: MirageMouseEvent,
@@ -54,6 +55,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Injects a window-relative mouse event into the host.
     func injectMouseEvent(
         _ type: CGEventType,
         _ event: MirageMouseEvent,
@@ -63,14 +65,13 @@ extension MirageHostInputController {
     ) {
         refreshPointerModifierState(event.modifiers, domain: .session)
 
-        let resolvedFrame: CGRect
-        if appliesTabletSubtype(event) {
+        let resolvedFrame: CGRect = if appliesTabletSubtype(event) {
             // Stylus input is absolute and high-frequency; use the stream frame directly
             // to avoid occasional frame-query jitter while drawing.
-            resolvedFrame = windowFrame
+            windowFrame
         } else {
             // Throttle CGWindowList frame validation to keep drag/move input path hot.
-            resolvedFrame = resolvedInputWindowFrame(for: windowID, streamFrame: windowFrame)
+            resolvedInputWindowFrame(for: windowID, streamFrame: windowFrame)
         }
 
         let localPoint = CGPoint(
@@ -124,6 +125,7 @@ extension MirageHostInputController {
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: screenPoint)
     }
 
+    /// Returns cached traffic-light protection geometry when the sampled frame is still current.
     func cachedDynamicTrafficLightClusterSize(
         windowID: WindowID,
         app: MirageApplication?,
@@ -149,6 +151,7 @@ extension MirageHostInputController {
         return dynamicClusterSize
     }
 
+    /// Logs a throttled diagnostic when a remote pointer event is blocked near traffic lights.
     func logTrafficLightBlockedEvent(
         windowID: WindowID,
         eventType: CGEventType,

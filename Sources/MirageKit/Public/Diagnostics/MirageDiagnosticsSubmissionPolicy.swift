@@ -8,20 +8,32 @@
 import Foundation
 import Loom
 
+/// Sentry handling decision for a classified Mirage diagnostics event.
 public enum MirageDiagnosticsSentryDisposition: String, Sendable, Equatable {
+    /// Submit the event as a reportable Sentry issue.
     case capture
+    /// Keep the event as breadcrumb context unless suppression thresholds are exceeded.
     case breadcrumbOnly
 }
 
+/// Normalized telemetry classification attached to Mirage diagnostics events.
 public struct MirageDiagnosticsEventClassification: Sendable, Equatable {
+    /// Whether Sentry should capture the event or retain it as breadcrumb-only context.
     public let disposition: MirageDiagnosticsSentryDisposition
+    /// Stable low-cardinality issue identifier.
     public let issueKind: String
+    /// Pipeline or lifecycle stage where the failure occurred.
     public let failureStage: String
+    /// Recovery result associated with the event.
     public let recoveryOutcome: String
+    /// Fallback path used before the event was emitted.
     public let fallbackUsed: String
+    /// Transport condition inferred from diagnostics text or context.
     public let transportHealth: String
+    /// Optional key used to group repeated breadcrumb-only events for escalation.
     public let suppressionKey: String?
 
+    /// Creates a normalized diagnostics classification and optional suppression group.
     public init(
         disposition: MirageDiagnosticsSentryDisposition,
         issueKind: String,
@@ -40,6 +52,7 @@ public struct MirageDiagnosticsEventClassification: Sendable, Equatable {
         self.suppressionKey = suppressionKey
     }
 
+    /// Tags applied to captured Sentry events.
     public var sentryTags: [String: String] {
         [
             "mirage_issue_kind": issueKind,
@@ -51,7 +64,9 @@ public struct MirageDiagnosticsEventClassification: Sendable, Equatable {
     }
 }
 
+/// Classifies diagnostics events before telemetry submission.
 public enum MirageDiagnosticsSubmissionPolicy {
+    /// Returns the submission classification tags for a diagnostics error event.
     public static func classification(for event: LoomDiagnosticsErrorEvent) -> MirageDiagnosticsEventClassification {
         guard event.severity == .error else {
             return capture(
@@ -125,7 +140,7 @@ public enum MirageDiagnosticsSubmissionPolicy {
             )
         }
 
-        if isExpectedAppWindowCapacityRejection(lowercasedMessage) {
+        if lowercasedMessage.contains("max app windows reached") {
             return breadcrumbOnly(
                 issueKind: "app-window-capacity",
                 failureStage: "app-selection",
@@ -240,264 +255,5 @@ public enum MirageDiagnosticsSubmissionPolicy {
             failureStage: event.category.rawValue,
             recoveryOutcome: "unrecovered"
         )
-    }
-}
-
-public struct MirageDiagnosticsSuppressionState: Sendable {
-    public static let defaultWindow: TimeInterval = 600
-    public static let defaultWindowThreshold = 5
-    public static let defaultLaunchThreshold = 10
-
-    private struct Bucket: Sendable {
-        var windowStart: TimeInterval
-        var windowCount: Int
-        var launchCount: Int
-    }
-
-    private var buckets: [String: Bucket] = [:]
-
-    public init() {}
-
-    public mutating func shouldEscalate(
-        classification: MirageDiagnosticsEventClassification,
-        at date: Date,
-        window: TimeInterval = Self.defaultWindow,
-        windowThreshold: Int = Self.defaultWindowThreshold,
-        launchThreshold: Int = Self.defaultLaunchThreshold
-    ) -> Bool {
-        guard classification.disposition == .breadcrumbOnly,
-              let suppressionKey = classification.suppressionKey else {
-            return false
-        }
-
-        let now = date.timeIntervalSinceReferenceDate
-        var bucket = buckets[suppressionKey] ?? Bucket(
-            windowStart: now,
-            windowCount: 0,
-            launchCount: 0
-        )
-
-        if now - bucket.windowStart > window {
-            bucket.windowStart = now
-            bucket.windowCount = 0
-        }
-
-        bucket.windowCount += 1
-        bucket.launchCount += 1
-        buckets[suppressionKey] = bucket
-
-        return bucket.windowCount == windowThreshold ||
-            bucket.launchCount == launchThreshold ||
-            (bucket.windowCount > windowThreshold && bucket.windowCount.isMultiple(of: windowThreshold)) ||
-            (bucket.launchCount > launchThreshold && bucket.launchCount.isMultiple(of: launchThreshold))
-    }
-}
-
-private extension MirageDiagnosticsSubmissionPolicy {
-    static func capture(
-        issueKind: String,
-        failureStage: String,
-        recoveryOutcome: String,
-        fallbackUsed: String = "none",
-        transportHealth: String = "unknown"
-    ) -> MirageDiagnosticsEventClassification {
-        MirageDiagnosticsEventClassification(
-            disposition: .capture,
-            issueKind: issueKind,
-            failureStage: failureStage,
-            recoveryOutcome: recoveryOutcome,
-            fallbackUsed: fallbackUsed,
-            transportHealth: transportHealth,
-            suppressionKey: nil
-        )
-    }
-
-    static func breadcrumbOnly(
-        issueKind: String,
-        failureStage: String,
-        recoveryOutcome: String,
-        fallbackUsed: String = "none",
-        transportHealth: String = "unknown",
-        allowEscalation: Bool = false
-    ) -> MirageDiagnosticsEventClassification {
-        MirageDiagnosticsEventClassification(
-            disposition: .breadcrumbOnly,
-            issueKind: issueKind,
-            failureStage: failureStage,
-            recoveryOutcome: recoveryOutcome,
-            fallbackUsed: fallbackUsed,
-            transportHealth: transportHealth,
-            suppressionKey: allowEscalation
-                ? "\(issueKind):\(failureStage):\(recoveryOutcome):\(fallbackUsed):\(transportHealth)"
-                : nil
-        )
-    }
-
-    static func isExpectedCancellation(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        if lowercasedMessage.contains("cancellationerror") {
-            return true
-        }
-
-        guard let metadata = event.metadata else { return false }
-        return metadata.domain == "Swift.CancellationError" ||
-            metadata.typeName == "Swift.CancellationError"
-    }
-
-    static func isDuplicateStartupReporter(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        guard event.category.rawValue == "appState" || event.category.rawValue == "appstate" else {
-            return false
-        }
-
-        return lowercasedMessage.contains("client error:") &&
-            (
-                lowercasedMessage.contains("desktop stream failed") ||
-                    lowercasedMessage.contains("desktop stream start timed out") ||
-                    lowercasedMessage.contains("stream failed to present its first frame after bounded recovery")
-            )
-    }
-
-    static func containsAny(_ value: String, _ needles: [String]) -> Bool {
-        needles.contains { value.contains($0) }
-    }
-
-    static func inferredTransportHealth(from lowercasedMessage: String) -> String {
-        if lowercasedMessage.contains("no screen samples") ||
-            lowercasedMessage.contains("no startup packets") ||
-            lowercasedMessage.contains("packet-starved") {
-            return "packet-starved"
-        }
-
-        if lowercasedMessage.contains("disconnected") ||
-            lowercasedMessage.contains("connection") ||
-            lowercasedMessage.contains("transport") {
-            return "disconnected"
-        }
-
-        return "unknown"
-    }
-
-    static func normalizedIssueKind(for event: LoomDiagnosticsErrorEvent) -> String {
-        if let metadata = event.metadata {
-            if metadata.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" {
-                return "screencapturekit"
-            }
-            if metadata.domain == NSOSStatusErrorDomain {
-                return "osstatus"
-            }
-            if metadata.domain == "MirageKit.MirageError" {
-                return "mirage-error"
-            }
-            if metadata.domain == "Loom.LoomError" {
-                return "loom-error"
-            }
-        }
-
-        return event.category.rawValue
-    }
-
-    static func isExpectedTransportSendFailure(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        guard lowercasedMessage.contains("failed to send input") ||
-            lowercasedMessage.contains("failed to send session state") ||
-            lowercasedMessage.contains("audio transport send failed") ||
-            lowercasedMessage.contains("failed reopening audio transport") ||
-            lowercasedMessage.contains("control channel closed") else {
-            return false
-        }
-
-        if lowercasedMessage.contains("unreliable send queue cancelled") ||
-            lowercasedMessage.contains("connectionfailed") ||
-            lowercasedMessage.contains("cancelled") ||
-            lowercasedMessage.contains("closed") {
-            return true
-        }
-
-        guard let metadata = event.metadata else { return false }
-        if metadata.domain == "Loom.LoomError" {
-            return metadata.code == 0 || metadata.code == 3
-        }
-        if metadata.domain == NSPOSIXErrorDomain {
-            return [32, 54, 57, 89].contains(metadata.code)
-        }
-        return false
-    }
-
-    static func isExpectedWakeFailure(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        guard event.category.rawValue == "wol" ||
-            event.category.rawValue == "bootstrapHandoff" ||
-            event.category.rawValue == "bootstrap_handoff" else {
-            return false
-        }
-
-        if lowercasedMessage.contains("wake timed out") {
-            return true
-        }
-
-        guard lowercasedMessage.contains("wake-on-lan failed") else { return false }
-        if lowercasedMessage.contains("permission denied") ||
-            lowercasedMessage.contains("sendfailed") ||
-            lowercasedMessage.contains("network is unreachable") ||
-            lowercasedMessage.contains("cannot assign requested address") {
-            return true
-        }
-        return false
-    }
-
-    static func isExpectedBootstrapHandoffConnectionRace(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        guard event.category.rawValue == "bootstrapHandoff" ||
-            event.category.rawValue == "bootstrap_handoff" else {
-            return false
-        }
-
-        return lowercasedMessage.contains("already connected or connecting")
-    }
-
-    static func isExpectedAppWindowCapacityRejection(_ lowercasedMessage: String) -> Bool {
-        lowercasedMessage.contains("max app windows reached")
-    }
-
-    static func isScreenCaptureKitContentListUnavailable(_ event: LoomDiagnosticsErrorEvent) -> Bool {
-        guard let metadata = event.metadata,
-              metadata.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" else {
-            return false
-        }
-        return [-3813, -3814, -3815].contains(metadata.code)
-    }
-
-    static func isVirtualDisplayStartupFailure(
-        _ event: LoomDiagnosticsErrorEvent,
-        lowercasedMessage: String
-    ) -> Bool {
-        if let metadata = event.metadata,
-           metadata.domain.contains("SharedVirtualDisplayManager.SharedDisplayError") {
-            return true
-        }
-
-        return lowercasedMessage.contains("virtual display acquisition failed") ||
-            lowercasedMessage.contains("failed to handle desktop stream request")
-    }
-
-    static func isExpectedVersionOrProtocolRejection(_ lowercasedMessage: String) -> Bool {
-        lowercasedMessage.contains("protocolversionmismatch") ||
-            lowercasedMessage.contains("protocolfeaturesmismatch") ||
-            lowercasedMessage.contains("versions are incompatible") ||
-            lowercasedMessage.contains("protocol features are incompatible") ||
-            lowercasedMessage.contains("incompatible mirage handshake") ||
-            lowercasedMessage.contains("invalid mirage bootstrap frame") ||
-            lowercasedMessage.contains("malformedbootstrap")
     }
 }

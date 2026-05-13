@@ -32,7 +32,10 @@ package enum MiragePeerAdvertisementMetadata {
         package let wiredSubnetSignatures: [String]
 
         package var allSubnetSignatures: Set<String> {
-            Set(wifiSubnetSignatures).union(wiredSubnetSignatures)
+            MirageLocalNetworkSnapshot.subnetSignatureSet(
+                wifiSubnetSignatures: wifiSubnetSignatures,
+                wiredSubnetSignatures: wiredSubnetSignatures
+            )
         }
     }
 

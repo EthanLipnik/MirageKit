@@ -9,11 +9,6 @@
 
 import Foundation
 
-/// Request a Mirage Host app relaunch from the connected host (Client -> Host).
-package struct HostApplicationRestartRequestMessage: Codable, Sendable {
-    package init() {}
-}
-
 /// Result of a Mirage Host app relaunch request (Host -> Client).
 package struct HostApplicationRestartResultMessage: Codable, Sendable {
     package let accepted: Bool

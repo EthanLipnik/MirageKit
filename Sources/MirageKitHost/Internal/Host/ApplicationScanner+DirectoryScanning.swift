@@ -9,42 +9,12 @@
 
 import MirageKit
 #if os(macOS)
-import CoreServices
 import Foundation
 
 // MARK: - Directory Scanning
 
 extension ApplicationScanner {
-    struct AppCandidate: Hashable, Sendable {
-        let name: String
-        let bundleIdentifier: String?
-        let version: String?
-        let url: URL
-        let path: String
-        let domainPriority: Int
-
-        func isPreferred(over other: AppCandidate) -> Bool {
-            guard self != other else { return false }
-
-            // Higher domain priority wins
-            if domainPriority != other.domainPriority { return domainPriority > other.domainPriority }
-
-            // Compare versions
-            if let v1 = version, let v2 = other.version {
-                let comparison = v1.compare(v2, options: .numeric)
-                if comparison != .orderedSame { return comparison == .orderedDescending }
-            }
-
-            // Fallback to path comparison
-            return path.localizedCaseInsensitiveCompare(other.path) == .orderedAscending
-        }
-    }
-
-    struct ProcessCandidateResult {
-        let canonicalURL: URL
-        let preferredCandidate: AppCandidate?
-    }
-
+    /// Scans configured application roots and reports each newly preferred candidate as it is discovered.
     func scanAllDirectories(
         onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)? = nil
     ) async -> [AppCandidate] {
@@ -52,18 +22,18 @@ extension ApplicationScanner {
         return await performDirectoryScan(onPreferredCandidate: onPreferredCandidate)
     }
 
+    /// Performs the full app directory scan and deduplicates candidates by bundle identifier.
     func performDirectoryScan(
         onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
     ) async -> [AppCandidate] {
         var byBundle: [String: AppCandidate] = [:]
-        var byPath: [String: AppCandidate] = [:]
         var seenPaths = Set<String>()
         let runningAppPathsByBundle = runningAppPathsByBundleIdentifier()
         var defaultAppPathByBundleIdentifier: [String: String] = [:]
         var missingDefaultAppPathBundleIdentifiers = Set<String>()
 
         for directory in scanDirectories {
-            if Task.isCancelled { return Array(byBundle.values) + Array(byPath.values) }
+            if Task.isCancelled { return Array(byBundle.values) }
             guard fileManager.fileExists(atPath: directory.path) else { continue }
 
             guard let enumerator = fileManager.enumerator(
@@ -71,7 +41,7 @@ extension ApplicationScanner {
                 includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants],
                 errorHandler: { url, error in
-                    NSLog("MirageKit.ApplicationScanner: Failed to enumerate \(url.path): \(error)")
+                    MirageLogger.host("Application scanner failed to enumerate \(url.path): \(error)")
                     return true
                 }
             ) else {
@@ -79,7 +49,7 @@ extension ApplicationScanner {
             }
 
             for url in Self.urls(from: enumerator) {
-                if Task.isCancelled { return Array(byBundle.values) + Array(byPath.values) }
+                if Task.isCancelled { return Array(byBundle.values) }
                 guard let result = processCandidate(
                     at: url,
                     allowBundleContents: false,
@@ -106,16 +76,16 @@ extension ApplicationScanner {
                         defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                         missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                         byBundle: &byBundle,
-                        byPath: &byPath,
                         onPreferredCandidate: onPreferredCandidate
                     )
                 }
             }
         }
 
-        return Array(byBundle.values) + Array(byPath.values)
+        return Array(byBundle.values)
     }
 
+    /// Materializes URLs from a directory enumerator so iteration can stay actor-isolated.
     nonisolated private static func urls(from enumerator: FileManager.DirectoryEnumerator) -> [URL] {
         var urls: [URL] = []
         for case let url as URL in enumerator {
@@ -124,7 +94,7 @@ extension ApplicationScanner {
         return urls
     }
 
-    @discardableResult
+    /// Converts a filesystem URL into a candidate and updates the current preferred candidate map.
     func processCandidate(
         at url: URL,
         allowBundleContents: Bool,
@@ -171,6 +141,7 @@ extension ApplicationScanner {
         return ProcessCandidateResult(canonicalURL: canonicalURL, preferredCandidate: preferredCandidate)
     }
 
+    /// Recursively scans bundle contents when a top-level app is allowed to expose nested apps.
     func scanNestedApps(
         inside directory: URL,
         currentDepth: Int,
@@ -180,7 +151,6 @@ extension ApplicationScanner {
         defaultAppPathByBundleIdentifier: inout [String: String],
         missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
-        byPath: inout [String: AppCandidate],
         onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
     ) async {
         if Task.isCancelled { return }
@@ -193,11 +163,15 @@ extension ApplicationScanner {
             return
         }
 
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        let contents: [URL]
+        do {
+            contents = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            MirageLogger.debug(.host, "Skipping unreadable application scan directory \(directory.path): \(error)")
             return
         }
 
@@ -236,7 +210,6 @@ extension ApplicationScanner {
                             defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                             missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                             byBundle: &byBundle,
-                            byPath: &byPath,
                             onPreferredCandidate: onPreferredCandidate
                         )
                     }
@@ -261,7 +234,6 @@ extension ApplicationScanner {
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
-                    byPath: &byPath,
                     onPreferredCandidate: onPreferredCandidate
                 )
                 continue
@@ -278,13 +250,13 @@ extension ApplicationScanner {
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
-                    byPath: &byPath,
                     onPreferredCandidate: onPreferredCandidate
                 )
             }
         }
     }
 
+    /// Recursively collects app bundles below an Applications or Utilities directory.
     func collectApplications(
         inside directory: URL,
         currentDepth: Int,
@@ -294,7 +266,6 @@ extension ApplicationScanner {
         defaultAppPathByBundleIdentifier: inout [String: String],
         missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
-        byPath: inout [String: AppCandidate],
         onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
     ) async {
         if Task.isCancelled { return }
@@ -307,11 +278,15 @@ extension ApplicationScanner {
             return
         }
 
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        let contents: [URL]
+        do {
+            contents = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        } catch {
+            MirageLogger.debug(.host, "Skipping unreadable catalog scan directory \(directory.path): \(error)")
             return
         }
 
@@ -349,7 +324,6 @@ extension ApplicationScanner {
                             defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                             missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                             byBundle: &byBundle,
-                            byPath: &byPath,
                             onPreferredCandidate: onPreferredCandidate
                         )
                     }
@@ -373,122 +347,11 @@ extension ApplicationScanner {
                 defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                 missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                 byBundle: &byBundle,
-                byPath: &byPath,
                 onPreferredCandidate: onPreferredCandidate
             )
         }
     }
 
-    func shouldPrefer(
-        _ candidate: AppCandidate,
-        over existing: AppCandidate,
-        bundleIdentifier: String,
-        runningAppPathsByBundle: [String: Set<String>],
-        defaultAppPathByBundleIdentifier: inout [String: String],
-        missingDefaultAppPathBundleIdentifiers: inout Set<String>
-    )
-    -> Bool {
-        let runningPaths = runningAppPathsByBundle[bundleIdentifier] ?? []
-        let defaultPath = defaultAppPath(
-            forBundleIdentifier: bundleIdentifier,
-            cachedPaths: &defaultAppPathByBundleIdentifier,
-            missingBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers
-        )
-        if let runtimePreferred = Self.runtimePathPreference(
-            candidatePath: candidate.path,
-            existingPath: existing.path,
-            runningPaths: runningPaths,
-            defaultPath: defaultPath
-        ) {
-            return runtimePreferred
-        }
-
-        return candidate.isPreferred(over: existing)
-    }
-
-    nonisolated static func runtimePathPreference(
-        candidatePath: String,
-        existingPath: String,
-        runningPaths: Set<String>,
-        defaultPath: String?
-    )
-    -> Bool? {
-        let candidateIsRunning = runningPaths.contains(candidatePath)
-        let existingIsRunning = runningPaths.contains(existingPath)
-        if candidateIsRunning != existingIsRunning { return candidateIsRunning }
-
-        guard let defaultPath else { return nil }
-        let candidateIsDefault = candidatePath == defaultPath
-        let existingIsDefault = existingPath == defaultPath
-        if candidateIsDefault != existingIsDefault { return candidateIsDefault }
-        return nil
-    }
-
-    func candidateFromBundle(at url: URL) -> AppCandidate? {
-        guard let bundle = Bundle(url: url) else {
-            return AppCandidate(
-                name: url.deletingPathExtension().lastPathComponent,
-                bundleIdentifier: nil,
-                version: nil,
-                url: url,
-                path: url.path,
-                domainPriority: domainPriority(for: url)
-            )
-        }
-
-        // Skip the hosting app itself to avoid self-stream recursion.
-        if let hostingBundleIdentifier = Bundle.main.bundleIdentifier,
-           bundle.bundleIdentifier == hostingBundleIdentifier {
-            return nil
-        }
-
-        let bundleID = bundle.bundleIdentifier ?? ""
-        let isCoreServices = url.path.hasPrefix("/System/Library/CoreServices")
-
-        // For CoreServices apps, use allowlist/blocklist filtering
-        if isCoreServices {
-            let lowercasedID = bundleID.lowercased()
-
-            // Always include apps on the allowlist
-            let isAllowlisted = coreServicesAllowlist.contains(lowercasedID)
-
-            // Exclude apps matching system service patterns
-            let matchesExclusionPattern = excludedBundlePatterns.contains { pattern in
-                bundleID.contains(pattern)
-            }
-
-            // Skip if not allowlisted and matches exclusion pattern
-            if !isAllowlisted, matchesExclusionPattern { return nil }
-
-            // Also skip apps with no UI (background-only apps)
-            if !isAllowlisted {
-                let isBackgroundOnly = bundle.object(forInfoDictionaryKey: "LSUIElement") as? Bool == true
-                    || bundle.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool == true
-                if isBackgroundOnly { return nil }
-            }
-        }
-
-        var displayName = bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-        if displayName?.isEmpty ?? true { displayName = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String }
-        if displayName?.isEmpty ?? true { displayName = url.deletingPathExtension().lastPathComponent }
-
-        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-
-        return AppCandidate(
-            name: displayName ?? url.deletingPathExtension().lastPathComponent,
-            bundleIdentifier: bundle.bundleIdentifier,
-            version: version,
-            url: url,
-            path: url.path,
-            domainPriority: domainPriority(for: url)
-        )
-    }
-
-    /// Compares two version strings using system version comparison
-    func compareVersions(_ version1: String?, _ version2: String?) -> ComparisonResult? {
-        guard let v1 = version1, let v2 = version2 else { return nil }
-        return v1.compare(v2, options: .numeric)
-    }
 }
 
 #endif

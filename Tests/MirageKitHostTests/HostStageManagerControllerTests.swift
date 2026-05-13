@@ -54,7 +54,7 @@ struct HostStageManagerControllerTests {
     func setEnabledReturnsFalseWhenWriteFails() async {
         let runner = MockCommandRunner(results: [
             Self.success(stdout: "1\n"),
-            Self.failure(status: 1, stderr: "write failed"),
+            Self.failure(status: 1),
         ])
         let controller = HostStageManagerController(commandRunner: runner.run)
 
@@ -117,7 +117,7 @@ struct HostStageManagerControllerTests {
         host.stageManagerController = HostStageManagerController(commandRunner: runner.run)
         host.appStreamingStageManagerNeedsRestore = true
 
-        await host.appStreamManager.startAppSession(
+        _ = await host.appStreamManager.startAppSession(
             bundleIdentifier: "com.example.App",
             appName: "Example",
             appPath: "/Applications/Example.app",
@@ -128,14 +128,15 @@ struct HostStageManagerControllerTests {
             maxVisibleSlots: 1,
             bitrateBudgetBps: nil
         )
-        await host.appStreamManager.addWindowToSession(
+        _ = await host.appStreamManager.addWindowToSession(
             bundleIdentifier: "com.example.App",
             windowID: 42,
             streamID: 7,
             title: "Main",
             width: 1280,
             height: 720,
-            isResizable: true
+            isResizable: true,
+            mediaStreamID: 7
         )
 
         await host.removeStoppedWindowFromAppSessionIfNeeded(
@@ -143,7 +144,7 @@ struct HostStageManagerControllerTests {
             fallbackWindowID: 42
         )
 
-        let sessions = await host.appStreamManager.getAllSessions()
+        let sessions = await host.appStreamManager.allSessions()
         #expect(sessions.isEmpty)
         #expect(!host.appStreamingStageManagerNeedsRestore)
 
@@ -184,7 +185,6 @@ extension HostStageManagerControllerTests {
                 terminationStatus: 1,
                 timedOut: false,
                 stdout: "",
-                stderr: "No queued response",
                 errorDescription: nil
             )
         }
@@ -194,22 +194,20 @@ extension HostStageManagerControllerTests {
         }
     }
 
-    static func success(stdout: String = "", stderr: String = "") -> HostStageManagerController.CommandResult {
+    static func success(stdout: String = "") -> HostStageManagerController.CommandResult {
         HostStageManagerController.CommandResult(
             terminationStatus: 0,
             timedOut: false,
             stdout: stdout,
-            stderr: stderr,
             errorDescription: nil
         )
     }
 
-    static func failure(status: Int32 = 1, stderr: String = "Failed") -> HostStageManagerController.CommandResult {
+    static func failure(status: Int32 = 1) -> HostStageManagerController.CommandResult {
         HostStageManagerController.CommandResult(
             terminationStatus: status,
             timedOut: false,
             stdout: "",
-            stderr: stderr,
             errorDescription: nil
         )
     }

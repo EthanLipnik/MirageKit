@@ -24,6 +24,7 @@ struct SessionRecoveryStatusTests {
 
         let sessionID = store.createSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 4101),
             hostName: "Host",
             minSize: nil
@@ -39,6 +40,7 @@ struct SessionRecoveryStatusTests {
         let streamID: StreamID = 42
         let sessionID = store.createSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 4201),
             hostName: "Host",
             minSize: nil
@@ -56,6 +58,7 @@ struct SessionRecoveryStatusTests {
         let streamID: StreamID = 43
         let firstSessionID = store.createSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 4301),
             hostName: "Host",
             minSize: nil
@@ -68,6 +71,7 @@ struct SessionRecoveryStatusTests {
 
         let secondSessionID = store.createSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 4302),
             hostName: "Host",
             minSize: nil

@@ -26,7 +26,6 @@ struct DesktopVirtualDisplayResizeCacheEntry: Equatable, Codable {
     let hiDPI: Bool
     let refreshRate: Int
     let colorSpace: MirageColorSpace
-    let targetTier: DesktopVirtualDisplayStartupTargetTier
 }
 
 func desktopVirtualDisplayResizeRequest(
@@ -59,7 +58,12 @@ func cachedDesktopVirtualDisplayResizeTarget(
 ) -> DesktopVirtualDisplayResizeCacheEntry? {
     let key = desktopVirtualDisplayResizeTargetDefaultsKey(for: request)
     guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-    return try? JSONDecoder().decode(DesktopVirtualDisplayResizeCacheEntry.self, from: data)
+    do {
+        return try JSONDecoder().decode(DesktopVirtualDisplayResizeCacheEntry.self, from: data)
+    } catch {
+        MirageLogger.error(.host, error: error, message: "Failed to decode desktop virtual-display resize target: ")
+        return nil
+    }
 }
 
 func clearDesktopVirtualDisplayResizeTarget(
@@ -67,32 +71,6 @@ func clearDesktopVirtualDisplayResizeTarget(
 ) {
     let key = desktopVirtualDisplayResizeTargetDefaultsKey(for: request)
     UserDefaults.standard.removeObject(forKey: key)
-}
-
-func recordDesktopVirtualDisplayResizeTargetSuccess(
-    pixelResolution: CGSize,
-    scaleFactor: CGFloat,
-    refreshRate: Int,
-    colorSpace: MirageColorSpace,
-    targetTier: DesktopVirtualDisplayStartupTargetTier,
-    for request: DesktopVirtualDisplayResizeRequest
-) {
-    guard targetTier == .preferred else {
-        MirageLogger.host("Not caching degraded desktop resize target")
-        return
-    }
-
-    let entry = DesktopVirtualDisplayResizeCacheEntry(
-        pixelWidth: Int(pixelResolution.width.rounded()),
-        pixelHeight: Int(pixelResolution.height.rounded()),
-        hiDPI: scaleFactor > 1.5,
-        refreshRate: refreshRate,
-        colorSpace: colorSpace,
-        targetTier: targetTier
-    )
-    guard let data = try? JSONEncoder().encode(entry) else { return }
-    let key = desktopVirtualDisplayResizeTargetDefaultsKey(for: request)
-    UserDefaults.standard.set(data, forKey: key)
 }
 
 func recordDesktopVirtualDisplayResizeTargetSuccess(
@@ -109,13 +87,26 @@ func recordDesktopVirtualDisplayResizeTargetSuccess(
         .degraded
     }
 
-    recordDesktopVirtualDisplayResizeTargetSuccess(
-        pixelResolution: snapshot.resolution,
-        scaleFactor: snapshot.scaleFactor,
+    guard effectiveTier == .preferred else {
+        MirageLogger.host("Not caching degraded desktop resize target")
+        return
+    }
+
+    let entry = DesktopVirtualDisplayResizeCacheEntry(
+        pixelWidth: Int(snapshot.resolution.width.rounded()),
+        pixelHeight: Int(snapshot.resolution.height.rounded()),
+        hiDPI: snapshot.scaleFactor > 1.5,
         refreshRate: Int(snapshot.refreshRate.rounded()),
-        colorSpace: snapshot.colorSpace,
-        targetTier: effectiveTier,
-        for: request
+        colorSpace: snapshot.colorSpace
     )
+    let data: Data
+    do {
+        data = try JSONEncoder().encode(entry)
+    } catch {
+        MirageLogger.error(.host, error: error, message: "Failed to encode desktop virtual-display resize target: ")
+        return
+    }
+    let key = desktopVirtualDisplayResizeTargetDefaultsKey(for: request)
+    UserDefaults.standard.set(data, forKey: key)
 }
 #endif

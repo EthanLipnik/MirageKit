@@ -7,20 +7,21 @@
 
 import Foundation
 
-/// Represents an application that owns windows
+/// Host application that owns one or more capturable windows.
 public struct MirageApplication: Identifiable, Hashable, Sendable, Codable {
-    /// Process ID of the application
+    /// Process identifier of the application.
     public let id: Int32
 
-    /// Bundle identifier (e.g., "com.apple.Safari")
+    /// Bundle identifier, when available.
     public let bundleIdentifier: String?
 
-    /// Application name
+    /// Display name of the application.
     public let name: String
 
-    /// Application icon as PNG data (for transmission)
+    /// Application icon payload data for transmission to clients.
     public let iconData: Data?
 
+    /// Creates host application metadata for window and app-stream discovery.
     public init(
         id: Int32,
         bundleIdentifier: String?,

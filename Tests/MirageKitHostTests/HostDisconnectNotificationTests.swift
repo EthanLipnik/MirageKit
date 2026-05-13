@@ -49,9 +49,7 @@ struct HostDisconnectNotificationTests {
         let hostClientContext = ClientContext(
             sessionID: sessionID,
             client: client,
-            negotiatedFeatures: mirageSupportedFeatures,
             controlChannel: serverControl,
-            remoteEndpoint: nil,
             pathSnapshot: nil
         )
         host.connectedClients = [client]
@@ -71,7 +69,6 @@ struct HostDisconnectNotificationTests {
             #expect(message.type == .disconnect)
             let disconnect = try message.decode(DisconnectMessage.self)
             #expect(disconnect.reason == .userRequested)
-            #expect(disconnect.message == "Disconnected by host")
 
             await disconnectTask.value
             #expect(host.connectedClients.isEmpty)
@@ -255,16 +252,16 @@ private actor AsyncBox<Value: Sendable> {
 
 @MainActor
 private final class AllowAllTrustProvider: LoomTrustProvider {
-    func evaluateTrust(for peer: LoomPeerIdentity) async -> LoomTrustDecision {
+    func evaluateTrust(for _: LoomPeerIdentity) async -> LoomTrustDecision {
         .trusted
     }
 
-    func evaluateTrustOutcome(for peer: LoomPeerIdentity) async -> LoomTrustEvaluation {
+    func evaluateTrustOutcome(for _: LoomPeerIdentity) async -> LoomTrustEvaluation {
         LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
     }
 
-    func grantTrust(to peer: LoomPeerIdentity) async throws {}
+    func grantTrust(to _: LoomPeerIdentity) async throws {}
 
-    func revokeTrust(for deviceID: UUID) async throws {}
+    func revokeTrust(for _: UUID) async throws {}
 }
 #endif

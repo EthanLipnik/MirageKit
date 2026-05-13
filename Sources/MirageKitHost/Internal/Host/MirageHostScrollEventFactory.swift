@@ -18,21 +18,13 @@ enum MirageHostScrollEventFactory {
         return Int32(integerDelta)
     }
 
-    static func integerDelta(for delta: CGFloat) -> Int32 {
-        Int32(delta.rounded(.towardZero))
-    }
-
     static func makeScrollEvent(
         from event: MirageScrollEvent,
         integerDeltaX: Int32,
         integerDeltaY: Int32
     ) -> CGEvent? {
         let usesNativeScrollMetadata = event.hasNativeScrollMetadata
-        guard shouldPost(
-            integerDeltaX: integerDeltaX,
-            integerDeltaY: integerDeltaY,
-            usesNativeScrollMetadata: usesNativeScrollMetadata
-        ) else {
+        guard integerDeltaX != 0 || integerDeltaY != 0 || usesNativeScrollMetadata else {
             return nil
         }
 
@@ -54,15 +46,6 @@ enum MirageHostScrollEventFactory {
             )
         }
         return cgEvent
-    }
-
-    private static func shouldPost(
-        integerDeltaX: Int32,
-        integerDeltaY: Int32,
-        usesNativeScrollMetadata: Bool
-    ) -> Bool {
-        if integerDeltaX != 0 || integerDeltaY != 0 { return true }
-        return usesNativeScrollMetadata
     }
 
     private static func applyNativeScrollMetadata(

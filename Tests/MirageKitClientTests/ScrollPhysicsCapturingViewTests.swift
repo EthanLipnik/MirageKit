@@ -12,7 +12,6 @@ import UIKit
 
 @Suite("Scroll Physics Capturing View")
 struct ScrollPhysicsCapturingViewTests {
-
     @Test("Input capturing view gives one-finger direct scroll priority over taps")
     func inputCapturingViewGivesOneFingerDirectScrollPriorityOverTaps() throws {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

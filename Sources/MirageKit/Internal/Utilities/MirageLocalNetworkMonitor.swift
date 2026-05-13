@@ -14,7 +14,11 @@ package struct MirageLocalNetworkSnapshot: Sendable, Equatable {
     package let wifiSubnetSignatures: [String]
     package let wiredSubnetSignatures: [String]
 
-    package var allSubnetSignatures: Set<String> {
+    /// Combines Wi-Fi and wired subnet fingerprints into the set used for local-network overlap checks.
+    package static func subnetSignatureSet(
+        wifiSubnetSignatures: [String],
+        wiredSubnetSignatures: [String]
+    ) -> Set<String> {
         Set(wifiSubnetSignatures).union(wiredSubnetSignatures)
     }
 }
@@ -42,7 +46,12 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         pathMonitor.cancel()
     }
 
-    package func snapshot() -> MirageLocalNetworkSnapshot {
+    /// Latest observed default-route kind and local subnet signatures.
+    ///
+    /// The path kind and interface map are read from the monitor queue before subnet signatures are
+    /// derived from the system interface table, so callers receive a consistent point-in-time view
+    /// of the last `NWPath` update.
+    package var snapshot: MirageLocalNetworkSnapshot {
         let (pathKind, interfaceTypesByName) = stateQueue.sync {
             (currentPathKind, self.interfaceTypesByName)
         }
@@ -109,7 +118,7 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
             let interface = current.pointee
             cursor = interface.ifa_next
 
-            let name = decodedCString(interface.ifa_name).lowercased()
+            let name = String(cString: interface.ifa_name).lowercased()
             guard interfaceTypesByName[name] == interfaceType else { continue }
 
             let flags = Int32(interface.ifa_flags)
@@ -131,11 +140,6 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         }
 
         return signatures.sorted()
-    }
-
-    private static func decodedCString(_ pointer: UnsafePointer<CChar>) -> String {
-        let bytes = UnsafeBufferPointer(start: pointer, count: strlen(pointer)).map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
     }
 
     private static func subnetSignature(

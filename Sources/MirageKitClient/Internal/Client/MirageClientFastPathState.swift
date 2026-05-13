@@ -21,7 +21,6 @@ final class MirageClientFastPathState: @unchecked Sendable {
     }
 
     private struct State {
-        var mediaSecurityContext: MirageMediaSecurityContext?
         var mediaSecurityPacketKey: MirageMediaPacketKey?
         var activeAudioStreamID: StreamID?
         var audioDecodeTargetChannelCount: Int = 2
@@ -39,16 +38,16 @@ final class MirageClientFastPathState: @unchecked Sendable {
     private let lock = NSLock()
     private var state = State()
 
-    func activeStreamIDsSnapshot() -> Set<StreamID> {
+    var activeStreamIDs: Set<StreamID> {
         withLock { $0.activeStreamIDs }
     }
 
     func addActiveStreamID(_ id: StreamID) {
-        withLock { $0.activeStreamIDs.insert(id) }
+        withLock { $0.activeStreamIDs.formUnion([id]) }
     }
 
     func removeActiveStreamID(_ id: StreamID) {
-        withLock { $0.activeStreamIDs.remove(id) }
+        withLock { $0.activeStreamIDs.subtract([id]) }
     }
 
     func clearActiveStreamIDs() {
@@ -73,17 +72,8 @@ final class MirageClientFastPathState: @unchecked Sendable {
 
     func setMediaSecurityContext(_ context: MirageMediaSecurityContext?) {
         withLock { state in
-            state.mediaSecurityContext = context
-            state.mediaSecurityPacketKey = context.map { MirageMediaSecurity.makePacketKey(context: $0) }
+            state.mediaSecurityPacketKey = context.map(MirageMediaPacketKey.init(context:))
         }
-    }
-
-    func mediaSecurityContext() -> MirageMediaSecurityContext? {
-        withLock { $0.mediaSecurityContext }
-    }
-
-    func mediaSecurityPacketKey() -> MirageMediaPacketKey? {
-        withLock { $0.mediaSecurityPacketKey }
     }
 
     func setActiveAudioStreamID(_ streamID: StreamID?) {
@@ -105,11 +95,11 @@ final class MirageClientFastPathState: @unchecked Sendable {
     }
 
     func markStartupPacketPending(_ streamID: StreamID) {
-        withLock { $0.startupPacketPending.insert(streamID) }
+        withLock { $0.startupPacketPending.formUnion([streamID]) }
     }
 
     func clearStartupPacketPending(_ streamID: StreamID) {
-        withLock { $0.startupPacketPending.remove(streamID) }
+        withLock { $0.startupPacketPending.subtract([streamID]) }
     }
 
     func clearAllStartupPacketPending() {
@@ -154,7 +144,7 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { $0.lastInboundMediaActivityTime = now }
     }
 
-    func latestInboundActivityTime() -> CFAbsoluteTime {
+    var latestInboundActivityTime: CFAbsoluteTime {
         withLock { max($0.lastInboundControlActivityTime, $0.lastInboundMediaActivityTime) }
     }
 
@@ -165,7 +155,7 @@ final class MirageClientFastPathState: @unchecked Sendable {
         }
     }
 
-    func qualityTestContext() -> (accumulator: QualityTestAccumulator?, testID: UUID?) {
+    var qualityTestContext: (accumulator: QualityTestAccumulator?, testID: UUID?) {
         withLock { state in
             (state.qualityTestAccumulator, state.qualityTestActiveTestID)
         }
@@ -185,7 +175,6 @@ final class MirageClientFastPathState: @unchecked Sendable {
         }
     }
 
-    @discardableResult
     private func withLock<T>(_ body: (inout State) -> T) -> T {
         lock.lock()
         defer { lock.unlock() }

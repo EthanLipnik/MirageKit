@@ -89,6 +89,5 @@ struct HostSymbolicHotKeyResolverTests {
         #expect(keyEvent.keyCode == 123)
         #expect(keyEvent.modifiers == [.control])
     }
-
 }
 #endif

@@ -8,12 +8,12 @@
 import Foundation
 
 package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
-    package enum SampleSource: String, Sendable, Equatable {
+    package enum SampleSource: String, Equatable {
         case encodedPFrame = "Encoded P-frame"
         case reassembledPFrame = "Reassembled P-frame"
     }
 
-    package struct Configuration: Sendable, Equatable {
+    package struct Configuration: Equatable {
         package let isEnabled: Bool
         package let sampleLimit: Int
         package let timeoutSeconds: TimeInterval
@@ -32,7 +32,9 @@ package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
         }
 
         package static func from(environment: [String: String]) -> Configuration {
-            let enabled = environment["MIRAGE_FRAME_INTEGRITY_DIAGNOSTICS"] == "1"
+            let enabled = MirageEnvironmentValue.isTruthy(
+                environment["MIRAGE_FRAME_INTEGRITY_DIAGNOSTICS"]
+            )
             let sampleLimit = environment["MIRAGE_FRAME_INTEGRITY_SAMPLE_LIMIT"]
                 .flatMap(Int.init) ?? 120
             let timeoutSeconds = environment["MIRAGE_FRAME_INTEGRITY_TIMEOUT_SECONDS"]
@@ -47,20 +49,10 @@ package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
             )
         }
 
-        package static var processEnvironment: Configuration {
-            from(environment: ProcessInfo.processInfo.environment)
-        }
+        package static let processEnvironment: Configuration = from(environment: ProcessInfo.processInfo.environment)
     }
 
-    package struct Snapshot: Sendable, Equatable {
-        package let acceptedSamples: UInt64
-        package let processedSamples: UInt64
-        package let droppedSamples: UInt64
-        package let pendingSamples: Int
-        package let isEnabled: Bool
-    }
-
-    private struct Sample: Sendable {
+    private struct Sample {
         let source: SampleSource
         let streamID: StreamID
         let frameNumber: UInt32
@@ -144,18 +136,6 @@ package final class MirageFrameIntegrityDiagnostics: @unchecked Sendable {
             queue.async { [weak self] in
                 self?.drainSamples()
             }
-        }
-    }
-
-    package func snapshot() -> Snapshot {
-        state.withLock { state in
-            Snapshot(
-                acceptedSamples: state.acceptedSamples,
-                processedSamples: state.processedSamples,
-                droppedSamples: state.droppedSamples,
-                pendingSamples: state.pendingSamples.count,
-                isEnabled: configuration.isEnabled
-            )
         }
     }
 

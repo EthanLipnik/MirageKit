@@ -17,12 +17,6 @@ package enum ControlMessageType: UInt8, Codable {
     case ping = 0x04
     case pong = 0x05
 
-    // Authentication
-    case authRequest = 0x10
-    case authChallenge = 0x11
-    case authResponse = 0x12
-    case authResult = 0x13
-
     // Window management
     case windowListRequest = 0x20
     case windowList = 0x21
@@ -30,7 +24,6 @@ package enum ControlMessageType: UInt8, Codable {
     case startStream = 0x23
     case stopStream = 0x24
     case streamStarted = 0x25
-    case streamStopped = 0x26
     case streamMetricsUpdate = 0x27
     case streamReady = 0x28
 
@@ -70,19 +63,16 @@ package enum ControlMessageType: UInt8, Codable {
     case appWindowCloseAlertActionRequest = 0x8A
     case appWindowCloseAlertActionResult = 0x8B
     case appWindowSwapResult = 0x8C
-    case windowResizabilityChanged = 0x8D
     case appTerminated = 0x8E
     case streamPolicyUpdate = 0x8F // Host -> Client: Per-stream runtime tier/fps/bitrate/recovery policy
 
     // Menu bar passthrough
     case menuBarUpdate = 0x90 // Host → Client: Menu structure update
     case menuActionRequest = 0x91 // Client → Host: Execute menu action
-    case menuActionResult = 0x92 // Host → Client: Action result
     case hostHardwareIconRequest = 0x93 // Client -> Host: Request host hardware icon payload
     case hostHardwareIcon = 0x94 // Host -> Client: Host hardware icon payload
     case hostSupportLogArchiveRequest = 0x97 // Client -> Host: Request host support log archive
     case hostSupportLogArchive = 0x98 // Host -> Client: Host support log in-session transfer metadata
-    case auxiliaryWindowUpdate = 0x99 // Host -> Client: Auxiliary window position/visibility update
     case hostWallpaperRequest = 0x9A // Client -> Host: Request host wallpaper payload
     case hostWallpaper = 0x9B // Host -> Client: Host wallpaper payload
     case remoteClientStreamOptionsState = 0x9C // Client -> Host: Sync client stream-option state
@@ -226,20 +216,4 @@ package enum ControlMessageParseResult {
     case success(message: ControlMessage, bytesConsumed: Int)
     case needMoreData
     case invalidFrame(reason: String)
-}
-
-package enum ControlMessageParseError: Error {
-    case needMoreData
-    case invalidFrame(String)
-}
-
-package func requireParsedControlMessage(from data: Data, offset: Int = 0) throws -> (ControlMessage, Int) {
-    switch ControlMessage.deserialize(from: data, offset: offset) {
-    case let .success(message, bytesConsumed):
-        return (message, bytesConsumed)
-    case .needMoreData:
-        throw ControlMessageParseError.needMoreData
-    case let .invalidFrame(reason):
-        throw ControlMessageParseError.invalidFrame(reason)
-    }
 }

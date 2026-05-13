@@ -24,22 +24,20 @@ final class QualityTestAccumulator: @unchecked Sendable {
     func record(header: QualityTestPacketHeader, payloadBytes: Int) {
         let stageID = Int(header.stageID)
         lock.lock()
+        defer { lock.unlock() }
         bytesByStage[stageID, default: 0] += payloadBytes
         packetsByStage[stageID, default: 0] += 1
-        lock.unlock()
     }
 
     func receivedMetrics(
         for stageID: Int
     ) -> (receivedPayloadBytes: Int, receivedPacketCount: Int) {
         lock.lock()
-        let bytesSnapshot = bytesByStage
-        let packetsSnapshot = packetsByStage
-        lock.unlock()
+        defer { lock.unlock() }
 
         return (
-            receivedPayloadBytes: bytesSnapshot[stageID, default: 0],
-            receivedPacketCount: packetsSnapshot[stageID, default: 0]
+            receivedPayloadBytes: bytesByStage[stageID, default: 0],
+            receivedPacketCount: packetsByStage[stageID, default: 0]
         )
     }
 }

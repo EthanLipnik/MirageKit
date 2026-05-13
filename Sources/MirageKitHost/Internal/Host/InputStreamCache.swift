@@ -10,47 +10,46 @@ import MirageKit
 
 #if os(macOS)
 
-struct AppStreamInputOverlayRegion: Sendable, Equatable {
+struct AppStreamInputOverlayRegion: Equatable {
+    /// Auxiliary child window that receives input when the region matches.
     let window: MirageWindow
+    /// Child window bounds in the parent stream's normalized coordinate space.
     let normalizedRect: CGRect
+    /// Higher values receive hit-test priority when regions overlap.
     let zIndex: Int
+    /// Whether keyboard-like events should prefer this region over visual z-order.
     let receivesKeyboardFocus: Bool
-
-    init(
-        window: MirageWindow,
-        normalizedRect: CGRect,
-        zIndex: Int,
-        receivesKeyboardFocus: Bool
-    ) {
-        self.window = window
-        self.normalizedRect = normalizedRect
-        self.zIndex = zIndex
-        self.receivesKeyboardFocus = receivesKeyboardFocus
-    }
 }
 
-/// Cached stream entry with all info needed for fast input mapping
+/// Cached stream entry with the window and client context needed for the fast input path.
 struct InputStreamCacheEntry {
+    /// Parent stream window used as the default input target.
     var window: MirageWindow
+    /// Client authorized to send input for this stream.
     var client: MirageConnectedClient
-    /// The content rect within the capture buffer (for offset adjustment)
-    /// Origin indicates padding at top-left, size is the actual content dimensions
-    var contentRect: CGRect = .zero
+    /// Auxiliary overlay hit-test regions associated with this stream.
     var auxiliaryOverlayRegions: [AppStreamInputOverlayRegion] = []
 }
 
-struct AppStreamResolvedInputTarget: Sendable {
+/// Input target resolved from a stream ID after auxiliary overlay hit testing.
+struct AppStreamResolvedInputTarget {
+    /// Possibly rewritten input event for the resolved target window.
     let event: MirageInputEvent
+    /// Host window that should receive the event.
     let window: MirageWindow
+    /// Client authorized for the stream.
     let client: MirageConnectedClient
 }
 
+/// Routes parent-stream input into auxiliary app-stream overlay regions.
 enum AppStreamInputOverlayRouting {
-    struct Result: Sendable {
+    /// Routed event and destination host window.
+    struct Result {
         let event: MirageInputEvent
         let window: MirageWindow
     }
 
+    /// Returns the destination window and rewrites pointer coordinates into child-region space when needed.
     static func route(
         event: MirageInputEvent,
         parentWindow: MirageWindow,
@@ -101,6 +100,7 @@ enum AppStreamInputOverlayRouting {
         }
     }
 
+    /// Returns the normalized pointer location used to hit-test overlay regions.
     private static func hitTestLocation(for event: MirageInputEvent) -> CGPoint? {
         switch event {
         case let .mouseDown(event),
@@ -136,6 +136,7 @@ enum AppStreamInputOverlayRouting {
         }
     }
 
+    /// Rewrites a pointer-like event from parent coordinates into an overlay region.
     private static func rewrite(
         event: MirageInputEvent,
         through rect: CGRect
@@ -183,6 +184,7 @@ enum AppStreamInputOverlayRouting {
         }
     }
 
+    /// Rewrites a mouse event location through an overlay region.
     private static func rewrite(mouseEvent event: MirageMouseEvent, through rect: CGRect) -> MirageMouseEvent {
         MirageMouseEvent(
             button: event.button,
@@ -195,6 +197,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Rewrites a scroll event location through an overlay region.
     private static func rewrite(scrollEvent event: MirageScrollEvent, through rect: CGRect) -> MirageScrollEvent {
         MirageScrollEvent(
             deltaX: event.deltaX,
@@ -208,6 +211,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Rewrites a magnify event location through an overlay region.
     private static func rewrite(magnifyEvent event: MirageMagnifyEvent, through rect: CGRect) -> MirageMagnifyEvent {
         MirageMagnifyEvent(
             magnification: event.magnification,
@@ -218,6 +222,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Rewrites a rotate event location through an overlay region.
     private static func rewrite(rotateEvent event: MirageRotateEvent, through rect: CGRect) -> MirageRotateEvent {
         MirageRotateEvent(
             rotation: event.rotation,
@@ -228,6 +233,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Rewrites a swipe event location through an overlay region.
     private static func rewrite(swipeEvent event: MirageSwipeEvent, through rect: CGRect) -> MirageSwipeEvent {
         MirageSwipeEvent(
             deltaX: event.deltaX,
@@ -239,6 +245,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Rewrites every sample in a pointer batch through an overlay region.
     private static func rewrite(
         pointerSampleBatch batch: MiragePointerSampleBatch,
         through rect: CGRect
@@ -261,6 +268,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Maps a parent normalized location into overlay-local normalized coordinates.
     private static func map(location: CGPoint, through rect: CGRect) -> CGPoint {
         CGPoint(
             x: (location.x - rect.minX) / rect.width,
@@ -268,6 +276,7 @@ enum AppStreamInputOverlayRouting {
         )
     }
 
+    /// Returns whether a normalized overlay rectangle can be used for hit testing.
     private static func isValidNormalizedRect(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite &&
             rect.origin.y.isFinite &&
@@ -278,30 +287,33 @@ enum AppStreamInputOverlayRouting {
     }
 }
 
-/// Thread-safe cache for stream info used by fast input path
-/// Using a class with lock for synchronous access from inputQueue
-final class InputStreamCacheActor: @unchecked Sendable {
+/// Lock-backed stream lookup cache used by the synchronous fast input path.
+final class InputStreamCache: @unchecked Sendable {
     private var cache: [StreamID: InputStreamCacheEntry] = [:]
     private let lock = NSLock()
 
+    /// Stores the current input mapping for a stream.
     func set(_ streamID: StreamID, window: MirageWindow, client: MirageConnectedClient) {
         lock.lock()
+        defer { lock.unlock() }
         cache[streamID] = InputStreamCacheEntry(window: window, client: client)
-        lock.unlock()
     }
 
+    /// Removes cached input mapping when a stream stops.
     func remove(_ streamID: StreamID) {
         lock.lock()
+        defer { lock.unlock() }
         cache.removeValue(forKey: streamID)
-        lock.unlock()
     }
 
-    func get(_ streamID: StreamID) -> InputStreamCacheEntry? {
+    /// Returns the cached input mapping for a stream.
+    func entry(for streamID: StreamID) -> InputStreamCacheEntry? {
         lock.lock()
         defer { lock.unlock() }
         return cache[streamID]
     }
 
+    /// Resolves the stream's current target window and rewrites the event for auxiliary overlays.
     func resolveInputTarget(streamID: StreamID, event: MirageInputEvent) -> AppStreamResolvedInputTarget? {
         lock.lock()
         defer { lock.unlock() }
@@ -318,6 +330,7 @@ final class InputStreamCacheActor: @unchecked Sendable {
         )
     }
 
+    /// Replaces auxiliary overlay routing regions for a parent app stream.
     func setAuxiliaryOverlayRegions(_ streamID: StreamID, regions: [AppStreamInputOverlayRegion]) {
         lock.lock()
         defer { lock.unlock() }
@@ -326,12 +339,7 @@ final class InputStreamCacheActor: @unchecked Sendable {
         cache[streamID] = entry
     }
 
-    func clearAuxiliaryOverlayRegions(_ streamID: StreamID) {
-        setAuxiliaryOverlayRegions(streamID, regions: [])
-    }
-
-    /// Update the window frame in the cache after window move/resize
-    /// Critical for correct mouse coordinate translation after virtual display moves
+    /// Updates a cached window frame after host-side move or resize changes.
     func updateWindowFrame(_ streamID: StreamID, newFrame: CGRect) {
         lock.lock()
         defer { lock.unlock() }
@@ -347,18 +355,8 @@ final class InputStreamCacheActor: @unchecked Sendable {
         cache[streamID] = entry
     }
 
-    /// Update the content rect for a stream (for coordinate offset adjustment)
-    /// Called when capture frames arrive with contentRect metadata
-    func updateContentRect(_ streamID: StreamID, contentRect: CGRect) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard var entry = cache[streamID] else { return }
-        entry.contentRect = contentRect
-        cache[streamID] = entry
-    }
-
-    /// Get stream ID for a given window ID (for updating frame by windowID)
-    func getStreamID(forWindowID windowID: WindowID) -> StreamID? {
+    /// Returns the stream ID currently associated with a host window ID.
+    func streamID(forWindowID windowID: WindowID) -> StreamID? {
         lock.lock()
         defer { lock.unlock() }
         return cache.first(where: { $0.value.window.id == windowID })?.key

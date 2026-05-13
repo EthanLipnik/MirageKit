@@ -24,7 +24,7 @@ private final class ClientControlPingFastPath: @unchecked Sendable {
             case let .success(message, bytesConsumed):
                 parseOffset += bytesConsumed
                 if message.type == .ping {
-                    controlChannel.sendBestEffort(ControlMessage(type: .pong))
+                    controlChannel.sendBestEffort(.pong)
                 }
             case .needMoreData:
                 if parseOffset > 0 {
@@ -52,7 +52,7 @@ extension MirageClientService {
             for await data in controlChannel.incomingBytes {
                 guard !Task.isCancelled else { return }
                 guard let service = serviceBox.value else { return }
-                guard await service.isCurrentControlChannel(controlChannel) else { return }
+                guard await service.controlChannel === controlChannel else { return }
                 if !data.isEmpty {
                     pingFastPath.inspect(data, respondOn: controlChannel)
                     await service.handleIncomingControlChunk(
@@ -65,13 +65,10 @@ extension MirageClientService {
             guard let service = serviceBox.value else { return }
             await service.handleControlChannelClosure(controlChannel)
         }
-        drainBufferedControlMessagesIfNeeded()
-    }
-
-    func drainBufferedControlMessagesIfNeeded() {
-        guard !receiveBuffer.isEmpty else { return }
-        Task { @MainActor [weak self] in
-            await self?.processReceivedData()
+        if !receiveBuffer.isEmpty {
+            Task { @MainActor [weak self] in
+                await self?.processReceivedData()
+            }
         }
     }
 
@@ -81,7 +78,7 @@ extension MirageClientService {
         defer { isProcessingReceivedData = false }
 
         while !receiveBuffer.isEmpty {
-            guard shouldContinueProcessingBufferedControlMessages else {
+            guard case .connected = connectionState else {
                 dropBufferedControlMessagesAfterConnectionStateChange()
                 return
             }
@@ -100,12 +97,13 @@ extension MirageClientService {
             switch ControlMessage.deserialize(from: receiveBuffer, offset: 0) {
             case let .success(message, bytesConsumed):
                 receiveBuffer.removeSubrange(0 ..< bytesConsumed)
-                if shouldDropControlMessageWhileSuppressed(message.type) {
+                if controlUpdatePolicy == .interactiveStreaming,
+                   Self.shouldDropNonEssentialControlMessageWhileInteractive(message.type) {
                     recordSuppressedControlMessage(message.type)
                     continue
                 }
                 recordHighFrequencyControlMessageSampleIfNeeded(message.type)
-                if shouldLogReceivedControlMessage(message.type) {
+                if Self.shouldLogControlMessage(message.type) {
                     MirageLogger.client("Received message type: \(message.type)")
                 }
                 await routeControlMessage(message)
@@ -133,42 +131,27 @@ extension MirageClientService {
         }
     }
 
-    private var shouldContinueProcessingBufferedControlMessages: Bool {
-        if case .connected = connectionState {
-            return true
-        }
-        return false
-    }
-
     private func dropBufferedControlMessagesAfterConnectionStateChange() {
         let bufferedByteCount = receiveBuffer.count
         guard bufferedByteCount > 0 else { return }
+        let connectionStateName = switch connectionState {
+        case .disconnected:
+            "disconnected"
+        case .connecting:
+            "connecting"
+        case .reconnecting:
+            "reconnecting"
+        case .handshaking:
+            "handshaking"
+        case .connected:
+            "connected"
+        case .error:
+            "error"
+        }
         MirageLogger.client(
-            "Dropping \(bufferedByteCount) buffered control bytes because connection state is now \(bufferedControlMessageConnectionStateName)"
+            "Dropping \(bufferedByteCount) buffered control bytes because connection state is now \(connectionStateName)"
         )
         receiveBuffer.removeAll(keepingCapacity: false)
-    }
-
-    private var bufferedControlMessageConnectionStateName: String {
-        switch connectionState {
-        case .disconnected:
-            return "disconnected"
-        case .connecting:
-            return "connecting"
-        case .reconnecting:
-            return "reconnecting"
-        case .handshaking:
-            return "handshaking"
-        case .connected:
-            return "connected"
-        case .error:
-            return "error"
-        }
-    }
-
-    private func shouldDropControlMessageWhileSuppressed(_ type: ControlMessageType) -> Bool {
-        guard controlUpdatePolicy == .interactiveStreaming else { return false }
-        return Self.shouldDropNonEssentialControlMessageWhileInteractive(type)
     }
 
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
@@ -179,9 +162,9 @@ extension MirageClientService {
              .windowList,
              .windowUpdate,
              .hostSoftwareUpdateStatus:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 
@@ -196,17 +179,6 @@ extension MirageClientService {
         default:
             break
         }
-
-        switch type {
-        case .appListProgress, .appListComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
-            break
-        default:
-            break
-        }
-    }
-
-    private func shouldLogReceivedControlMessage(_ type: ControlMessageType) -> Bool {
-        Self.shouldLogControlMessage(type)
     }
 
     private func recordHighFrequencyControlMessageSampleIfNeeded(_ type: ControlMessageType) {
@@ -228,51 +200,6 @@ extension MirageClientService {
         MirageLogger.network("Control sample (1s): streamMetricsUpdates=\(metricsCount)")
     }
 
-    nonisolated static func isExpectedTransportTermination(_ error: Error) -> Bool {
-        if let nwError = error as? NWError {
-            switch nwError {
-            case let .posix(code):
-                return expectedReceivePOSIXErrors.contains(code)
-            default:
-                break
-            }
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == NSPOSIXErrorDomain,
-           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
-            return expectedReceivePOSIXErrors.contains(code)
-        }
-        if expectedNetworkReceiveErrorDomains.contains(nsError.domain),
-           expectedNetworkReceiveErrorCodes.contains(nsError.code) {
-            return true
-        }
-
-        return false
-    }
-
-    private nonisolated static var expectedReceivePOSIXErrors: Set<POSIXErrorCode> {
-        [
-            .ECONNABORTED,
-            .ECONNRESET,
-            .ENOTCONN,
-            .ETIMEDOUT,
-            .ECANCELED,
-            .ENETDOWN,
-            .ENETUNREACH,
-            .ENETRESET,
-            .EHOSTUNREACH,
-            .EPIPE,
-        ]
-    }
-
-    private nonisolated static let expectedNetworkReceiveErrorDomains: Set<String> = [
-        "Network.NWError",
-        "NWErrorDomain",
-        "NWError",
-        "kNWErrorDomainPOSIX",
-    ]
-
     nonisolated static func shouldLogControlMessage(_ type: ControlMessageType) -> Bool {
         switch type {
         case .appListProgress,
@@ -282,20 +209,10 @@ extension MirageClientService {
              .ping,
              .pong,
              .streamMetricsUpdate:
-            return false
+            false
         default:
-            return true
+            true
         }
-    }
-
-    private nonisolated static var expectedNetworkReceiveErrorCodes: Set<Int> {
-        [
-            89,
-        ]
-    }
-
-    private func isCurrentControlChannel(_ channel: MirageControlChannel) -> Bool {
-        controlChannel === channel
     }
 
     private func handleIncomingControlChunk(

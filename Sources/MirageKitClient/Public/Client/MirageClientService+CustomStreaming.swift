@@ -12,7 +12,6 @@ import MirageKit
 @MainActor
 public extension MirageClientService {
     /// Requests a generic app-defined stream from the connected host.
-    @discardableResult
     func startCustomStream(
         kind: String,
         metadata: [String: String] = [:],
@@ -29,8 +28,8 @@ public extension MirageClientService {
             throw MirageError.protocolError("Custom stream kind is required")
         }
 
-        let baseResolution = displayResolution ?? getMainDisplayResolution()
-        let effectiveDisplayResolution = scaledDisplayResolution(baseResolution)
+        let baseResolution = displayResolution ?? mainDisplayResolution
+        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for custom streaming")
         }
@@ -46,10 +45,9 @@ public extension MirageClientService {
             metadata: metadata,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
-            targetFrameRate: getScreenMaxRefreshRate(),
-            scaleFactor: nil,
+            targetFrameRate: screenMaxRefreshRate,
             streamScale: nil,
-            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
+            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
@@ -60,7 +58,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: clampedStreamScale(),
+            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
             disableResolutionCap: request.disableResolutionCap == true
@@ -85,12 +83,11 @@ public extension MirageClientService {
         }
     }
 
+    /// Requests host-side custom stream shutdown and clears the local stream session.
     func stopCustomStream(_ session: ClientStreamSession) async {
         let streamID = session.id
-        sendControlMessageBestEffort(
-            .stopCustomStream,
-            content: StopCustomStreamMessage(streamID: streamID)
-        )
+        let request = StopCustomStreamMessage(streamID: streamID)
+        queueControlMessageBestEffort(.stopCustomStream, content: request)
         await forceStopCustomStreamLocally(
             streamID: streamID,
             notifyStopReason: .clientRequested
@@ -113,7 +110,8 @@ extension MirageClientService {
             }
 
             let window = syntheticCustomStreamWindow(for: started)
-            let clientSession = ClientStreamSession(id: streamID, window: window, kind: .custom)
+            let clientSession = ClientStreamSession(id: streamID, window: window, kind: .custom, mediaStreamID: streamID)
+            customStreamDescriptorsByStreamID[streamID] = started.descriptor
             upsertActiveStreamSession(streamID: streamID, window: window, kind: .custom)
             activeStreamCodecs[streamID] = started.codec
 
@@ -124,7 +122,7 @@ extension MirageClientService {
             streamStartupBaseTimes[streamID] = CFAbsoluteTimeGetCurrent()
             streamStartupFirstRegistrationSent.remove(streamID)
             streamStartupFirstPacketReceived.remove(streamID)
-            markStartupPacketPending(streamID)
+            fastPathState.markStartupPacketPending(streamID)
             registerStartupAttempt(startupAttemptID, for: streamID)
             applyRenderLatencyMode(
                 to: streamID,
@@ -144,7 +142,7 @@ extension MirageClientService {
                 dimensionToken: started.dimensionToken,
                 targetFrameRate: started.frameRate
             )
-            addActiveStreamID(streamID)
+            fastPathState.addActiveStreamID(streamID)
 
             if let startupAttemptID {
                 await sendStreamReadyAck(
@@ -156,11 +154,15 @@ extension MirageClientService {
 
             if !registeredStreamIDs.contains(streamID) {
                 registeredStreamIDs.insert(streamID)
-                let refreshRate = refreshRateOverridesByStream[streamID] ?? getScreenMaxRefreshRate()
-                try? await sendStreamRefreshRateChange(
-                    streamID: streamID,
-                    maxRefreshRate: refreshRate
-                )
+                let refreshRate = refreshRateOverridesByStream[streamID] ?? screenMaxRefreshRate
+                do {
+                    try await sendStreamRefreshRateChange(
+                        streamID: streamID,
+                        maxRefreshRate: refreshRate
+                    )
+                } catch {
+                    MirageLogger.error(.client, error: error, message: "Failed to sync custom stream refresh override: ")
+                }
                 startStartupRegistrationRetry(streamID: streamID)
             }
 
@@ -222,12 +224,9 @@ extension MirageClientService {
         streamID: StreamID,
         notifyStopReason: MirageCustomStreamStoppedMessage.Reason?
     ) async {
-        recordRetiredStreamDiagnosticsSummary(
-            streamID: streamID,
-            reason: "custom:\(notifyStopReason.map(String.init(describing:)) ?? "local")"
-        )
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
+        customStreamDescriptorsByStreamID.removeValue(forKey: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
         renderLatencyModeByStream.removeValue(forKey: streamID)
 
@@ -236,7 +235,7 @@ extension MirageClientService {
         cursorPositionStore.clear(streamID: streamID)
         sessionStore.clearPostResizeTransition(for: streamID)
 
-        removeActiveStreamID(streamID)
+        fastPathState.removeActiveStreamID(streamID)
         stopVideoStreamReceive(for: streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
@@ -249,7 +248,7 @@ extension MirageClientService {
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupFirstRegistrationSent.remove(streamID)
         streamStartupFirstPacketReceived.remove(streamID)
-        clearStartupPacketPending(streamID)
+        fastPathState.clearStartupPacketPending(streamID)
         cancelStartupRegistrationRetry(streamID: streamID)
         cancelRecoveryKeyframeRetry(for: streamID)
         activeJitterHoldMs = 0

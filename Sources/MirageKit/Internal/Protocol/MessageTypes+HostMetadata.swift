@@ -57,7 +57,6 @@ package struct HostWallpaperMessage: Codable, Sendable {
     package let imageData: Data?
     package let pixelWidth: Int
     package let pixelHeight: Int
-    package let bytesPerPixelEstimate: Int
     package let errorMessage: String?
 
     package init(
@@ -65,14 +64,12 @@ package struct HostWallpaperMessage: Codable, Sendable {
         imageData: Data? = nil,
         pixelWidth: Int,
         pixelHeight: Int,
-        bytesPerPixelEstimate: Int,
         errorMessage: String? = nil
     ) {
         self.requestID = requestID
         self.imageData = imageData
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
-        self.bytesPerPixelEstimate = bytesPerPixelEstimate
         self.errorMessage = errorMessage
     }
 }

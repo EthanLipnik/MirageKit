@@ -25,13 +25,7 @@ enum MirageHostHardwareIconResolver {
         let fileSize: Int
     }
 
-    private static let cachedBundlePath: String? = resolveMetadataCoreTypesBundlePath()
     private static let cachedIconAssets: [CoreTypesIconAsset] = loadMetadataCoreTypesIconAssets()
-
-    static func prewarmCache() {
-        _ = cachedBundlePath
-        _ = cachedIconAssets
-    }
 
     static func payload(
         preferredIconName: String?,
@@ -58,31 +52,6 @@ enum MirageHostHardwareIconResolver {
         )
     }
 
-    static func cloudKitShareThumbnailData(
-        preferredIconName: String?,
-        hardwareMachineFamily: String?,
-        hardwareModelIdentifier: String?,
-        maxPixelSize: Int = 512,
-        compressionQuality: Double = 0.35
-    ) -> Data? {
-        guard let resolvedAsset = resolvedAsset(
-            preferredIconName: preferredIconName,
-            hardwareMachineFamily: hardwareMachineFamily,
-            hardwareModelIdentifier: hardwareModelIdentifier
-        ),
-        let cgImage = thumbnailCGImage(
-            at: resolvedAsset.path,
-            maxPixelSize: maxPixelSize
-        ) else {
-            return nil
-        }
-
-        return heifOrPNGData(
-            for: cgImage,
-            compressionQuality: compressionQuality
-        )
-    }
-
     private static func resolvedAsset(
         preferredIconName: String?,
         hardwareMachineFamily: String?,
@@ -93,15 +62,9 @@ enum MirageHostHardwareIconResolver {
             return nil
         }
 
-        let normalizedPreferredName = preferredIconName?
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedFamily = hardwareMachineFamily?
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedModel = hardwareModelIdentifier?
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPreferredName = mirageNormalizedHardwareMetadataValue(preferredIconName)
+        let normalizedFamily = mirageNormalizedHardwareMetadataValue(hardwareMachineFamily)
+        let normalizedModel = mirageNormalizedHardwareMetadataValue(hardwareModelIdentifier)
 
         var selectedAsset: CoreTypesIconAsset?
 
@@ -128,7 +91,7 @@ enum MirageHostHardwareIconResolver {
 
         if selectedAsset == nil, let normalizedFamily {
             selectedAsset = iconAssets
-                .filter { matchesMachineFamily(normalizedFamily, iconName: $0.lowercasedFilename) }
+                .filter { mirageMacHardwareIconName($0.lowercasedFilename, matchesMachineFamily: normalizedFamily) }
                 .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
         }
 
@@ -147,14 +110,14 @@ enum MirageHostHardwareIconResolver {
         normalizedModel: String?
     ) -> Bool {
         if let normalizedFamily {
-            return matchesMachineFamily(normalizedFamily, iconName: iconName)
+            return mirageMacHardwareIconName(iconName, matchesMachineFamily: normalizedFamily)
         }
 
         guard let normalizedModel,
               let knownFamily = knownMachineFamily(forModelIdentifier: normalizedModel) else {
             return true
         }
-        return matchesMachineFamily(knownFamily, iconName: iconName)
+        return mirageMacHardwareIconName(iconName, matchesMachineFamily: knownFamily)
     }
 
     private static func knownMachineFamily(forModelIdentifier modelIdentifier: String) -> String? {
@@ -245,79 +208,23 @@ enum MirageHostHardwareIconResolver {
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
     }
 
+    /// Encodes a thumbnail image for host hardware-icon transfer.
     private static func pngData(for image: CGImage) -> Data? {
-        encodeImage(
-            image,
-            type: UTType.png,
-            properties: nil
-        )
-    }
-
-    private static func heifOrPNGData(
-        for image: CGImage,
-        compressionQuality: Double
-    ) -> Data? {
-        if let heifData = encodeImage(
-            image,
-            type: .heic,
-            properties: [
-                kCGImageDestinationLossyCompressionQuality: max(0.1, min(1.0, compressionQuality)),
-            ] as CFDictionary
-        ),
-        !heifData.isEmpty {
-            return heifData
-        }
-
-        return pngData(for: image)
-    }
-
-    private static func encodeImage(
-        _ image: CGImage,
-        type: UTType,
-        properties: CFDictionary?
-    ) -> Data? {
         let mutableData = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             mutableData,
-            type.identifier as CFString,
+            UTType.png.identifier as CFString,
             1,
             nil
         ) else {
             return nil
         }
 
-        CGImageDestinationAddImage(destination, image, properties)
+        CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else {
             return nil
         }
         return mutableData as Data
-    }
-
-    private static func isMacHardwareIconFilename(_ lowercasedFilename: String) -> Bool {
-        lowercasedFilename.contains("macbook") ||
-            lowercasedFilename.contains("imac") ||
-            lowercasedFilename.contains("macmini") ||
-            lowercasedFilename.contains("macstudio") ||
-            lowercasedFilename.contains("macpro") ||
-            lowercasedFilename.contains("sidebarlaptop") ||
-            lowercasedFilename.contains("sidebarmac")
-    }
-
-    private static func matchesMachineFamily(_ family: String, iconName: String) -> Bool {
-        switch family {
-        case "macbook":
-            return iconName.contains("macbook") || iconName.contains("sidebarlaptop")
-        case "imac":
-            return iconName.contains("imac") || iconName.contains("sidebarimac")
-        case "macmini":
-            return iconName.contains("macmini") || iconName.contains("sidebarmacmini")
-        case "macstudio":
-            return iconName.contains("macstudio")
-        case "macpro":
-            return iconName.contains("macpro") || iconName.contains("sidebarmacpro")
-        default:
-            return isMacHardwareIconFilename(iconName)
-        }
     }
 }
 #endif

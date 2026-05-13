@@ -25,7 +25,7 @@ extension MirageHostService {
         let axWindow = findAXWindow(for: window)
 
         // Use robust multi-method activation
-        let result = windowActivator.activate(app: app, window: window, axWindow: axWindow)
+        let result = windowActivator.activate(app: app, axWindow: axWindow)
 
         switch result {
         case let .success(method):
@@ -50,34 +50,19 @@ extension MirageHostService {
         }
 
         let appElement = AXUIElementCreateApplication(app.id)
+        let axWindows = HostAccessibilityWindowLookup.windows(in: appElement)
 
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success, let axWindows = windowsRef as? [AXUIElement] else {
-            // Log the actual error for debugging
-            MirageLogger.host("AX windows query failed for '\(app.name)' (PID: \(app.id)): AXError \(result.rawValue)")
-            switch result {
-            case .apiDisabled:
-                MirageLogger.host("Accessibility API is disabled in System Preferences")
-            case .invalidUIElement:
-                MirageLogger.host("Invalid UI element - process may have terminated or restarted")
-            case .cannotComplete:
-                MirageLogger.host("Cannot complete - app may be unresponsive")
-            case .notImplemented:
-                MirageLogger.host("App does not implement accessibility for windows")
-            case .noValue:
-                MirageLogger.host("App returned no windows via accessibility")
-            default:
-                break
-            }
+        guard !axWindows.isEmpty else {
+            MirageLogger.host("AX windows query returned no windows for '\(app.name)' (PID: \(app.id))")
             return nil
         }
 
-        // Single window - use it directly
-        if axWindows.count == 1 { return axWindows[0] }
+        if let exactWindow = HostAccessibilityWindowLookup.window(matching: window.id, in: axWindows) {
+            return exactWindow
+        }
 
-        // Get window position from CGWindowList using the known window ID
+        if axWindows.count == 1 { return axWindows.first }
+
         guard let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
               let windowInfo = windowList.first(where: { ($0[kCGWindowNumber as String] as? Int) == Int(window.id) }),
               let bounds = windowInfo[kCGWindowBounds as String] as? [String: CGFloat],
@@ -86,17 +71,9 @@ extension MirageHostService {
             return axWindows.first
         }
 
-        // Match by position
         for axWindow in axWindows {
-            var positionRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef)
-
-            if let positionValue = positionRef {
-                var position = CGPoint.zero
-                AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
-
-                if abs(position.x - windowX) < 10, abs(position.y - windowY) < 10 { return axWindow }
-            }
+            guard let position = HostAccessibilityWindowLookup.position(of: axWindow) else { continue }
+            if abs(position.x - windowX) < 10, abs(position.y - windowY) < 10 { return axWindow }
         }
 
         return axWindows.first

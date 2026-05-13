@@ -10,44 +10,52 @@ import MirageKit
 import AppKit
 import Foundation
 
-/// Monitors cursor state for active streams and notifies when the cursor type changes.
-/// Runs on the host Mac and polls NSCursor.currentSystem at a configurable rate.
+/// Polls host cursor state for active streams and publishes visibility, position, and cursor-shape changes.
 actor CursorMonitor {
-    /// Polling interval (default 120Hz = ~8.3ms)
+    /// Expands visibility checks slightly so edge cursors remain visible at window bounds.
+    private static let visibilityPadding: CGFloat = 1.0
+
+    /// Minimum normalized movement before sending a cursor position update.
+    private static let positionMovementThreshold: CGFloat = 0.002
+
+    /// Maximum interval between cursor position heartbeats when the cursor has not moved.
+    private static let positionHeartbeatInterval: CFAbsoluteTime = 0.5
+
+    /// Delay between cursor samples.
     private let pollingInterval: TimeInterval
+
     /// Interval for refreshing stream window frames from the provider.
     private let windowFrameRefreshInterval: TimeInterval
 
-    /// Active polling task
+    /// Task that owns the cursor polling loop.
     private var pollingTask: Task<Void, Never>?
 
     /// Cached stream frames sampled from the host service.
     private var cachedStreams: [(StreamID, CGRect)] = []
     private var lastWindowFrameRefreshTime: CFAbsoluteTime = 0
 
-    /// Last known cursor type per stream (for change detection)
+    /// Most recent cursor shape sent for each stream.
     private var lastCursorTypes: [StreamID: MirageCursorType] = [:]
 
-    /// Last known visibility state per stream
+    /// Most recent cursor visibility state sent for each stream.
     private var lastVisibility: [StreamID: Bool] = [:]
+
+    /// Most recent normalized cursor position sampled for each stream.
     private var lastCursorPositions: [StreamID: CGPoint] = [:]
+
+    /// Wall-clock time of the most recent cursor position update for each stream.
     private var lastCursorPositionSentAt: [StreamID: CFAbsoluteTime] = [:]
 
-    /// Expand visibility checks slightly so edge cursors remain visible at window bounds
-    private let visibilityPadding: CGFloat = 1.0
-    private let positionMovementThreshold: CGFloat = 0.002
-    private let positionHeartbeatInterval: CFAbsoluteTime = 0.5
-
-    /// Callback invoked when cursor changes for a stream.
+    /// Callback invoked when a stream's cursor shape or visibility changes.
     private var onCursorChange: ((StreamID, MirageCursorType, Bool) async -> Void)?
 
     /// Callback invoked with cursor position updates for a stream.
     private var onCursorPosition: ((StreamID, CGPoint, Bool) async -> Void)?
 
-    /// Initialize with a polling rate
+    /// Creates a cursor monitor.
     /// - Parameters:
-    ///   - pollingRate: How many times per second to poll cursor state (default 120Hz).
-    ///   - windowFrameRefreshRate: How many times per second to refresh stream frames (default 30Hz).
+    ///   - pollingRate: Cursor samples per second.
+    ///   - windowFrameRefreshRate: Stream window frame refreshes per second.
     init(
         pollingRate: Double = Double(MirageInteractionCadence.targetFPS120),
         windowFrameRefreshRate: Double = 30.0
@@ -56,10 +64,11 @@ actor CursorMonitor {
         windowFrameRefreshInterval = Self.normalizedInterval(rate: windowFrameRefreshRate)
     }
 
-    /// Start monitoring cursor state for active streams
+    /// Starts polling cursor state for the stream frames returned by the provider.
     /// - Parameters:
-    ///   - windowFrameProvider: Closure that returns current window frames for each active stream (runs on MainActor)
-    ///   - onCursorChange: Callback invoked when cursor type changes for a stream
+    ///   - windowFrameProvider: Main-actor provider for currently active stream frames.
+    ///   - onCursorChange: Callback invoked when cursor shape or visibility changes.
+    ///   - onCursorPosition: Optional callback invoked for movement updates and position heartbeats.
     func start(
         windowFrameProvider: @escaping @MainActor () -> [(StreamID, CGRect)],
         onCursorChange: @escaping @Sendable (StreamID, MirageCursorType, Bool) async -> Void,
@@ -68,10 +77,8 @@ actor CursorMonitor {
         self.onCursorChange = onCursorChange
         self.onCursorPosition = onCursorPosition
 
-        // Cancel any existing polling task
         pollingTask?.cancel()
 
-        // Start new polling loop
         pollingTask = Task { [weak self, pollingInterval] in
             while !Task.isCancelled {
                 guard let self else { break }
@@ -84,14 +91,13 @@ actor CursorMonitor {
                 do {
                     try await Task.sleep(for: .seconds(pollingInterval))
                 } catch {
-                    // Task was cancelled
                     break
                 }
             }
         }
     }
 
-    /// Stop monitoring
+    /// Stops polling and clears all cached cursor state.
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
@@ -135,16 +141,12 @@ actor CursorMonitor {
         return cachedStreams
     }
 
-    /// Poll current cursor state and check for changes
+    /// Samples the current cursor state and publishes changes for active streams.
     private func pollCursor(streams: [(StreamID, CGRect)]) async {
-        // Get current mouse location in screen coordinates
-        // NSEvent.mouseLocation uses bottom-left origin (Cocoa coordinates)
         let mouseLocation = NSEvent.mouseLocation
 
         for (streamID, windowFrame) in streams {
-            // Check if mouse is within this window's frame
-            // Note: windowFrame is in screen coordinates with bottom-left origin
-            let visibilityFrame = windowFrame.insetBy(dx: -visibilityPadding, dy: -visibilityPadding)
+            let visibilityFrame = windowFrame.insetBy(dx: -Self.visibilityPadding, dy: -Self.visibilityPadding)
             let isInWindow = visibilityFrame.contains(mouseLocation)
             let normalized = normalizedPosition(mouseLocation, in: windowFrame)
 
@@ -153,12 +155,8 @@ actor CursorMonitor {
                 await onCursorPosition(streamID, normalized, isInWindow)
             }
 
-            // ALWAYS detect actual system cursor, regardless of mouse position
-            // This ensures cursor changes are sent even when mouse is at window edge
-            // or when the cursor changes while interacting from the client
             let cursorType = MirageCursorType(from: NSCursor.currentSystem) ?? .arrow
 
-            // Check for changes from last known state
             let previousType = lastCursorTypes[streamID]
             let previousVisibility = lastVisibility[streamID]
 
@@ -168,18 +166,15 @@ actor CursorMonitor {
                 cursorType: cursorType,
                 isVisible: isInWindow
             ) {
-                // Update cached state
                 lastCursorTypes[streamID] = cursorType
                 lastVisibility[streamID] = isInWindow
 
-                // Notify listener
                 if let onCursorChange {
                     await onCursorChange(streamID, cursorType, isInWindow)
                 }
             }
         }
 
-        // Clean up stale entries for streams that are no longer active
         let activeStreamIDs = Set(streams.map(\.0))
         for streamID in lastCursorTypes.keys where !activeStreamIDs.contains(streamID) {
             lastCursorTypes.removeValue(forKey: streamID)
@@ -198,9 +193,9 @@ actor CursorMonitor {
               let lastSentAt = lastCursorPositionSentAt[streamID] else {
             return true
         }
-        let moved = abs(previous.x - position.x) >= positionMovementThreshold ||
-            abs(previous.y - position.y) >= positionMovementThreshold
-        return moved || now - lastSentAt >= positionHeartbeatInterval
+        let moved = abs(previous.x - position.x) >= Self.positionMovementThreshold ||
+            abs(previous.y - position.y) >= Self.positionMovementThreshold
+        return moved || now - lastSentAt >= Self.positionHeartbeatInterval
     }
 
     private func normalizedPosition(_ location: CGPoint, in frame: CGRect) -> CGPoint {
@@ -208,22 +203,6 @@ actor CursorMonitor {
         let x = (location.x - frame.minX) / frame.width
         let y = 1.0 - ((location.y - frame.minY) / frame.height)
         return CGPoint(x: x, y: y)
-    }
-
-    /// Force an immediate cursor update for a specific stream
-    func forceUpdate(for streamID: StreamID, windowFrame: CGRect) async {
-        let mouseLocation = NSEvent.mouseLocation
-        let visibilityFrame = windowFrame.insetBy(dx: -visibilityPadding, dy: -visibilityPadding)
-        let isInWindow = visibilityFrame.contains(mouseLocation)
-
-        // ALWAYS detect actual cursor type, regardless of mouse position
-        let cursorType = MirageCursorType(from: NSCursor.currentSystem) ?? .arrow
-
-        lastCursorTypes[streamID] = cursorType
-        lastVisibility[streamID] = isInWindow
-        if let onCursorChange {
-            await onCursorChange(streamID, cursorType, isInWindow)
-        }
     }
 }
 #endif

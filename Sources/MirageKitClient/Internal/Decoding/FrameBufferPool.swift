@@ -10,10 +10,12 @@
 import Foundation
 import MirageKit
 
+/// Reuses large frame-reassembly buffers while returning finalized frame data as detached `Data`.
 final class FrameBufferPool: @unchecked Sendable {
     nonisolated static let defaultMaxRetainedBufferCapacity = 16 * 1024 * 1024
     nonisolated static let defaultMaxRetainedBytes = 64 * 1024 * 1024
 
+    /// Mutable byte storage leased from a `FrameBufferPool` for one frame assembly operation.
     final class Buffer: @unchecked Sendable {
         private let pool: FrameBufferPool
         let capacity: Int
@@ -26,12 +28,14 @@ final class FrameBufferPool: @unchecked Sendable {
             self.pool = pool
         }
 
+        /// Resets the buffer contents before a new owner writes packet payloads into it.
         func prepareForReuse() {
             isReleased = false
             if data.count != capacity { data.count = capacity }
             data.resetBytes(in: 0..<capacity)
         }
 
+        /// Copies a packet payload into the leased buffer at the requested byte offset.
         func write(_ payload: Data, at offset: Int) {
             guard offset >= 0, offset + payload.count <= capacity else { return }
             data.withUnsafeMutableBytes { destination in
@@ -43,6 +47,7 @@ final class FrameBufferPool: @unchecked Sendable {
             }
         }
 
+        /// Returns a detached copy of the first `length` bytes so reuse cannot mutate the frame output.
         func finalize(length: Int) -> Data {
             let clampedLength = min(max(0, length), capacity)
             guard clampedLength > 0 else {
@@ -63,6 +68,7 @@ final class FrameBufferPool: @unchecked Sendable {
             }
         }
 
+        /// Returns this buffer to the pool once the current assembly operation no longer needs it.
         func release() {
             guard !isReleased else { return }
             isReleased = true
@@ -88,40 +94,50 @@ final class FrameBufferPool: @unchecked Sendable {
         self.maxRetainedBytes = max(1, maxRetainedBytes)
     }
 
+    /// Acquires zeroed storage with at least one byte of capacity.
     func acquire(capacity: Int) -> Buffer {
         let clampedCapacity = max(1, capacity)
+        let reusableBuffer: Buffer?
         lock.lock()
-        if var buffers = buffersByCapacity[clampedCapacity], let buffer = buffers.popLast() {
-            if buffers.isEmpty {
-                buffersByCapacity.removeValue(forKey: clampedCapacity)
+        do {
+            defer { lock.unlock() }
+            if var buffers = buffersByCapacity[clampedCapacity], let buffer = buffers.popLast() {
+                if buffers.isEmpty {
+                    buffersByCapacity.removeValue(forKey: clampedCapacity)
+                } else {
+                    buffersByCapacity[clampedCapacity] = buffers
+                }
+                retainedBytes = max(0, retainedBytes - buffer.capacity)
+                reusableBuffer = buffer
             } else {
-                buffersByCapacity[clampedCapacity] = buffers
+                reusableBuffer = nil
             }
-            retainedBytes = max(0, retainedBytes - buffer.capacity)
-            lock.unlock()
-            buffer.prepareForReuse()
-            return buffer
         }
-        lock.unlock()
+        if let reusableBuffer {
+            reusableBuffer.prepareForReuse()
+            return reusableBuffer
+        }
+
         let data = Data(count: clampedCapacity)
         let buffer = Buffer(capacity: clampedCapacity, data: data, pool: self)
         buffer.prepareForReuse()
         return buffer
     }
 
-    func retainedByteCount() -> Int {
+    /// Number of bytes currently held by retained, reusable buffers.
+    var retainedByteCount: Int {
         lock.lock()
-        let bytes = retainedBytes
-        lock.unlock()
-        return bytes
+        defer { lock.unlock() }
+        return retainedBytes
     }
 
+    /// Drops all retained buffers and returns the number of bytes released.
     func purgeRetainedBuffers() -> Int {
         lock.lock()
+        defer { lock.unlock() }
         let bytes = retainedBytes
         buffersByCapacity.removeAll(keepingCapacity: false)
         retainedBytes = 0
-        lock.unlock()
         return bytes
     }
 
@@ -129,16 +145,14 @@ final class FrameBufferPool: @unchecked Sendable {
         guard buffer.capacity <= maxRetainedBufferCapacity else { return }
 
         lock.lock()
+        defer { lock.unlock() }
         var buffers = buffersByCapacity[buffer.capacity] ?? []
         if buffers.count < maxBuffersPerCapacity {
             buffers.append(buffer)
             buffersByCapacity[buffer.capacity] = buffers
             retainedBytes += buffer.capacity
             trimRetainedBuffersIfNeeded()
-            lock.unlock()
-            return
         }
-        lock.unlock()
     }
 
     private func trimRetainedBuffersIfNeeded() {

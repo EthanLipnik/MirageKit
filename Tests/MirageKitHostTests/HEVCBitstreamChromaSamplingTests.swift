@@ -27,7 +27,7 @@ struct HEVCBitstreamChromaSamplingTests {
         #expect(VideoEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 3)) == .yuv444)
     }
 
-    @Test("Ultra encode path does not force a legacy HEVC profile")
+    @Test("Ultra encode path uses automatic HEVC profile selection")
     func ultraProfileSelectionUsesAutomaticMode() {
         #expect(VideoEncoder.requestedProfileLevels(for: .xf44).isEmpty)
     }

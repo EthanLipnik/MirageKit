@@ -9,32 +9,24 @@
 
 import Foundation
 
+/// FIFO ring buffer that keeps append/pop operations cheap for hot client queues.
 struct MirageRingBuffer<Element> {
     private var storage: ContiguousArray<Element?>
     private var headIndex: Int = 0
 
     private(set) var count: Int = 0
 
+    /// Creates a buffer with at least one storage slot.
     init(minimumCapacity: Int = 16) {
         let capacity = max(1, minimumCapacity)
         storage = ContiguousArray(repeating: nil, count: capacity)
     }
 
     var isEmpty: Bool {
-        count == 0
+        count < 1
     }
 
-    var first: Element? {
-        guard count > 0 else { return nil }
-        return storage[headIndex]
-    }
-
-    var last: Element? {
-        guard count > 0 else { return nil }
-        let tailIndex = index(offsetFromHead: count - 1)
-        return storage[tailIndex]
-    }
-
+    /// Appends an element at the logical tail, growing storage when full.
     mutating func append(_ element: Element) {
         ensureCapacity(forAdditionalCount: 1)
         let tailIndex = index(offsetFromHead: count)
@@ -42,46 +34,22 @@ struct MirageRingBuffer<Element> {
         count += 1
     }
 
-    @discardableResult
+    /// Removes and returns the logical head element.
     mutating func popFirst() -> Element? {
-        guard count > 0 else { return nil }
+        guard !isEmpty else { return nil }
         let element = storage[headIndex]
         storage[headIndex] = nil
         headIndex = (headIndex + 1) % storage.count
         count -= 1
-        if count == 0 {
+        if isEmpty {
             headIndex = 0
         }
         return element
     }
 
-    @discardableResult
-    mutating func removeFirst(_ amount: Int) -> Int {
-        guard amount > 0, count > 0 else { return 0 }
-        let dropCount = min(amount, count)
-        for _ in 0 ..< dropCount {
-            storage[headIndex] = nil
-            headIndex = (headIndex + 1) % storage.count
-        }
-        count -= dropCount
-        if count == 0 {
-            headIndex = 0
-        }
-        return dropCount
-    }
-
-    mutating func removeAll(keepingCapacity: Bool) {
-        if keepingCapacity {
-            removeFirst(count)
-            return
-        }
-        storage = ContiguousArray(repeating: nil, count: 1)
-        headIndex = 0
-        count = 0
-    }
-
+    /// Removes all queued elements in FIFO order.
     mutating func drain() -> [Element] {
-        guard count > 0 else { return [] }
+        guard !isEmpty else { return [] }
         var drained: [Element] = []
         drained.reserveCapacity(count)
         while let element = popFirst() {

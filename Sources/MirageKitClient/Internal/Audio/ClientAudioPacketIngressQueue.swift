@@ -8,10 +8,14 @@
 import Foundation
 import MirageKit
 
+/// Off-main audio packet ingress queue that decodes packets and discards stale generations.
 final class ClientAudioPacketIngressQueue: @unchecked Sendable {
+    /// Main-actor callback used to hand decoded PCM frames back to playback state.
     typealias DeliverDecodedFrames = @MainActor @Sendable ([DecodedPCMFrame], StreamID) -> Void
 
+    /// Lock-protected state shared by the queue closure and owner-facing methods.
     private final class SharedState: @unchecked Sendable {
+        /// Mutable generation and delivery target guarded by `lock`.
         private struct State {
             var generation: UInt64 = 0
             var deliverHandler: DeliverDecodedFrames?
@@ -24,7 +28,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
             withLock { $0.deliverHandler = handler }
         }
 
-        func currentGeneration() -> UInt64 {
+        var currentGeneration: UInt64 {
             withLock { $0.generation }
         }
 
@@ -32,7 +36,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
             withLock { $0.generation &+= 1 }
         }
 
-        func deliverySnapshot() -> (generation: UInt64, handler: DeliverDecodedFrames?) {
+        var deliverySnapshot: (generation: UInt64, handler: DeliverDecodedFrames?) {
             withLock { state in
                 (generation: state.generation, handler: state.deliverHandler)
             }
@@ -45,6 +49,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
         }
     }
 
+    /// Work captured at enqueue time so reset operations can invalidate older packets.
     private struct WorkItem: Sendable {
         let header: AudioPacketHeader
         let payload: Data
@@ -61,7 +66,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
         let sharedState = SharedState()
         self.sharedState = sharedState
         queue = MirageAsyncDispatchQueue(priority: .userInitiated) { item in
-            guard item.generation == sharedState.currentGeneration() else { return }
+            guard item.generation == sharedState.currentGeneration else { return }
 
             let decodedFrames = await pipeline.ingestPacket(
                 header: item.header,
@@ -70,7 +75,7 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
             )
             guard !decodedFrames.isEmpty else { return }
 
-            let delivery = sharedState.deliverySnapshot()
+            let delivery = sharedState.deliverySnapshot
             guard item.generation == delivery.generation, let handler = delivery.handler else { return }
             await handler(decodedFrames, item.header.streamID)
         }
@@ -80,8 +85,8 @@ final class ClientAudioPacketIngressQueue: @unchecked Sendable {
         sharedState.setDeliverHandler(handler)
     }
 
-    func currentGeneration() -> UInt64 {
-        sharedState.currentGeneration()
+    var currentGeneration: UInt64 {
+        sharedState.currentGeneration
     }
 
     func invalidatePendingPackets() {

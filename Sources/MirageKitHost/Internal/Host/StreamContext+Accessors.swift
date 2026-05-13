@@ -12,30 +12,58 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Actor-safe encoder settings needed by host service code outside `StreamContext`.
 struct EncoderSettingsSnapshot: Sendable {
-    let keyFrameInterval: Int
-    let colorDepth: MirageStreamColorDepth
+    /// Requested output bit depth for the active encoder session.
     let bitDepth: MirageVideoBitDepth
-    let frameQuality: Float
-    let keyframeQuality: Float
+
+    /// Pixel format currently being fed into the encoder.
     let pixelFormat: MiragePixelFormat
+
+    /// Color-space target associated with the encoder configuration.
     let colorSpace: MirageColorSpace
-    let latencyMode: MirageStreamLatencyMode
-    let runtimeQualityAdjustmentEnabled: Bool
-    let lowLatencyHighResolutionCompressionBoostEnabled: Bool
-    let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
-    let captureQueueDepth: Int?
-    let enteredBitrate: Int?
+
+    /// Active encoder bitrate, or `nil` when the encoder uses its default rate.
     let bitrate: Int?
-    let requestedTargetBitrate: Int?
-    let bitrateAdaptationCeiling: Int?
+}
+
+/// Immutable stream-start metadata sent to clients and reused by resize notifications.
+struct StreamStartSnapshot: Sendable {
+    /// Encoded output size for media frames.
+    let encodedDimensions: (width: Int, height: Int)
+
+    /// Target frame cadence advertised for this stream.
+    let targetFrameRate: Int
+
+    /// Video codec selected for this stream.
+    let codec: MirageVideoCodec
+
+    /// Token that lets clients reject frames from older encoder dimensions.
+    let dimensionToken: UInt16
+
+    /// Maximum media packet payload size negotiated for the stream.
+    let mediaMaxPacketSize: Int
+}
+
+/// Virtual-display geometry captured as one actor-isolated snapshot for stream-setting updates.
+struct VirtualDisplayGeometrySnapshot: Sendable {
+    /// Shared display backing the stream.
+    let display: SharedVirtualDisplayManager.DisplaySnapshot
+
+    /// Visible bounds on the virtual display in host logical coordinates.
+    let visibleBounds: CGRect
+
+    /// Rect where the captured content is presented on the virtual display.
+    let capturePresentationRect: CGRect
+
+    /// Source rect used to crop display capture into stream content.
+    let captureSourceRect: CGRect
+
+    /// Host window currently associated with this virtual-display stream.
+    let windowID: WindowID
 }
 
 extension StreamContext {
-    func getDroppedFrameCount() -> UInt64 {
-        droppedFrameCount
-    }
-
     func setEncoderLowPowerEnabled(_ enabled: Bool) async {
         guard encoderLowPowerEnabled != enabled else { return }
         encoderLowPowerEnabled = enabled
@@ -69,22 +97,34 @@ extension StreamContext {
         await captureEngine.restartCapture(reason: reason)
     }
 
-    func getRequestedAudioChannelCount() -> Int {
-        requestedAudioChannelCount
+    /// Returns the capture cadence currently in force for a requested target frame rate.
+    func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {
+        if let override = captureFrameRateOverride { return override }
+        return targetFrameRate
     }
 
-    func isUsingVirtualDisplay() -> Bool {
+    /// Refreshes the cached cadence from the active ScreenCaptureKit capture engine.
+    func refreshCaptureCadence() async {
+        guard let captureEngine else { return }
+        let effectiveRate = await captureEngine.minimumFrameIntervalRate
+        captureFrameRate = effectiveRate
+    }
+
+    var isUsingVirtualDisplay: Bool {
         useVirtualDisplay &&
             virtualDisplayContext != nil &&
             (captureMode == .display || !virtualDisplayVisibleBounds.isEmpty)
     }
 
-    func getVirtualDisplayID() -> CGDirectDisplayID? {
-        virtualDisplayContext?.displayID
-    }
-
-    func getVirtualDisplaySnapshot() -> SharedVirtualDisplayManager.DisplaySnapshot? {
-        virtualDisplayContext
+    var virtualDisplayGeometrySnapshot: VirtualDisplayGeometrySnapshot? {
+        guard let virtualDisplayContext else { return nil }
+        return VirtualDisplayGeometrySnapshot(
+            display: virtualDisplayContext,
+            visibleBounds: virtualDisplayVisibleBounds,
+            capturePresentationRect: virtualDisplayCapturePresentationRect,
+            captureSourceRect: virtualDisplayCaptureSourceRect,
+            windowID: windowID
+        )
     }
 
     func configureDesktopVirtualDisplayCapture(
@@ -98,30 +138,6 @@ extension StreamContext {
 
     func setDisplayP3CoverageStatusOverride(_ status: MirageDisplayP3CoverageStatus?) {
         displayP3CoverageStatusOverride = status
-    }
-
-    func getVirtualDisplayVisibleBounds() -> CGRect {
-        virtualDisplayVisibleBounds
-    }
-
-    func getVirtualDisplayCapturePresentationRect() -> CGRect {
-        virtualDisplayCapturePresentationRect
-    }
-
-    func getVirtualDisplayCaptureSourceRect() -> CGRect {
-        virtualDisplayCaptureSourceRect
-    }
-
-    func getVirtualDisplayVisiblePixelResolution() -> CGSize {
-        virtualDisplayVisiblePixelResolution
-    }
-
-    func getWindowID() -> WindowID {
-        windowID
-    }
-
-    func getCapturedClusterWindowIDs() -> [WindowID] {
-        capturedWindowClusterWindowIDs
     }
 
     func updateWindowBinding(windowID: WindowID, ownerGeneration: UInt64?) {
@@ -163,67 +179,23 @@ extension StreamContext {
         )
     }
 
-    func getDimensionToken() -> UInt16 {
-        dimensionToken
-    }
-
-    func getEncodedDimensions() -> (width: Int, height: Int) {
+    var encodedDimensions: (width: Int, height: Int) {
         let width = Int(currentEncodedSize.width)
         let height = Int(currentEncodedSize.height)
         return (width, height)
     }
 
-    func getLastCapturedFrameTime() -> CFAbsoluteTime {
-        lastCapturedFrameTime
-    }
-
-    func getTargetFrameRate() -> Int {
-        encoderConfig.targetFrameRate
-    }
-
-    func getRequestedTargetBitrate() -> Int? {
-        requestedTargetBitrate
-    }
-
-    func setRequestedTargetBitrate(_ bitrate: Int?) {
-        if let bitrate {
-            requestedTargetBitrate = min(bitrate, bitrateAdaptationCeiling ?? bitrate)
-        } else {
-            requestedTargetBitrate = nil
-        }
-    }
-
-    func getInFlightPolicy() -> (
-        minInFlightFrames: Int,
-        maxInFlightFrames: Int,
-        maxInFlightFramesCap: Int,
-        frameBufferDepth: Int
-    ) {
-        (
-            minInFlightFrames: minInFlightFrames,
-            maxInFlightFrames: maxInFlightFrames,
-            maxInFlightFramesCap: maxInFlightFramesCap,
-            frameBufferDepth: frameBufferDepth
+    var streamStartSnapshot: StreamStartSnapshot {
+        StreamStartSnapshot(
+            encodedDimensions: encodedDimensions,
+            targetFrameRate: encoderConfig.targetFrameRate,
+            codec: encoderConfig.codec,
+            dimensionToken: dimensionToken,
+            mediaMaxPacketSize: mediaMaxPacketSize
         )
     }
 
-    func getCodec() -> MirageVideoCodec {
-        encoderConfig.codec
-    }
-
-    func getMediaMaxPacketSize() -> Int {
-        mediaMaxPacketSize
-    }
-
-    func getStreamScale() -> CGFloat {
-        streamScale
-    }
-
-    func getRequestedStreamScale() -> CGFloat {
-        requestedStreamScale
-    }
-
-    func getEncoderMaxDimensions() -> (width: Int?, height: Int?) {
+    var encoderMaxDimensions: (width: Int?, height: Int?) {
         (encoderMaxWidth, encoderMaxHeight)
     }
 
@@ -243,28 +215,12 @@ extension StreamContext {
         }
     }
 
-    func isResolutionCapDisabled() -> Bool {
-        disableResolutionCap
-    }
-
-    func getEncoderSettings() -> EncoderSettingsSnapshot {
+    var encoderSettings: EncoderSettingsSnapshot {
         EncoderSettingsSnapshot(
-            keyFrameInterval: encoderConfig.keyFrameInterval,
-            colorDepth: encoderConfig.colorDepth,
             bitDepth: encoderConfig.bitDepth,
-            frameQuality: encoderConfig.frameQuality,
-            keyframeQuality: encoderConfig.keyframeQuality,
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
-            latencyMode: latencyMode,
-            runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
-            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
-            capturePressureProfile: capturePressureProfile,
-            captureQueueDepth: encoderConfig.captureQueueDepth,
-            enteredBitrate: enteredTargetBitrate,
-            bitrate: encoderConfig.bitrate,
-            requestedTargetBitrate: requestedTargetBitrate,
-            bitrateAdaptationCeiling: bitrateAdaptationCeiling
+            bitrate: encoderConfig.bitrate
         )
     }
 
@@ -279,8 +235,5 @@ extension StreamContext {
         )
     }
 
-    func getEncoderRuntimeValidationSnapshot() async -> VideoEncoder.RuntimeValidationSnapshot? {
-        await encoder?.runtimeValidationSnapshot()
-    }
 }
 #endif

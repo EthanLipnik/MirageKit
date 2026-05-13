@@ -12,42 +12,19 @@ import MirageKit
 import CoreGraphics
 import Foundation
 
-enum SharedDisplayMissingUpdateDecision: Equatable {
-    case requiresRecreation
-    case recreateNow
-}
-
-enum DesktopResizeRecreateFailureDecision: Equatable {
-    case retryAfterResidualDisplayClears([CGDirectDisplayID])
-    case fail
-}
-
-func sharedDisplayMissingUpdateDecision(allowRecreation: Bool) -> SharedDisplayMissingUpdateDecision {
-    allowRecreation ? .recreateNow : .requiresRecreation
-}
-
-func desktopResizeRecreateFailureDecision(error: any Error) -> DesktopResizeRecreateFailureDecision {
-    guard let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError else {
-        return .fail
-    }
-
-    switch sharedDisplayError {
-    case let .residualMirageDisplaysOnline(displayIDs):
-        return .retryAfterResidualDisplayClears(displayIDs)
-    default:
-        return .fail
-    }
-}
-
 extension SharedVirtualDisplayManager {
     // MARK: - Consumer-Based Acquisition (for non-stream consumers)
 
+    /// Result of probing whether the virtual display is presenting at the requested cadence.
     struct VirtualDisplayCadenceValidation: Sendable, Equatable {
-        let displayID: CGDirectDisplayID
+        /// Requested frame cadence in frames per second.
         let targetFPS: Double
+        /// Measured display cadence, or `nil` when probing was unavailable.
         let observedFPS: Double?
+        /// Whether the display cadence is close enough to drive capture from native display updates.
         let usesNativeDisplayCadence: Bool
 
+        /// Compact diagnostic label used in host logs.
         var logLabel: String {
             let observedText = observedFPS
                 .map { $0.formatted(.number.precision(.fractionLength(1))) }
@@ -56,7 +33,8 @@ extension SharedVirtualDisplayManager {
         }
     }
 
-    private func syncActiveConsumerColorSpace(
+    /// Updates the tracked color space for an active consumer after display creation falls back.
+    func syncActiveConsumerColorSpace(
         _ consumer: DisplayConsumer,
         to colorSpace: MirageColorSpace
     ) {
@@ -73,14 +51,16 @@ extension SharedVirtualDisplayManager {
             )
     }
 
-    /// Acquire the shared virtual display for a non-stream purpose (unlock, desktop stream, benchmark)
-    /// Creates the display if this is the first consumer, otherwise returns existing
+    /// Acquires the shared virtual display for a non-stream purpose.
+    ///
+    /// Unlock, desktop streaming, and benchmark consumers share one display instance. The manager creates the display
+    /// for the first consumer and returns the existing display for later consumers unless `allowActiveUpdate` permits
+    /// changing the active display mode.
     /// - Parameters:
-    ///   - consumer: The consumer type acquiring the display
-    ///   - resolution: Optional resolution for the display (used by desktop streaming; capture/encoder enforce the 5K
-    /// cap)
-    ///   - refreshRate: Refresh rate in Hz (default 60, use 120 for high refresh rate clients)
-    /// - Returns: The managed display context
+    ///   - consumer: Consumer type acquiring the display.
+    ///   - resolution: Optional display resolution; capture and encoder setup still enforce the host cap.
+    ///   - refreshRate: Requested refresh rate in Hz.
+    /// - Returns: The managed display snapshot.
     func acquireDisplayForConsumer(
         _ consumer: DisplayConsumer,
         resolution: CGSize? = nil,
@@ -92,15 +72,33 @@ extension SharedVirtualDisplayManager {
     )
     async throws -> DisplaySnapshot {
         try startupBudget?.checkAvailable()
-        let residualDisplayIDs = refreshResidualMirageDisplayTracking()
-        if !residualDisplayIDs.isEmpty, sharedDisplay == nil {
-            throw SharedDisplayError.residualMirageDisplaysOnline(residualDisplayIDs)
+        // Force-destroy any orphaned displays from previous sessions before
+        // acquiring.  Orphans block virtual display creation until the OS
+        // reclaims them, which can take minutes after an unclean teardown.
+        if !orphanedDisplayIDs.isEmpty {
+            MirageLogger.host(
+                "Cleaning up \(orphanedDisplayIDs.count) orphaned display(s) before acquisition: \(orphanedDisplayIDs)"
+            )
+            var survivingOrphans: Set<CGDirectDisplayID> = []
+            for orphanID in orphanedDisplayIDs {
+                CGVirtualDisplayBridge.forceInvalidateOrphan(orphanID)
+                if CGVirtualDisplayBridge.isDisplayOnline(orphanID) {
+                    survivingOrphans.insert(orphanID)
+                }
+            }
+            orphanedDisplayIDs = survivingOrphans
+            if !survivingOrphans.isEmpty {
+                MirageLogger.host(
+                    "Virtual display orphan cleanup left \(survivingOrphans.count) display(s) online; keeping them tracked: \(survivingOrphans)"
+                )
+                let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(500) ?? 500
+                try await Task.sleep(for: .milliseconds(boundedDelayMs))
+                try startupBudget?.checkAvailable()
+            }
         }
 
         let requestedRate = refreshRate
-        let refreshRate = consumer == .desktopStream
-            ? SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
-            : resolvedRefreshRate(requestedRate)
+        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
         // Use provided resolution or fall back to default
         let targetResolution = resolution ?? CGSize(width: 2880, height: 1800)
         let previousGeneration = sharedDisplay?.generation ?? 0
@@ -228,8 +226,9 @@ extension SharedVirtualDisplayManager {
                     startupBudget: startupBudget
                 )
             } else {
-                let currentResolution = sharedDisplay!.resolution
-                let needsRefresh = sharedDisplay?.refreshRate != Double(refreshRate)
+                guard let display = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
+                let currentResolution = display.resolution
+                let needsRefresh = display.refreshRate != Double(refreshRate)
                 let requiresResize = needsResize(currentResolution: currentResolution, targetResolution: targetResolution)
 
                 if needsRefresh || requiresResize {
@@ -295,9 +294,7 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: display)
     }
 
-    /// Release the display for a non-stream consumer
-    /// Destroys the display if this was the last consumer
-    /// - Parameter consumer: The consumer type releasing the display
+    /// Releases a non-stream display consumer and destroys the shared display once no consumers remain.
     func releaseDisplayForConsumer(_ consumer: DisplayConsumer) async {
         guard activeConsumers.removeValue(forKey: consumer) != nil else {
             MirageLogger.host("\(consumer) was not using shared display")
@@ -315,164 +312,13 @@ extension SharedVirtualDisplayManager {
         }
     }
 
-    /// Update the display resolution for a consumer (used for desktop streaming resize)
-    /// This updates the existing display's resolution in place without recreation
-    /// - Parameters:
-    ///   - consumer: The consumer requesting the resize
-    ///   - newResolution: The new resolution to resize to
-    ///   - refreshRate: Refresh rate in Hz (default 60)
-    private func recreateSharedDisplayForResolutionChange(
-        consumer: DisplayConsumer,
-        newResolution: CGSize,
-        refreshRate: Int,
-        colorSpace: MirageColorSpace,
-        resizeRequest: DesktopVirtualDisplayResizeRequest?
-    ) async throws -> Bool {
-        if consumer == .desktopStream,
-           let resizeRequest,
-           let cachedTarget = cachedDesktopVirtualDisplayResizeTarget(for: resizeRequest) {
-            do {
-                MirageLogger.host(
-                    "Retrying desktop resize with cached target: " +
-                        "\(cachedTarget.pixelWidth)x\(cachedTarget.pixelHeight) px, " +
-                        "\(cachedTarget.refreshRate)Hz, \(cachedTarget.colorSpace.displayName)"
-                )
-                sharedDisplay = try await recreateDisplayForDesktopResize(
-                    newResolution: CGSize(
-                        width: cachedTarget.pixelWidth,
-                        height: cachedTarget.pixelHeight
-                    ),
-                    refreshRate: cachedTarget.refreshRate,
-                    colorSpace: cachedTarget.colorSpace,
-                    creationPolicy: .singleAttempt(hiDPI: cachedTarget.hiDPI)
-                )
-                if let updatedDisplay = sharedDisplay {
-                    recordDesktopVirtualDisplayResizeTargetSuccess(
-                        snapshot: snapshot(from: updatedDisplay),
-                        for: resizeRequest
-                    )
-                }
-                return true
-            } catch {
-                clearDesktopVirtualDisplayResizeTarget(for: resizeRequest)
-                MirageLogger.host("Cached desktop resize target failed; cleared cache and falling back: \(error)")
-            }
-        }
-
-        if consumer == .desktopStream {
-            do {
-                MirageLogger.host("Desktop resize recreating shared display (guarded path)")
-                sharedDisplay = try await recreateDisplayForDesktopResize(
-                    newResolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: colorSpace
-                )
-            } catch {
-                MirageLogger
-                    .host(
-                        "Desktop resize guarded recreate failed; retrying fast recreate path: \(error)"
-                    )
-                sharedDisplay = try await recreateDisplayForDesktopResize(
-                    newResolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: colorSpace,
-                    preferFastRecreate: true
-                )
-            }
-        } else {
-            sharedDisplay = try await recreateDisplay(
-                newResolution: newResolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace,
-                preferFastRecreate: false
-            )
-        }
-
-        if consumer == .desktopStream,
-           let resizeRequest,
-           let updatedDisplay = sharedDisplay {
-            recordDesktopVirtualDisplayResizeTargetSuccess(
-                snapshot: snapshot(from: updatedDisplay),
-                for: resizeRequest
-            )
-        }
-        return false
-    }
-
-    private func recreateDisplayForDesktopResize(
-        newResolution: CGSize,
-        refreshRate: Int,
-        colorSpace: MirageColorSpace,
-        preferFastRecreate: Bool = false,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
-    )
-    async throws -> ManagedDisplayContext {
-        do {
-            return try await recreateDisplay(
-                newResolution: newResolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace,
-                preferFastRecreate: preferFastRecreate,
-                creationPolicy: creationPolicy
-            )
-        } catch {
-            switch desktopResizeRecreateFailureDecision(error: error) {
-            case .fail:
-                throw error
-            case let .retryAfterResidualDisplayClears(displayIDs):
-                guard await waitForResidualMirageDisplaysToClear(
-                    initialDisplayIDs: displayIDs,
-                    timeoutMs: 2500
-                ) else {
-                    throw error
-                }
-                MirageLogger.host(
-                    "Residual Mirage display(s) cleared after desktop resize recreate wait; retrying " +
-                        "\(Int(newResolution.width))x\(Int(newResolution.height))@\(refreshRate)Hz"
-                )
-                return try await createDisplay(
-                    resolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: colorSpace,
-                    creationPolicy: creationPolicy
-                )
-            }
-        }
-    }
-
-    private func waitForResidualMirageDisplaysToClear(
-        initialDisplayIDs: [CGDirectDisplayID],
-        timeoutMs: Int,
-        pollIntervalMs: Int = 100
-    )
-    async -> Bool {
-        var latestDisplayIDs = initialDisplayIDs
-        let deadline = Date().addingTimeInterval(Double(max(0, timeoutMs)) / 1000.0)
-
-        while !Task.isCancelled, Date() < deadline {
-            let residualDisplayIDs = refreshResidualMirageDisplayTracking()
-            if residualDisplayIDs.isEmpty {
-                return true
-            }
-
-            latestDisplayIDs = residualDisplayIDs
-            try? await Task.sleep(for: .milliseconds(max(1, pollIntervalMs)))
-        }
-
-        MirageLogger.host(
-            "Residual Mirage display(s) still online after desktop resize recreate wait: \(latestDisplayIDs)"
-        )
-        return false
-    }
-
+    /// Reapplies the tracked mode for a consumer when the OS reports display drift.
+    ///
+    /// This is used after OS display state changes where the display still exists but its mode may need to be
+    /// reasserted. Returns the updated snapshot when the in-place update succeeds.
     func reassertDisplayMode(for consumer: DisplayConsumer) async -> DisplaySnapshot? {
         guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
-        let refreshRate = switch consumer {
-        case .desktopStream:
-            SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
-        default:
-            resolvedRefreshRate(Int(display.refreshRate.rounded()))
-        }
+        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
         guard let updatedDisplay = await updateDisplayInPlace(
             display: display,
             newResolution: display.resolution,
@@ -486,6 +332,9 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: updatedDisplay)
     }
 
+    /// Restarts the driver backing a consumer when cadence validation indicates the display is not ticking natively.
+    ///
+    /// The display snapshot is unchanged; the returned value confirms the consumer and display were still active.
     func restartCadenceDriver(for consumer: DisplayConsumer) async -> DisplaySnapshot? {
         guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
         await MainActor.run {
@@ -498,6 +347,7 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: display)
     }
 
+    /// Samples Core Graphics display timing and decides whether the shared display is using native cadence.
     func validateDisplayCadence(
         _ snapshot: DisplaySnapshot,
         targetFrameRate: Int,
@@ -510,7 +360,6 @@ extension SharedVirtualDisplayManager {
                 "Virtual display cadence validation unavailable for display \(snapshot.displayID); using explicit SCK frame interval"
             )
             return VirtualDisplayCadenceValidation(
-                displayID: snapshot.displayID,
                 targetFPS: targetFPS,
                 observedFPS: nil,
                 usesNativeDisplayCadence: false
@@ -520,13 +369,21 @@ extension SharedVirtualDisplayManager {
         let clampedDuration = max(0.10, min(durationSeconds, 1.0))
         cadenceProbe.beginMeasurement()
         let startedAt = CFAbsoluteTimeGetCurrent()
-        try? await Task.sleep(for: .milliseconds(Int((clampedDuration * 1000).rounded())))
+        do {
+            try await Task.sleep(for: .milliseconds(Int((clampedDuration * 1000).rounded())))
+        } catch {
+            cadenceProbe.stop()
+            return VirtualDisplayCadenceValidation(
+                targetFPS: targetFPS,
+                observedFPS: nil,
+                usesNativeDisplayCadence: false
+            )
+        }
         let elapsed = max(0.001, CFAbsoluteTimeGetCurrent() - startedAt)
         let observedFPS = cadenceProbe.completeMeasurement(durationSeconds: elapsed)
         cadenceProbe.stop()
         let usesNativeDisplayCadence = observedFPS.map { $0 >= targetFPS * 0.85 } ?? false
         let validation = VirtualDisplayCadenceValidation(
-            displayID: snapshot.displayID,
             targetFPS: targetFPS,
             observedFPS: observedFPS,
             usesNativeDisplayCadence: usesNativeDisplayCadence
@@ -537,6 +394,7 @@ extension SharedVirtualDisplayManager {
         return validation
     }
 
+    /// Recreates a display with a stricter profile after cadence validation fails.
     func recreateDisplayForCadenceRecovery(
         for consumer: DisplayConsumer
     )
@@ -544,18 +402,12 @@ extension SharedVirtualDisplayManager {
         guard let consumerInfo = activeConsumers[consumer], let display = sharedDisplay else {
             return DisplayResolutionUpdateResult(
                 outcome: .noChange,
-                usedCachedResizeTarget: false,
                 generationChanged: false
             )
         }
 
         let previousGeneration = display.generation
-        let refreshRate = switch consumer {
-        case .desktopStream:
-            SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
-        default:
-            resolvedRefreshRate(Int(display.refreshRate.rounded()))
-        }
+        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
         sharedDisplay = try await recreateDisplay(
             newResolution: display.resolution,
             refreshRate: refreshRate,
@@ -569,188 +421,9 @@ extension SharedVirtualDisplayManager {
         notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
         return DisplayResolutionUpdateResult(
             outcome: .recreated,
-            usedCachedResizeTarget: false,
             generationChanged: generationChanged
         )
     }
 
-    func updateDisplayResolution(
-        for consumer: DisplayConsumer,
-        newResolution: CGSize,
-        refreshRate: Int = 60,
-        resizeRequest: DesktopVirtualDisplayResizeRequest? = nil,
-        allowRecreation: Bool = true
-    )
-    async throws -> DisplayResolutionUpdateResult {
-        let requestedRate = refreshRate
-        let refreshRate: Int = switch consumer {
-        case .desktopStream:
-            SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
-        default:
-            resolvedRefreshRate(requestedRate)
-        }
-        guard let existingInfo = activeConsumers[consumer] else {
-            MirageLogger.error(.host, "Cannot update resolution: consumer \(consumer) not found")
-            return DisplayResolutionUpdateResult(
-                outcome: .noChange,
-                usedCachedResizeTarget: false,
-                generationChanged: false
-            )
-        }
-
-        let requestedColorSpace = existingInfo.colorSpace
-        activeConsumers[consumer] = ClientDisplayInfo(
-            resolution: newResolution,
-            windowID: existingInfo.windowID,
-            colorSpace: requestedColorSpace,
-            acquiredAt: existingInfo.acquiredAt
-        )
-
-        guard let display = sharedDisplay else {
-            switch sharedDisplayMissingUpdateDecision(allowRecreation: allowRecreation) {
-            case .requiresRecreation:
-                MirageLogger.host(
-                    "Shared display missing during resolution update for \(consumer); recreation required"
-                )
-                return DisplayResolutionUpdateResult(
-                    outcome: .requiresRecreation,
-                    usedCachedResizeTarget: false,
-                    generationChanged: false
-                )
-            case .recreateNow:
-                MirageLogger.host(
-                    "Shared display missing during resolution update for \(consumer); recreating from requested state"
-                )
-                let usedCachedResizeTarget = try await recreateSharedDisplayForResolutionChange(
-                    consumer: consumer,
-                    newResolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: requestedColorSpace,
-                    resizeRequest: resizeRequest
-                )
-                if let updatedDisplay = sharedDisplay {
-                    syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-                }
-                return DisplayResolutionUpdateResult(
-                    outcome: .recreated,
-                    usedCachedResizeTarget: usedCachedResizeTarget,
-                    generationChanged: true
-                )
-            }
-        }
-        let previousGeneration = display.generation
-
-        // Check for color space mismatch - requires recreation
-        if display.colorSpace != requestedColorSpace {
-            guard allowRecreation else {
-                return DisplayResolutionUpdateResult(
-                    outcome: .requiresRecreation,
-                    usedCachedResizeTarget: false,
-                    generationChanged: false
-                )
-            }
-            MirageLogger
-                .host(
-                    "Display color space mismatch (\(display.colorSpace.displayName) → \(requestedColorSpace.displayName)); recreating"
-                )
-            let usedCachedResizeTarget = try await recreateSharedDisplayForResolutionChange(
-                consumer: consumer,
-                newResolution: newResolution,
-                refreshRate: refreshRate,
-                colorSpace: requestedColorSpace,
-                resizeRequest: resizeRequest
-            )
-            if let updatedDisplay = sharedDisplay {
-                syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-            }
-            let generationChanged = (sharedDisplay?.generation ?? previousGeneration) != previousGeneration
-            notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-            return DisplayResolutionUpdateResult(
-                outcome: .recreated,
-                usedCachedResizeTarget: usedCachedResizeTarget,
-                generationChanged: generationChanged
-            )
-        }
-
-        // Check if refresh rate or resolution needs updating
-        let needsRefresh = display.refreshRate != Double(refreshRate)
-        let requiresResize = needsResize(currentResolution: display.resolution, targetResolution: newResolution)
-
-        guard needsRefresh || requiresResize else {
-            if let updatedDisplay = sharedDisplay {
-                syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-            }
-            notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-            return DisplayResolutionUpdateResult(
-                outcome: .noChange,
-                usedCachedResizeTarget: false,
-                generationChanged: false
-            )
-        }
-
-        MirageLogger
-            .host(
-                "Updating display \(display.displayID) for \(consumer) to \(Int(newResolution.width))x\(Int(newResolution.height))@\(refreshRate)Hz"
-            )
-
-        let updated = await updateDisplayInPlace(
-            newResolution: newResolution,
-            refreshRate: refreshRate,
-            colorSpace: requestedColorSpace
-        )
-
-        if updated {
-            if consumer == .desktopStream,
-               let resizeRequest,
-               let updatedDisplay = sharedDisplay {
-                recordDesktopVirtualDisplayResizeTargetSuccess(
-                    snapshot: snapshot(from: updatedDisplay),
-                    for: resizeRequest
-                )
-            }
-            if let updatedDisplay = sharedDisplay {
-                syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-            }
-            notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-            return DisplayResolutionUpdateResult(
-                outcome: .updatedInPlace,
-                usedCachedResizeTarget: false,
-                generationChanged: false
-            )
-        }
-
-        if needsRefresh {
-            MirageLogger.host("In-place refresh rate update failed, recreating display")
-        } else {
-            MirageLogger.host("In-place resize failed, recreating display")
-        }
-
-        guard allowRecreation else {
-            return DisplayResolutionUpdateResult(
-                outcome: .requiresRecreation,
-                usedCachedResizeTarget: false,
-                generationChanged: false
-            )
-        }
-
-        let usedCachedResizeTarget = try await recreateSharedDisplayForResolutionChange(
-            consumer: consumer,
-            newResolution: newResolution,
-            refreshRate: refreshRate,
-            colorSpace: requestedColorSpace,
-            resizeRequest: resizeRequest
-        )
-
-        if let updatedDisplay = sharedDisplay {
-            syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-        }
-        let generationChanged = (sharedDisplay?.generation ?? previousGeneration) != previousGeneration
-        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-        return DisplayResolutionUpdateResult(
-            outcome: .recreated,
-            usedCachedResizeTarget: usedCachedResizeTarget,
-            generationChanged: generationChanged
-        )
-    }
 }
 #endif

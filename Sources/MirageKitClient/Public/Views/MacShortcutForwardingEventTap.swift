@@ -12,6 +12,19 @@ import AppKit
 import ApplicationServices
 
 final class MacShortcutForwardingEventTap {
+    private static let screenshotShortcutKeyCodes: Set<UInt16> = [0x14, 0x15, 0x17]
+    private static let allowedScreenshotShortcutModifiers: MirageModifierFlags = [
+        .command,
+        .shift,
+        .control,
+        .option,
+        .capsLock,
+    ]
+    static let eventTapLocations: [CGEventTapLocation] = [
+        .cghidEventTap,
+        .cgSessionEventTap,
+    ]
+
     var onInputEvent: ((MirageInputEvent) -> Void)?
     var onForwardedShortcutKeyDown: (() -> Void)?
     var shouldForward: () -> Bool = { true }
@@ -19,10 +32,6 @@ final class MacShortcutForwardingEventTap {
     private var eventTap: CFMachPort?
     private var eventTapSource: CFRunLoopSource?
     private var forwardedKeyCodes: Set<UInt16> = []
-
-    var isActive: Bool {
-        eventTap != nil
-    }
 
     func start() {
         guard eventTap == nil else { return }
@@ -42,28 +51,28 @@ final class MacShortcutForwardingEventTap {
             (1 << CGEventType.keyUp.rawValue) |
             (1 << CGEventType.flagsChanged.rawValue)
 
-        for location in Self.eventTapLocations {
-            guard let tap = CGEvent.tapCreate(
+        let tap = Self.eventTapLocations.lazy.compactMap { location in
+            CGEvent.tapCreate(
                 tap: location,
                 place: .headInsertEventTap,
                 options: .defaultTap,
                 eventsOfInterest: CGEventMask(mask),
                 callback: callback,
                 userInfo: Unmanaged.passUnretained(self).toOpaque()
-            ) else {
-                continue
-            }
+            )
+        }.first
 
-            eventTap = tap
-            eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            if let eventTapSource {
-                CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
-            }
-            CGEvent.tapEnable(tap: tap, enable: true)
+        guard let tap else {
+            MirageLogger.client("Failed to create mac shortcut forwarding event tap")
             return
         }
 
-        MirageLogger.client("Failed to create mac shortcut forwarding event tap")
+        eventTap = tap
+        eventTapSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        if let eventTapSource {
+            CFRunLoopAddSource(CFRunLoopGetMain(), eventTapSource, .commonModes)
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
     }
 
     func stop() {
@@ -90,6 +99,7 @@ final class MacShortcutForwardingEventTap {
             guard shouldForward() else { return Unmanaged.passUnretained(event) }
             return handleKeyDown(event)
         case .keyUp:
+            guard shouldForward() else { return Unmanaged.passUnretained(event) }
             return handleKeyUp(event)
         case .flagsChanged:
             if shouldForward() {
@@ -102,21 +112,22 @@ final class MacShortcutForwardingEventTap {
     }
 
     private func handleKeyDown(_ event: CGEvent) -> Unmanaged<CGEvent>? {
-        let keyCode = keyCode(from: event)
-        let modifiers = modifiers(from: event)
-        guard Self.shouldForwardShortcut(keyCode: keyCode, modifiers: modifiers) else {
+        let eventKeyCode = keyCode(from: event)
+        let eventModifiers = modifiers(from: event)
+        guard Self.shouldForwardShortcut(keyCode: eventKeyCode, modifiers: eventModifiers) else {
             return Unmanaged.passUnretained(event)
         }
 
-        forwardedKeyCodes.insert(keyCode)
+        forwardedKeyCodes.insert(eventKeyCode)
         onForwardedShortcutKeyDown?()
-        onInputEvent?(.keyDown(keyEvent(from: event, modifiers: modifiers, isRepeat: isRepeat(event))))
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        onInputEvent?(.keyDown(keyEvent(from: event, modifiers: eventModifiers, isRepeat: isRepeat)))
         return nil
     }
 
     private func handleKeyUp(_ event: CGEvent) -> Unmanaged<CGEvent>? {
-        let keyCode = keyCode(from: event)
-        guard forwardedKeyCodes.remove(keyCode) != nil else {
+        let eventKeyCode = keyCode(from: event)
+        guard forwardedKeyCodes.remove(eventKeyCode) != nil else {
             return Unmanaged.passUnretained(event)
         }
 
@@ -146,20 +157,13 @@ final class MacShortcutForwardingEventTap {
         )
     }
 
-    private func isRepeat(_ event: CGEvent) -> Bool {
-        event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-    }
-
     nonisolated static func shouldForwardShortcut(
         keyCode: UInt16,
         modifiers: MirageModifierFlags
     ) -> Bool {
         let shortcutModifiers = modifiers.normalizedForShortcutMatching
         guard !shortcutModifiers.isEmpty else { return false }
-        if HostLightsOutScreenshotShortcutPolicy.isScreenshotShortcut(
-            keyCode: keyCode,
-            modifiers: modifiers
-        ) {
+        if isScreenshotShortcut(keyCode: keyCode, modifiers: modifiers) {
             return true
         }
         return shortcutModifiers.contains(.command) ||
@@ -167,21 +171,13 @@ final class MacShortcutForwardingEventTap {
             shortcutModifiers.contains(.option)
     }
 
-    nonisolated static var eventTapLocations: [CGEventTapLocation] {
-        [.cghidEventTap, .cgSessionEventTap]
-    }
-}
-
-private enum HostLightsOutScreenshotShortcutPolicy {
-    nonisolated static func isScreenshotShortcut(
+    private nonisolated static func isScreenshotShortcut(
         keyCode: UInt16,
         modifiers: MirageModifierFlags
     ) -> Bool {
-        let screenshotKeyCodes: Set<UInt16> = [0x14, 0x15, 0x17]
-        guard screenshotKeyCodes.contains(keyCode) else { return false }
+        guard screenshotShortcutKeyCodes.contains(keyCode) else { return false }
         guard modifiers.isSuperset(of: [.command, .shift]) else { return false }
-        let allowed: MirageModifierFlags = [.command, .shift, .control, .option, .capsLock]
-        return modifiers.subtracting(allowed).isEmpty
+        return modifiers.subtracting(allowedScreenshotShortcutModifiers).isEmpty
     }
 }
 #endif

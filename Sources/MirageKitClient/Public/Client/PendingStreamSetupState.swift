@@ -1,0 +1,38 @@
+//
+//  PendingStreamSetupState.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 3/10/26.
+//
+
+import Foundation
+import MirageKit
+
+@MainActor
+extension MirageClientService {
+    func clearPendingStreamSetup(kind: StreamSetupKind? = nil, appSessionID: UUID? = nil) {
+        if let kind, pendingStreamSetupKind != kind { return }
+        if let appSessionID, pendingStreamSetupAppSessionID != appSessionID { return }
+        pendingStreamSetupRequestID = nil
+        pendingStreamSetupKind = nil
+        pendingStreamSetupAppSessionID = nil
+        pendingStreamSetupLatencyMode = nil
+    }
+
+    func clearPendingDesktopStreamStartState() {
+        guard desktopStreamID == nil else { return }
+        desktopStreamStartTimeoutTask?.cancel()
+        desktopStreamStartTimeoutTask = nil
+        desktopStreamRequestStartTime = 0
+        desktopSessionID = nil
+        desktopStreamMode = nil
+        desktopCursorPresentation = nil
+        desktopStreamPresentationResolution = nil
+        desktopCaptureSource = .virtualDisplay
+        desktopStreamAllowsClientResize = true
+        pendingDesktopRequestedColorDepth = nil
+        pendingDesktopRequestedLatencyMode = nil
+        clearPendingStreamSetup(kind: .desktop)
+        desktopResizeCoordinator.clearAllState()
+    }
+}

@@ -23,12 +23,12 @@ struct MirageInputEventSenderCoalescingTests {
 
         sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 100)
 
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(moveEvent, streamID: streamID, now: 100.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescingForTesting(moveEvent, streamID: streamID, now: 100.004))
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(moveEvent, streamID: streamID, now: 100.020))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.000))
+        #expect(sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.004))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.020))
 
         // Window expires after 1.2s.
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(moveEvent, streamID: streamID, now: 101.250))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 101.250))
     }
 
     @Test("Non-pointer events bypass temporary coalescing")
@@ -41,8 +41,8 @@ struct MirageInputEventSenderCoalescingTests {
 
         sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 200)
 
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(keyEvent, streamID: streamID, now: 200.001))
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(keyEvent, streamID: streamID, now: 200.004))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(keyEvent, streamID: streamID, now: 200.001))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(keyEvent, streamID: streamID, now: 200.004))
     }
 
     @Test("Temporary coalescing is scoped per stream")
@@ -54,18 +54,18 @@ struct MirageInputEventSenderCoalescingTests {
 
         sender.activateTemporaryPointerCoalescing(for: throttledStreamID, duration: 1.2, now: 300)
 
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(dragEvent, streamID: throttledStreamID, now: 300.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescingForTesting(dragEvent, streamID: throttledStreamID, now: 300.005))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: throttledStreamID, now: 300.000))
+        #expect(sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: throttledStreamID, now: 300.005))
 
         // No coalescing window was opened for bypassedStreamID.
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(dragEvent, streamID: bypassedStreamID, now: 300.005))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: bypassedStreamID, now: 300.005))
     }
 
     @Test("Input sender tracks probe-gating interaction")
     func inputSenderTracksProbeGatingInteraction() {
         let sender = MirageInputEventSender()
 
-        sender.recordInteractionForTesting(.mouseMoved(makeMouseEvent()), now: 400)
+        sender.recordInteractionIfNeeded(.mouseMoved(makeMouseEvent()), now: 400)
 
         #expect(sender.hasRecentInteraction(within: 3, now: 402.9))
         #expect(!sender.hasRecentInteraction(within: 3, now: 403.1))
@@ -75,7 +75,7 @@ struct MirageInputEventSenderCoalescingTests {
     func windowResizeDoesNotCountAsProbeGatingInteraction() {
         let sender = MirageInputEventSender()
 
-        sender.recordInteractionForTesting(
+        sender.recordInteractionIfNeeded(
             .windowResize(MirageResizeEvent(windowID: 1, newSize: CGSize(width: 800, height: 600), scaleFactor: 2)),
             now: 500
         )
@@ -92,9 +92,9 @@ struct MirageInputEventSenderCoalescingTests {
 
         sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 600)
 
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(hoverEvent, streamID: streamID, now: 600.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescingForTesting(hoverEvent, streamID: streamID, now: 600.004))
-        #expect(!sender.shouldDropInputForTemporaryCoalescingForTesting(contactEvent, streamID: streamID, now: 600.005))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(hoverEvent, streamID: streamID, now: 600.000))
+        #expect(sender.shouldDropInputForTemporaryCoalescing(hoverEvent, streamID: streamID, now: 600.004))
+        #expect(!sender.shouldDropInputForTemporaryCoalescing(contactEvent, streamID: streamID, now: 600.005))
     }
 
     @Test("Slow best-effort sends replace hover while preserving Pencil contact order")
@@ -198,8 +198,8 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(scrollEvents.first?.timestamp == 2)
     }
 
-    @Test("Legacy scroll events keep replacement behavior instead of merging")
-    func legacyScrollEventsKeepReplacementBehaviorInsteadOfMerging() async throws {
+    @Test("Phase-less scroll events keep replacement behavior instead of merging")
+    func phaseLessScrollEventsKeepReplacementBehaviorInsteadOfMerging() async throws {
         let sender = MirageInputEventSender()
         let recorder = InputEventRecorder()
         let streamID: StreamID = 909

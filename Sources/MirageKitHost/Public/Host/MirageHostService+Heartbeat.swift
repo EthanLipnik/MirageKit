@@ -11,6 +11,7 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Liveness action chosen for a connected host client.
 enum HostClientLivenessDecision: Equatable {
     case wait
     case ping
@@ -20,6 +21,7 @@ enum HostClientLivenessDecision: Equatable {
     case disconnect
 }
 
+/// Chooses the next liveness action from control, media, background, and metadata activity.
 func hostClientLivenessDecision(
     controlIdleSeconds: CFAbsoluteTime,
     mediaIdleSeconds: CFAbsoluteTime?,
@@ -77,23 +79,28 @@ extension MirageHostService {
     nonisolated private static let minimumBackgroundLeaseDuration: TimeInterval = 1
     nonisolated private static let maximumBackgroundLeaseDuration: TimeInterval = 120
 
+    /// Records inbound control-channel activity for a client.
     nonisolated func recordClientActivity(clientID: UUID) {
         clientLastActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
     }
 
+    /// Records host media delivery activity for a client.
     nonisolated func recordClientMediaActivity(clientID: UUID) {
         clientLastMediaActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
     }
 
+    /// Records outbound control-channel activity for a client.
     nonisolated func recordClientControlSendActivity(clientID: UUID) {
         clientLastControlSendActivityByID.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
     }
 
+    /// Clamps a background lease request to the host's accepted duration range.
     nonisolated static func clampedBackgroundLeaseDuration(_ duration: TimeInterval) -> TimeInterval {
         guard duration.isFinite else { return maximumBackgroundLeaseDuration }
         return min(max(duration, minimumBackgroundLeaseDuration), maximumBackgroundLeaseDuration)
     }
 
+    /// Arms a temporary lease that lets a backgrounded client keep its host slot.
     func scheduleBackgroundLease(
         _ lease: ClientBackgroundLeaseMessage,
         for clientContext: ClientContext
@@ -127,8 +134,7 @@ extension MirageHostService {
                 client,
                 sessionID: sessionID,
                 notifyClient: true,
-                reason: .backgroundLeaseExpired,
-                message: "Background lease expired."
+                reason: .backgroundLeaseExpired
             )
             self.delegate?.didDisconnectClient(client)
         }
@@ -138,12 +144,14 @@ extension MirageHostService {
         )
     }
 
+    /// Cancels any background lease for a client.
     func cancelBackgroundLease(clientID: UUID) {
         backgroundLeaseExpirationsByClientID.removeValue(forKey: clientID)
         backgroundLeaseTasksByClientID[clientID]?.cancel()
         backgroundLeaseTasksByClientID.removeValue(forKey: clientID)
     }
 
+    /// Starts the client liveness monitor while at least one client is connected.
     func startClientLivenessMonitorIfNeeded() {
         guard clientLivenessTask == nil else { return }
         clientLivenessTask = Task { [weak self] in
@@ -159,18 +167,21 @@ extension MirageHostService {
         }
     }
 
+    /// Stops the client liveness monitor once all clients are gone.
     func stopClientLivenessMonitorIfIdle() {
         guard connectedClients.isEmpty else { return }
         clientLivenessTask?.cancel()
         clientLivenessTask = nil
     }
 
+    /// Clears all liveness activity timestamps for a client.
     func clearClientActivityRecord(clientID: UUID) {
-        clientLastActivityByID.withLock { $0.removeValue(forKey: clientID) }
-        clientLastMediaActivityByID.withLock { $0.removeValue(forKey: clientID) }
-        clientLastControlSendActivityByID.withLock { $0.removeValue(forKey: clientID) }
+        clientLastActivityByID.withLock { $0[clientID] = nil }
+        clientLastMediaActivityByID.withLock { $0[clientID] = nil }
+        clientLastControlSendActivityByID.withLock { $0[clientID] = nil }
     }
 
+    /// Checks connected clients and disconnects those that exceeded the idle deadline.
     private func checkClientLiveness() async {
         let now = CFAbsoluteTimeGetCurrent()
         let activitySnapshot = clientLastActivityByID.read { $0 }
@@ -205,7 +216,7 @@ extension MirageHostService {
             case .wait:
                 break
             case .ping:
-                clientContext.sendBestEffort(ControlMessage(type: .ping))
+                clientContext.sendBestEffort(.ping)
             case .deferForBackgroundLease:
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout deferred; background lease is active"
@@ -214,12 +225,12 @@ extension MirageHostService {
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout deferred; active media was sent \(Int(mediaElapsed ?? 0))s ago"
                 )
-                clientContext.sendBestEffort(ControlMessage(type: .ping))
+                clientContext.sendBestEffort(.ping)
             case .deferForActiveControlWork:
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout deferred; active control work was sent \(Int(controlWorkElapsed ?? 0))s ago"
                 )
-                clientContext.sendBestEffort(ControlMessage(type: .ping))
+                clientContext.sendBestEffort(.ping)
             case .disconnect:
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout (\(Int(elapsed))s idle) — disconnecting"
@@ -234,14 +245,10 @@ extension MirageHostService {
         }
     }
 
+    /// Returns whether a client owns any active media stream.
     private func hasActiveStream(forClientID clientID: UUID) -> Bool {
-        if let desktopClientID = desktopStreamClientContext?.client.id,
-           desktopClientID == clientID,
-           desktopStreamContext != nil {
-            return true
-        }
-
-        return activeSessionByStreamID.values.contains { $0.client.id == clientID } ||
+        (desktopStreamClientContext?.client.id == clientID && desktopStreamContext != nil) ||
+            activeSessionByStreamID.values.contains { $0.client.id == clientID } ||
             customStreamClientSessionIDByStreamID.values.contains { sessionID in
                 clientsBySessionID[sessionID]?.client.id == clientID
             }

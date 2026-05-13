@@ -42,11 +42,11 @@ package enum MirageColorAttachments {
     /// Enforce color attachments on a pixel buffer, setting only when the existing value differs.
     package static func enforceOnPixelBuffer(_ pixelBuffer: CVPixelBuffer, colorSpace: MirageColorSpace) {
         let expected = expectedAttachments(for: colorSpace)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferTransferFunctionKey, value: expected.transferFunction)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey, value: expected.yCbCrMatrix)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferTransferFunctionKey, value: expected.transferFunction)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey, value: expected.yCbCrMatrix)
         if let cgColorSpace = CGColorSpace(name: expected.cgColorSpaceName) {
-            setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferCGColorSpaceKey, value: cgColorSpace)
+            MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferCGColorSpaceKey, value: cgColorSpace)
         }
     }
 
@@ -59,16 +59,5 @@ package enum MirageColorAttachments {
             kCMFormatDescriptionExtension_YCbCrMatrix: expected.yCbCrMatrix,
         ]
         return extensions as CFDictionary
-    }
-
-    private static func setAttachmentIfNeeded(
-        _ buffer: CVBuffer,
-        key: CFString,
-        value: CFTypeRef
-    ) {
-        if let existing = CVBufferCopyAttachment(buffer, key, nil), CFEqual(existing, value) {
-            return
-        }
-        CVBufferSetAttachment(buffer, key, value, .shouldPropagate)
     }
 }

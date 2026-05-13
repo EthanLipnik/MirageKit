@@ -70,7 +70,6 @@ struct HostSystemActionSerializationTests {
             assertGestureEvent(decodedEnvelope.event, matches: event)
         }
     }
-
 }
 
 private func assertGestureEvent(_ actual: MirageInputEvent, matches expected: MirageInputEvent) {

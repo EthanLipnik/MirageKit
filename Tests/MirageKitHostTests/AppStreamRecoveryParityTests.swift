@@ -39,18 +39,17 @@ struct AppStreamRecoveryParityTests {
         )
         host.streamsByID[77] = context
 
-        await host.applyStreamEncoderSettingsChange(
+        await host.handleStreamEncoderSettingsChange(
             StreamEncoderSettingsChangeMessage(
-                requestID: UUID(),
                 streamID: 77,
                 streamScale: 0.8
             )
         )
 
-        #expect(abs((await context.getStreamScale()) - 0.8) < 0.001)
-        #expect(await context.getDimensionToken() == 1)
+        #expect(abs((await context.streamScale) - 0.8) < 0.001)
+        #expect(await context.streamStartSnapshot.dimensionToken == 1)
 
-        let encodedDimensions = await context.getEncodedDimensions()
+        let encodedDimensions = await context.encodedDimensions
         #expect(encodedDimensions.width == 2_560)
         #expect(encodedDimensions.height == 1_664)
     }
@@ -62,7 +61,7 @@ struct AppStreamRecoveryParityTests {
             encoderConfig: MirageEncoderConfiguration(
                 targetFrameRate: 60,
                 keyFrameInterval: 1_800,
-                bitDepth: .eightBit,
+                colorDepth: .standard,
                 captureQueueDepth: 4,
                 bitrate: 24_000_000
             ),
@@ -101,7 +100,6 @@ private extension StreamContext {
         virtualDisplayContext = displaySnapshot
         virtualDisplayVisibleBounds = visibleBounds
         virtualDisplayCaptureSourceRect = visibleBounds
-        virtualDisplayVisiblePixelResolution = displaySnapshot.resolution
         self.baseCaptureSize = baseCaptureSize
         currentCaptureSize = baseCaptureSize
         currentEncodedSize = baseCaptureSize

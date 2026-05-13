@@ -18,10 +18,10 @@ struct ClientHelloHandshakeStateTests {
     func acceptedBootstrapCanonicalizesConnectedHost() async throws {
         let provisionalHostID = UUID()
         let acceptedHostID = UUID()
-        let port = try #require(NWEndpoint.Port(rawValue: 9_848))
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
+        let port = try #require(NWEndpoint.Port(rawValue: 9848))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61020))
         let provisionalAdvertisement = LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
+            protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: provisionalHostID,
             identityKeyID: "bonjour-key",
             deviceType: .mac,
@@ -34,13 +34,13 @@ struct ClientHelloHandshakeStateTests {
             ],
             metadata: ["source": "bonjour"]
         )
-        let provisionalHost = LoomPeer(
+        let provisionalHost = try LoomPeer(
             id: provisionalHostID,
             name: "Bonjour Host",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("bonjour.local"), port: port),
             advertisement: provisionalAdvertisement,
-            resolvedAddresses: [.ipv4(IPv4Address("192.168.50.81")!)]
+            resolvedAddresses: [.ipv4(#require(IPv4Address("192.168.50.81")))]
         )
         let service = MirageClientService(deviceName: "Test Device")
         service.connectedHost = provisionalHost
@@ -51,7 +51,6 @@ struct ClientHelloHandshakeStateTests {
             accepted: true,
             hostID: acceptedHostID,
             hostName: "Accepted Host",
-            selectedFeatures: mirageSupportedFeatures,
             mediaEncryptionEnabled: true,
             udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
         )
@@ -110,12 +109,12 @@ struct ClientHelloHandshakeStateTests {
         let stream = AsyncStream<Data> { _ in }
 
         do {
-            try await service.receiveSingleControlMessage(
+            let message = try await service.receiveSingleControlMessage(
                 from: stream,
                 timeout: .milliseconds(50),
                 timeoutMessage: "Timed out waiting for host bootstrap response from Test Host"
             )
-            Issue.record("Expected bootstrap response wait to time out.")
+            Issue.record("Expected bootstrap response wait to time out, received \(message.type).")
         } catch let MirageError.protocolError(message) {
             #expect(message == "Timed out waiting for host bootstrap response from Test Host")
         } catch {

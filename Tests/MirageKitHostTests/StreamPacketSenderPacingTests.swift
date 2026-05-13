@@ -15,7 +15,6 @@ import Testing
 
 @Suite("Stream Packet Sender Pacing")
 struct StreamPacketSenderPacingTests {
-
     @Test("Steady-state non-keyframe pacing uses a sub-frame burst window")
     func steadyStateNonKeyframePacingUsesSubFrameBurstWindow() {
         let sixtyHzWindow = StreamPacketSender.packetPacerBurstWindowMilliseconds(
@@ -63,59 +62,6 @@ struct StreamPacketSenderPacingTests {
         #expect(parameters.burstBytes <= bytesPerMillisecond * StreamPacketSender.packetPacerSteadyStateFrameBurstMaxWindowMs)
         #expect(parameters.burstBytes < bytesPerMillisecond * frameIntervalMs)
         #expect(parameters.burstBytes > 1_200)
-    }
-
-    @Test("Packet budget includes FEC parity payload when wire bytes omit it")
-    func packetBudgetIncludesFECParityPayloadWhenWireBytesOmitIt() async {
-        let payload = Data(repeating: 0xA5, count: 1025)
-        let maxPayloadSize = 512
-        let fecBlockSize = 2
-        let sender = StreamPacketSender(
-            maxPayloadSize: maxPayloadSize,
-            sendPacket: { _, onComplete in
-                onComplete(nil)
-            }
-        )
-
-        await sender.start()
-        await sender.setTargetBitrateBps(200_000_000)
-        let generation = sender.currentGenerationSnapshot()
-        sender.enqueue(
-            StreamPacketSender.WorkItem(
-                encodedData: payload,
-                frameByteCount: payload.count,
-                isKeyframe: false,
-                presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
-                contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
-                streamID: 14,
-                frameNumber: 34,
-                sequenceNumberStart: 5000,
-                additionalFlags: [],
-                dimensionToken: 0,
-                epoch: 0,
-                fecBlockSize: fecBlockSize,
-                wireBytes: payload.count,
-                logPrefix: "test",
-                generation: generation,
-                encodedAt: CFAbsoluteTimeGetCurrent(),
-                pacingOverride: nil
-            )
-        )
-
-        guard let snapshot = await sender.packetBudgetSnapshot() else {
-            Issue.record("Missing packet budget snapshot")
-            await sender.stop()
-            return
-        }
-
-        let dataFragments = (payload.count + maxPayloadSize - 1) / maxPayloadSize
-        let parityFragments = (dataFragments + fecBlockSize - 1) / fecBlockSize
-        let payloadBudget = payload.count + parityFragments * maxPayloadSize
-        let packetOverhead = (dataFragments + parityFragments) * mirageHeaderSize
-        #expect(snapshot.sampleBytes >= payloadBudget + packetOverhead)
-        #expect(snapshot.sampleBytes > payload.count + dataFragments * mirageHeaderSize)
-
-        await sender.stop()
     }
 
     @Test("Fragment plans reject header counts that cannot fit on the wire")

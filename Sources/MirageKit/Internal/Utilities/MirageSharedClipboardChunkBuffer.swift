@@ -8,6 +8,9 @@
 import Foundation
 
 package struct MirageSharedClipboardChunkBuffer: Sendable {
+    /// Maximum age for an incomplete clipboard chunk transfer before it is discarded.
+    private static let transferTimeout: Duration = .seconds(5)
+
     struct PendingTransfer: Sendable {
         let chunkCount: Int
         var chunks: [Int: Data]
@@ -15,7 +18,6 @@ package struct MirageSharedClipboardChunkBuffer: Sendable {
     }
 
     private var pending: [UUID: PendingTransfer] = [:]
-    private let timeout: Duration = .seconds(5)
 
     package init() {}
 
@@ -58,6 +60,6 @@ package struct MirageSharedClipboardChunkBuffer: Sendable {
 
     private mutating func evictStale() {
         let now = ContinuousClock.Instant.now
-        pending = pending.filter { now - $0.value.startedAt < timeout }
+        pending = pending.filter { now - $0.value.startedAt < Self.transferTimeout }
     }
 }

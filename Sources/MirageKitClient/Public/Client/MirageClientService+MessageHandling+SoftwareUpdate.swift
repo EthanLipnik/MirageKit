@@ -7,7 +7,6 @@
 //  Host software update control message handling.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
@@ -19,7 +18,7 @@ extension MirageClientService {
         }
         do {
             let statusMessage = try message.decode(HostSoftwareUpdateStatusMessage.self)
-            onHostSoftwareUpdateStatus?(mapHostSoftwareUpdateStatus(statusMessage))
+            onHostSoftwareUpdateStatus?(HostSoftwareUpdateStatus(message: statusMessage))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode host software update status: ")
         }
@@ -28,116 +27,25 @@ extension MirageClientService {
     func handleHostSoftwareUpdateInstallResult(_ message: ControlMessage) {
         do {
             let installResultMessage = try message.decode(HostSoftwareUpdateInstallResultMessage.self)
-            onHostSoftwareUpdateInstallResult?(mapHostSoftwareUpdateInstallResult(installResultMessage))
+            onHostSoftwareUpdateInstallResult?(HostSoftwareUpdateInstallResult(message: installResultMessage))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode host software update install result: ")
         }
     }
+}
 
-    func mapHostSoftwareUpdateStatus(_ message: HostSoftwareUpdateStatusMessage) -> HostSoftwareUpdateStatus {
-        let channel: HostSoftwareUpdateChannel
-        switch message.channel {
-        case .release:
-            channel = .release
-        case .nightly:
-            channel = .nightly
-        }
-
-        let automationMode: HostSoftwareUpdateAutomationMode?
-        switch message.automationMode {
-        case .none:
-            automationMode = nil
-        case .metadataOnly:
-            automationMode = .metadataOnly
-        case .autoDownload:
-            automationMode = .autoDownload
-        case .autoInstall:
-            automationMode = .autoInstall
-        }
-
-        let installDisposition: HostSoftwareUpdateInstallDisposition?
-        switch message.installDisposition {
-        case .none:
-            installDisposition = nil
-        case .idle:
-            installDisposition = .idle
-        case .checking:
-            installDisposition = .checking
-        case .updateAvailable:
-            installDisposition = .updateAvailable
-        case .downloading:
-            installDisposition = .downloading
-        case .installing:
-            installDisposition = .installing
-        case .completed:
-            installDisposition = .completed
-        case .blocked:
-            installDisposition = .blocked
-        case .failed:
-            installDisposition = .failed
-        }
-
-        let lastBlockReason: HostSoftwareUpdateBlockReason?
-        switch message.lastBlockReason {
-        case .none:
-            lastBlockReason = nil
-        case .clientUpdatesDisabled:
-            lastBlockReason = .clientUpdatesDisabled
-        case .hostUpdaterBusy:
-            lastBlockReason = .hostUpdaterBusy
-        case .unattendedInstallUnsupported:
-            lastBlockReason = .unattendedInstallUnsupported
-        case .insufficientPermissions:
-            lastBlockReason = .insufficientPermissions
-        case .authorizationRequired:
-            lastBlockReason = .authorizationRequired
-        case .serviceUnavailable:
-            lastBlockReason = .serviceUnavailable
-        case .policyDenied:
-            lastBlockReason = .policyDenied
-        case .unknown:
-            lastBlockReason = .unknown
-        }
-
-        let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
-        switch message.lastInstallResultCode {
-        case .none:
-            lastInstallResultCode = nil
-        case .started:
-            lastInstallResultCode = .started
-        case .alreadyInProgress:
-            lastInstallResultCode = .alreadyInProgress
-        case .noUpdateAvailable:
-            lastInstallResultCode = .noUpdateAvailable
-        case .denied:
-            lastInstallResultCode = .denied
-        case .blocked:
-            lastInstallResultCode = .blocked
-        case .failed:
-            lastInstallResultCode = .failed
-        case .unavailable:
-            lastInstallResultCode = .unavailable
-        }
-
-        let releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?
-        switch message.releaseNotesFormat {
-        case .none:
-            releaseNotesFormat = nil
-        case .plainText:
-            releaseNotesFormat = .plainText
-        case .html:
-            releaseNotesFormat = .html
-        }
-
-        return HostSoftwareUpdateStatus(
+private extension MirageClientService.HostSoftwareUpdateStatus {
+    /// Converts the host wire payload into the client-facing software-update model.
+    init(message: HostSoftwareUpdateStatusMessage) {
+        self.init(
             isSparkleAvailable: message.isSparkleAvailable,
             isCheckingForUpdates: message.isCheckingForUpdates,
             isInstallInProgress: message.isInstallInProgress,
-            channel: channel,
-            automationMode: automationMode,
-            installDisposition: installDisposition,
-            lastBlockReason: lastBlockReason,
-            lastInstallResultCode: lastInstallResultCode,
+            channel: mirageMappedEnum(message.channel),
+            automationMode: mirageMappedEnum(message.automationMode),
+            installDisposition: mirageMappedEnum(message.installDisposition),
+            lastBlockReason: message.lastBlockReason.map { mirageMappedEnum($0) },
+            lastInstallResultCode: message.lastInstallResultCode.map { mirageMappedEnum($0) },
             canCancelUpdate: message.canCancelUpdate,
             downloadExpectedBytes: message.downloadExpectedBytes,
             downloadReceivedBytes: message.downloadReceivedBytes,
@@ -149,63 +57,22 @@ extension MirageClientService {
             availableVersionTitle: message.availableVersionTitle,
             releaseNotesSummary: message.releaseNotesSummary,
             releaseNotesBody: message.releaseNotesBody,
-            releaseNotesFormat: releaseNotesFormat,
+            releaseNotesFormat: message.releaseNotesFormat.map { mirageMappedEnum($0) },
             lastCheckedAtMs: message.lastCheckedAtMs
         )
     }
+}
 
-    func mapHostSoftwareUpdateInstallResult(
-        _ message: HostSoftwareUpdateInstallResultMessage
-    ) -> HostSoftwareUpdateInstallResult {
-        let resultCode: HostSoftwareUpdateInstallResultCode?
-        switch message.resultCode {
-        case .none:
-            resultCode = nil
-        case .started:
-            resultCode = .started
-        case .alreadyInProgress:
-            resultCode = .alreadyInProgress
-        case .noUpdateAvailable:
-            resultCode = .noUpdateAvailable
-        case .denied:
-            resultCode = .denied
-        case .blocked:
-            resultCode = .blocked
-        case .failed:
-            resultCode = .failed
-        case .unavailable:
-            resultCode = .unavailable
-        }
-
-        let blockReason: HostSoftwareUpdateBlockReason?
-        switch message.blockReason {
-        case .none:
-            blockReason = nil
-        case .clientUpdatesDisabled:
-            blockReason = .clientUpdatesDisabled
-        case .hostUpdaterBusy:
-            blockReason = .hostUpdaterBusy
-        case .unattendedInstallUnsupported:
-            blockReason = .unattendedInstallUnsupported
-        case .insufficientPermissions:
-            blockReason = .insufficientPermissions
-        case .authorizationRequired:
-            blockReason = .authorizationRequired
-        case .serviceUnavailable:
-            blockReason = .serviceUnavailable
-        case .policyDenied:
-            blockReason = .policyDenied
-        case .unknown:
-            blockReason = .unknown
-        }
-
-        return HostSoftwareUpdateInstallResult(
-            accepted: message.accepted,
+private extension MirageClientService.HostSoftwareUpdateInstallResult {
+    /// Converts a host install-result wire payload into the client-facing result model.
+    init(message: HostSoftwareUpdateInstallResultMessage) {
+        self.init(
+            accepted: message.resultCode == .started,
             message: message.message,
-            resultCode: resultCode,
-            blockReason: blockReason,
+            resultCode: mirageMappedEnum(message.resultCode),
+            blockReason: message.blockReason.map { mirageMappedEnum($0) },
             remediationHint: message.remediationHint,
-            status: message.status.map(mapHostSoftwareUpdateStatus)
+            status: MirageClientService.HostSoftwareUpdateStatus(message: message.status)
         )
     }
 }

@@ -43,7 +43,7 @@ extension MirageHostService {
                 return
             }
 
-            guard let inputTarget = inputStreamCacheActor.resolveInputTarget(
+            guard let inputTarget = inputStreamCache.resolveInputTarget(
                 streamID: inputMessage.streamID,
                 event: inputMessage.event
             ) else {
@@ -95,7 +95,7 @@ extension MirageHostService {
                 return
             }
 
-            if let handler = onInputEventStorage { handler(inputTarget.event, inputTarget.window, inputTarget.client) } else {
+            if let handler = onInputEvent { handler(inputTarget.event, inputTarget.window, inputTarget.client) } else {
                 inputController.handleInputEvent(
                     inputTarget.event,
                     window: inputTarget.window,
@@ -104,7 +104,7 @@ extension MirageHostService {
                         guard self.streamRegistry.isInputSessionActive(sessionID, clientID: client.id) else {
                             return false
                         }
-                        return self.inputStreamCacheActor.get(inputMessage.streamID) != nil
+                        return self.inputStreamCache.entry(for: inputMessage.streamID) != nil
                     }
                 )
             }

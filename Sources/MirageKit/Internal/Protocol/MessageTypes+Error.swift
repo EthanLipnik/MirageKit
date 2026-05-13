@@ -11,43 +11,76 @@ import Foundation
 
 // MARK: - Error Messages
 
+/// Generic control-channel error payload.
 package struct ErrorMessage: Codable {
+    /// Machine-readable error code.
     package let code: ErrorCode
+
+    /// User-facing or diagnostic error text.
     package let message: String
-    package let streamID: StreamID?
+
+    /// Bundle identifier associated with an app-stream failure, when available.
     package let bundleIdentifier: String?
 
+    /// Control-channel error categories exchanged between client and host.
     package enum ErrorCode: String, Codable {
+        /// The sender could not classify the error more specifically.
         case unknown
+
+        /// The peer sent a malformed or unsupported message.
         case invalidMessage
+
+        /// A referenced stream does not exist.
         case streamNotFound
+
+        /// A referenced window does not exist.
         case windowNotFound
+
+        /// The host could not start an app-stream session.
         case appStreamStartupFailed
+
+        /// The host failed while encoding media.
         case encodingError
+
+        /// The client failed while decoding media.
         case decodingError
+
+        /// Network transport failed.
         case networkError
+
+        /// Authentication is required before the request can proceed.
         case authRequired
+
+        /// The peer lacks permission for the requested operation.
         case permissionDenied
+
+        /// The host could not create a virtual display.
         case virtualDisplayStartFailed
+
+        /// The host could not resize a virtual display.
         case virtualDisplayResizeFailed
+
+        /// The host login session is locked.
         case sessionLocked
+
+        /// The host is waiting for local approval.
         case waitingForHostApproval
     }
 
+    /// Creates a generic control-channel error payload.
     package init(
         code: ErrorCode,
         message: String,
-        streamID: StreamID? = nil,
         bundleIdentifier: String? = nil
     ) {
         self.code = code
         self.message = message
-        self.streamID = streamID
         self.bundleIdentifier = bundleIdentifier
     }
 }
 
 package extension ErrorMessage.ErrorCode {
+    /// Maps a runtime-condition error into its wire error code.
     init(_ runtimeCondition: MirageRuntimeConditionError) {
         switch runtimeCondition {
         case .sessionLocked:
@@ -57,14 +90,15 @@ package extension ErrorMessage.ErrorCode {
         }
     }
 
+    /// Converts a wire error code back into a runtime-condition error when possible.
     var runtimeConditionError: MirageRuntimeConditionError? {
         switch self {
         case .sessionLocked:
-            return .sessionLocked
+            .sessionLocked
         case .waitingForHostApproval:
-            return .waitingForHostApproval
+            .waitingForHostApproval
         default:
-            return nil
+            nil
         }
     }
 }

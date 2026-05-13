@@ -18,10 +18,6 @@ import AppKit
 import ScreenCaptureKit
 
 extension WindowCaptureEngine {
-    func handleFrame(_ frame: CapturedFrame) {
-        capturedFrameHandler?(frame)
-    }
-
     func markKeyframeRequested(reason: CaptureStreamOutput.KeyframeRequestReason) {
         switch reason {
         case .fallbackResume:

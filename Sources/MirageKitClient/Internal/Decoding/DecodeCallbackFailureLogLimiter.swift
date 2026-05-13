@@ -46,7 +46,7 @@ final class DecodeCallbackFailureLogLimiter: @unchecked Sendable {
 
     func reset() {
         lock.lock()
+        defer { lock.unlock() }
         entries.removeAll(keepingCapacity: true)
-        lock.unlock()
     }
 }

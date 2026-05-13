@@ -15,99 +15,12 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
-    struct ObservedDisplayMode: Sendable, Equatable {
-        let logicalResolution: CGSize
-        let pixelResolution: CGSize
-        let refreshRate: Double
-    }
-
-    enum DisplayValidationOutcome: Sendable, Equatable {
-        case ready
-        case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
-        case modeMismatch
-    }
-
-    enum DisplayModeValidationAcceptance: Sendable, Equatable {
-        case strict
-        case lenientOneX
-        case missingCoreGraphicsRefreshOneX
-        case missingCoreGraphicsMode
-
-        var logLabel: String {
-            switch self {
-            case .strict:
-                return "strict"
-            case .lenientOneX:
-                return "lenient 1x"
-            case .missingCoreGraphicsRefreshOneX:
-                return "missing CoreGraphics refresh 1x"
-            case .missingCoreGraphicsMode:
-                return "missing CoreGraphics mode/refresh"
-            }
-        }
-    }
-
-    struct DisplayModeValidationSnapshot: Sendable, Equatable {
-        let boundsSize: CGSize
-        let screenCaptureSize: CGSize
-        let modeLogicalSize: CGSize
-        let modePixelSize: CGSize
-        let modeRefreshRate: Double?
-    }
-
-    struct DisplayCreationAttempt: Sendable {
-        let resolution: CGSize
-        let hiDPI: Bool
-        let colorSpace: MirageColorSpace
-        let label: String
-    }
-
     func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
         var ordered = [requestedColorSpace]
         for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
             ordered.append(candidate)
         }
         return ordered
-    }
-
-    static func logicalResolution(for pixelResolution: CGSize, scaleFactor: CGFloat = 2.0) -> CGSize {
-        guard pixelResolution.width > 0, pixelResolution.height > 0 else { return pixelResolution }
-        let scale = max(1.0, scaleFactor)
-        return CGSize(
-            width: pixelResolution.width / scale,
-            height: pixelResolution.height / scale
-        )
-    }
-
-    static func fallbackResolution(for retinaResolution: CGSize) -> CGSize {
-        let width = CGFloat(StreamContext.alignedEvenPixel(max(2.0, retinaResolution.width / 2.0)))
-        let height = CGFloat(StreamContext.alignedEvenPixel(max(2.0, retinaResolution.height / 2.0)))
-        return CGSize(width: width, height: height)
-    }
-
-    private static func normalizedPixelResolution(_ resolution: CGSize) -> CGSize {
-        CGSize(
-            width: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.width))),
-            height: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.height)))
-        )
-    }
-
-    static func needsPostReadyModeEnforcement(
-        observedMode: ObservedDisplayMode?,
-        expectedPixelResolution: CGSize,
-        expectedRefreshRate: Double,
-        pixelTolerance: CGFloat = 1.0,
-        refreshTolerance: Double = 1.0
-    ) -> Bool {
-        guard let observedMode else { return true }
-
-        let widthDelta = abs(observedMode.pixelResolution.width - expectedPixelResolution.width)
-        let heightDelta = abs(observedMode.pixelResolution.height - expectedPixelResolution.height)
-        guard widthDelta <= pixelTolerance, heightDelta <= pixelTolerance else {
-            return true
-        }
-
-        return abs(observedMode.refreshRate - expectedRefreshRate) > refreshTolerance
     }
 
     private func creationAttempts(
@@ -166,83 +79,6 @@ extension SharedVirtualDisplayManager {
         return attempts
     }
 
-    static func aspectRelativeDelta(requested: CGSize, candidate: CGSize) -> CGFloat {
-        guard requested.width > 0,
-              requested.height > 0,
-              candidate.width > 0,
-              candidate.height > 0 else {
-            return .greatestFiniteMagnitude
-        }
-        let requestedAspect = requested.width / requested.height
-        let candidateAspect = candidate.width / candidate.height
-        guard requestedAspect > 0, candidateAspect > 0 else {
-            return .greatestFiniteMagnitude
-        }
-        return abs(requestedAspect - candidateAspect) / requestedAspect
-    }
-
-    static func displayModeValidationAcceptance(
-        snapshot: DisplayModeValidationSnapshot,
-        expectedLogicalResolution: CGSize,
-        expectedPixelResolution: CGSize,
-        expectedRefreshRate: Double?
-    ) -> DisplayModeValidationAcceptance? {
-        let boundsReady = snapshot.boundsSize.width > 0 && snapshot.boundsSize.height > 0
-
-        let scMatchesLogical = Self.resolutionsMatch(snapshot.screenCaptureSize, expectedLogicalResolution)
-        let scMatchesPixel = Self.resolutionsMatch(snapshot.screenCaptureSize, expectedPixelResolution)
-        let boundsMatchesLogical = Self.resolutionsMatch(snapshot.boundsSize, expectedLogicalResolution)
-        let boundsMatchesPixel = Self.resolutionsMatch(snapshot.boundsSize, expectedPixelResolution)
-        let modeMatchesLogical = Self.resolutionsMatch(snapshot.modeLogicalSize, expectedLogicalResolution)
-        let modeMatchesPixel = Self.resolutionsMatch(snapshot.modePixelSize, expectedPixelResolution)
-
-        let screenCaptureMatches = scMatchesLogical || scMatchesPixel
-        let boundsMatches = boundsMatchesLogical || boundsMatchesPixel
-        let observedSurfacesCoverExpectedGeometry = (scMatchesLogical || boundsMatchesLogical) &&
-            (scMatchesPixel || boundsMatchesPixel)
-        let sizeMatches = screenCaptureMatches || boundsMatches
-        let modeMatches = modeMatchesLogical && modeMatchesPixel
-        let modeSizeAvailable = snapshot.modeLogicalSize.width > 0 &&
-            snapshot.modeLogicalSize.height > 0 &&
-            snapshot.modePixelSize.width > 0 &&
-            snapshot.modePixelSize.height > 0
-        let modeRefreshRate = snapshot.modeRefreshRate ?? 0
-        let modeRefreshAvailable = modeRefreshRate > 0
-        let refreshMatches = if let expectedRefreshRate {
-            modeRefreshAvailable && abs(modeRefreshRate - expectedRefreshRate) <= 1.0
-        } else {
-            true
-        }
-        let missingExpectedRefresh = expectedRefreshRate != nil && !modeRefreshAvailable
-        let expectsOneX = Self.resolutionsMatch(expectedLogicalResolution, expectedPixelResolution)
-
-        if boundsReady, sizeMatches, modeMatches, refreshMatches {
-            return .strict
-        }
-
-        if expectsOneX, boundsReady, sizeMatches, refreshMatches {
-            return .lenientOneX
-        }
-
-        if expectsOneX, boundsReady, screenCaptureMatches, boundsMatches, missingExpectedRefresh {
-            return .missingCoreGraphicsRefreshOneX
-        }
-
-        if boundsReady,
-           observedSurfacesCoverExpectedGeometry,
-           missingExpectedRefresh,
-           (!modeSizeAvailable || modeMatches) {
-            return .missingCoreGraphicsMode
-        }
-
-        return nil
-    }
-
-    private static func resolutionsMatch(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat = 1) -> Bool {
-        abs(lhs.width - rhs.width) <= tolerance &&
-            abs(lhs.height - rhs.height) <= tolerance
-    }
-
     private func resolvedScaleFactor(displayID: CGDirectDisplayID, fallback: CGFloat) -> CGFloat {
         if let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID),
            modeSizes.logical.width > 0,
@@ -263,188 +99,6 @@ extension SharedVirtualDisplayManager {
         generationChangeHandler?(snapshot(from: display), previousGeneration)
     }
 
-    func dedicatedDisplayName(for streamID: StreamID) -> String {
-        "Mirage Stream Display (\(streamID))"
-    }
-
-    private func dedicatedInsetCacheKey(
-        scaleFactor: CGFloat,
-        colorSpace: MirageColorSpace
-    ) -> DedicatedInsetCacheKey {
-        let normalizedScale = max(1.0, scaleFactor)
-        let bucket = Int((normalizedScale * 100).rounded())
-        return DedicatedInsetCacheKey(colorSpace: colorSpace, scaleBucket: bucket)
-    }
-
-    func cachedDedicatedInsetsPixels(
-        scaleFactor: CGFloat,
-        colorSpace: MirageColorSpace
-    ) -> CGSize {
-        dedicatedInsetsByKey[dedicatedInsetCacheKey(scaleFactor: scaleFactor, colorSpace: colorSpace)] ?? .zero
-    }
-
-    func cacheDedicatedInsetsPixels(
-        _ insets: CGSize,
-        scaleFactor: CGFloat,
-        colorSpace: MirageColorSpace
-    ) {
-        guard insets.width >= 0, insets.height >= 0 else { return }
-        let sanitized = CGSize(width: ceil(insets.width), height: ceil(insets.height))
-        dedicatedInsetsByKey[dedicatedInsetCacheKey(scaleFactor: scaleFactor, colorSpace: colorSpace)] = sanitized
-    }
-
-    /// Check if display needs to be resized
-    func needsResize(currentResolution: CGSize, targetResolution: CGSize) -> Bool {
-        let widthDiff = abs(currentResolution.width - targetResolution.width)
-        let heightDiff = abs(currentResolution.height - targetResolution.height)
-        // Allow small tolerance (2 pixels) for rounding differences
-        return widthDiff > 2 || heightDiff > 2
-    }
-
-    func observedDisplayMode(
-        displayID: CGDirectDisplayID
-    ) -> ObservedDisplayMode? {
-        guard let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID),
-              let refreshRate = CGDisplayCopyDisplayMode(displayID)?.refreshRate else {
-            return nil
-        }
-        return ObservedDisplayMode(
-            logicalResolution: modeSizes.logical,
-            pixelResolution: modeSizes.pixel,
-            refreshRate: refreshRate
-        )
-    }
-
-    func validatedObservedDisplayMode(
-        requestedResolution: CGSize,
-        requestedRefreshRate: Int,
-        observedMode: ObservedDisplayMode?
-    ) -> ObservedDisplayMode? {
-        guard let observedMode else { return nil }
-        guard !needsResize(
-            currentResolution: observedMode.pixelResolution,
-            targetResolution: requestedResolution
-        ) else {
-            return nil
-        }
-
-        let refreshTolerance = 1.0
-        guard abs(observedMode.refreshRate - Double(requestedRefreshRate)) <= refreshTolerance else {
-            return nil
-        }
-
-        return observedMode
-    }
-
-    func validateDisplayMode(
-        displayID: CGDirectDisplayID,
-        expectedLogicalResolution: CGSize,
-        expectedPixelResolution: CGSize,
-        expectedRefreshRate: Double? = nil,
-        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
-    )
-    async -> DisplayValidationOutcome {
-        guard expectedLogicalResolution.width > 0,
-              expectedLogicalResolution.height > 0,
-              expectedPixelResolution.width > 0,
-              expectedPixelResolution.height > 0 else { return .ready }
-
-        let maxAttempts = 6
-        var delayMs = 80
-        var sawScreenCaptureKitDelay = false
-
-        for attempt in 1 ... maxAttempts {
-            if startupBudget?.isExpired == true {
-                return sawScreenCaptureKitDelay ? .screenCaptureKitVisibilityDelayed(displayID) : .modeMismatch
-            }
-            let bounds = CGDisplayBounds(displayID)
-            let observedMode = observedDisplayMode(displayID: displayID)
-
-            do {
-                let scDisplay = try await findSCDisplay(
-                    displayID: displayID,
-                    maxAttempts: 1,
-                    startupBudget: startupBudget
-                )
-                let scSize = CGSize(width: CGFloat(scDisplay.display.width), height: CGFloat(scDisplay.display.height))
-                let modeLogicalSize = observedMode?.logicalResolution ?? .zero
-                let modePixelSize = observedMode?.pixelResolution ?? .zero
-                let modeRefreshRate = observedMode?.refreshRate
-                let validationAcceptance = Self.displayModeValidationAcceptance(
-                    snapshot: DisplayModeValidationSnapshot(
-                        boundsSize: bounds.size,
-                        screenCaptureSize: scSize,
-                        modeLogicalSize: modeLogicalSize,
-                        modePixelSize: modePixelSize,
-                        modeRefreshRate: modeRefreshRate
-                    ),
-                    expectedLogicalResolution: expectedLogicalResolution,
-                    expectedPixelResolution: expectedPixelResolution,
-                    expectedRefreshRate: expectedRefreshRate
-                )
-
-                if validationAcceptance == .strict {
-                    return .ready
-                }
-
-                if let validationAcceptance {
-                    MirageLogger
-                        .host(
-                            "Virtual display \(displayID) accepted using \(validationAcceptance.logLabel) validation: " +
-                                "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate ?? 0), " +
-                                "expected=\(expectedPixelResolution)"
-                        )
-                    return .ready
-                }
-
-                MirageLogger
-                    .host(
-                        "Virtual display \(displayID) size mismatch (attempt \(attempt)/\(maxAttempts)): " +
-                            "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                            "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate ?? 0), " +
-                            "expectedLogical=\(expectedLogicalResolution), expectedPixel=\(expectedPixelResolution), expectedRefresh=\(expectedRefreshRate ?? 0)"
-                    )
-            } catch let error as SharedDisplayError {
-                switch error {
-                case .noActiveDisplay, .scDisplayNotFound:
-                    sawScreenCaptureKitDelay = true
-                default:
-                    break
-                }
-                MirageLogger
-                    .host(
-                        "Virtual display \(displayID) size validation failed (attempt \(attempt)/\(maxAttempts)): \(error)"
-                    )
-            } catch {
-                MirageLogger
-                    .host(
-                        "Virtual display \(displayID) size validation failed (attempt \(attempt)/\(maxAttempts)): \(error)"
-                    )
-            }
-
-            if attempt < maxAttempts {
-                let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(delayMs) ?? delayMs
-                try? await Task.sleep(for: .milliseconds(boundedDelayMs))
-                delayMs = min(1000, Int(Double(delayMs) * 1.6))
-            }
-        }
-
-        if sawScreenCaptureKitDelay {
-            return .screenCaptureKitVisibilityDelayed(displayID)
-        }
-        return .modeMismatch
-    }
-
-    func waitForDisplayRemoval(displayID: CGDirectDisplayID, timeoutMs: Int = 1500) async {
-        let clampedTimeoutMs = max(0, timeoutMs)
-        let deadline = Date().addingTimeInterval(Double(clampedTimeoutMs) / 1000.0)
-        while Date() < deadline {
-            if !CGVirtualDisplayBridge.isDisplayOnline(displayID) { return }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-    }
-
     func waitForSpaceAssignment(
         displayID: CGDirectDisplayID,
         timeoutMs: Int = 1500,
@@ -455,51 +109,17 @@ extension SharedVirtualDisplayManager {
         let deadline = Date().addingTimeInterval(Double(clampedTimeoutMs) / 1000.0)
         while Date() < deadline {
             if startupBudget?.isExpired == true { return nil }
-            let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(displayID)
+            let spaceID = CGVirtualDisplayBridge.space(for: displayID)
             if spaceID != 0 { return spaceID }
             if !CGVirtualDisplayBridge.isDisplayOnline(displayID) { return nil }
             let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(50) ?? 50
-            try? await Task.sleep(for: .milliseconds(boundedDelayMs))
+            do {
+                try await Task.sleep(for: .milliseconds(boundedDelayMs))
+            } catch {
+                return nil
+            }
         }
         return nil
-    }
-
-    func destroyAttemptDisplay(
-        _ displayContext: CGVirtualDisplayBridge.VirtualDisplayContext,
-        removalWaitMs: Int = 1500
-    )
-    async {
-        let displayID = displayContext.displayID
-        let invalidateSelector = NSSelectorFromString("invalidate")
-        let displayObject = displayContext.display
-
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
-        }
-
-        await withDisplayMutation(kind: .virtualDisplayDestroy) {
-            if (displayObject as AnyObject).responds(to: invalidateSelector) {
-                _ = (displayObject as AnyObject).perform(invalidateSelector)
-                MirageLogger.host("Invalidated failed-attempt virtual display object \(displayID)")
-            }
-
-            CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-            await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
-        }
-
-        if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
-            orphanedDisplayIDs.insert(displayID)
-            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: displayContext.colorSpace)
-            CGVirtualDisplayBridge.invalidatePersistentSerial(for: displayContext.colorSpace)
-            MirageLogger.debug(
-                .host,
-                "WARNING: Failed-attempt virtual display \(displayID) remained online after invalidation; marked orphaned and rotated descriptor profile/serial"
-            )
-            return
-        }
-
-        orphanedDisplayIDs.remove(displayID)
-        MirageLogger.host("Failed-attempt virtual display \(displayID) successfully destroyed")
     }
 
     func updateDisplayInPlace(
@@ -523,7 +143,6 @@ extension SharedVirtualDisplayManager {
                 height: Int(normalizedResolution.height),
                 refreshRate: Double(refreshRate),
                 hiDPI: useHiDPI,
-                colorSpace: display.colorSpace,
                 isFallbackProbe: true
             )
         }
@@ -594,8 +213,6 @@ extension SharedVirtualDisplayManager {
         startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> ManagedDisplayContext {
-        try assertNoResidualMirageDisplaysBeforeCreation()
-
         if displayCounter == 0 {
             displayCounter = 1
         }
@@ -670,7 +287,6 @@ extension SharedVirtualDisplayManager {
                         height: Int(effectivePixel.height.rounded()),
                         refreshRate: Double(refreshRate),
                         hiDPI: enforceHiDPI,
-                        colorSpace: attempt.colorSpace,
                         isFallbackProbe: true
                     )
                 }
@@ -823,87 +439,5 @@ extension SharedVirtualDisplayManager {
         )
     }
 
-    /// Recreate a specific display instance (used by dedicated stream displays).
-    func recreateDisplay(
-        from display: ManagedDisplayContext,
-        newResolution: CGSize,
-        refreshRate: Int,
-        colorSpace: MirageColorSpace,
-        displayNameOverride: String? = nil,
-        preferFastRecreate: Bool = false,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
-        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
-    )
-    async throws -> ManagedDisplayContext {
-        await destroyDisplay(display, removalWaitMs: preferFastRecreate ? 250 : 1500)
-        try startupBudget?.checkAvailable()
-        let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(50) ?? 50
-        try await Task.sleep(for: .milliseconds(boundedDelayMs))
-        return try await createDisplay(
-            resolution: newResolution,
-            refreshRate: refreshRate,
-            colorSpace: colorSpace,
-            displayNameOverride: displayNameOverride,
-            creationPolicy: creationPolicy,
-            startupBudget: startupBudget
-        )
-    }
-
-    func destroyDisplay(_ display: ManagedDisplayContext, removalWaitMs: Int = 3000) async {
-        let displayID = display.displayID
-        MirageLogger.host("Destroying virtual display, displayID=\(displayID)")
-
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
-        }
-
-        let invalidateSelector = NSSelectorFromString("invalidate")
-        let displayObject = display.displayRef.value
-        await withDisplayMutation(kind: .virtualDisplayDestroy) {
-            if (displayObject as AnyObject).responds(to: invalidateSelector) {
-                _ = (displayObject as AnyObject).perform(invalidateSelector)
-                MirageLogger.host("Invalidated virtual display object \(displayID)")
-            }
-
-            CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-            await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
-        }
-
-        if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
-            orphanedDisplayIDs.insert(displayID)
-            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: display.colorSpace)
-            CGVirtualDisplayBridge.invalidatePersistentSerial(for: display.colorSpace)
-            MirageLogger.debug(
-                .host,
-                "WARNING: Virtual display \(displayID) still online after invalidation; marked orphaned and rotated descriptor profile/serial"
-            )
-            return
-        }
-
-        orphanedDisplayIDs.remove(displayID)
-        MirageLogger.host("Virtual display \(displayID) successfully destroyed")
-    }
-
-    /// Destroy the shared display
-    func destroyDisplay() async {
-        await destroyDisplay(removalWaitMs: 1500)
-    }
-
-    /// Destroy the shared display with a custom removal wait budget.
-    func destroyDisplay(removalWaitMs: Int) async {
-        guard let display = sharedDisplay else { return }
-        sharedDisplay = nil
-        await destroyDisplay(display, removalWaitMs: removalWaitMs)
-    }
-
-    private func withDisplayMutation<T>(
-        kind: VirtualDisplayMutationKind,
-        operation: () async -> T
-    ) async -> T {
-        let lease = await VirtualDisplayMutationCoordinator.shared.acquire(kind: kind)
-        let result = await operation()
-        await VirtualDisplayMutationCoordinator.shared.release(lease)
-        return result
-    }
 }
 #endif

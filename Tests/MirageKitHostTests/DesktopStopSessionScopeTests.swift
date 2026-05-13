@@ -37,6 +37,5 @@ struct DesktopStopSessionScopeTests {
             )
         )
     }
-
 }
 #endif

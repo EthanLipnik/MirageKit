@@ -12,16 +12,6 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-struct MirageVideoDecodeFrameContext: Sendable, Equatable {
-    let renderGeneration: UInt64
-    let queueEpoch: UInt64
-    let hostEpoch: UInt16
-    let dimensionToken: UInt16
-    let frameNumber: UInt32
-    let remotePresentationTime: CMTime
-    let timeline: FrameTimeline
-}
-
 /// Hardware-accelerated video decoder using VideoToolbox (HEVC or ProRes)
 actor VideoDecoder {
     var decompressionSession: VTDecompressionSession?
@@ -33,7 +23,6 @@ actor VideoDecoder {
     var preferredOutputColorDepth: MirageStreamColorDepth = .standard
     var lastDecodedOutputPixelFormat: OSType?
     var maximizePowerEfficiencyEnabled = false
-    var metalFXOutputOverrideEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
     let decodeCallbackGenerationFence = DecodeCallbackGenerationFence()
     var pendingOutputTelemetryGeneration: UInt64 = 0
@@ -52,7 +41,7 @@ actor VideoDecoder {
     var memoryPool: CMMemoryPool?
 
     var isDecoding = false
-    var decodedFrameHandler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?
+    var decodedFrameHandler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?
 
     /// Thread-safe error tracker for decode callbacks
     var errorTracker: DecodeErrorTracker?
@@ -65,10 +54,8 @@ actor VideoDecoder {
 
     /// Bounded in-flight decode submissions to avoid decoder saturation spirals.
     var decodeSubmissionLimit: Int = 1
-    var decodeSubmissionGeneration: UInt64 = 0
-    var activeDecodeSubmissionLeases: Set<UInt64> = []
-    var decodeSubmissionWaiters: [DecodeSubmissionWaiter] = []
-    var nextDecodeSubmissionLeaseID: UInt64 = 0
+    var inFlightDecodeSubmissions: Int = 0
+    var decodeSubmissionWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// Handler called when video dimensions change - used to reset reassembler
     var onDimensionChange: (@Sendable () -> Void)?
@@ -90,14 +77,9 @@ actor VideoDecoder {
 
     /// Expected dimensions after resize (optional, for validation)
     var expectedDimensions: (width: Int, height: Int)?
-
 }
 
 extension VideoDecoder {
-    var preferredOutputBitDepth: MirageVideoBitDepth {
-        preferredOutputColorDepth.bitDepth
-    }
-
     func preferredOutputPixelFormat(for colorDepth: MirageStreamColorDepth) -> OSType {
         switch colorDepth {
         case .standard:
@@ -233,7 +215,7 @@ extension VideoDecoder {
 
 /// Info passed through the decode callback
 final class DecodeInfo: @unchecked Sendable {
-    let handler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?
+    let handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?
     let contentRect: CGRect
     let isKeyframe: Bool
     let errorTracker: DecodeErrorTracker?
@@ -242,13 +224,10 @@ final class DecodeInfo: @unchecked Sendable {
     let callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?
     let sessionGeneration: UInt64
     let colorDepth: MirageStreamColorDepth
-    let frameContext: MirageVideoDecodeFrameContext
     let onCompletion: (@Sendable () -> Void)?
-    let releaseBuffer: (@Sendable () -> Void)?
-    let data: Data
 
     init(
-        handler: (@Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void)?,
+        handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?,
         contentRect: CGRect,
         isKeyframe: Bool,
         errorTracker: DecodeErrorTracker?,
@@ -257,10 +236,7 @@ final class DecodeInfo: @unchecked Sendable {
         callbackFailureLogLimiter: DecodeCallbackFailureLogLimiter?,
         sessionGeneration: UInt64,
         colorDepth: MirageStreamColorDepth,
-        frameContext: MirageVideoDecodeFrameContext,
-        onCompletion: (@Sendable () -> Void)?,
-        releaseBuffer: (@Sendable () -> Void)?,
-        data: Data
+        onCompletion: (@Sendable () -> Void)?
     ) {
         self.handler = handler
         self.contentRect = contentRect
@@ -271,10 +247,7 @@ final class DecodeInfo: @unchecked Sendable {
         self.callbackFailureLogLimiter = callbackFailureLogLimiter
         self.sessionGeneration = sessionGeneration
         self.colorDepth = colorDepth
-        self.frameContext = frameContext
         self.onCompletion = onCompletion
-        self.releaseBuffer = releaseBuffer
-        self.data = data
     }
 }
 
@@ -358,225 +331,4 @@ final class DecodePerformanceTracker: @unchecked Sendable {
     let lock = NSLock()
     var samples: [Double] = []
     let maxSamples: Int = 30
-}
-
-/// Reassembles video frames from network packets.
-/// Uses lock-based synchronization to avoid per-packet Task overhead.
-final class FrameReassembler: @unchecked Sendable {
-    enum FrameLossReason: String, Sendable, Equatable {
-        case timeout
-        case forwardGapTimeout
-        case payloadIntegrity
-        case memoryBudget
-        case severeForwardGap
-    }
-
-    struct MemoryBudget: Sendable, Equatable {
-        static let `default` = MemoryBudget(
-            maxPendingFrames: 60,
-            maxPendingKeyframes: 2,
-            maxPendingBytes: 128 * 1024 * 1024
-        )
-
-        let maxPendingFrames: Int
-        let maxPendingKeyframes: Int
-        let maxPendingBytes: Int
-
-        init(
-            maxPendingFrames: Int,
-            maxPendingKeyframes: Int,
-            maxPendingBytes: Int
-        ) {
-            self.maxPendingFrames = max(1, maxPendingFrames)
-            self.maxPendingKeyframes = max(1, maxPendingKeyframes)
-            self.maxPendingBytes = max(1, maxPendingBytes)
-        }
-    }
-
-    struct Metrics: Sendable {
-        let framesDelivered: UInt64
-        let lastCompletedFrame: UInt32
-        let totalPacketsReceived: UInt64
-        let droppedFrames: UInt64
-        let discardedPackets: UInt64
-        let pendingFrameCount: Int
-        let pendingKeyframeCount: Int
-        let pendingFrameBytes: Int
-        let frameBufferPoolRetainedBytes: Int
-        let budgetEvictions: UInt64
-    }
-
-    struct MemoryTrimResult: Sendable, Equatable {
-        let evictedFrames: Int
-        let releasedPendingBytes: Int
-        let purgedRetainedBytes: Int
-        let awaitingKeyframe: Bool
-    }
-
-    /// The stream ID this reassembler handles
-    let streamID: StreamID
-    let maxPayloadSize: Int
-    let lock = NSLock()
-    let bufferPool = FrameBufferPool()
-    let memoryBudget: MemoryBudget
-
-    var pendingFrames: [UInt32: PendingFrame] = [:]
-    var lastCompletedFrame: UInt32 = 0
-    var lastDeliveredKeyframe: UInt32 = 0
-    /// Tracks whether we have a valid keyframe anchor.
-    /// Frame number 0 is valid, so lastDeliveredKeyframe cannot be used as a sentinel.
-    var hasDeliveredKeyframeAnchor: Bool = false
-    var droppedFrameCount: UInt64 = 0
-    var memoryBudgetEvictionCount: UInt64 = 0
-    var awaitingKeyframe: Bool = false
-    var awaitingKeyframeSince: CFAbsoluteTime = 0
-    var lastPacketReceivedTime: CFAbsoluteTime = 0
-    var currentEpoch: UInt16 = 0
-    let keyframeTimeout: TimeInterval = 3.0
-    let startupKeyframeTimeout: TimeInterval = 5.0
-    let pendingKeyframePromotionDelay: TimeInterval = 0.15
-    let pendingKeyframePromotionProgressThreshold: Double = 0.25
-    let pendingKeyframeProgressPreservationThreshold: Double = 0.75
-    let pFrameTimeoutFrameIntervalBudget: Double = 18.0
-    let pFrameTimeoutMinimum: TimeInterval = 0.12
-    let pFrameTimeoutMaximum: TimeInterval = 0.60
-    let severeForwardGapFrameIntervalBudget: Double = 18.0
-    var targetFrameRate: Int = 60
-    var startupKeyframeTimeoutOverrideEnabled = false
-
-    /// Expected dimension token - frames with mismatched tokens are silently discarded.
-    /// Updated when stream starts or client receives a resize notification.
-    /// Initial value of 0 accepts all frames until explicitly set.
-    var expectedDimensionToken: UInt16 = 0
-
-    /// Whether dimension token validation is enabled.
-    /// Disabled until the stream provides an explicit token contract.
-    var dimensionTokenValidationEnabled: Bool = false
-
-    /// Frame completion callback: (streamID, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, release)
-    var onFrameComplete: (@Sendable (
-        StreamID,
-        Data,
-        Bool,
-        UInt32,
-        UInt64,
-        UInt16,
-        UInt16,
-        CGRect,
-        FrameTimeline,
-        @escaping @Sendable () -> Void
-    ) -> Void)?
-
-    // MARK: - Diagnostic counters
-
-    var totalPacketsReceived: UInt64 = 0
-    var framesDelivered: UInt64 = 0
-    var packetsDiscardedOld: UInt64 = 0
-    var packetsDiscardedCRC: UInt64 = 0
-    var packetsDiscardedToken: UInt64 = 0
-    var packetsDiscardedAwaitingKeyframe: UInt64 = 0
-    var packetsDiscardedEpoch: UInt64 = 0
-    var packetsDiscardedDeliveredKeyframe: UInt64 = 0
-    let keyframeFECBlockSize: Int = 8
-    let pFrameFECBlockSize: Int = 16
-
-    /// Callback for loss events (frame timeouts / pathological forward gaps).
-    var onFrameLoss: (@Sendable (StreamID, FrameLossReason) -> Void)?
-
-    /// Prevents repeated frame-loss signals for the same forward gap.
-    /// Set when a gap timeout fires; reset when `lastCompletedFrame` advances or on `reset()`.
-    var hasSignaledGapFrameLoss: Bool = false
-
-    final class PendingFrame {
-        let buffer: FrameBufferPool.Buffer
-        var receivedMap: [Bool]
-        var receivedCount: Int
-        var isComplete: Bool
-        let totalFragments: UInt16
-        let dataFragmentCount: Int
-        let fecBlockSize: Int
-        var isKeyframe: Bool
-        let timestamp: UInt64
-        let epoch: UInt16
-        let dimensionToken: UInt16
-        let receivedAt: Date
-        var lastProgressAt: Date
-        let contentRect: CGRect
-        var expectedTotalBytes: Int
-        var parityFragments: [Int: Data]
-        var receivedParityCount: Int
-        var timeline: FrameTimeline
-        var retainedMemoryBytes: Int {
-            buffer.capacity + parityFragments.values.reduce(0) { $0 + $1.count }
-        }
-
-        init(
-            buffer: FrameBufferPool.Buffer,
-            receivedMap: [Bool],
-            receivedCount: Int,
-            isComplete: Bool = false,
-            totalFragments: UInt16,
-            dataFragmentCount: Int,
-            fecBlockSize: Int,
-            isKeyframe: Bool,
-            timestamp: UInt64,
-            epoch: UInt16,
-            dimensionToken: UInt16,
-            receivedAt: Date,
-            lastProgressAt: Date,
-            contentRect: CGRect,
-            expectedTotalBytes: Int,
-            parityFragments: [Int: Data] = [:],
-            receivedParityCount: Int = 0,
-            timeline: FrameTimeline
-        ) {
-            self.buffer = buffer
-            self.receivedMap = receivedMap
-            self.receivedCount = receivedCount
-            self.isComplete = isComplete
-            self.totalFragments = totalFragments
-            self.dataFragmentCount = dataFragmentCount
-            self.fecBlockSize = fecBlockSize
-            self.isKeyframe = isKeyframe
-            self.timestamp = timestamp
-            self.epoch = epoch
-            self.dimensionToken = dimensionToken
-            self.receivedAt = receivedAt
-            self.lastProgressAt = lastProgressAt
-            self.contentRect = contentRect
-            self.expectedTotalBytes = expectedTotalBytes
-            self.parityFragments = parityFragments
-            self.receivedParityCount = receivedParityCount
-            self.timeline = timeline
-        }
-    }
-
-    init(
-        streamID: StreamID,
-        maxPayloadSize: Int,
-        memoryBudget: MemoryBudget = .default
-    ) {
-        self.streamID = streamID
-        self.maxPayloadSize = max(1, maxPayloadSize)
-        self.memoryBudget = memoryBudget
-    }
-
-    // Update the expected dimension token for this stream.
-    // Frames with mismatched tokens will be silently discarded.
-    // Called when stream starts or when client is notified of a resize.
-    // - Parameter token: The new expected dimension token from the host
-
-    // Process a received packet
-
-    // Discard pending P-frames older than the given frame number
-    // IMPORTANT: Never discard pending keyframes - they're critical for recovery
-    // and take longer to arrive due to their large size
-
-    // Request a keyframe if too many frames are incomplete or dropped
-
-    // Get the number of dropped frames
-
-    // Reset state for a new stream
-
-    // Enter keyframe-only mode after decoder errors until a keyframe arrives.
 }

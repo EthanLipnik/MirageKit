@@ -59,8 +59,11 @@ actor HostDesktopStreamTerminationTracker {
         defer { defaults.removeObject(forKey: Self.markerDefaultsKey) }
 
         let decoder = JSONDecoder()
-        guard let marker = try? decoder.decode(ActiveDesktopStreamMarker.self, from: data) else {
-            MirageLogger.error(.host, "Desktop stream termination marker decode failed")
+        let marker: ActiveDesktopStreamMarker
+        do {
+            marker = try decoder.decode(ActiveDesktopStreamMarker.self, from: data)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Desktop stream termination marker decode failed: ")
             return
         }
 
@@ -122,8 +125,11 @@ actor HostDesktopStreamTerminationTracker {
         )
 
         let encoder = JSONEncoder()
-        guard let data = try? encoder.encode(marker) else {
-            MirageLogger.error(.host, "Desktop stream termination marker encode failed")
+        let data: Data
+        do {
+            data = try encoder.encode(marker)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Desktop stream termination marker encode failed: ")
             return
         }
         defaults.set(data, forKey: Self.markerDefaultsKey)
@@ -134,7 +140,13 @@ actor HostDesktopStreamTerminationTracker {
         guard let data = defaults.data(forKey: Self.markerDefaultsKey) else { return }
 
         let decoder = JSONDecoder()
-        guard var marker = try? decoder.decode(ActiveDesktopStreamMarker.self, from: data) else { return }
+        var marker: ActiveDesktopStreamMarker
+        do {
+            marker = try decoder.decode(ActiveDesktopStreamMarker.self, from: data)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Desktop stream termination marker decode failed: ")
+            return
+        }
         guard marker.runID == runID, marker.streamID == streamID else { return }
         guard marker.firstPacketSentAtUnix == nil else { return }
 
@@ -142,8 +154,11 @@ actor HostDesktopStreamTerminationTracker {
         marker.firstPacketSentAtUnix = Date().timeIntervalSince1970
 
         let encoder = JSONEncoder()
-        guard let encoded = try? encoder.encode(marker) else {
-            MirageLogger.error(.host, "Desktop stream termination marker encode failed")
+        let encoded: Data
+        do {
+            encoded = try encoder.encode(marker)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Desktop stream termination marker encode failed: ")
             return
         }
         defaults.set(encoded, forKey: Self.markerDefaultsKey)

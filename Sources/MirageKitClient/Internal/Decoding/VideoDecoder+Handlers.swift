@@ -37,31 +37,6 @@ extension VideoDecoder {
         }
     }
 
-    func setMetalFXOutputOverride(_ enabled: Bool) {
-        guard metalFXOutputOverrideEnabled != enabled else { return }
-        metalFXOutputOverrideEnabled = enabled
-
-        let desiredPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
-        let formatChanged = outputPixelFormat != desiredPixelFormat
-        outputPixelFormat = desiredPixelFormat
-
-        guard formatChanged else {
-            MirageLogger.decoder("MetalFX output override set to \(enabled) (no format change)")
-            return
-        }
-
-        if decompressionSession != nil {
-            invalidateActiveSession(resetFormatDescription: false)
-            MirageLogger.decoder(
-                "MetalFX output override set to \(enabled); invalidated active session for format change to \(Self.pixelFormatName(desiredPixelFormat))"
-            )
-        } else {
-            MirageLogger.decoder(
-                "MetalFX output override set to \(enabled); format will be \(Self.pixelFormatName(desiredPixelFormat))"
-            )
-        }
-    }
-
     func setPreferredOutputColorDepth(_ colorDepth: MirageStreamColorDepth) {
         let desiredPixelFormat = preferredOutputPixelFormat(for: colorDepth)
         let formatChanged = outputPixelFormat != desiredPixelFormat
@@ -95,20 +70,12 @@ extension VideoDecoder {
         onDimensionChange = handler
     }
 
-    func getAverageDecodeTimeMs() -> Double {
-        performanceTracker.averageMs()
-    }
-
-    func getTotalDecodeErrors() -> UInt64 {
-        errorTracker?.totalErrorsSnapshot() ?? 0
-    }
-
-    func decodedOutputPixelFormatName() -> String? {
+    var decodedOutputPixelFormatName: String? {
         let pixelFormat = lastDecodedOutputPixelFormat ?? outputPixelFormat
         return VideoDecoder.pixelFormatName(pixelFormat)
     }
 
-    func currentHardwareDecoderStatus() -> Bool? {
+    var currentHardwareDecoderStatus: Bool? {
         if usingHardwareDecoder == nil {
             refreshHardwareDecoderStatusIfNeeded(reason: "metrics_dispatch")
         }
@@ -126,15 +93,5 @@ extension VideoDecoder {
 
     func beginRecoveryTracking() {
         errorTracker?.beginRecoveryTracking()
-    }
-
-    func clearPendingState() {
-        if awaitingDimensionChange {
-            MirageLogger.decoder("Clearing stuck awaitingDimensionChange state for recovery")
-            awaitingDimensionChange = false
-            expectedDimensions = nil
-        }
-        // Reset error tracking to give fresh keyframe a clean slate
-        errorTracker?.clearForSessionReset()
     }
 }

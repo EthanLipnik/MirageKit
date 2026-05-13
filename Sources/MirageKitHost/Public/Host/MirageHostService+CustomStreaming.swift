@@ -30,30 +30,50 @@ public extension MirageHostService {
         customStreamSourcesByKind.removeValue(forKey: kind)
     }
 
+    /// Snapshot of registered custom stream descriptors.
+    var customStreamDescriptors: [MirageCustomStreamDescriptor] {
+        customStreamSourcesByKind.values
+            .map(\.descriptor)
+            .sorted { lhs, rhs in lhs.kind < rhs.kind }
+    }
 }
 
 @MainActor
 extension MirageHostService {
     func handleStartCustomStream(_ message: ControlMessage, from clientContext: ClientContext) async {
+        let request: StartCustomStreamMessage
         do {
-            let request = try message.decode(StartCustomStreamMessage.self)
+            request = try message.decode(StartCustomStreamMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to decode custom stream start: ")
+            return
+        }
+
+        do {
             try await startCustomStream(request, to: clientContext)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle custom stream start: ")
-            if let request = try? message.decode(StartCustomStreamMessage.self) {
-                let failed = CustomStreamFailedMessage(
-                    startupRequestID: request.startupRequestID,
-                    kind: request.kind,
-                    reason: error.localizedDescription,
-                    errorCode: .encodingError
-                )
-                try? await clientContext.send(.customStreamFailed, content: failed)
+            let failed = CustomStreamFailedMessage(
+                startupRequestID: request.startupRequestID,
+                reason: error.localizedDescription
+            )
+            do {
+                try await clientContext.send(.customStreamFailed, content: failed)
+            } catch {
+                MirageLogger.error(.host, error: error, message: "Failed to send customStreamFailed: ")
             }
         }
     }
 
     func handleStopCustomStream(_ message: ControlMessage, from clientContext: ClientContext) async {
-        guard let request = try? message.decode(StopCustomStreamMessage.self) else { return }
+        let request: StopCustomStreamMessage
+        do {
+            request = try message.decode(StopCustomStreamMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle custom stream stop: ")
+            return
+        }
+
         guard customStreamClientSessionIDByStreamID[request.streamID] == clientContext.sessionID else {
             return
         }
@@ -201,23 +221,19 @@ extension MirageHostService {
         }
         await PowerAssertionManager.shared.enable()
 
-        let encodedDimensions = await context.getEncodedDimensions()
-        let targetFrameRate = await context.getTargetFrameRate()
-        let codec = await context.getCodec()
-        let dimensionToken = await context.getDimensionToken()
-        let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
+        let streamStart = await context.streamStartSnapshot
         let startupAttemptID = UUID()
         let started = MirageCustomStreamStartedMessage(
             startupRequestID: request.startupRequestID,
             streamID: streamID,
             descriptor: source.descriptor,
-            width: encodedDimensions.width,
-            height: encodedDimensions.height,
-            frameRate: targetFrameRate,
-            codec: codec,
+            width: streamStart.encodedDimensions.width,
+            height: streamStart.encodedDimensions.height,
+            frameRate: streamStart.targetFrameRate,
+            codec: streamStart.codec,
             startupAttemptID: startupAttemptID,
-            dimensionToken: dimensionToken,
-            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
+            dimensionToken: streamStart.dimensionToken,
+            acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize
         )
 
         do {
@@ -254,7 +270,7 @@ extension MirageHostService {
         }
 
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
-            Task { try? await videoStream.close() }
+            closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: streamID)
 
@@ -266,7 +282,11 @@ extension MirageHostService {
            let clientSessionID,
            let clientContext = findClientContext(sessionID: clientSessionID) {
             let stopped = MirageCustomStreamStoppedMessage(streamID: streamID, reason: reason)
-            try? await clientContext.send(.customStreamStopped, content: stopped)
+            do {
+                try await clientContext.send(.customStreamStopped, content: stopped)
+            } catch {
+                MirageLogger.error(.host, error: error, message: "Failed to send customStreamStopped: ")
+            }
         }
 
         if activeStreams.isEmpty, desktopStreamID == nil, customStreamSessionsByStreamID.isEmpty {
@@ -281,7 +301,7 @@ extension MirageHostService {
         await context.stop()
         streamsByID.removeValue(forKey: streamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
-            Task { try? await videoStream.close() }
+            closeRemovedMediaStream(videoStream, streamID: streamID, kind: "video")
         }
         transportRegistry.unregisterVideoStream(streamID: streamID)
         streamRegistry.unregisterCustomInputHandler(streamID: streamID)

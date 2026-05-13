@@ -5,11 +5,11 @@
 //  Created by Ethan Lipnik on 3/5/26.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
 extension MirageClientService {
+    /// Starts monitoring client power state changes that may affect decoder low-power mode.
     func configureDecoderLowPowerMonitoring() {
         decoderPowerStateMonitor.start { [weak self] snapshot in
             guard let self else { return }
@@ -18,12 +18,14 @@ extension MirageClientService {
         }
     }
 
+    /// Schedules decoder low-power policy evaluation on the main actor.
     func scheduleDecoderLowPowerPolicyApply(reason: String) {
         Task { @MainActor [weak self] in
             await self?.applyDecoderLowPowerPolicy(reason: reason)
         }
     }
 
+    /// Applies the effective decoder low-power mode to active stream controllers.
     private func applyDecoderLowPowerPolicy(reason: String) async {
         let supportsBatteryPolicy = decoderPowerStateSnapshot.supportsBatteryState
         if decoderLowPowerSupportsBatteryPolicy != supportsBatteryPolicy {

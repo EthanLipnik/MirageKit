@@ -15,7 +15,6 @@ import Testing
 
 @Suite("Control Update Policy Suppression")
 struct ControlUpdatePolicySuppressionTests {
-
     @Test("Deferred refresh requirements are tracked and consumed once")
     func deferredRefreshRequirementsConsumeOnce() async throws {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
@@ -27,9 +26,9 @@ struct ControlUpdatePolicySuppressionTests {
             type: .windowList,
             content: WindowListMessage(windows: [Self.makeWindow()])
         )
-        let windowUpdateMessage = try ControlMessage(
+        let windowUpdateMessage = ControlMessage(
             type: .windowUpdate,
-            content: WindowUpdateMessage(added: [], removed: [], updated: [])
+            payload: Self.emptyWindowUpdatePayload()
         )
         let hostUpdateStatusMessage = try ControlMessage(
             type: .hostSoftwareUpdateStatus,
@@ -49,8 +48,14 @@ struct ControlUpdatePolicySuppressionTests {
             #expect(firstConsumption.needsHostSoftwareUpdateRefresh)
 
             let secondConsumption = service.consumeDeferredControlRefreshRequirements()
-            #expect(!secondConsumption.hasAny)
+            #expect(!secondConsumption.needsAppListRefresh)
+            #expect(!secondConsumption.needsWindowListRefresh)
+            #expect(!secondConsumption.needsHostSoftwareUpdateRefresh)
         }
+    }
+
+    private static func emptyWindowUpdatePayload() -> Data {
+        Data(#"{"added":[],"removed":[],"updated":[]}"#.utf8)
     }
 
     private static func makeWindow() -> MirageWindow {

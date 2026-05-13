@@ -15,6 +15,12 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    /// Clamps host stream scaling to the supported encoded-size multiplier range.
+    static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
+        guard scale > 0 else { return 1.0 }
+        return max(0.1, min(1.0, scale))
+    }
+
     func resolvedStreamScale(
         for baseSize: CGSize,
         requestedScale: CGFloat,
@@ -37,14 +43,6 @@ extension StreamContext {
         }
 
         return resolved
-    }
-
-    /// Align a pixel dimension to a 16-byte boundary.  Hardware video encoders
-    /// (HEVC on Apple Silicon) require both width and height to be multiples of
-    /// 16 for NV12/P010 pixel formats; unaligned dimensions cause silent encode
-    /// failures during preheat.
-    static func alignedEvenPixel(_ value: CGFloat) -> Int {
-        MirageStreamGeometry.alignedEncodedDimension(value)
     }
 }
 

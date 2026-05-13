@@ -11,9 +11,9 @@ import MirageKit
 #if os(macOS)
 import AVFoundation
 import AppKit
-import CoreGraphics
 import QuartzCore
 
+/// AppKit view that renders decoded stream frames through an `AVSampleBufferDisplayLayer`.
 public class MirageSampleBufferView: NSView {
     // MARK: - Public API
 
@@ -31,9 +31,12 @@ public class MirageSampleBufferView: NSView {
         }
     }
 
+    /// Callback fired when drawable pixel size or scale changes.
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
+    /// Callback fired when the renderer requests a platform refresh-rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
+    /// Host-authoritative maximum render frame rate for this stream.
     public var preferredMaximumRenderFPS: Int? {
         didSet {
             guard preferredMaximumRenderFPS != oldValue else { return }
@@ -42,6 +45,7 @@ public class MirageSampleBufferView: NSView {
         }
     }
 
+    /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize? {
         didSet {
             guard maxDrawableSize != oldValue else { return }
@@ -68,7 +72,7 @@ public class MirageSampleBufferView: NSView {
     private let preferencesObserver = MirageUserDefaultsObserver()
     private var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayClock: MirageMacDisplayClock?
-    private let presentationDisplayTickHandlerBox = MirageDisplayTickHandlerBox()
+    private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
     private var screenChangeObserver: NSObjectProtocol?
 
     private var displayLayer: AVSampleBufferDisplayLayer {
@@ -101,11 +105,11 @@ public class MirageSampleBufferView: NSView {
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
-            resumeRendering()
+            presentationPipeline.resumeRendering()
             applyRenderPreferences()
             observeScreenChanges()
         } else {
-            suspendRendering()
+            presentationPipeline.suspendRendering()
             stopObservingScreenChanges()
         }
     }
@@ -117,22 +121,12 @@ public class MirageSampleBufferView: NSView {
         presentationPipeline.layoutDisplayLayer(bounds: bounds, scale: scale)
     }
 
-    // MARK: - Public Controls
-
-    func suspendRendering() {
-        presentationPipeline.suspendRendering()
-    }
-
-    func resumeRendering() {
-        presentationPipeline.resumeRendering()
-    }
-
     // MARK: - Setup
 
     private func setup() {
         wantsLayer = true
 
-        let displayLayer = self.displayLayer
+        let displayLayer = displayLayer
         presentationPipeline = MirageSampleBufferPresentationPipeline(
             displayLayer: displayLayer,
             platformName: "macOS",
@@ -146,7 +140,7 @@ public class MirageSampleBufferView: NSView {
                 self?.stopPresentationDisplayClock()
             },
             updateDisplayClockTargetFPS: { [weak self] targetFPS in
-                self?.updatePresentationDisplayClockFrameRate(targetFPS: targetFPS)
+                self?.presentationDisplayClock?.updateTargetFPS(targetFPS)
             },
             requestPlatformLayout: { [weak self] in
                 self?.needsLayout = true
@@ -170,42 +164,29 @@ public class MirageSampleBufferView: NSView {
     private func applyRenderConfiguration() {
         presentationPipeline.applyConfiguration(
             MirageStreamRenderConfiguration(
-                logicalStreamID: streamID,
                 mediaStreamID: streamID,
                 contentRectOverride: contentRectOverride,
                 presentationTier: streamPresentationTier,
-                preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                 maxDrawableSize: maxDrawableSize,
-                prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                containerSizingMode: .viewBounds
+                prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
             )
         )
-    }
-
-    // MARK: - Draw Path
-
-    func requestImmediateSubmission() {
-        presentationPipeline.requestImmediateSubmission()
-    }
-
-    private func startPresentationDisplayClockIfNeeded() {
-        presentationPipeline.resumeRendering()
     }
 
     private func startPresentationDisplayClock(
         targetFPS: Int,
         tickHandler: @escaping MirageSampleBufferPresentationPipeline.DisplayTickHandler
     ) {
-        presentationDisplayTickHandlerBox.set(tickHandler)
-        let displayID = currentScreenDisplayID
+        presentationDisplayTickHandler = tickHandler
         if let presentationDisplayClock {
-            presentationDisplayClock.updateTargetFPS(targetFPS, displayID: displayID)
+            presentationDisplayClock.updateTargetFPS(targetFPS)
         } else {
             let clock = MirageMacDisplayClock()
             presentationDisplayClock = clock
-            let handlerBox = presentationDisplayTickHandlerBox
-            clock.start(targetFPS: targetFPS, displayID: displayID) { referenceTime in
-                handlerBox.call(referenceTime)
+            clock.start(targetFPS: targetFPS) { [weak self] referenceTime in
+                Task { @MainActor [weak self] in
+                    self?.presentationDisplayTickHandler?(referenceTime)
+                }
             }
         }
     }
@@ -213,27 +194,14 @@ public class MirageSampleBufferView: NSView {
     private func stopPresentationDisplayClock() {
         presentationDisplayClock?.stop()
         presentationDisplayClock = nil
-        presentationDisplayTickHandlerBox.set(nil)
-    }
-
-    private func updatePresentationDisplayClockFrameRate(targetFPS: Int) {
-        presentationDisplayClock?.updateTargetFPS(targetFPS, displayID: currentScreenDisplayID)
-    }
-
-    private var currentScreenDisplayID: CGDirectDisplayID? {
-        guard let displayID = window?.screen?.deviceDescription[
-            NSDeviceDescriptionKey("NSScreenNumber")
-        ] as? NSNumber else {
-            return nil
-        }
-        return CGDirectDisplayID(displayID.uint32Value)
+        presentationDisplayTickHandler = nil
     }
 
     // MARK: - Preferences
 
     private func applyRenderPreferences() {
         presentationPipeline.applyResolvedRenderFPS(
-            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate()
+            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate
         )
     }
 
@@ -254,7 +222,6 @@ public class MirageSampleBufferView: NSView {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.applyRenderPreferences()
-                self?.presentationPipeline.requestImmediateSubmission()
             }
         }
     }
@@ -264,25 +231,6 @@ public class MirageSampleBufferView: NSView {
             NotificationCenter.default.removeObserver(observer)
             screenChangeObserver = nil
         }
-    }
-}
-
-private final class MirageDisplayTickHandlerBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
-
-    func set(_ handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?) {
-        lock.lock()
-        self.handler = handler
-        lock.unlock()
-    }
-
-    func call(_ referenceTime: CFTimeInterval) {
-        let handler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
-        lock.lock()
-        handler = self.handler
-        lock.unlock()
-        handler?(referenceTime)
     }
 }
 #endif

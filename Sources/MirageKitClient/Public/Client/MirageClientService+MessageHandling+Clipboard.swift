@@ -10,12 +10,8 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    /// Applies the host's shared-clipboard availability state.
     func handleSharedClipboardStatus(_ message: ControlMessage) {
-        guard negotiatedFeatures.contains(.sharedClipboardV1) else {
-            MirageLogger.client("Ignoring shared clipboard status without negotiated support")
-            return
-        }
-
         do {
             let status = try message.decode(SharedClipboardStatusMessage.self)
             sharedClipboardEnabled = status.enabled
@@ -26,11 +22,8 @@ extension MirageClientService {
         }
     }
 
+    /// Validates and decrypts a host clipboard update before handing payload chunks to the bridge.
     func handleSharedClipboardUpdate(_ message: ControlMessage) {
-        guard negotiatedFeatures.contains(.sharedClipboardV1) else {
-            MirageLogger.client("Ignoring shared clipboard update without negotiated support")
-            return
-        }
         guard Self.shouldEnableSharedClipboard(
             connectionState: connectionState,
             hostSharedClipboardEnabled: sharedClipboardEnabled,
@@ -50,14 +43,13 @@ extension MirageClientService {
         Task.detached(priority: .utility) { [weak self] in
             do {
                 let update = try message.decode(SharedClipboardUpdateMessage.self)
-                let decryptedPayload: Data?
-                if let encryptedPayload = update.encryptedPayload {
-                    decryptedPayload = try MirageMediaSecurity.decryptClipboardPayload(
+                let decryptedPayload: Data? = if let encryptedPayload = update.encryptedPayload {
+                    try MirageMediaSecurity.decryptClipboardPayload(
                         encryptedPayload,
                         context: secCtx
                     )
                 } else {
-                    decryptedPayload = nil
+                    nil
                 }
                 await self?.applyReceivedClipboardChunk(
                     representation: update.representation,
@@ -73,6 +65,7 @@ extension MirageClientService {
         }
     }
 
+    /// Reassembles and validates remote clipboard chunks before applying the completed item.
     private func applyReceivedClipboardChunk(
         representation: SharedClipboardRepresentation,
         payload: Data?,
@@ -122,6 +115,7 @@ extension MirageClientService {
         )
     }
 
+    /// Delays clipboard application while active media recovery may still be presenting stale frames.
     private func applyReceivedClipboardItemWhenMediaStable(
         _ item: MirageSharedClipboardItem,
         orderingToken: MirageSharedClipboardOrderingToken,
@@ -134,7 +128,11 @@ extension MirageClientService {
                     "Deferring shared clipboard payload apply while media recovery is active"
                 )
             }
-            try? await Task.sleep(for: .milliseconds(250))
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
             await applyReceivedClipboardItemWhenMediaStable(
                 item,
                 orderingToken: orderingToken,
@@ -151,9 +149,10 @@ extension MirageClientService {
         )
     }
 
+    /// Returns whether any active stream controller is currently blocking remote clipboard application.
     private func shouldDeferSharedClipboardPayloadApplication() async -> Bool {
         for controller in controllersByStream.values {
-            if await controller.shouldDeferSharedClipboardApply() {
+            if await controller.shouldDeferSharedClipboardApply {
                 return true
             }
         }

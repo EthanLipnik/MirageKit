@@ -22,7 +22,7 @@ struct MiragePixelBufferCropperTests {
             cropper.crop(source, to: CGRect(x: 2, y: 1, width: 3, height: 2))
         )
 
-        #expect(!result.usedOriginalBuffer)
+        #expect(!sameBuffer(result.pixelBuffer, source))
         #expect(CVPixelBufferGetWidth(result.pixelBuffer) == 3)
         #expect(CVPixelBufferGetHeight(result.pixelBuffer) == 2)
         #expect(pixelBytes(in: result.pixelBuffer, x: 0, y: 0) == pixelBytes(in: source, x: 2, y: 1))
@@ -38,7 +38,6 @@ struct MiragePixelBufferCropperTests {
             cropper.crop(source, to: CGRect(x: 0, y: 0, width: 6, height: 4))
         )
 
-        #expect(result.usedOriginalBuffer)
         #expect(sameBuffer(result.pixelBuffer, source))
         #expect(CVPixelBufferGetWidth(result.pixelBuffer) == 6)
         #expect(CVPixelBufferGetHeight(result.pixelBuffer) == 4)
@@ -53,7 +52,6 @@ struct MiragePixelBufferCropperTests {
             cropper.crop(source, to: CGRect(x: 5, y: 0, width: 3, height: 2))
         )
 
-        #expect(result.usedOriginalBuffer)
         #expect(sameBuffer(result.pixelBuffer, source))
         #expect(result.contentRect == CGRect(x: 0, y: 0, width: 6, height: 4))
     }

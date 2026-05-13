@@ -8,9 +8,9 @@
 import CoreGraphics
 import Foundation
 
-/// Represents a mouse event
+/// Pointer button or movement event forwarded from the client to the host.
 public struct MirageMouseEvent: Codable, Sendable, Hashable {
-    /// Mouse button involved
+    /// Mouse button involved in the event.
     public let button: MirageMouseButton
 
     /// Location in normalized stream coordinates.
@@ -18,19 +18,19 @@ public struct MirageMouseEvent: Codable, Sendable, Hashable {
     /// while the host cursor travels onto another display.
     public let location: CGPoint
 
-    /// Click count for multi-click detection
+    /// Click count for multi-click detection.
     public let clickCount: Int
 
-    /// Active modifier flags
+    /// Active modifier flags.
     public let modifiers: MirageModifierFlags
 
-    /// Pressure for Force Touch (0.0 - 1.0)
+    /// Pressure for Force Touch or stylus contact, normalized to `0...1`.
     public let pressure: CGFloat
 
     /// Optional stylus metadata for tablet-style input.
     public let stylus: MirageStylusEvent?
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a pointer event.
@@ -63,12 +63,12 @@ public struct MirageMouseEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a scroll wheel event
+/// Scroll wheel or trackpad scroll event.
 public struct MirageScrollEvent: Codable, Sendable, Hashable {
-    /// Horizontal scroll delta
+    /// Horizontal scroll delta.
     public let deltaX: CGFloat
 
-    /// Vertical scroll delta
+    /// Vertical scroll delta.
     public let deltaY: CGFloat
 
     /// Location in normalized stream coordinates.
@@ -76,19 +76,19 @@ public struct MirageScrollEvent: Codable, Sendable, Hashable {
     /// Used to inject scroll at cursor position rather than window center.
     public let location: CGPoint?
 
-    /// Scroll phase (for trackpad gestures)
+    /// Physical scroll phase for trackpad gestures.
     public let phase: MirageScrollPhase
 
-    /// Momentum phase (for inertial scrolling)
+    /// Momentum phase for inertial scrolling.
     public let momentumPhase: MirageScrollPhase
 
-    /// Active modifier flags
+    /// Active modifier flags.
     public let modifiers: MirageModifierFlags
 
-    /// Whether this is a precise scroll (trackpad vs mouse wheel)
+    /// Whether this is high-resolution trackpad-style scrolling.
     public let isPrecise: Bool
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a scroll event.
@@ -123,21 +123,21 @@ public struct MirageScrollEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a magnification gesture event
+/// Trackpad magnification gesture event.
 public struct MirageMagnifyEvent: Codable, Sendable, Hashable {
-    /// Magnification delta
+    /// Magnification delta, where positive values zoom in.
     public let magnification: CGFloat
 
     /// Location in normalized stream coordinates.
     public let location: CGPoint?
 
-    /// Gesture phase
+    /// Gesture lifecycle phase.
     public let phase: MirageScrollPhase
 
-    /// Active modifier flags
+    /// Active modifier flags.
     public let modifiers: MirageModifierFlags
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a magnify gesture event.
@@ -163,21 +163,21 @@ public struct MirageMagnifyEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a rotation gesture event
+/// Trackpad rotation gesture event.
 public struct MirageRotateEvent: Codable, Sendable, Hashable {
-    /// Rotation in degrees
+    /// Rotation delta in degrees.
     public let rotation: CGFloat
 
     /// Location in normalized stream coordinates.
     public let location: CGPoint?
 
-    /// Gesture phase
+    /// Gesture lifecycle phase.
     public let phase: MirageScrollPhase
 
-    /// Active modifier flags
+    /// Active modifier flags.
     public let modifiers: MirageModifierFlags
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a rotate gesture event.
@@ -223,6 +223,15 @@ public struct MirageSwipeEvent: Codable, Sendable, Hashable {
     /// Event timestamp.
     public let timestamp: TimeInterval
 
+    /// Creates a trackpad swipe gesture event.
+    ///
+    /// - Parameters:
+    ///   - deltaX: Horizontal swipe delta.
+    ///   - deltaY: Vertical swipe delta.
+    ///   - location: Optional normalized cursor/contact location.
+    ///   - phase: Gesture lifecycle phase.
+    ///   - modifiers: Active keyboard modifiers.
+    ///   - timestamp: Event creation time.
     public init(
         deltaX: CGFloat,
         deltaY: CGFloat,
@@ -240,22 +249,21 @@ public struct MirageSwipeEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a window resize request from client using point size + scale.
+/// Window resize request expressed as point size plus client display scale.
 public struct MirageResizeEvent: Codable, Sendable, Hashable {
-    /// Target window ID
+    /// Target window identifier.
     public let windowID: WindowID
 
-    /// New requested size in points (used to resize Mac window)
+    /// Requested host window size in points.
     public let newSize: CGSize
 
-    /// Client's display scale factor (e.g., 2.0 for Retina, ~1.72 for iPad)
+    /// Client display scale factor.
     public let scaleFactor: CGFloat
 
-    /// Actual pixel dimensions the client needs (newSize × scaleFactor)
-    /// The host should encode at this resolution for 1:1 pixel mapping
+    /// Pixel dimensions the client needs for 1:1 stream mapping.
     public let pixelSize: CGSize
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a resize event from point size plus client scale.
@@ -284,29 +292,27 @@ public struct MirageResizeEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a relative window sizing request from client
-/// Host uses aspect ratio and pixel dimensions to calculate optimal window size
+/// Relative window sizing request based on client display shape and target area.
 public struct MirageRelativeResizeEvent: Codable, Sendable, Hashable {
-    /// Target window ID
+    /// Target window identifier.
     public let windowID: WindowID
 
-    /// Desired aspect ratio (width / height, e.g., 1.333 for 4:3)
+    /// Desired width-to-height ratio.
     public let aspectRatio: CGFloat
 
-    /// Relative scale as percentage of screen area (0.0 - 1.0)
-    /// Example: 0.25 = window should occupy 25% of host screen area
+    /// Relative target area usage, clamped to `0.01...1.0`.
     public let relativeScale: CGFloat
 
-    /// Client's screen dimensions in points (for reference/debugging only)
+    /// Client screen dimensions in points for reference and diagnostics.
     public let clientScreenSize: CGSize
 
-    /// Client's drawable pixel width - host should produce this exact resolution
+    /// Exact drawable pixel width requested by the client.
     public let pixelWidth: Int
 
-    /// Client's drawable pixel height - host should produce this exact resolution
+    /// Exact drawable pixel height requested by the client.
     public let pixelHeight: Int
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a relative resize event.
@@ -338,20 +344,18 @@ public struct MirageRelativeResizeEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents an absolute pixel-based resize request from client
-/// Host resizes window so that: window_points × host_scale = client_pixels
-/// This ensures 1:1 pixel matching for maximum quality
+/// Absolute pixel-based resize request from the client.
 public struct MiragePixelResizeEvent: Codable, Sendable, Hashable {
-    /// Target window ID
+    /// Target window identifier.
     public let windowID: WindowID
 
-    /// Exact drawable pixel width the client needs
+    /// Exact drawable pixel width requested by the client.
     public let pixelWidth: Int
 
-    /// Exact drawable pixel height the client needs
+    /// Exact drawable pixel height requested by the client.
     public let pixelHeight: Int
 
-    /// Event timestamp
+    /// Event creation timestamp.
     public let timestamp: TimeInterval
 
     /// Creates a pixel-accurate resize event.

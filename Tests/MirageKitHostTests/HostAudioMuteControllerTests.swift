@@ -58,6 +58,33 @@ struct HostAudioMuteControllerTests {
             .init(deviceID: 77, element: 2, volume: 0.50),
         ])
     }
+
+    @Test("Default output changes are muted while requested")
+    func defaultOutputChangesAreMutedWhileRequested() async {
+        let driver = RecordingHostAudioDeviceDriver(
+            defaultDeviceID: 42,
+            muteStateByDeviceID: [42: false, 99: false],
+            writableMuteDeviceIDs: [42, 99],
+            writableVolumeElementsByDeviceID: [:]
+        )
+        let controller = HostAudioMuteController(driver: driver)
+
+        controller.setMuted(true)
+        driver.defaultDeviceID = 99
+        driver.notifyDefaultOutputDeviceChanged()
+        await Task.yield()
+        controller.setMuted(false)
+
+        #expect(Array(driver.muteWrites.prefix(2)) == [
+            .init(deviceID: 42, muted: true),
+            .init(deviceID: 99, muted: true),
+        ])
+        #expect(Set(driver.muteWrites.dropFirst(2)) == [
+            .init(deviceID: 42, muted: false),
+            .init(deviceID: 99, muted: false),
+        ])
+        #expect(driver.removedDefaultOutputListenerCount == 1)
+    }
 }
 
 private final class RecordingHostAudioDeviceDriver: HostAudioDeviceDriving {
@@ -72,12 +99,12 @@ private final class RecordingHostAudioDeviceDriver: HostAudioDeviceDriving {
         let volume: Float
     }
 
-    struct MuteWrite: Equatable {
+    struct MuteWrite: Equatable, Hashable {
         let deviceID: AudioDeviceID
         let muted: Bool
     }
 
-    private let defaultDeviceID: AudioDeviceID?
+    var defaultDeviceID: AudioDeviceID?
     private var muteStateByDeviceID: [AudioDeviceID: Bool]
     private let writableMuteDeviceIDs: Set<AudioDeviceID>
     private let writableVolumeElementsByDeviceID: [AudioDeviceID: [AudioObjectPropertyElement]]
@@ -85,6 +112,8 @@ private final class RecordingHostAudioDeviceDriver: HostAudioDeviceDriving {
 
     private(set) var muteWrites: [MuteWrite] = []
     private(set) var volumeWrites: [VolumeWrite] = []
+    private(set) var removedDefaultOutputListenerCount = 0
+    private var defaultOutputListener: (queue: DispatchQueue, handler: @Sendable () -> Void)?
 
     init(
         defaultDeviceID: AudioDeviceID?,
@@ -141,9 +170,19 @@ private final class RecordingHostAudioDeviceDriver: HostAudioDeviceDriving {
         handler: @escaping @Sendable () -> Void
     )
     -> HostAudioDefaultOutputListenerToken? {
-        HostAudioDefaultOutputListenerToken(block: nil)
+        defaultOutputListener = (queue: queue, handler: handler)
+        return HostAudioDefaultOutputListenerToken(block: nil)
     }
 
-    func removeDefaultOutputDeviceChangeListener(_ token: HostAudioDefaultOutputListenerToken) {}
+    func removeDefaultOutputDeviceChangeListener(_: HostAudioDefaultOutputListenerToken) {
+        defaultOutputListener = nil
+        removedDefaultOutputListenerCount += 1
+    }
+
+    func notifyDefaultOutputDeviceChanged() {
+        defaultOutputListener?.queue.sync {
+            defaultOutputListener?.handler()
+        }
+    }
 }
 #endif

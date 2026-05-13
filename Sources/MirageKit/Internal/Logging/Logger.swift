@@ -20,13 +20,13 @@ import os
 /// - Not set - Default: essential logs only (host, client, appState)
 public struct MirageLogger: Sendable {
     public struct SignpostInterval {
-        fileprivate let category: MirageLogCategory
-        fileprivate let name: StaticString
-        fileprivate let id: OSSignpostID
+        let category: MirageLogCategory
+        let name: StaticString
+        let id: OSSignpostID
     }
 
     /// Subsystem identifier for the system logger (appears in Console.app)
-    private static let subsystem = "com.mirage"
+    static let subsystem = "com.mirage"
 
     /// Cached system logger instances per category (created lazily)
     private static let loggers: [MirageLogCategory: Logger] = {
@@ -38,7 +38,7 @@ public struct MirageLogger: Sendable {
     }()
 
     /// Cached OSLog instances used for signposts.
-    private static let signpostLogs: [MirageLogCategory: OSLog] = {
+    static let signpostLogs: [MirageLogCategory: OSLog] = {
         var result: [MirageLogCategory: OSLog] = [:]
         for category in MirageLogCategory.allCases {
             result[category] = OSLog(subsystem: subsystem, category: category.rawValue)
@@ -47,7 +47,9 @@ public struct MirageLogger: Sendable {
     }()
 
     /// Enabled log categories (evaluated once at startup from env var)
-    public static let enabledCategories: Set<MirageLogCategory> = parseEnvironment()
+    public static let enabledCategories: Set<MirageLogCategory> = parsedEnabledCategories(
+        environmentValue: ProcessInfo.processInfo.environment["MIRAGE_LOG"]
+    )
 
     /// Check if a category is enabled
     public static func isEnabled(_ category: MirageLogCategory) -> Bool {
@@ -182,7 +184,7 @@ public struct MirageLogger: Sendable {
         )
     }
 
-    private static func logInfo(
+    static func logInfo(
         _ category: MirageLogCategory,
         message: () -> String,
         fileID: String,
@@ -212,7 +214,7 @@ public struct MirageLogger: Sendable {
     ) {
         let rawMessage = message()
         let sourceMessage = "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
-        let logger = logger(for: category)
+        let logger = loggers[category] ?? Logger(subsystem: subsystem, category: category.rawValue)
         switch level {
         case .info:
             logger.info("\(sourceMessage, privacy: .public)")
@@ -255,166 +257,8 @@ public struct MirageLogger: Sendable {
         }
     }
 
-    private static func sourcePrefix(fileID: String, line: UInt, function: String) -> String {
+    static func sourcePrefix(fileID: String, line: UInt, function: String) -> String {
         "[\(fileID):\(line) \(function)]"
-    }
-
-    private static func logger(for category: MirageLogCategory) -> Logger {
-        loggers[category] ?? Logger(subsystem: subsystem, category: category.rawValue)
-    }
-
-    private static func signpostLog(for category: MirageLogCategory) -> OSLog {
-        signpostLogs[category] ?? OSLog(subsystem: subsystem, category: category.rawValue)
-    }
-
-    private static func signpostMessage(
-        _ message: @autoclosure () -> String,
-        fileID: String,
-        line: UInt,
-        function: String
-    ) -> String {
-        let rawMessage = message()
-        guard !rawMessage.isEmpty else {
-            return sourcePrefix(fileID: fileID, line: line, function: function)
-        }
-        return "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
-    }
-
-    public static func signpostEvent(
-        _ category: MirageLogCategory,
-        _ name: StaticString,
-        _ message: @autoclosure () -> String = "",
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        guard enabledCategories.contains(category) else { return }
-        let formattedMessage = signpostMessage(
-            message(),
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-        os_signpost(
-            .event,
-            log: signpostLog(for: category),
-            name: name,
-            "%{public}s",
-            formattedMessage
-        )
-    }
-
-    public static func beginInterval(
-        _ category: MirageLogCategory,
-        _ name: StaticString,
-        _ message: @autoclosure () -> String = "",
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) -> SignpostInterval {
-        let interval = SignpostInterval(
-            category: category,
-            name: name,
-            id: OSSignpostID(log: signpostLog(for: category))
-        )
-
-        guard enabledCategories.contains(category) else { return interval }
-        let formattedMessage = signpostMessage(
-            message(),
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-        os_signpost(
-            .begin,
-            log: signpostLog(for: category),
-            name: name,
-            signpostID: interval.id,
-            "%{public}s",
-            formattedMessage
-        )
-        return interval
-    }
-
-    public static func endInterval(
-        _ interval: SignpostInterval?,
-        _ message: @autoclosure () -> String = "",
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        guard let interval else { return }
-        guard enabledCategories.contains(interval.category) else { return }
-        let formattedMessage = signpostMessage(
-            message(),
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-        os_signpost(
-            .end,
-            log: signpostLog(for: interval.category),
-            name: interval.name,
-            signpostID: interval.id,
-            "%{public}s",
-            formattedMessage
-        )
-    }
-
-    public static func withInterval<T>(
-        _ category: MirageLogCategory,
-        _ name: StaticString,
-        _ message: @autoclosure () -> String = "",
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function,
-        operation: () throws -> T
-    ) rethrows -> T {
-        let interval = beginInterval(
-            category,
-            name,
-            message(),
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-        defer {
-            endInterval(
-                interval,
-                fileID: fileID,
-                line: line,
-                function: function
-            )
-        }
-        return try operation()
-    }
-
-    public static func withInterval<T>(
-        _ category: MirageLogCategory,
-        _ name: StaticString,
-        _ message: @autoclosure () -> String = "",
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function,
-        operation: () async throws -> T
-    ) async rethrows -> T {
-        let interval = beginInterval(
-            category,
-            name,
-            message(),
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-        defer {
-            endInterval(
-                interval,
-                fileID: fileID,
-                line: line,
-                function: function
-            )
-        }
-        return try await operation()
     }
 
     /// Parse MIRAGE_LOG environment variable
@@ -439,284 +283,5 @@ public struct MirageLogger: Sendable {
             }
             return categories
         }
-    }
-
-    private static func parseEnvironment() -> Set<MirageLogCategory> {
-        parsedEnabledCategories(environmentValue: ProcessInfo.processInfo.environment["MIRAGE_LOG"])
-    }
-}
-
-/// Convenience functions for common log patterns
-public extension MirageLogger {
-    /// Log timing information (frame processing, encoding duration, etc.)
-    static func timing(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .timing,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log pipeline throughput metrics
-    static func metrics(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .metrics,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log capture engine events
-    static func capture(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .capture,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log encoder events
-    static func encoder(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .encoder,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log decoder events
-    static func decoder(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .decoder,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log client events
-    static func client(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .client,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log host events
-    static func host(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .host,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log app state events
-    static func appState(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .appState,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log renderer events
-    static func renderer(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .renderer,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log stream lifecycle events
-    static func stream(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .stream,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log discovery events
-    static func discovery(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .discovery,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log network events
-    static func network(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .network,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log menu bar passthrough events
-    static func menuBar(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .menuBar,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log bootstrap orchestration events
-    static func bootstrap(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .bootstrap,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log SSH bootstrap events
-    static func ssh(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .ssh,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log Wake-on-LAN events
-    static func wol(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .wol,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
-    }
-
-    /// Log bootstrap handoff events
-    static func bootstrapHandoff(
-        _ message: @autoclosure () -> String,
-        fileID: String = #fileID,
-        line: UInt = #line,
-        function: String = #function
-    ) {
-        logInfo(
-            .bootstrapHandoff,
-            message: message,
-            fileID: fileID,
-            line: line,
-            function: function
-        )
     }
 }

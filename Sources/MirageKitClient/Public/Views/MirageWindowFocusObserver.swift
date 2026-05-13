@@ -33,6 +33,7 @@ struct MirageWindowFocusObserver: NSViewRepresentable {
         return view
     }
 
+    /// Focus tracking is driven by `NSWindow` notifications after the view is installed.
     func updateNSView(_: NSView, context _: Context) {}
 }
 

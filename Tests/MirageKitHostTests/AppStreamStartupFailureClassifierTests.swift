@@ -22,7 +22,6 @@ struct AppStreamStartupFailureClassifierTests {
         )
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
         #expect(AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
@@ -33,7 +32,7 @@ struct AppStreamStartupFailureClassifierTests {
         )
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
     @Test("Dedicated virtual-display startup failures remain retryable when allocation did not fail")
@@ -44,7 +43,7 @@ struct AppStreamStartupFailureClassifierTests {
         )
 
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
     @Test("ScreenCaptureKit visibility delays remain retryable")
@@ -52,7 +51,6 @@ struct AppStreamStartupFailureClassifierTests {
         let error = SharedVirtualDisplayManager.SharedDisplayError.screenCaptureKitVisibilityDelayed(101)
 
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
         #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
@@ -67,7 +65,7 @@ struct AppStreamStartupFailureClassifierTests {
 
         #expect(failureCode == .windowPlacementFailed)
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(wrappedError))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(wrappedError))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(wrappedError))
     }
 
     @Test("Window-not-found and timeout remain retryable")
@@ -81,7 +79,7 @@ struct AppStreamStartupFailureClassifierTests {
         let error = MirageError.protocolError("invalid app selection")
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
     @Test("Window already bound conflicts are non-retryable")
@@ -93,9 +91,9 @@ struct AppStreamStartupFailureClassifierTests {
         let startupRaceError = WindowStreamStartError.windowStartupInProgress(windowID: 405)
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(startupRaceError))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(startupRaceError))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(startupRaceError))
         #expect(windowStreamStartFailureCode(for: startupRaceError) == .windowAlreadyBound)
     }
 
@@ -112,8 +110,8 @@ struct AppStreamStartupFailureClassifierTests {
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(ownerConflict))
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(ownerMismatch))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(ownerConflict))
-        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(ownerMismatch))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(ownerConflict))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(ownerMismatch))
     }
 }
 #endif

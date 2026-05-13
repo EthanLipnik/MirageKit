@@ -24,24 +24,6 @@ package enum MirageCodecBenchmarkConstants {
 // MARK: - Shared Benchmark Functions
 
 package enum MirageCodecBenchmarkRunner {
-    package static func runEncodeBenchmark(
-        width: Int = MirageCodecBenchmarkConstants.benchmarkWidth,
-        height: Int = MirageCodecBenchmarkConstants.benchmarkHeight,
-        frameRate: Int = MirageCodecBenchmarkConstants.benchmarkFrameRate,
-        frameCount: Int = MirageCodecBenchmarkConstants.benchmarkFrameCount,
-        pixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-    ) async throws -> Double {
-        let encoder = BenchmarkEncoder(
-            width: width,
-            height: height,
-            frameRate: frameRate,
-            pixelFormat: pixelFormat
-        )
-        let result = try await encoder.encodeFrames(frameCount: frameCount, collectSamples: false)
-        let trimmed = result.encodeTimes.dropFirst(5)
-        return average(Array(trimmed))
-    }
-
     package static func runDecodeBenchmark(
         width: Int = MirageCodecBenchmarkConstants.benchmarkWidth,
         height: Int = MirageCodecBenchmarkConstants.benchmarkHeight,
@@ -55,7 +37,7 @@ package enum MirageCodecBenchmarkRunner {
             frameRate: frameRate,
             pixelFormat: pixelFormat
         )
-        let encoded = try await encoder.encodeFrames(frameCount: frameCount, collectSamples: true)
+        let encoded = try await encoder.encodeFrames(frameCount: frameCount)
         guard let firstSample = encoded.samples.first,
               let formatDescription = CMSampleBufferGetFormatDescription(firstSample) else {
             throw MirageError.protocolError("Failed to create sample buffers for decode benchmark")
@@ -74,17 +56,6 @@ package enum MirageCodecBenchmarkRunner {
         return total / Double(values.count)
     }
 
-    package static func benchmarkPixelFormat(for format: MiragePixelFormat) -> OSType {
-        switch format {
-        case .xf44, .ayuv16:
-            kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
-        case .p010, .bgr10a2:
-            kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-        case .bgra8, .nv12:
-            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        }
-    }
-
     package static func waitForGroup(_ group: DispatchGroup, timeout: Duration) async -> DispatchTimeoutResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -100,7 +71,6 @@ package enum MirageCodecBenchmarkRunner {
 package final class BenchmarkEncoder {
     package struct Result {
         package var samples: [CMSampleBuffer]
-        package var encodeTimes: [Double]
     }
 
     let width: Int
@@ -115,7 +85,7 @@ package final class BenchmarkEncoder {
         self.pixelFormat = pixelFormat
     }
 
-    package func encodeFrames(frameCount: Int, collectSamples: Bool) async throws -> Result {
+    package func encodeFrames(frameCount: Int) async throws -> Result {
         var session: VTCompressionSession?
         let encoderSpecification: CFDictionary = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
@@ -174,7 +144,7 @@ package final class BenchmarkEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
 
         let group = DispatchGroup()
-        let state = BenchmarkEncoderState(collectSamples: collectSamples, group: group)
+        let state = BenchmarkEncoderState(group: group)
         var encodeError: OSStatus?
 
         for frameIndex in 0 ..< frameCount {
@@ -190,8 +160,7 @@ package final class BenchmarkEncoder {
                 }
 
                 group.enter()
-                let startTime = CFAbsoluteTimeGetCurrent()
-                let info = BenchmarkFrameInfo(startTime: startTime, state: state)
+                let info = BenchmarkFrameInfo(state: state)
                 let unmanaged = Unmanaged.passRetained(info)
                 let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(frameRate))
 
@@ -226,20 +195,20 @@ package final class BenchmarkEncoder {
             throw MirageError.protocolError("Encode benchmark failed: \(encodeError)")
         }
 
-        return Result(samples: state.samples, encodeTimes: state.encodeTimes)
+        return Result(samples: state.samples)
     }
 
     private static let encodeCallback: VTCompressionOutputCallback = { _, sourceFrameRefCon, status, _, sampleBuffer in
         guard let sourceFrameRefCon else { return }
         let info = Unmanaged<BenchmarkFrameInfo>.fromOpaque(sourceFrameRefCon).takeRetainedValue()
-        let deltaMs = (CFAbsoluteTimeGetCurrent() - info.startTime) * 1000
 
         info.state.lock.lock()
-        info.state.encodeTimes.append(deltaMs)
-        if info.state.collectSamples, let sampleBuffer {
-            info.state.samples.append(sampleBuffer)
+        do {
+            defer { info.state.lock.unlock() }
+            if let sampleBuffer {
+                info.state.samples.append(sampleBuffer)
+            }
         }
-        info.state.lock.unlock()
         info.state.group.leave()
 
         if status != noErr {
@@ -364,8 +333,10 @@ package enum BenchmarkDecoder {
         let deltaMs = (CFAbsoluteTimeGetCurrent() - info.startTime) * 1000
 
         info.state.lock.lock()
-        info.state.decodeTimes.append(deltaMs)
-        info.state.lock.unlock()
+        do {
+            defer { info.state.lock.unlock() }
+            info.state.decodeTimes.append(deltaMs)
+        }
         info.state.group.leave()
 
         if status != noErr {
@@ -378,23 +349,18 @@ package enum BenchmarkDecoder {
 
 private final class BenchmarkEncoderState {
     let lock = NSLock()
-    let collectSamples: Bool
     let group: DispatchGroup
     var samples: [CMSampleBuffer] = []
-    var encodeTimes: [Double] = []
 
-    init(collectSamples: Bool, group: DispatchGroup) {
-        self.collectSamples = collectSamples
+    init(group: DispatchGroup) {
         self.group = group
     }
 }
 
 private final class BenchmarkFrameInfo {
-    let startTime: CFAbsoluteTime
     let state: BenchmarkEncoderState
 
-    init(startTime: CFAbsoluteTime, state: BenchmarkEncoderState) {
-        self.startTime = startTime
+    init(state: BenchmarkEncoderState) {
         self.state = state
     }
 }

@@ -14,24 +14,32 @@ import CoreGraphics
 import CoreVideo
 import QuartzCore
 
+/// Maintains compositor activity for a virtual display by animating a tiny transparent window.
 @MainActor
 final class VirtualDisplayKeepalive {
+    /// Size of the tiny keepalive pixel drawn at the display edge.
+    private static let pixelSize: CGFloat = 6.0
+
+    /// Lower alpha in the alternating keepalive cadence.
+    private static let alphaLow: CGFloat = 0.035
+
+    /// Higher alpha in the alternating keepalive cadence.
+    private static let alphaHigh: CGFloat = 0.090
+
     private let displayID: CGDirectDisplayID
     private var spaceID: CGSSpaceID
     private var refreshRate: Double
     private var window: NSWindow?
     private var cadenceDriver: VirtualDisplayKeepaliveCadenceDriver?
 
-    private let pixelSize: CGFloat = 6.0
-    private let alphaLow: CGFloat = 0.035
-    private let alphaHigh: CGFloat = 0.090
-
+    /// Creates a keepalive for a display in the target CoreGraphics space.
     init(displayID: CGDirectDisplayID, spaceID: CGSSpaceID, refreshRate: Double) {
         self.displayID = displayID
         self.spaceID = spaceID
         self.refreshRate = refreshRate
     }
 
+    /// Creates the keepalive window, moves it to the display space, and starts cadence animation.
     func start() {
         guard window == nil else { return }
 
@@ -41,12 +49,13 @@ final class VirtualDisplayKeepalive {
         window.orderFrontRegardless()
         self.window = window
 
-        let cadence = refreshRate >= 120.0 ? 120.0 : 60.0
+        let cadence = resolvedCadence(for: refreshRate)
         startCadenceDriver(cadence: cadence)
 
         MirageLogger.host("Virtual display cadence driver started for display \(displayID) @ \(Int(cadence))Hz")
     }
 
+    /// Stops cadence animation and hides the keepalive window.
     func stop() {
         stopCadenceDriver()
         window?.orderOut(nil)
@@ -54,11 +63,13 @@ final class VirtualDisplayKeepalive {
         MirageLogger.host("Virtual display cadence driver stopped for display \(displayID)")
     }
 
+    /// Repositions the keepalive window after display bounds change.
     func updateBounds() {
         guard let window else { return }
         window.setFrame(windowFrame(), display: false)
     }
 
+    /// Moves the keepalive into a new space and updates cadence if the display mode changed.
     func reconfigure(spaceID: CGSSpaceID, refreshRate: Double) {
         let previousCadence = resolvedCadence(for: self.refreshRate)
         self.spaceID = spaceID
@@ -73,12 +84,14 @@ final class VirtualDisplayKeepalive {
         startCadenceDriver(cadence: cadence)
     }
 
+    /// Restarts cadence animation for an existing keepalive window.
     func restart() {
         let cadence = resolvedCadence(for: refreshRate)
         startCadenceDriver(cadence: cadence)
         MirageLogger.host("Virtual display cadence driver restarted for display \(displayID) @ \(Int(cadence))Hz")
     }
 
+    /// Replaces the current cadence driver with one targeting `cadence`.
     private func startCadenceDriver(cadence: Double) {
         stopCadenceDriver()
         let driver = VirtualDisplayKeepaliveCadenceDriver(
@@ -97,21 +110,24 @@ final class VirtualDisplayKeepalive {
         }
     }
 
+    /// Stops and releases the active display-link driver.
     private func stopCadenceDriver() {
         cadenceDriver?.stop()
         cadenceDriver = nil
     }
 
+    /// Alternates the keepalive pixel alpha so the compositor has visible frame work.
     private func advanceCadenceFrame(tick: UInt64) {
         guard let layer = window?.contentView?.layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let alpha = tick.isMultiple(of: 2) ? alphaLow : alphaHigh
+        let alpha = tick.isMultiple(of: 2) ? Self.alphaLow : Self.alphaHigh
         layer.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
         layer.setNeedsDisplay()
         CATransaction.commit()
     }
 
+    /// Builds the tiny transparent window used to keep the virtual display refreshing.
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: windowFrame(),
@@ -128,26 +144,29 @@ final class VirtualDisplayKeepalive {
 
         let view = NSView(frame: CGRect(origin: .zero, size: window.frame.size))
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.black.withAlphaComponent(alphaLow).cgColor
+        view.layer?.backgroundColor = NSColor.black.withAlphaComponent(Self.alphaLow).cgColor
         window.contentView = view
 
         return window
     }
 
+    /// Uses 120 Hz only for high-refresh displays; otherwise keeps a 60 Hz cadence.
     private func resolvedCadence(for refreshRate: Double) -> Double {
         refreshRate >= 120.0 ? 120.0 : 60.0
     }
 
+    /// Positions the keepalive pixel just inside the display bounds.
     private func windowFrame() -> CGRect {
         let bounds = CGDisplayBounds(displayID)
         let origin = CGPoint(
-            x: bounds.maxX - pixelSize - 1.0,
+            x: bounds.maxX - Self.pixelSize - 1.0,
             y: bounds.minY + 1.0
         )
-        return CGRect(origin: origin, size: CGSize(width: pixelSize, height: pixelSize))
+        return CGRect(origin: origin, size: CGSize(width: Self.pixelSize, height: Self.pixelSize))
     }
 }
 
+/// Thin CVDisplayLink wrapper that throttles ticks to the target frame interval.
 private final class VirtualDisplayKeepaliveCadenceDriver: @unchecked Sendable {
     private let displayID: CGDirectDisplayID
     private let targetFrameInterval: CFAbsoluteTime
@@ -159,13 +178,14 @@ private final class VirtualDisplayKeepaliveCadenceDriver: @unchecked Sendable {
     private var tickCount: UInt64 = 0
     private var lastTickTime: CFAbsoluteTime = 0
 
+    /// Creates a display link for `displayID` and calls `onTick` at roughly `targetFPS`.
     init(
         displayID: CGDirectDisplayID,
         targetFPS: Double,
         onTick: @escaping @Sendable (UInt64) -> Void
     ) {
         self.displayID = displayID
-        self.targetFrameInterval = 1.0 / max(1.0, targetFPS)
+        targetFrameInterval = 1.0 / max(1.0, targetFPS)
         self.onTick = onTick
 
         var createdDisplayLink: CVDisplayLink?
@@ -201,10 +221,12 @@ private final class VirtualDisplayKeepaliveCadenceDriver: @unchecked Sendable {
         displayLink = createdDisplayLink
     }
 
+    /// Stops the display link before release.
     deinit {
         stop()
     }
 
+    /// Starts the display link if it was created successfully.
     func start() -> Bool {
         guard let displayLink else { return false }
         guard !isRunning else { return true }
@@ -220,12 +242,14 @@ private final class VirtualDisplayKeepaliveCadenceDriver: @unchecked Sendable {
         return true
     }
 
+    /// Stops the display link if it is currently running.
     func stop() {
         guard let displayLink, isRunning else { return }
         CVDisplayLinkStop(displayLink)
         isRunning = false
     }
 
+    /// Handles raw display-link callbacks and suppresses callbacks above the target cadence.
     private func handleDisplayTick() {
         let now = CFAbsoluteTimeGetCurrent()
         let tick: UInt64? = stateLock.withLock {
@@ -241,12 +265,15 @@ private final class VirtualDisplayKeepaliveCadenceDriver: @unchecked Sendable {
     }
 }
 
+/// Tracks all active virtual-display keepalives for the host process.
 @MainActor
 final class VirtualDisplayKeepaliveController {
+    /// Shared host-wide keepalive registry.
     static let shared = VirtualDisplayKeepaliveController()
 
     private var keepalives: [CGDirectDisplayID: VirtualDisplayKeepalive] = [:]
 
+    /// Starts or reconfigures keepalive activity for a display.
     func start(displayID: CGDirectDisplayID, spaceID: CGSSpaceID, refreshRate: Double) {
         if let existing = keepalives[displayID] {
             existing.reconfigure(spaceID: spaceID, refreshRate: refreshRate)
@@ -258,6 +285,7 @@ final class VirtualDisplayKeepaliveController {
         keepalives[displayID] = keepalive
     }
 
+    /// Restarts an existing keepalive or starts a new one when none exists.
     func restart(displayID: CGDirectDisplayID, spaceID: CGSSpaceID, refreshRate: Double) {
         if let existing = keepalives[displayID] {
             existing.reconfigure(spaceID: spaceID, refreshRate: refreshRate)
@@ -267,21 +295,15 @@ final class VirtualDisplayKeepaliveController {
         start(displayID: displayID, spaceID: spaceID, refreshRate: refreshRate)
     }
 
+    /// Updates the keepalive window bounds for a display.
     func update(displayID: CGDirectDisplayID) {
         keepalives[displayID]?.updateBounds()
     }
 
+    /// Stops and removes keepalive activity for a display.
     func stop(displayID: CGDirectDisplayID) {
         guard let keepalive = keepalives.removeValue(forKey: displayID) else { return }
         keepalive.stop()
-    }
-
-    func stopAll() {
-        let entries = keepalives
-        keepalives.removeAll()
-        for keepalive in entries.values {
-            keepalive.stop()
-        }
     }
 }
 

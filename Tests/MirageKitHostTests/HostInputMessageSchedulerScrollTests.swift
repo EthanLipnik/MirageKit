@@ -45,12 +45,7 @@ struct HostInputMessageSchedulerScrollTests {
         queue.activate()
         try await waitForEvents(events, count: 2)
 
-        let scrollEvents: [MirageScrollEvent] = events.read { events in
-            events.compactMap { event in
-                guard case let .scrollWheel(scrollEvent) = event else { return nil }
-                return scrollEvent
-            }
-        }
+        let scrollEvents = deliveredScrollEvents(in: events)
         #expect(scrollEvents.count == 1)
         #expect(scrollEvents.first?.deltaX == 4)
         #expect(scrollEvents.first?.deltaY == 6)
@@ -58,10 +53,10 @@ struct HostInputMessageSchedulerScrollTests {
         #expect(scrollEvents.first?.timestamp == 2)
     }
 
-    @Test("Legacy scroll messages keep replacement behavior instead of merging")
-    func legacyScrollMessagesKeepReplacementBehaviorInsteadOfMerging() async throws {
+    @Test("Phase-less scroll messages keep replacement behavior instead of merging")
+    func phaseLessScrollMessagesKeepReplacementBehaviorInsteadOfMerging() async throws {
         let streamID: StreamID = 702
-        let queue = DispatchQueue(label: "com.mirage.tests.host-input-scroll-legacy", attributes: .initiallyInactive)
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-scroll-phase-less", attributes: .initiallyInactive)
         let events = Locked<[MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
@@ -87,12 +82,7 @@ struct HostInputMessageSchedulerScrollTests {
         queue.activate()
         try await waitForEvents(events, count: 2)
 
-        let scrollEvents: [MirageScrollEvent] = events.read { events in
-            events.compactMap { event in
-                guard case let .scrollWheel(scrollEvent) = event else { return nil }
-                return scrollEvent
-            }
-        }
+        let scrollEvents = deliveredScrollEvents(in: events)
         #expect(scrollEvents.count == 1)
         #expect(scrollEvents.first?.deltaX == 3)
         #expect(scrollEvents.first?.deltaY == 4)
@@ -143,12 +133,21 @@ private func recordInputEvent(from message: ControlMessage, into events: Locked<
     events.withLock { $0.append(inputMessage.event) }
 }
 
+private func deliveredScrollEvents(in events: Locked<[MirageInputEvent]>) -> [MirageScrollEvent] {
+    events.read { events in
+        events.compactMap { event in
+            guard case let .scrollWheel(scrollEvent) = event else { return nil }
+            return scrollEvent
+        }
+    }
+}
+
 private func waitForEvents(
     _ events: Locked<[MirageInputEvent]>,
     count: Int
 ) async throws {
-    let deadline = Date().addingTimeInterval(2)
-    while events.read({ $0.count }) < count, Date() < deadline {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while events.read({ $0.count }) < count, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(events.read { $0.count } >= count)
@@ -158,8 +157,8 @@ private func waitForKeyboardEvent(
     _ events: Locked<[MirageInputEvent]>,
     keyCode: UInt16
 ) async throws {
-    let deadline = Date().addingTimeInterval(2)
-    while Date() < deadline {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while ContinuousClock.now < deadline {
         let didReceive = events.read { events in
             events.contains { event in
                 guard case let .keyDown(keyEvent) = event else { return false }

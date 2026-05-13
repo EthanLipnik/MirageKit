@@ -12,18 +12,6 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    private func shouldSuppressHostSupportLogFailure(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-
-        if case .connected = connectionState {
-            return false
-        }
-
-        return true
-    }
-
     func handleHostSupportLogArchive(_ message: ControlMessage) {
         do {
             let response = try message.decode(HostSupportLogArchiveMessage.self)
@@ -60,10 +48,12 @@ extension MirageClientService {
                     completeHostSupportLogArchiveRequest(.success(archiveURL))
                 } catch {
                     completeHostSupportLogArchiveRequest(.failure(error))
-                    if shouldSuppressHostSupportLogFailure(error) {
+                    if error is CancellationError {
                         MirageLogger.client("Host support log transfer ended after disconnect")
-                    } else {
+                    } else if case .connected = connectionState {
                         MirageLogger.error(.client, error: error, message: "Failed to download host support logs: ")
+                    } else {
+                        MirageLogger.client("Host support log transfer ended after disconnect")
                     }
                 }
             }

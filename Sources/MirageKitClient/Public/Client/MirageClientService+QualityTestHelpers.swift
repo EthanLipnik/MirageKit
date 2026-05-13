@@ -9,15 +9,9 @@
 
 import Foundation
 import MirageKit
-import Network
 
 @MainActor
 extension MirageClientService {
-    struct PingWaiterRegistration {
-        let requestID: UInt64
-        let startedNewRequest: Bool
-    }
-
     nonisolated static func validatedQualityTestStageResult(
         _ stageResult: MirageQualityTestSummary.StageResult,
         metrics: (
@@ -37,57 +31,12 @@ extension MirageClientService {
     }
 
     nonisolated func handleQualityTestPacket(_ header: QualityTestPacketHeader, data: Data) {
-        let context = fastPathState.qualityTestContext()
+        let context = fastPathState.qualityTestContext
         let accumulator = context.accumulator
         let activeTestID = context.testID
         guard let accumulator, activeTestID == header.testID else { return }
         let payloadBytes = min(Int(header.payloadLength), max(0, data.count - mirageQualityTestHeaderSize))
         accumulator.record(header: header, payloadBytes: payloadBytes)
-    }
-
-    func measureRTT(
-        sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
-    ) async throws -> Double {
-        var samples: [Double] = []
-
-        for _ in 0 ..< 3 {
-            let start = CFAbsoluteTimeGetCurrent()
-            try await sendPingAndAwaitPong(sendPing: sendPing)
-            let delta = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            samples.append(delta)
-        }
-
-        guard !samples.isEmpty else { return 0 }
-        let sorted = samples.sorted()
-        return sorted[sorted.count / 2]
-    }
-
-    func sendPingAndAwaitPong(
-        timeout: Duration = .seconds(5),
-        sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
-    ) async throws {
-        guard case .connected = connectionState else {
-            throw MirageError.protocolError("Not connected")
-        }
-        let message = ControlMessage(type: .ping)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let registration = registerPingWaiter(continuation, timeout: timeout)
-            guard registration.startedNewRequest else { return }
-            Task { @MainActor [weak self] in
-                do {
-                    if let sendPing {
-                        try await sendPing()
-                    } else {
-                        try await self?.sendControlMessage(message)
-                    }
-                } catch {
-                    self?.completePingRequest(
-                        expectedRequestID: registration.requestID,
-                        result: .failure(error)
-                    )
-                }
-            }
-        }
     }
 
     /// Cancel the current quality test, if one is active.
@@ -102,10 +51,14 @@ extension MirageClientService {
         )
 
         if notifyHost {
-            try? await sendControlMessage(
-                .qualityTestCancel,
-                content: QualityTestCancelMessage(testID: testID)
-            )
+            do {
+                try await sendControlMessage(
+                    .qualityTestCancel,
+                    content: QualityTestCancelMessage(testID: testID)
+                )
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Failed to send qualityTestCancel: ")
+            }
         }
 
         qualityTestPendingTestID = nil
@@ -114,7 +67,7 @@ extension MirageClientService {
         qualityTestStageCompletionTimeoutTask?.cancel()
         qualityTestStageCompletionTimeoutTask = nil
         qualityTestStageCompletionBuffer.removeAll()
-        clearQualityTestAccumulator()
+        fastPathState.clearQualityTestAccumulator()
 
         failActivePingRequests(with: CancellationError())
 
@@ -127,96 +80,8 @@ extension MirageClientService {
         activeMediaStreams.removeValue(forKey: "quality-test/\(testID.uuidString)")
     }
 
-    func awaitQualityTestBenchmark(
-        testID: UUID,
-        timeout: Duration
-    ) async -> QualityTestBenchmarkMessage? {
-        if let pending = qualityTestPendingTestID, pending != testID {
-            completeQualityTestBenchmarkWaiter(result: nil)
-            completeQualityTestStageCompletionWaiter(result: nil)
-            qualityTestStageCompletionBuffer.removeAll()
-        }
-
-        qualityTestBenchmarkWaiterID &+= 1
-        let waiterID = qualityTestBenchmarkWaiterID
-        qualityTestPendingTestID = testID
-
-        return await withCheckedContinuation { continuation in
-            qualityTestBenchmarkContinuation = continuation
-            qualityTestBenchmarkTimeoutTask?.cancel()
-            qualityTestBenchmarkTimeoutTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try await Task.sleep(for: timeout)
-                } catch {
-                    return
-                }
-                self.completeQualityTestBenchmarkWaiter(
-                    expectedWaiterID: waiterID,
-                    expectedTestID: testID,
-                    result: nil
-                )
-            }
-        }
-    }
-
-    func awaitQualityTestStageCompletion(
-        testID: UUID,
-        stageID: Int,
-        timeout: Duration
-    ) async -> QualityTestStageCompleteMessage? {
-        if let pending = qualityTestPendingTestID, pending != testID {
-            completeQualityTestBenchmarkWaiter(result: nil)
-            completeQualityTestStageCompletionWaiter(result: nil)
-            qualityTestStageCompletionBuffer.removeAll()
-        }
-
-        qualityTestPendingTestID = testID
-        if let bufferedIndex = qualityTestStageCompletionBuffer.firstIndex(where: { completion in
-            completion.testID == testID && completion.stageID == stageID
-        }) {
-            return qualityTestStageCompletionBuffer.remove(at: bufferedIndex)
-        }
-
-        qualityTestStageCompletionWaiterID &+= 1
-        let waiterID = qualityTestStageCompletionWaiterID
-        return await withCheckedContinuation { continuation in
-            qualityTestStageCompletionContinuation = continuation
-            qualityTestStageCompletionTimeoutTask?.cancel()
-            qualityTestStageCompletionTimeoutTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try await Task.sleep(for: timeout)
-                } catch {
-                    return
-                }
-                self.completeQualityTestStageCompletionWaiter(
-                    expectedWaiterID: waiterID,
-                    expectedTestID: testID,
-                    result: nil
-                )
-            }
-        }
-    }
-
-    func sendQualityTestRegistration() async throws {
-        MirageLogger.client("Quality-test registration skipped (media via Loom session)")
-    }
-
-    func runDecodeBenchmark() async throws -> MirageCodecBenchmarkStore.Record {
-        let store = MirageCodecBenchmarkStore()
-        let decodeMs = try await MirageCodecBenchmark.runDecodeBenchmark()
-        let record = MirageCodecBenchmarkStore.Record(
-            version: MirageCodecBenchmarkStore.currentVersion,
-            benchmarkWidth: MirageCodecBenchmark.benchmarkWidth,
-            benchmarkHeight: MirageCodecBenchmark.benchmarkHeight,
-            benchmarkFrameRate: MirageCodecBenchmark.benchmarkFrameRate,
-            hostEncodeMs: nil,
-            clientDecodeMs: decodeMs,
-            measuredAt: Date()
-        )
-        store.save(record)
-        return record
+    func runDecodeBenchmark() async throws -> Double {
+        try await MirageCodecBenchmarkRunner.runDecodeBenchmark()
     }
 
     func runQualityTestSession(
@@ -229,11 +94,11 @@ extension MirageClientService {
         onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
     ) async throws -> [MirageQualityTestSummary.StageResult] {
         let accumulator = QualityTestAccumulator(testID: testID)
-        setQualityTestAccumulator(accumulator, testID: testID)
+        fastPathState.setQualityTestAccumulator(accumulator, testID: testID)
         qualityTestPendingTestID = testID
         qualityTestStageCompletionBuffer.removeAll()
         defer {
-            clearQualityTestAccumulator()
+            fastPathState.clearQualityTestAccumulator()
             completeQualityTestStageCompletionWaiter(result: nil)
             qualityTestStageCompletionBuffer.removeAll()
         }
@@ -259,9 +124,7 @@ extension MirageClientService {
                     latestCompletedStageResult: results.last
                 )
             )
-            let timeout = Duration.milliseconds(
-                Self.qualityTestStageCompletionTimeoutMs(for: stage)
-            )
+            let timeout = Duration.milliseconds(stage.totalCompletionBudgetMs + Self.qualityTestControlMessageMarginMs)
             guard let completion = await awaitQualityTestStageCompletion(
                 testID: testID,
                 stageID: stage.id,
@@ -308,7 +171,7 @@ extension MirageClientService {
                 : 0
             let lossText = stageResult.lossPercent.formatted(.number.precision(.fractionLength(1)))
             MirageLogger.client(
-                "Quality test stage \(stage.id) result kind=\(stage.probeKind.rawValue) target \((Double(stage.targetBitrateBps) / 1_000_000.0).formatted(.number.precision(.fractionLength(1)))) Mbps, sent \(sentMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, received \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, packets \(stageResult.receivedPacketCount)/\(stageResult.sentPacketCount)"
+                "Quality test stage \(stage.id) result kind=\(stage.probeKind.rawValue) target \(mirageFormattedMegabitRate(stage.targetBitrateBps)), sent \(sentMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, received \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, packets \(stageResult.receivedPacketCount)/\(stageResult.sentPacketCount)"
             )
 
             if mode == .connectionLimit,
@@ -334,7 +197,7 @@ extension MirageClientService {
                 for: mode,
                 probeKind: stage.probeKind
             )
-            let stageStable = stageIsStable(
+            let stageStable = Self.qualityTestStageIsStable(
                 stageResult,
                 targetBitrate: stage.targetBitrateBps,
                 payloadBytes: payloadBytes,
@@ -371,9 +234,8 @@ extension MirageClientService {
             targetBitrateBps: targetBitrateBps,
             durationMs: durationMs
         )
-        let targetMbps = Double(targetBitrateBps) / 1_000_000.0
         MirageLogger.client(
-            "Quality test stage \(stageID) start: kind \(probeKind.rawValue), target \(targetMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, duration \(durationMs)ms, payload \(payloadBytes)B"
+            "Quality test stage \(stageID) start: kind \(probeKind.rawValue), target \(mirageFormattedMegabitRate(targetBitrateBps)), duration \(durationMs)ms, payload \(payloadBytes)B"
         )
         let results = try await runQualityTestSession(
             testID: testID,
@@ -443,143 +305,4 @@ extension MirageClientService {
         )
     }
 
-    func stageIsStable(
-        _ stage: MirageQualityTestSummary.StageResult,
-        targetBitrate: Int,
-        payloadBytes: Int,
-        throughputFloor: Double?,
-        lossCeiling: Double,
-        requiresLossBelowCeiling: Bool = false
-    ) -> Bool {
-        Self.qualityTestStageIsStable(
-            stage,
-            targetBitrate: targetBitrate,
-            payloadBytes: payloadBytes,
-            throughputFloor: throughputFloor,
-            lossCeiling: lossCeiling,
-            requiresLossBelowCeiling: requiresLossBelowCeiling
-        )
-    }
-
-    nonisolated func setQualityTestAccumulator(_ accumulator: QualityTestAccumulator, testID: UUID) {
-        fastPathState.setQualityTestAccumulator(accumulator, testID: testID)
-    }
-
-    nonisolated static func qualityTestStageCompletionTimeoutMs(
-        for stage: MirageQualityTestPlan.Stage
-    ) -> Int {
-        stage.totalCompletionBudgetMs + qualityTestControlMessageMarginMs
-    }
-
-    func clearQualityTestAccumulator() {
-        fastPathState.clearQualityTestAccumulator()
-    }
-
-    func registerPingWaiter(
-        _ continuation: CheckedContinuation<Void, Error>,
-        timeout: Duration = .seconds(5)
-    ) -> PingWaiterRegistration {
-        pingContinuations.append(continuation)
-        if pingContinuations.count > 1 {
-            return PingWaiterRegistration(
-                requestID: pingRequestID,
-                startedNewRequest: false
-            )
-        }
-
-        pingRequestID &+= 1
-        let requestID = pingRequestID
-        pingTimeoutTask?.cancel()
-        pingTimeoutTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(for: timeout)
-            } catch {
-                return
-            }
-            self.completePingRequest(
-                expectedRequestID: requestID,
-                result: .failure(MirageError.protocolError("Ping timed out"))
-            )
-        }
-
-        return PingWaiterRegistration(
-            requestID: requestID,
-            startedNewRequest: true
-        )
-    }
-
-    func failActivePingRequests(with error: Error) {
-        guard !pingContinuations.isEmpty else {
-            pingTimeoutTask?.cancel()
-            pingTimeoutTask = nil
-            return
-        }
-        completePingRequest(
-            expectedRequestID: pingRequestID,
-            result: .failure(error)
-        )
-    }
-
-    func completePingRequest(
-        expectedRequestID: UInt64,
-        result: Result<Void, Error>
-    ) {
-        guard pingRequestID == expectedRequestID, !pingContinuations.isEmpty else { return }
-        let continuations = pingContinuations
-        pingContinuations.removeAll(keepingCapacity: false)
-        pingTimeoutTask?.cancel()
-        pingTimeoutTask = nil
-        for continuation in continuations {
-            switch result {
-            case .success:
-                continuation.resume()
-            case let .failure(error):
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-
-    func completeQualityTestBenchmarkWaiter(
-        expectedWaiterID: UInt64? = nil,
-        expectedTestID: UUID? = nil,
-        result: QualityTestBenchmarkMessage?
-    ) {
-        if let expectedWaiterID, qualityTestBenchmarkWaiterID != expectedWaiterID { return }
-        if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
-        qualityTestBenchmarkTimeoutTask?.cancel()
-        qualityTestBenchmarkTimeoutTask = nil
-        guard let continuation = qualityTestBenchmarkContinuation else { return }
-        qualityTestBenchmarkContinuation = nil
-        continuation.resume(returning: result)
-    }
-
-    func completeQualityTestStageCompletionWaiter(
-        expectedWaiterID: UInt64? = nil,
-        expectedTestID: UUID? = nil,
-        result: QualityTestStageCompleteMessage?
-    ) {
-        if let expectedWaiterID, qualityTestStageCompletionWaiterID != expectedWaiterID { return }
-        if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
-        qualityTestStageCompletionTimeoutTask?.cancel()
-        qualityTestStageCompletionTimeoutTask = nil
-        guard let continuation = qualityTestStageCompletionContinuation else { return }
-        qualityTestStageCompletionContinuation = nil
-        continuation.resume(returning: result)
-    }
-}
-
-func describeQualityTestNetworkPath(_ path: NWPath) -> String {
-    var interfaces: [String] = []
-    if path.usesInterfaceType(.wifi) { interfaces.append("wifi") }
-    if path.usesInterfaceType(.wiredEthernet) { interfaces.append("wired") }
-    if path.usesInterfaceType(.cellular) { interfaces.append("cellular") }
-    if path.usesInterfaceType(.loopback) { interfaces.append("loopback") }
-    if path.usesInterfaceType(.other) { interfaces.append("other") }
-    let interfaceText = interfaces.isEmpty ? "unknown" : interfaces.joined(separator: ",")
-    let available = path.availableInterfaces
-        .map { "\($0.name)(\(String(describing: $0.type)))" }
-        .joined(separator: ",")
-    let availableText = available.isEmpty ? "none" : available
-    return "status=\(path.status), interfaces=\(interfaceText), available=\(availableText), expensive=\(path.isExpensive), constrained=\(path.isConstrained), ipv4=\(path.supportsIPv4), ipv6=\(path.supportsIPv6)"
 }

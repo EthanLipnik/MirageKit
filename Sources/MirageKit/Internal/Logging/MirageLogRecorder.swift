@@ -9,16 +9,27 @@ import Foundation
 
 // MARK: - Configuration
 
+/// Records Mirage diagnostic log events to a bounded on-disk session log.
 public final class MirageLogRecorder: @unchecked Sendable {
+    /// File layout, retention, and category policy for a log recorder instance.
     public struct Configuration: Sendable {
+        /// Name of the active log file inside the resolved logs directory.
         public let logFilename: String
+        /// Directory name used for active logs and exported archives.
         public let logsDirectoryName: String
+        /// Number of days to keep rotated log files.
         public let retentionDays: Int
+        /// Maximum size of the active log before it is compacted.
         public let maxLogBytes: Int
+        /// Number of leading bytes preserved when compacting a large log.
         public let headLogBytes: Int
+        /// Whether logs are written under Application Support instead of the caches directory.
         public let useApplicationSupport: Bool
+        /// Serial queue label used for disk I/O.
         public let queueLabel: String
+        /// Human-readable prefix used in truncation markers.
         public let truncationLabel: String
+        /// Log categories recorded even when verbose diagnostics are disabled.
         public let baselineCategories: Set<LoomLogCategory>
 
         public init(
@@ -242,23 +253,24 @@ public final class MirageLogRecorder: @unchecked Sendable {
             let expirationDate = Date().addingTimeInterval(-TimeInterval(configuration.retentionDays * 24 * 60 * 60))
             for url in urls {
                 guard let creationDate = (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate else { continue }
-                if creationDate < expirationDate { try? fileManager.removeItem(at: url) }
+                guard creationDate < expirationDate else { continue }
+                do {
+                    try fileManager.removeItem(at: url)
+                } catch {
+                    continue
+                }
             }
         } catch {
             return
         }
     }
 
-    private func formattedLine(for entry: LoomDiagnosticsLogEvent) -> String {
-        let timestamp = formatter.string(from: entry.date)
-        return "[\(timestamp)] [\(entry.category.rawValue)] [\(entry.level.rawValue)] \(entry.message)\n"
-    }
-
     private func appendEntry(_ entry: LoomDiagnosticsLogEvent) {
         queue.async { [weak self] in
             guard let self else { return }
             do {
-                let line = formattedLine(for: entry)
+                let timestamp = formatter.string(from: entry.date)
+                let line = "[\(timestamp)] [\(entry.category.rawValue)] [\(entry.level.rawValue)] \(entry.message)\n"
                 guard let data = line.data(using: .utf8) else { return }
                 pendingLogData.append(data)
                 if pendingLogData.count >= writeBatchBytes {
@@ -285,7 +297,11 @@ public final class MirageLogRecorder: @unchecked Sendable {
 
     private func closeFileHandleIfNeeded() {
         guard let fileHandle else { return }
-        try? fileHandle.close()
+        do {
+            try fileHandle.close()
+        } catch {
+            // Closing the diagnostics log is best effort; avoid logging from the logger itself.
+        }
         self.fileHandle = nil
     }
 

@@ -10,21 +10,29 @@ import Foundation
 import MirageKit
 import UniformTypeIdentifiers
 
+/// Snapshot of the host pasteboard state used for shared-clipboard ordering.
 private struct HostClipboardSnapshot: Sendable {
+    /// Pasteboard change count captured with the item.
     let changeCount: Int
+
+    /// Serialized clipboard item derived from the current pasteboard contents.
     let item: MirageSharedClipboardItem
 }
 
+/// Reads and writes `NSPasteboard` on an actor so host clipboard polling stays serialized.
 private actor HostClipboardSnapshotReader {
     static let shared = HostClipboardSnapshotReader()
+    private static let receivedClipboardSide = "Host"
 
     private let fileManager = FileManager.default
 
-    func changeCount() -> Int {
+    /// Current pasteboard change count.
+    var changeCount: Int {
         NSPasteboard.general.changeCount
     }
 
-    func snapshot() -> HostClipboardSnapshot {
+    /// Current pasteboard change count plus a serialized Mirage clipboard item.
+    var snapshot: HostClipboardSnapshot {
         let pasteboard = NSPasteboard.general
         return HostClipboardSnapshot(
             changeCount: pasteboard.changeCount,
@@ -32,6 +40,7 @@ private actor HostClipboardSnapshotReader {
         )
     }
 
+    /// Applies a client-provided clipboard item to the host pasteboard.
     func applyItem(_ item: MirageSharedClipboardItem) -> Int {
         cleanupReceivedFiles()
         let pasteboard = NSPasteboard.general
@@ -48,7 +57,11 @@ private actor HostClipboardSnapshotReader {
                 pasteboard.writeObjects([image])
             }
         case .file:
-            if let url = materializeReceivedFile(item) as NSURL? {
+            if let url = mirageMaterializeReceivedSharedClipboardFile(
+                item,
+                side: Self.receivedClipboardSide,
+                fileManager: fileManager
+            ) as NSURL? {
                 pasteboard.writeObjects([url])
             }
         case .unsupported:
@@ -57,111 +70,48 @@ private actor HostClipboardSnapshotReader {
         return pasteboard.changeCount
     }
 
+    /// Removes temporary files materialized for received clipboard file payloads.
     func cleanupReceivedFiles() {
-        try? fileManager.removeItem(at: receivedClipboardDirectory)
-    }
-
-    private var receivedClipboardDirectory: URL {
-        fileManager.temporaryDirectory
-            .appendingPathComponent("MirageSharedClipboard", isDirectory: true)
-            .appendingPathComponent("Host", isDirectory: true)
-    }
-
-    private func materializeReceivedFile(_ item: MirageSharedClipboardItem) -> URL? {
-        guard item.representation.kind == .file,
-              let payload = item.payload else {
-            return nil
-        }
-        let filename = sanitizedFilename(item.representation.filename ?? "Mirage Clipboard Item")
-        let directory = receivedClipboardDirectory
+        let directory = mirageReceivedSharedClipboardDirectory(
+            side: Self.receivedClipboardSide,
+            fileManager: fileManager
+        )
+        guard fileManager.fileExists(atPath: directory.path) else { return }
         do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appendingPathComponent(filename, isDirectory: false)
-            try payload.write(to: url, options: [.atomic])
-            return url
+            try fileManager.removeItem(at: directory)
         } catch {
-            return nil
+            MirageLogger.error(.host, error: error, message: "Failed to clean up received clipboard files: ")
         }
     }
 
-    private func sanitizedFilename(_ filename: String) -> String {
-        let invalid = CharacterSet(charactersIn: "/:")
-        let sanitized = filename
-            .components(separatedBy: invalid)
-            .joined(separator: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return sanitized.isEmpty ? "Mirage Clipboard Item" : sanitized
-    }
-
+    /// Converts the current host pasteboard contents into a Mirage clipboard item.
     private static func item(from pasteboard: NSPasteboard) -> MirageSharedClipboardItem {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [NSURL],
-           let item = fileItem(from: urls.map { $0 as URL }) {
+           let item = mirageSharedClipboardFileItem(from: urls.map { $0 as URL }) {
             return item
         }
 
         if let image = NSImage(pasteboard: pasteboard),
            let payload = image.pngData {
-            return item(kind: .image, contentType: "public.png", filename: nil, payload: payload)
+            return mirageSharedClipboardItem(kind: .image, contentType: "public.png", filename: nil, payload: payload)
         }
 
         if let text = pasteboard.string(forType: .string),
            let payload = text.data(using: .utf8) {
-            return item(kind: .text, contentType: "public.utf8-plain-text", filename: nil, payload: payload)
+            return mirageSharedClipboardItem(
+                kind: .text,
+                contentType: "public.utf8-plain-text",
+                filename: nil,
+                payload: payload
+            )
         }
 
         return .unsupported()
     }
-
-    private static func fileItem(from urls: [URL]) -> MirageSharedClipboardItem? {
-        guard let url = urls.first, url.isFileURL else { return nil }
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey]),
-              values.isRegularFile == true,
-              let byteCount = values.fileSize else {
-            return nil
-        }
-        let representation = SharedClipboardRepresentation(
-            kind: .file,
-            contentType: values.contentType?.identifier,
-            filename: url.lastPathComponent,
-            byteCount: byteCount
-        )
-        guard byteCount <= MirageSharedClipboard.maximumPayloadBytes,
-              let payload = try? Data(contentsOf: url),
-              payload.count <= MirageSharedClipboard.maximumPayloadBytes else {
-            return MirageSharedClipboardItem(representation: representation, payload: nil)
-        }
-        return MirageSharedClipboardItem(
-            representation: representation,
-            payload: payload
-        )
-    }
-
-    private static func item(
-        kind: SharedClipboardRepresentationKind,
-        contentType: String?,
-        filename: String?,
-        payload: Data
-    ) -> MirageSharedClipboardItem {
-        let representation = SharedClipboardRepresentation(
-            kind: kind,
-            contentType: contentType,
-            filename: filename,
-            byteCount: payload.count
-        )
-        guard payload.count <= MirageSharedClipboard.maximumPayloadBytes(for: representation) else {
-            return MirageSharedClipboardItem(
-                representation: representation,
-                payload: nil
-            )
-        }
-        return MirageSharedClipboardItem(
-            representation: representation,
-            payload: payload
-        )
-    }
 }
 
 private extension NSImage {
+    /// PNG representation used for shared-clipboard image transfer.
     var pngData: Data? {
         guard let tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffRepresentation) else {
@@ -206,7 +156,7 @@ final class MirageHostSharedClipboardBridge {
         }
 
         guard item.payload != nil else {
-            let changeCount = await HostClipboardSnapshotReader.shared.changeCount()
+            let changeCount = await HostClipboardSnapshotReader.shared.changeCount
             clipboardState.recordRemoteDeclaration(
                 changeCount: changeCount,
                 orderingToken: orderingToken
@@ -229,7 +179,7 @@ final class MirageHostSharedClipboardBridge {
         observationTask?.cancel()
         Task { [weak self] in
             guard let self else { return }
-            let initialCount = await HostClipboardSnapshotReader.shared.changeCount()
+            let initialCount = await HostClipboardSnapshotReader.shared.changeCount
             guard self.isActive else { return }
             clipboardState.activate(changeCount: initialCount)
             startObservingHostClipboard()
@@ -248,7 +198,11 @@ final class MirageHostSharedClipboardBridge {
     private func startObservingHostClipboard() {
         observationTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(250))
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    break
+                }
                 guard let self, self.isActive else { continue }
                 await self.sendHostClipboardIfChanged()
             }
@@ -256,7 +210,7 @@ final class MirageHostSharedClipboardBridge {
     }
 
     private func sendHostClipboardIfChanged() async {
-        let snapshot = await HostClipboardSnapshotReader.shared.snapshot()
+        let snapshot = await HostClipboardSnapshotReader.shared.snapshot
         guard let localSend = clipboardState.prepareLocalDeclaration(
             item: snapshot.item,
             changeCount: snapshot.changeCount

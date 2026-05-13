@@ -13,7 +13,6 @@ import Testing
 
 @Suite("Client Network Path Status")
 struct ClientNetworkPathStatusTests {
-
     @Test("AWDL interface names win over Wi-Fi path flags")
     func awdlClassifierWinsOverWiFiFlags() {
         let snapshot = MirageNetworkPathClassifier.classify(

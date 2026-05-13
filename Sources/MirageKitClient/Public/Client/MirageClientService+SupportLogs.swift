@@ -32,9 +32,13 @@ public extension MirageClientService {
             hostSupportLogArchiveTransferTask = nil
             hostSupportLogArchiveTimeoutTask?.cancel()
             hostSupportLogArchiveTimeoutTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(45))
+                do {
+                    try await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(45))
+                } catch {
+                    return
+                }
                 guard let self,
-                      self.hostSupportLogArchiveContinuation != nil else {
+                      hostSupportLogArchiveContinuation != nil else {
                     return
                 }
                 completeHostSupportLogArchiveRequest(
@@ -83,11 +87,16 @@ extension MirageClientService {
             "Accepted host support log transfer offer requestID=\(rid) bytes=\(incomingTransfer.offer.byteLength)"
         )
 
-        let destinationURL = uniqueSupportLogDestinationURL(fileName: fileName)
+        let sanitizedFileName = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseName = sanitizedFileName.isEmpty
+            ? "MirageHostSupportLogs.zip"
+            : URL(fileURLWithPath: sanitizedFileName).lastPathComponent
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(UUID().uuidString)-\(baseName)")
         let sink = try LoomFileTransferSink(url: destinationURL)
         try await incomingTransfer.accept(using: sink)
 
-        let terminalProgress = await terminalProgress(from: incomingTransfer.progressEvents)
+        let terminalProgress = await MirageTransferProgress.terminalProgress(from: incomingTransfer.progressEvents)
         switch terminalProgress?.state {
         case .completed:
             MirageLogger.client(
@@ -98,40 +107,29 @@ extension MirageClientService {
                 "Host support log transfer ended early requestID=\(rid) " +
                     "state=\(terminalProgress?.state.rawValue ?? "unknown")"
             )
-            try? FileManager.default.removeItem(at: destinationURL)
+            removeIncompleteHostSupportLogDownload(at: destinationURL, requestID: rid)
             throw CancellationError()
         default:
             MirageLogger.client(
                 "Host support log transfer ended early requestID=\(rid) " +
                     "state=\(terminalProgress?.state.rawValue ?? "unknown")"
             )
-            try? FileManager.default.removeItem(at: destinationURL)
+            removeIncompleteHostSupportLogDownload(at: destinationURL, requestID: rid)
             throw MirageError.protocolError("Host support log transfer did not complete")
         }
 
         return destinationURL
     }
 
-    private func uniqueSupportLogDestinationURL(fileName: String) -> URL {
-        let sanitized = fileName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseName = sanitized.isEmpty ? "MirageHostSupportLogs.zip" : URL(fileURLWithPath: sanitized).lastPathComponent
-        let uniqueName = "\(UUID().uuidString)-\(baseName)"
-        return FileManager.default.temporaryDirectory.appending(path: uniqueName)
-    }
-
-    private func terminalProgress(
-        from stream: AsyncStream<LoomTransferProgress>
-    ) async -> LoomTransferProgress? {
-        var lastProgress: LoomTransferProgress?
-        for await progress in stream {
-            lastProgress = progress
-            switch progress.state {
-            case .completed, .cancelled, .failed, .declined:
-                return progress
-            case .offered, .waitingForAcceptance, .transferring:
-                break
-            }
+    private func removeIncompleteHostSupportLogDownload(at url: URL, requestID: String) {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            MirageLogger.error(
+                .client,
+                error: error,
+                message: "Failed to remove incomplete host support log download requestID=\(requestID): "
+            )
         }
-        return lastProgress
     }
 }

@@ -16,638 +16,6 @@ import MirageKit
 import ScreenCaptureKit
 
 extension VideoEncoder {
-    nonisolated static func encoderSpecification(
-        latencyMode: MirageStreamLatencyMode
-    ) -> [CFString: Any] {
-        encoderSpecification(
-            latencyMode: latencyMode,
-            width: 0,
-            height: 0,
-            streamKind: .window
-        )
-    }
-
-    nonisolated static func encoderSpecification(
-        latencyMode: MirageStreamLatencyMode,
-        width: Int,
-        height: Int,
-        streamKind: StreamKind,
-        codec: MirageVideoCodec = .hevc,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
-    ) -> [CFString: Any] {
-        // ProRes does not use hardware-accelerated HEVC encoder or low-latency rate control
-        if codec == .proRes4444 {
-            return [
-                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-            ]
-        }
-
-        var spec: [CFString: Any] = [
-            kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
-        ]
-        if standardLowLatencyVTTuningEnabled(
-            latencyMode: latencyMode,
-            streamKind: streamKind,
-            colorDepth: colorDepth,
-            pixelFormat: pixelFormat
-        ) {
-            spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
-        }
-        return spec
-    }
-
-    nonisolated static func standardLowLatencyVTTuningEnabled(
-        latencyMode: MirageStreamLatencyMode
-    ) -> Bool {
-        standardLowLatencyVTTuningEnabled(
-            latencyMode: latencyMode,
-            streamKind: .window
-        )
-    }
-
-    nonisolated static func standardLowLatencyVTTuningEnabled(
-        latencyMode: MirageStreamLatencyMode,
-        streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
-    ) -> Bool {
-        guard latencyMode == .lowestLatency else { return false }
-        return usesStandardLowLatencyRateControl(
-            streamKind: streamKind,
-            colorDepth: colorDepth,
-            pixelFormat: pixelFormat
-        )
-    }
-
-    nonisolated static func shouldSuppressStandardLowLatencyRateControl(
-        streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
-    ) -> Bool {
-        !usesStandardLowLatencyRateControl(
-            streamKind: streamKind,
-            colorDepth: colorDepth,
-            pixelFormat: pixelFormat
-        )
-    }
-
-    nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
-        latencyMode: MirageStreamLatencyMode,
-        streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
-    ) -> Bool {
-        latencyMode == .lowestLatency &&
-            shouldSuppressStandardLowLatencyRateControl(
-                streamKind: streamKind,
-                colorDepth: colorDepth,
-                pixelFormat: pixelFormat
-            )
-    }
-
-    nonisolated static func usesStandardLowLatencyRateControl(
-        streamKind: StreamKind,
-        colorDepth: MirageStreamColorDepth? = nil,
-        pixelFormat: MiragePixelFormat? = nil
-    ) -> Bool {
-        streamKind == .desktop ||
-            colorDepth == .ultra ||
-            pixelFormat == .xf44 ||
-            pixelFormat == .ayuv16
-    }
-
-    private struct LowLatencyRateControlPolicy {
-        let realTime = true
-        let allowFrameReordering = false
-        let referenceBufferCount = 1
-        let expectedFrameRate: Int
-        let dataRateWindowSeconds: Double
-        let allowTemporalCompression = true
-
-        init(targetFrameRate: Int) {
-            let clampedFrameRate = max(1, targetFrameRate)
-            expectedFrameRate = clampedFrameRate
-            dataRateWindowSeconds = 1.0 / Double(clampedFrameRate)
-        }
-    }
-
-    private enum PropertyApplyOutcome: String {
-        case applied
-        case unsupported
-        case failed
-
-        var appliedBool: Bool { self == .applied }
-    }
-
-    private struct SessionPolicyStatus {
-        var applied: [String] = []
-        var unsupported: [String] = []
-        var failed: [String] = []
-
-        mutating func record(_ property: String, outcome: PropertyApplyOutcome) {
-            switch outcome {
-            case .applied:
-                applied.append(property)
-            case .unsupported:
-                unsupported.append(property)
-            case .failed:
-                failed.append(property)
-            }
-        }
-
-        private func joined(_ values: [String]) -> String {
-            if values.isEmpty { return "none" }
-            return values.sorted().joined(separator: ",")
-        }
-
-        var appliedText: String { joined(applied) }
-        var unsupportedText: String { joined(unsupported) }
-        var failedText: String { joined(failed) }
-    }
-
-    private enum LowLatencyBitrateStrategy: String {
-        case constantBitRate
-        case averageBitRateOnly
-        case averageBitRateDataRateLimits
-        case none
-    }
-
-    private struct LowLatencyBitrateResult {
-        let strategy: LowLatencyBitrateStrategy
-        let windowSeconds: Double?
-    }
-
-    func resolvedSessionLatencyMode() -> MirageStreamLatencyMode {
-        return latencyMode
-    }
-
-    func frameDelayCount(for mode: MirageStreamLatencyMode) -> Int {
-        switch mode {
-        case .smoothest:
-            2
-        case .lowestLatency:
-            0
-        }
-    }
-
-    func applySessionLatencySettings(_ session: VTCompressionSession, logReason: String? = nil) {
-        let mode = resolvedSessionLatencyMode()
-        let frameDelayCount = frameDelayCount(for: mode)
-        let applied = setProperty(
-            session,
-            key: kVTCompressionPropertyKey_MaxFrameDelayCount,
-            value: NSNumber(value: frameDelayCount)
-        )
-        guard let logReason else { return }
-        let applyText = applied ? "applied" : "not-applied"
-        MirageLogger
-            .encoder(
-                "Encoder latency profile: \(mode.displayName) (\(logReason), maxFrameDelay=\(frameDelayCount), \(applyText))"
-            )
-    }
-
-    func createSession(width: Int, height: Int) throws {
-        // Enforce 16-byte alignment for HEVC hardware encoder compatibility.
-        let width = max(16, width & ~15)
-        let height = max(16, height & ~15)
-
-        var session: VTCompressionSession?
-
-        let imageBufferAttributes: CFDictionary = [
-            kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
-            kCVPixelBufferWidthKey: width,
-            kCVPixelBufferHeightKey: height,
-            kCVPixelBufferMetalCompatibilityKey: true,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
-        ] as CFDictionary
-
-        let codecType: CMVideoCodecType = switch codec {
-        case .hevc: kCMVideoCodecType_HEVC
-        case .h264: kCMVideoCodecType_H264
-        case .proRes4444: kCMVideoCodecType_AppleProRes4444
-        }
-
-        let baseSpec = encoderSpecificationForCurrentTier(width: width, height: height)
-
-        var status = VTCompressionSessionCreate(
-            allocator: kCFAllocatorDefault,
-            width: Int32(width),
-            height: Int32(height),
-            codecType: codecType,
-            encoderSpecification: baseSpec as CFDictionary,
-            imageBufferAttributes: imageBufferAttributes,
-            compressedDataAllocator: nil,
-            outputCallback: nil,
-            refcon: nil,
-            compressionSessionOut: &session
-        )
-
-        while status != noErr {
-            let fallbackPixelFormat: MiragePixelFormat? = switch activePixelFormat {
-            case .xf44, .ayuv16:
-                .p010
-            case .p010,
-                 .bgr10a2:
-                .nv12
-            case .bgra8,
-                 .nv12:
-                nil
-            }
-            guard let fallbackPixelFormat else { break }
-
-            let previousPixelFormat = activePixelFormat
-            activePixelFormat = fallbackPixelFormat
-            let fallbackAttributes: CFDictionary = [
-                kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
-                kCVPixelBufferWidthKey: width,
-                kCVPixelBufferHeightKey: height,
-                kCVPixelBufferMetalCompatibilityKey: true,
-            ] as CFDictionary
-
-            session = nil
-            status = VTCompressionSessionCreate(
-                allocator: kCFAllocatorDefault,
-                width: Int32(width),
-                height: Int32(height),
-                codecType: codecType,
-                encoderSpecification: baseSpec as CFDictionary,
-                imageBufferAttributes: fallbackAttributes,
-                compressedDataAllocator: nil,
-                outputCallback: nil,
-                refcon: nil,
-                compressionSessionOut: &session
-            )
-
-            if status == noErr {
-                MirageLogger.encoder(
-                    "\(previousPixelFormat.displayName) unsupported; using \(fallbackPixelFormat.displayName)"
-                )
-            }
-        }
-
-        guard status == noErr, let session else { throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
-
-        hardwareStatusRefreshAttempts = 0
-        loadSupportedProperties(session)
-        try configureSession(session, width: width, height: height)
-        logHardwareStatus(session, reason: "session_create")
-        compressionSession = session
-
-        // Store dimensions for reset
-        currentWidth = width
-        currentHeight = height
-
-        let formatLabel = switch activePixelFormat {
-        case .xf44:
-            "xf44"
-        case .ayuv16:
-            "AYUV16"
-        case .p010:
-            "P010"
-        case .bgr10a2:
-            "ARGB2101010"
-        case .bgra8:
-            "BGRA"
-        case .nv12:
-            "NV12"
-        }
-        MirageLogger.encoder("Encoder input format: \(formatLabel)")
-        if let activeProfileLevel {
-            MirageLogger.encoder("Encoder profile: \(hevcProfileName(for: activeProfileLevel))")
-        }
-        if resolvedSessionLatencyMode() == .lowestLatency {
-            if Self.shouldSuppressStandardLowLatencyRateControl(
-                streamKind: streamKind,
-                colorDepth: configuration.colorDepth,
-                pixelFormat: activePixelFormat
-            ) {
-                MirageLogger.encoder(
-                    "Encoder spec: standard low-latency rate control suppressed for \(streamKind.rawValue) \(width)x\(height)"
-                )
-            } else if Self.standardLowLatencyVTTuningEnabled(
-                latencyMode: resolvedSessionLatencyMode(),
-                streamKind: streamKind,
-                colorDepth: configuration.colorDepth,
-                pixelFormat: activePixelFormat
-            ) {
-                MirageLogger.encoder(
-                    "Encoder spec: standard low-latency rate control requested for \(streamKind.rawValue) \(width)x\(height)"
-                )
-            }
-        }
-    }
-
-    /// Runs preheat and, if it fails, falls back pixel format and encoder spec tiers.
-    /// Returns `true` if a working configuration was found.
-    func preheatWithFallback() async throws -> Bool {
-        let originalPixelFormat = activePixelFormat
-
-        // Try each encoder spec tier (0 = default, 1 = no low-latency RC, 2 = no require HW)
-        while activeEncoderSpecTier <= Self.maxEncoderSpecTier {
-            // Try current pixel format first, then walk the format fallback chain
-            if try await preheat() { return true }
-
-            while true {
-                let fallbackFormat: MiragePixelFormat? = switch activePixelFormat {
-                case .xf44, .ayuv16: .p010
-                case .p010, .bgr10a2: .nv12
-                case .bgra8, .nv12: nil
-                }
-                guard let fallbackFormat else { break }
-
-                let previousFormat = activePixelFormat
-                activePixelFormat = fallbackFormat
-
-                if let session = compressionSession {
-                    VTCompressionSessionInvalidate(session)
-                    compressionSession = nil
-                }
-
-                MirageLogger.encoder(
-                    "Preheat fallback: \(previousFormat.displayName) → \(fallbackFormat.displayName) at \(currentWidth)x\(currentHeight) (spec tier \(activeEncoderSpecTier): \(encoderSpecTierLabel))"
-                )
-
-                do {
-                    try createSession(width: currentWidth, height: currentHeight)
-                } catch {
-                    MirageLogger.error(.encoder, "Session creation failed for \(fallbackFormat.displayName): \(error)")
-                    continue
-                }
-
-                if try await preheat() {
-                    MirageLogger.encoder(
-                        "Preheat succeeded after fallback to \(fallbackFormat.displayName) (spec tier \(activeEncoderSpecTier): \(encoderSpecTierLabel))"
-                    )
-                    return true
-                }
-            }
-
-            // All pixel formats failed at this spec tier — try next tier
-            activeEncoderSpecTier += 1
-            guard activeEncoderSpecTier <= Self.maxEncoderSpecTier else { break }
-
-            // Reset pixel format to original for next tier
-            activePixelFormat = originalPixelFormat
-
-            if let session = compressionSession {
-                VTCompressionSessionInvalidate(session)
-                compressionSession = nil
-            }
-
-            MirageLogger.encoder(
-                "Preheat spec fallback: advancing to tier \(activeEncoderSpecTier) (\(encoderSpecTierLabel)) at \(currentWidth)x\(currentHeight)"
-            )
-
-            do {
-                try createSession(width: currentWidth, height: currentHeight)
-            } catch {
-                MirageLogger.error(.encoder, "Session creation failed at spec tier \(activeEncoderSpecTier): \(error)")
-                continue
-            }
-        }
-
-        MirageLogger.error(.encoder, "Preheat failed on all pixel formats and encoder spec tiers")
-        return false
-    }
-
-    /// Returns the encoder specification for the given tier.
-    /// Tier 0: RequireHW + optional LowLatencyRC (current default)
-    /// Tier 1: RequireHW only (no low-latency rate control)
-    /// Tier 2: EnableHW only (no require, no low-latency)
-    func encoderSpecificationForCurrentTier(
-        width: Int,
-        height: Int
-    ) -> [CFString: Any] {
-        switch activeEncoderSpecTier {
-        case 0:
-            // Default: full spec with potential low-latency rate control
-            return Self.encoderSpecification(
-                latencyMode: resolvedSessionLatencyMode(),
-                width: width,
-                height: height,
-                streamKind: streamKind,
-                codec: codec,
-                colorDepth: configuration.colorDepth,
-                pixelFormat: activePixelFormat
-            )
-        case 1:
-            // Drop low-latency rate control, keep hardware requirement
-            if codec == .proRes4444 {
-                return [kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true]
-            }
-            return [
-                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-                kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
-            ]
-        default:
-            // Drop hardware requirement entirely
-            return [
-                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-            ]
-        }
-    }
-
-    private static let encoderSpecTierLabels = [
-        "hw-required+lowLatency",
-        "hw-required",
-        "hw-preferred",
-    ]
-
-    var encoderSpecTierLabel: String {
-        Self.encoderSpecTierLabels[min(activeEncoderSpecTier, Self.encoderSpecTierLabels.count - 1)]
-    }
-
-    private func qualitySettings(for quality: Float) -> QualitySettings {
-        let clamped = max(0.02, min(compressionQualityCeiling, quality))
-        let useQP = clamped < 0.98
-        guard useQP else { return QualitySettings(quality: clamped, minQP: nil, maxQP: nil) }
-        let rawMin = 10.0 + (1.0 - Double(clamped)) * 36.0
-        let clampedMin = max(10, min(46, Int(rawMin.rounded())))
-        let maxQP = min(51, clampedMin + 12)
-        return QualitySettings(quality: clamped, minQP: clampedMin, maxQP: maxQP)
-    }
-
-    private func loadSupportedProperties(_ session: VTCompressionSession) {
-        var propertyDictionary: CFDictionary?
-        let status = VTSessionCopySupportedPropertyDictionary(
-            session,
-            supportedPropertyDictionaryOut: &propertyDictionary
-        )
-        didQuerySupportedProperties = (status == noErr)
-        guard status == noErr, let dict = propertyDictionary as? [CFString: Any] else {
-            supportedPropertyKeys = []
-            loggedUnsupportedKeys = []
-            MirageLogger.encoder("Encoder property support lookup failed: \(status)")
-            return
-        }
-        supportedPropertyKeys = Set(dict.keys)
-        loggedUnsupportedKeys = []
-    }
-
-    func refreshHardwareStatusIfNeeded(reason: String) {
-        guard hardwareStatusRefreshAttempts < maxHardwareStatusRefreshAttempts else { return }
-        guard usingHardwareEncoder == nil || encoderGPURegistryID == nil else { return }
-        guard let session = compressionSession else { return }
-        logHardwareStatus(session, reason: reason)
-    }
-
-    private func logHardwareStatus(_ session: VTCompressionSession, reason: String) {
-        hardwareStatusRefreshAttempts += 1
-
-        var hw: Unmanaged<CFTypeRef>?
-        let hwStatus = VTSessionCopyProperty(
-            session,
-            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
-            allocator: kCFAllocatorDefault,
-            valueOut: &hw
-        )
-        if hwStatus == noErr,
-           let value = hw?.takeRetainedValue(),
-           let boolValue = value as? Bool {
-            usingHardwareEncoder = boolValue
-        }
-
-        var gpu: Unmanaged<CFTypeRef>?
-        let gpuStatus = VTSessionCopyProperty(
-            session,
-            key: kVTCompressionPropertyKey_UsingGPURegistryID,
-            allocator: kCFAllocatorDefault,
-            valueOut: &gpu
-        )
-        if gpuStatus == noErr,
-           let value = gpu?.takeRetainedValue(),
-           let registry = value as? NSNumber {
-            encoderGPURegistryID = registry.uint64Value
-        }
-
-        let usingHardwareText: String = if let usingHardwareEncoder {
-            String(usingHardwareEncoder)
-        } else {
-            "unknown(status=\(hwStatus))"
-        }
-        let gpuText: String = if let encoderGPURegistryID {
-            String(encoderGPURegistryID)
-        } else if gpuStatus == noErr {
-            "nil"
-        } else {
-            "unknown(status=\(gpuStatus))"
-        }
-        let healthText: String = if usingHardwareEncoder == true {
-            "active"
-        } else if usingHardwareEncoder == false {
-            "software_fallback"
-        } else {
-            "unknown"
-        }
-
-        MirageLogger.encoder(
-            "event=hardware_encoder_status reason=\(reason) usingHardware=\(usingHardwareText) " +
-                "status=\(healthText) gpuRegistryID=\(gpuText) requiredBySpec=true"
-        )
-    }
-
-    static func fourCCString(_ value: OSType) -> String {
-        let scalars: [UnicodeScalar] = [
-            UnicodeScalar((value >> 24) & 0xFF) ?? UnicodeScalar(32),
-            UnicodeScalar((value >> 16) & 0xFF) ?? UnicodeScalar(32),
-            UnicodeScalar((value >> 8) & 0xFF) ?? UnicodeScalar(32),
-            UnicodeScalar(value & 0xFF) ?? UnicodeScalar(32),
-        ]
-        return String(scalars.map { Character($0) })
-    }
-
-    @discardableResult
-    func setProperty(_ session: VTCompressionSession, key: CFString, value: CFTypeRef) -> Bool {
-        setPropertyOutcome(session, key: key, value: value).appliedBool
-    }
-
-    @discardableResult
-    private func setPropertyOutcome(
-        _ session: VTCompressionSession,
-        key: CFString,
-        value: CFTypeRef
-    ) -> PropertyApplyOutcome {
-        if didQuerySupportedProperties, !supportedPropertyKeys.contains(key) {
-            if !loggedUnsupportedKeys.contains(key) {
-                loggedUnsupportedKeys.insert(key)
-                MirageLogger.encoder("Encoder property unsupported: \(key)")
-            }
-            return .unsupported
-        }
-        let status = VTSessionSetProperty(session, key: key, value: value)
-        if Self.unsupportedEncoderPropertyStatuses.contains(status) {
-            if !loggedUnsupportedKeys.contains(key) {
-                loggedUnsupportedKeys.insert(key)
-                MirageLogger.encoder("Encoder property unsupported: \(key) (status \(status))")
-            }
-            return .unsupported
-        }
-        guard status == noErr else {
-            MirageLogger.error(.encoder, "VTSessionSetProperty \(key) failed: \(status)")
-            return .failed
-        }
-        return .applied
-    }
-
-    private nonisolated static let unsupportedEncoderPropertyStatuses: Set<OSStatus> = [
-        -12900,
-    ]
-
-    @discardableResult
-    private func setPropertyTracked(
-        _ session: VTCompressionSession,
-        key: CFString,
-        value: CFTypeRef,
-        propertyName: String,
-        status: inout SessionPolicyStatus
-    ) -> Bool {
-        let outcome = setPropertyOutcome(session, key: key, value: value)
-        status.record(propertyName, outcome: outcome)
-        return outcome.appliedBool
-    }
-
-    private var maximizePowerEfficiencyValue: CFTypeRef {
-        maximizePowerEfficiencyEnabled ? kCFBooleanTrue : kCFBooleanFalse
-    }
-
-    @discardableResult
-    func applyMaximizePowerEfficiency(_ session: VTCompressionSession) -> Bool {
-        setProperty(
-            session,
-            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
-            value: maximizePowerEfficiencyValue
-        )
-    }
-
-    @discardableResult
-    private func applyMaximizePowerEfficiencyTracked(
-        _ session: VTCompressionSession,
-        status: inout SessionPolicyStatus
-    ) -> Bool {
-        setPropertyTracked(
-            session,
-            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
-            value: maximizePowerEfficiencyValue,
-            propertyName: "maximizePowerEfficiency",
-            status: &status
-        )
-    }
-
-    func hevcProfileName(for profile: CFString) -> String {
-        if CFEqual(profile, kVTProfileLevel_HEVC_Main42210_AutoLevel) {
-            return "HEVC Main42210 (4:2:2)"
-        }
-        if CFEqual(profile, kVTProfileLevel_HEVC_Main10_AutoLevel) {
-            return "HEVC Main10 (4:2:0)"
-        }
-        if CFEqual(profile, kVTProfileLevel_HEVC_Main_AutoLevel) {
-            return "HEVC Main (4:2:0)"
-        }
-        return profile as String
-    }
-
     func applyProfileLevel(_ session: VTCompressionSession) {
         let key = kVTCompressionPropertyKey_ProfileLevel
         activeProfileLevel = nil
@@ -677,8 +45,8 @@ extension VideoEncoder {
             }
 
             activeProfileLevel = profile
-            if index > 0 {
-                let preferred = hevcProfileName(for: candidates[0])
+            if index > 0, let preferredProfile = candidates.first {
+                let preferred = hevcProfileName(for: preferredProfile)
                 let fallback = hevcProfileName(for: profile)
                 MirageLogger.encoder("Encoder profile fallback: \(preferred) -> \(fallback)")
             }
@@ -693,17 +61,18 @@ extension VideoEncoder {
             key: kVTCompressionPropertyKey_Quality,
             value: NSNumber(value: settings.quality)
         )
-        let shouldApplyQPClamps = Self.shouldApplyQPClamps()
         var minQPApplied = false
         var maxQPApplied = false
-        if shouldApplyQPClamps, let minQP = settings.minQP {
+        // Keep QP clamps active in all modes. On some Macs VT ignores `Quality`,
+        // so QP bounds are the only reliable way to enforce throughput targets.
+        if let minQP = settings.minQP {
             minQPApplied = setProperty(
                 session,
                 key: kVTCompressionPropertyKey_MinAllowedFrameQP,
                 value: NSNumber(value: minQP)
             )
         }
-        if shouldApplyQPClamps, let maxQP = settings.maxQP {
+        if let maxQP = settings.maxQP {
             maxQPApplied = setProperty(
                 session,
                 key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
@@ -713,9 +82,7 @@ extension VideoEncoder {
         guard log else { return }
         let qualityText = settings.quality.formatted(.number.precision(.fractionLength(2)))
         let qualityState = qualityApplied ? "applied" : "not-applied"
-        if !shouldApplyQPClamps {
-            MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState)), QP clamps disabled")
-        } else if let minQP = settings.minQP, let maxQP = settings.maxQP {
+        if let minQP = settings.minQP, let maxQP = settings.maxQP {
             let qpState = (minQPApplied && maxQPApplied) ? "applied" : "not-applied"
             MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState)), QP \(minQP)-\(maxQP) (\(qpState))")
         } else {
@@ -731,35 +98,32 @@ extension VideoEncoder {
             targetBitrateBps: targetBitrate,
             targetFrameRate: configuration.targetFrameRate
         )
-        setProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: targetBitrate))
+        _ = setProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: targetBitrate))
         let rateLimits: [NSNumber] = [
             NSNumber(value: rateLimit.bytes),
             NSNumber(value: rateLimit.windowSeconds),
         ]
-        setProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: rateLimits as CFArray)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: rateLimits as CFArray)
 
-        let mbps = Double(targetBitrate) / 1_000_000.0
-        let bitrateText = mbps.formatted(.number.precision(.fractionLength(1)))
         let limitMB = Double(rateLimit.bytes) / 1_000_000.0
         let limitText = limitMB.formatted(.number.precision(.fractionLength(2)))
         let windowText = rateLimit.windowSeconds.formatted(.number.precision(.fractionLength(2)))
         MirageLogger
             .encoder(
-                "Encoder bitrate target: \(bitrateText) Mbps (rate limit \(limitText) MB/\(windowText)s)"
+                "Encoder bitrate target: \(mirageFormattedMegabitRate(targetBitrate)) (rate limit \(limitText) MB/\(windowText)s)"
             )
     }
 
-    @discardableResult
     private func applyLowLatencyBitrateSettings(
         _ session: VTCompressionSession,
-        policy: LowLatencyRateControlPolicy,
+        targetFrameRate: Int,
         status: inout SessionPolicyStatus
     ) -> LowLatencyBitrateResult {
         guard let targetBitrate = configuration.bitrate, targetBitrate > 0 else {
             return LowLatencyBitrateResult(strategy: .none, windowSeconds: nil)
         }
 
-        let targetFrameRate = max(1, policy.expectedFrameRate)
+        let targetFrameRate = max(1, targetFrameRate)
         let constantBitRateApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_ConstantBitRate,
@@ -782,7 +146,7 @@ extension VideoEncoder {
                 status: &status
             )
             if averageBitRateApplied {
-                // Standard low-latency VT tuning relies on bitrate + realtime + speed priority,
+                // Sunshine-style VT defaults rely on bitrate + realtime + speed priority,
                 // without forcing an ultra-tight DataRateLimits window.
                 strategy = .averageBitRateOnly
                 windowSeconds = nil
@@ -807,8 +171,6 @@ extension VideoEncoder {
             }
         }
 
-        let mbps = Double(targetBitrate) / 1_000_000.0
-        let bitrateText = mbps.formatted(.number.precision(.fractionLength(1)))
         if strategy == .averageBitRateDataRateLimits, let windowSeconds {
             let rateLimit = Self.dataRateLimit(
                 targetBitrateBps: targetBitrate,
@@ -819,24 +181,30 @@ extension VideoEncoder {
             let windowText = windowSeconds.formatted(.number.precision(.fractionLength(4)))
             MirageLogger
                 .encoder(
-                    "Encoder bitrate target: \(bitrateText) Mbps (strategy \(strategy.rawValue), rate limit \(limitText) MB/\(windowText)s)"
+                    "Encoder bitrate target: \(mirageFormattedMegabitRate(targetBitrate)) (strategy \(strategy.rawValue), rate limit \(limitText) MB/\(windowText)s)"
                 )
         } else {
-            MirageLogger.encoder("Encoder bitrate target: \(bitrateText) Mbps (strategy \(strategy.rawValue))")
+            MirageLogger
+                .encoder(
+                    "Encoder bitrate target: \(mirageFormattedMegabitRate(targetBitrate)) (strategy \(strategy.rawValue))"
+                )
         }
         return LowLatencyBitrateResult(strategy: strategy, windowSeconds: windowSeconds)
     }
 
     func applyBitrateSettingsToActiveSession() {
         guard let session = compressionSession else { return }
-        if !isProRes, Self.usesStandardLowLatencyRateControl(
+        if !isProRes, Self.standardLowLatencyUsesSunshineRateControl(
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
             pixelFormat: activePixelFormat
-        ), resolvedSessionLatencyMode() == .lowestLatency {
-            let policy = LowLatencyRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+        ), latencyMode == .lowestLatency {
             var status = SessionPolicyStatus()
-            applyLowLatencyBitrateSettings(session, policy: policy, status: &status)
+            _ = applyLowLatencyBitrateSettings(
+                session,
+                targetFrameRate: configuration.targetFrameRate,
+                status: &status
+            )
         } else {
             applyBitrateSettings(session)
         }
@@ -853,7 +221,7 @@ extension VideoEncoder {
         return (bytes: bytes, windowSeconds: windowSeconds)
     }
 
-    private func configureSession(
+    func configureSession(
         _ session: VTCompressionSession,
         width: Int,
         height: Int
@@ -863,14 +231,14 @@ extension VideoEncoder {
             return
         }
 
-        let resolvedLatencyMode = resolvedSessionLatencyMode()
+        let resolvedLatencyMode = latencyMode
         let standardLowLatencyTuningEnabled = Self.standardLowLatencyVTTuningEnabled(
             latencyMode: resolvedLatencyMode,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
             pixelFormat: activePixelFormat
         )
-        let suppressedStandardLowLatencyThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+        let suppressedThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
             latencyMode: resolvedLatencyMode,
             streamKind: streamKind,
             colorDepth: configuration.colorDepth,
@@ -879,25 +247,25 @@ extension VideoEncoder {
         var standardLowLatencyStatus = SessionPolicyStatus()
 
         // Real-time encoding.
-        setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
         // Disable B-frames for predictable latency (smoothest relies on buffering only).
-        setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
         // Configure encoder buffering policy from the active latency profile.
         applySessionLatencySettings(session)
 
         // Frame rate.
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_ExpectedFrameRate,
             value: configuration.targetFrameRate as CFNumber
         )
 
-        if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
+        if standardLowLatencyTuningEnabled || suppressedThroughputTuningEnabled {
             applyStandardLowLatencyThroughputSettings(
                 session,
-                usesStandardLowLatencyRateControl: standardLowLatencyTuningEnabled,
+                usesSunshineRateControl: standardLowLatencyTuningEnabled,
                 status: &standardLowLatencyStatus
             )
         } else {
@@ -908,7 +276,7 @@ extension VideoEncoder {
         }
 
         // Keyframe interval
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
             value: configuration.keyFrameInterval as CFNumber
@@ -917,7 +285,7 @@ extension VideoEncoder {
             1.0,
             Double(configuration.keyFrameInterval) / Double(max(1, configuration.targetFrameRate))
         )
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
             value: intervalSeconds as CFNumber
@@ -927,7 +295,7 @@ extension VideoEncoder {
         applyProfileLevel(session)
 
         // Prioritize encoding speed over quality for lower latency.
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
             value: kCFBooleanTrue
@@ -946,10 +314,10 @@ extension VideoEncoder {
 
         // Apply bitrate policy.
         if standardLowLatencyTuningEnabled {
-            let policy = LowLatencyRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+            let lowLatencyTargetFrameRate = max(1, configuration.targetFrameRate)
             let bitrateResult = applyLowLatencyBitrateSettings(
                 session,
-                policy: policy,
+                targetFrameRate: lowLatencyTargetFrameRate,
                 status: &standardLowLatencyStatus
             )
             let windowText = if let windowSeconds = bitrateResult.windowSeconds {
@@ -959,45 +327,22 @@ extension VideoEncoder {
             }
             MirageLogger.encoder(
                 "event=encoder_effective_policy mode=standardLowLatency strategy=\(bitrateResult.strategy.rawValue) " +
-                    "targetFPS=\(policy.expectedFrameRate) dataRateWindow=\(windowText)s"
+                    "targetFPS=\(lowLatencyTargetFrameRate) dataRateWindow=\(windowText)s"
             )
         } else {
             // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
             applyBitrateSettings(session)
         }
-        if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
+        if standardLowLatencyTuningEnabled || suppressedThroughputTuningEnabled {
             MirageLogger.encoder(
                 "event=encoder_standard_low_latency_tuning applied=\(standardLowLatencyStatus.appliedText) " +
-                    "suppressedRateControl=\(suppressedStandardLowLatencyThroughputTuningEnabled) " +
+                    "suppressedRateControl=\(suppressedThroughputTuningEnabled) " +
                     "unsupported=\(standardLowLatencyStatus.unsupportedText) " +
                     "failed=\(standardLowLatencyStatus.failedText)"
             )
         }
 
-        // Color space configuration
-        switch configuration.colorSpace {
-        case .displayP3:
-            // P3 uses P3-D65 primaries with sRGB transfer function and 709 YCbCr matrix
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_ColorPrimaries,
-                value: kCMFormatDescriptionColorPrimaries_P3_D65
-            )
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_TransferFunction,
-                value: kCMFormatDescriptionTransferFunction_sRGB
-            )
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_YCbCrMatrix,
-                value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
-            )
-
-        case .sRGB:
-            // sRGB uses standard Rec. 709 primaries
-            break
-        }
+        applyColorSpaceSettings(session)
 
         // Prepare for encoding
         VTCompressionSessionPrepareToEncodeFrames(session)
@@ -1009,20 +354,20 @@ extension VideoEncoder {
         height: Int
     ) throws {
         // Real-time encoding
-        setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
         // No B-frames
-        setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
         // Frame rate
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_ExpectedFrameRate,
             value: configuration.targetFrameRate as CFNumber
         )
 
         // Keyframe interval (ProRes is all-intra, but set for consistency)
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
             value: configuration.keyFrameInterval as CFNumber
@@ -1030,33 +375,13 @@ extension VideoEncoder {
 
         // Quality 1.0 for near-lossless ProRes
         baseQuality = 1.0
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_Quality,
             value: NSNumber(value: 1.0)
         )
 
-        // Color space configuration
-        switch configuration.colorSpace {
-        case .displayP3:
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_ColorPrimaries,
-                value: kCMFormatDescriptionColorPrimaries_P3_D65
-            )
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_TransferFunction,
-                value: kCMFormatDescriptionTransferFunction_sRGB
-            )
-            setProperty(
-                session,
-                key: kVTCompressionPropertyKey_YCbCrMatrix,
-                value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
-            )
-        case .sRGB:
-            break
-        }
+        applyColorSpaceSettings(session)
 
         MirageLogger.encoder("ProRes 4444 session configured at \(width)x\(height)")
 
@@ -1064,28 +389,52 @@ extension VideoEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
     }
 
+    /// Applies VideoToolbox color metadata for the configured stream color space.
+    private func applyColorSpaceSettings(_ session: VTCompressionSession) {
+        switch configuration.colorSpace {
+        case .displayP3:
+            _ = setProperty(
+                session,
+                key: kVTCompressionPropertyKey_ColorPrimaries,
+                value: kCMFormatDescriptionColorPrimaries_P3_D65
+            )
+            _ = setProperty(
+                session,
+                key: kVTCompressionPropertyKey_TransferFunction,
+                value: kCMFormatDescriptionTransferFunction_sRGB
+            )
+            _ = setProperty(
+                session,
+                key: kVTCompressionPropertyKey_YCbCrMatrix,
+                value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
+            )
+        case .sRGB:
+            break
+        }
+    }
+
     private func applyStandardLowLatencyThroughputSettings(
         _ session: VTCompressionSession,
-        usesStandardLowLatencyRateControl: Bool,
+        usesSunshineRateControl: Bool,
         status: inout SessionPolicyStatus
     ) {
-        applyMaximizePowerEfficiencyTracked(session, status: &status)
-        setPropertyTracked(
+        _ = applyMaximizePowerEfficiencyTracked(session, status: &status)
+        _ = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_ReferenceBufferCount,
             value: NSNumber(value: 1),
             propertyName: "referenceBufferCount",
             status: &status
         )
-        guard usesStandardLowLatencyRateControl else { return }
-        setPropertyTracked(
+        guard usesSunshineRateControl else { return }
+        _ = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_AllowOpenGOP,
             value: kCFBooleanFalse,
             propertyName: "allowOpenGOP",
             status: &status
         )
-        setPropertyTracked(
+        _ = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_AllowTemporalCompression,
             value: kCFBooleanTrue,
@@ -1093,7 +442,6 @@ extension VideoEncoder {
             status: &status
         )
     }
-
 }
 
 #endif

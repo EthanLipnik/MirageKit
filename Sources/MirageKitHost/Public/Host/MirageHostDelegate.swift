@@ -43,14 +43,10 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     func sessionStateDidChange(_ state: LoomSessionAvailability)
 
     /// Called early in the incoming session when the Loom handshake completes and the peer
-    /// advertisement is available, before full Mirage bootstrap negotiation.
+    /// advertisement is available, before Mirage session bootstrap finishes.
     @MainActor
     func didDiscoverPeer(advertisement: LoomPeerAdvertisement)
 
-    /// Called after an authenticated hello is accepted so the host can advertise whether clients
-    /// may reuse host-published off-LAN access metadata for future sessions.
-    @MainActor
-    var remoteAccessAllowedForConnections: Bool { get }
 }
 
 #endif

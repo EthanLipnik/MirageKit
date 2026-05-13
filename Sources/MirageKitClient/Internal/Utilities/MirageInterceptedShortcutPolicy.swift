@@ -7,20 +7,16 @@
 
 import MirageKit
 
-enum MirageInterceptedShortcutDeliveryBehavior: Equatable, Sendable {
+enum MirageInterceptedShortcutDeliveryBehavior: Equatable {
     case single
     case repeatable
 }
 
-struct MirageInterceptedShortcut: Equatable, Sendable {
+struct MirageInterceptedShortcut: Equatable {
     let input: String
     let keyCode: UInt16
     let modifiers: MirageModifierFlags
     let deliveryBehavior: MirageInterceptedShortcutDeliveryBehavior
-
-    var allowsRepeat: Bool {
-        deliveryBehavior == .repeatable
-    }
 
     func forwardedModifiers(baseModifiers: MirageModifierFlags) -> MirageModifierFlags {
         baseModifiers.union(modifiers)
@@ -132,28 +128,27 @@ enum MirageInterceptedShortcutPolicy {
         modifiers: MirageModifierFlags
     ) -> MirageInterceptedShortcut? {
         let normalizedInput = input.lowercased()
-        let normalizedModifiers = normalizedShortcutModifiers(modifiers)
+        let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return shortcuts.first { shortcut in
             shortcut.input == normalizedInput && shortcut.modifiers == normalizedModifiers
         }
     }
 
+    #if os(iOS) || os(visionOS)
+    /// Finds a host-forwarded shortcut by the macOS virtual key code emitted by hardware-key paths.
     static func shortcut(
         keyCode: UInt16,
         modifiers: MirageModifierFlags
     ) -> MirageInterceptedShortcut? {
-        let normalizedModifiers = normalizedShortcutModifiers(modifiers)
+        let normalizedModifiers = modifiers.normalizedForShortcutMatching
         return shortcuts.first { shortcut in
             shortcut.keyCode == keyCode && shortcut.modifiers == normalizedModifiers
         }
     }
+    #endif
 
     static func shortcut(actionName: String) -> MirageInterceptedShortcut? {
         shortcutsByActionName[actionName]
-    }
-
-    static func normalizedShortcutModifiers(_ modifiers: MirageModifierFlags) -> MirageModifierFlags {
-        modifiers.normalizedForShortcutMatching
     }
 
     private static func makeShortcut(
@@ -164,7 +159,7 @@ enum MirageInterceptedShortcutPolicy {
         MirageInterceptedShortcut(
             input: input.lowercased(),
             keyCode: MirageClientKeyEventBuilder.characterToMacKeyCode(input),
-            modifiers: normalizedShortcutModifiers(modifiers),
+            modifiers: modifiers.normalizedForShortcutMatching,
             deliveryBehavior: deliveryBehavior
         )
     }

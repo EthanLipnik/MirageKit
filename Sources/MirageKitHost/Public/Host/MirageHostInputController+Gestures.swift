@@ -6,7 +6,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -16,6 +15,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Gesture Injection (runs on accessibilityQueue)
 
+    /// Injects a native magnify gesture at the stream-relative location.
     func injectMagnifyEvent(
         _ event: MirageMagnifyEvent,
         bounds: CGRect,
@@ -34,6 +34,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Injects a native rotate gesture at the stream-relative location.
     func injectRotateEvent(
         _ event: MirageRotateEvent,
         bounds: CGRect,
@@ -52,6 +53,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Injects a native swipe gesture or maps it to a host system action.
     func injectSwipeEvent(
         _ event: MirageSwipeEvent,
         bounds: CGRect,
@@ -76,6 +78,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Converts an optional normalized gesture location into a host screen point.
     private func gesturePoint(_ location: CGPoint?, in bounds: CGRect) -> CGPoint {
         guard let location else {
             return CGPoint(x: bounds.midX, y: bounds.midY)
@@ -86,6 +89,7 @@ extension MirageHostInputController {
         )
     }
 
+    /// Maps directional swipe deltas to host system actions when appropriate.
     nonisolated static func hostSystemAction(for event: MirageSwipeEvent) -> MirageHostSystemAction? {
         let absX = abs(event.deltaX)
         let absY = abs(event.deltaY)
@@ -99,9 +103,11 @@ extension MirageHostInputController {
     }
 }
 
+/// Posts private CoreGraphics gesture events for host-side trackpad gestures.
 private enum HostPrivateGestureInjector {
     private static let gestureEventTypeRawValue: UInt32 = 29
 
+    /// Private CoreGraphics fields used by gesture events.
     private enum Field: UInt32 {
         case gestureSubtype = 110
         case phase = 132
@@ -111,12 +117,14 @@ private enum HostPrivateGestureInjector {
         case rotation = 114
     }
 
+    /// Private gesture subtype values understood by the window server.
     private enum GestureSubtype: Int64 {
         case magnify = 1
         case rotate = 2
         case swipe = 3
     }
 
+    /// Posts a magnify gesture event.
     static func postMagnify(
         magnification: CGFloat,
         phase: MirageScrollPhase,
@@ -135,6 +143,7 @@ private enum HostPrivateGestureInjector {
         }
     }
 
+    /// Posts a rotate gesture event.
     static func postRotate(
         rotation: CGFloat,
         phase: MirageScrollPhase,
@@ -153,6 +162,7 @@ private enum HostPrivateGestureInjector {
         }
     }
 
+    /// Posts a swipe gesture event.
     static func postSwipe(
         deltaX: CGFloat,
         deltaY: CGFloat,
@@ -173,6 +183,7 @@ private enum HostPrivateGestureInjector {
         }
     }
 
+    /// Builds, configures, and posts a private gesture event.
     private static func postGesture(
         subtype: GestureSubtype,
         phase: MirageScrollPhase,
@@ -202,11 +213,13 @@ private enum HostPrivateGestureInjector {
         return true
     }
 
+    /// Sets an integer private gesture field when available.
     private static func setInteger(_ field: Field, _ value: Int64, on event: CGEvent) {
         guard let eventField = CGEventField(rawValue: field.rawValue) else { return }
         event.setIntegerValueField(eventField, value: value)
     }
 
+    /// Sets a floating-point private gesture field when available.
     private static func setDouble(_ field: Field, _ value: Double, on event: CGEvent) {
         guard let eventField = CGEventField(rawValue: field.rawValue) else { return }
         event.setDoubleValueField(eventField, value: value)

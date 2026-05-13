@@ -10,92 +10,93 @@
 import MirageKit
 import Foundation
 
+/// Keyboard shortcut configured for a client-side stream action.
 public struct MirageClientShortcut: Codable, Sendable, Hashable {
+    /// macOS virtual key code.
     public let keyCode: UInt16
+    /// Modifier flags required for the shortcut.
     public let modifiers: MirageModifierFlags
 
+    /// Creates a client shortcut from a virtual key code and modifiers.
     public init(keyCode: UInt16, modifiers: MirageModifierFlags) {
         self.keyCode = keyCode
         self.modifiers = modifiers
     }
 
+    /// Default shortcut for toggling dictation.
     public static let defaultDictationToggle = MirageClientShortcut(
         keyCode: 0x02, // D
         modifiers: [.command, .shift, .option]
     )
 
+    /// Default shortcut for exiting desktop streaming.
     public static let defaultDesktopExit = MirageClientShortcut(
         keyCode: 0x35, // Escape
         modifiers: [.control, .option]
     )
 
+    /// Default shortcut that remaps Escape to a host-safe key combination.
     public static let defaultEscapeRemap = MirageClientShortcut(
         keyCode: 0x21, // [
         modifiers: [.control]
     )
 
+    /// Returns whether a key event matches this shortcut after modifier normalization.
     public func matches(_ keyEvent: MirageKeyEvent) -> Bool {
         keyEvent.keyCode == keyCode &&
-            Self.normalizedShortcutModifiers(keyEvent.modifiers) == Self.normalizedShortcutModifiers(modifiers)
+            keyEvent.modifiers.normalizedForShortcutMatching == modifiers.normalizedForShortcutMatching
     }
 
+    /// Compact shortcut label using standard modifier glyphs.
     public var displayString: String {
         var result = ""
         if modifiers.contains(.control) { result += "⌃" }
         if modifiers.contains(.option) { result += "⌥" }
         if modifiers.contains(.shift) { result += "⇧" }
         if modifiers.contains(.command) { result += "⌘" }
-        result += Self.keyName(for: keyCode)
+        result += MirageClientShortcutBinding.keyName(for: keyCode)
         return result
     }
 
-    public static func normalizedShortcutModifiers(_ flags: MirageModifierFlags) -> MirageModifierFlags {
-        flags.normalizedForShortcutMatching
-    }
-
+    #if os(iOS) || os(visionOS)
     func keyDownEvent(isRepeat: Bool = false) -> MirageKeyEvent {
         MirageKeyEvent(
             keyCode: keyCode,
-            modifiers: Self.normalizedShortcutModifiers(modifiers),
+            modifiers: modifiers.normalizedForShortcutMatching,
             isRepeat: isRepeat
         )
     }
 
-    func keyUpEvent() -> MirageKeyEvent {
+    var keyUpEvent: MirageKeyEvent {
         MirageKeyEvent(
             keyCode: keyCode,
-            modifiers: Self.normalizedShortcutModifiers(modifiers)
+            modifiers: modifiers.normalizedForShortcutMatching
         )
     }
+    #endif
 
-    private static let keyNames: [UInt16: String] = [
-        0x00: "A", 0x01: "S", 0x02: "D", 0x03: "F", 0x04: "H", 0x05: "G", 0x06: "Z", 0x07: "X",
-        0x08: "C", 0x09: "V", 0x0B: "B", 0x0C: "Q", 0x0D: "W", 0x0E: "E", 0x0F: "R", 0x10: "Y",
-        0x11: "T", 0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4", 0x16: "6", 0x17: "5", 0x18: "=",
-        0x19: "9", 0x1A: "7", 0x1B: "-", 0x1C: "8", 0x1D: "0", 0x1E: "]", 0x1F: "O", 0x20: "U",
-        0x21: "[", 0x22: "I", 0x23: "P", 0x24: "↩", 0x25: "L", 0x26: "J", 0x27: "'", 0x28: "K",
-        0x29: ";", 0x2A: "\\", 0x2B: ",", 0x2C: "/", 0x2D: "N", 0x2E: "M", 0x2F: ".", 0x30: "⇥",
-        0x31: "Space", 0x32: "`", 0x33: "⌫", 0x35: "⎋", 0x7B: "←", 0x7C: "→", 0x7D: "↓", 0x7E: "↑",
-    ]
-
+    /// Display name for a macOS virtual key code.
     public static func keyName(for keyCode: UInt16) -> String {
-        keyNames[keyCode] ?? "Key \(keyCode)"
+        MirageClientShortcutBinding.keyName(for: keyCode)
     }
 }
 
 // MARK: - MirageClientShortcutBinding Bridge
 
 public extension MirageClientShortcut {
+    /// Creates a client shortcut from the shared shortcut-binding model.
     init(_ binding: MirageClientShortcutBinding) {
         self.init(keyCode: binding.keyCode, modifiers: binding.modifiers)
     }
 
+    /// Shared shortcut-binding representation used by host and client preference storage.
     var asBinding: MirageClientShortcutBinding {
         MirageClientShortcutBinding(keyCode: keyCode, modifiers: modifiers)
     }
 }
 
 public extension MirageClientShortcutBinding {
+    /// Creates a shared shortcut binding from a client shortcut.
     init(_ shortcut: MirageClientShortcut) {
         self.init(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers)
     }

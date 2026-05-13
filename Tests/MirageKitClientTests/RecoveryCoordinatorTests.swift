@@ -30,10 +30,7 @@ struct RecoveryCoordinatorTests {
         coordinator.recordHostAck(
             KeyframeRecoveryAckMessage(
                 streamID: 1,
-                accepted: true,
-                hostEpoch: 2,
-                deadlineMilliseconds: 750,
-                reason: "queued"
+                deadlineMilliseconds: 750
             ),
             now: 10.05
         )

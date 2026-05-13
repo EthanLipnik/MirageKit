@@ -7,23 +7,15 @@
 
 import MirageKit
 #if os(macOS)
-import AppKit
-import ApplicationServices
 import Foundation
 import OSLog
-import ScreenCaptureKit
 
-/// Manages app-centric streaming sessions on the host
-/// Tracks which apps are being streamed to which clients,
-/// handles deterministic window diffing and exclusive access
-public actor AppStreamManager {
+/// Manages app-centric streaming sessions, window inventory, monitoring, and installed app scans.
+actor AppStreamManager {
     let logger = Logger(subsystem: "MirageKit", category: "AppStreamManager")
 
     /// Active app streaming sessions keyed by bundle identifier
     var sessions: [String: MirageAppStreamSession] = [:]
-
-    /// Reservation duration after unexpected disconnect (seconds)
-    public var disconnectReservationDuration: TimeInterval = 30.0
 
     /// Callbacks for notifying the host service of events
     var onNewWindowDetected: (@Sendable (String, AppStreamWindowCandidate) async -> Void)?
@@ -35,23 +27,27 @@ public actor AppStreamManager {
     /// Known auxiliary window IDs per session, used to detect appearance/disappearance.
     var knownAuxiliaryWindowIDs: [String: Set<WindowID>] = [:]
 
-    /// Setters for callbacks (allows setting from outside the actor)
+    /// Sets the callback invoked when a new primary window appears for a session.
     func setOnNewWindowDetected(_ callback: @escaping @Sendable (String, AppStreamWindowCandidate) async -> Void) {
         onNewWindowDetected = callback
     }
 
-    public func setOnWindowClosed(_ callback: @escaping @Sendable (String, WindowID) async -> Void) {
+    /// Sets the callback invoked when a visible session window closes.
+    func setOnWindowClosed(_ callback: @escaping @Sendable (String, WindowID) async -> Void) {
         onWindowClosed = callback
     }
 
-    public func setOnAppTerminated(_ callback: @escaping @Sendable (String) async -> Void) {
+    /// Sets the callback invoked when a streamed app terminates.
+    func setOnAppTerminated(_ callback: @escaping @Sendable (String) async -> Void) {
         onAppTerminated = callback
     }
 
+    /// Sets the callback invoked when an auxiliary window appears for a session.
     func setOnAuxiliaryWindowDetected(_ callback: @escaping @Sendable (String, AppStreamWindowCandidate) async -> Void) {
         onAuxiliaryWindowDetected = callback
     }
 
+    /// Sets the callback invoked when an auxiliary window closes.
     func setOnAuxiliaryWindowClosed(_ callback: @escaping @Sendable (String, WindowID) async -> Void) {
         onAuxiliaryWindowClosed = callback
     }
@@ -74,7 +70,8 @@ public actor AppStreamManager {
     /// Startup retry bookkeeping keyed by session bundle ID and window ID.
     var startupFailureStateByBundleID: [String: [WindowID: AppStreamWindowStartupFailureState]] = [:]
 
-    public init() {
+    /// Creates an app stream manager with a fresh application scanner.
+    init() {
         applicationScanner = ApplicationScanner()
     }
 }

@@ -16,10 +16,7 @@ public extension MirageClientService {
     /// Start viewing a remote window.
     /// - Parameters:
     ///   - window: The remote window to stream.
-    ///   - expectedPixelSize: Optional pixel dimensions the client expects to render at.
-    ///     If provided, the host will encode at this resolution from the start.
     ///   - scaleFactor: Optional display scale factor (e.g., 2.0 for Retina).
-    ///     Used with expectedPixelSize to calculate point-based window size.
     ///   - displayResolution: Client's logical display size in points.
     ///     Host applies HiDPI (2x) to determine virtual display pixel resolution.
     ///   - keyFrameInterval: Optional keyframe interval in frames. Higher = fewer lag spikes.
@@ -28,7 +25,6 @@ public extension MirageClientService {
     ///   - audioConfiguration: Optional per-stream audio overrides.
     func startViewing(
         window: MirageWindow,
-        expectedPixelSize: CGSize? = nil,
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
@@ -45,17 +41,12 @@ public extension MirageClientService {
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
         var request = StartStreamMessage(
             windowID: window.id,
-            dataPort: nil,
-            targetFrameRate: getScreenMaxRefreshRate()
+            targetFrameRate: screenMaxRefreshRate
         )
-        request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
-        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
+        request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
+        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(displayResolution ?? mainDisplayResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for window streaming")
-        }
-        if let expectedPixelSize, expectedPixelSize.width > 0, expectedPixelSize.height > 0 {
-            request.pixelWidth = Int(expectedPixelSize.width)
-            request.pixelHeight = Int(expectedPixelSize.height)
         }
 
         // Include display resolution for virtual display sizing.
@@ -82,7 +73,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: clampedStreamScale(),
+            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight,
             disableResolutionCap: request.disableResolutionCap == true
@@ -113,7 +104,8 @@ public extension MirageClientService {
 
         let session = ClientStreamSession(
             id: realStreamID,
-            window: window
+            window: window,
+            mediaStreamID: realStreamID
         )
 
         upsertActiveStreamSession(streamID: realStreamID, window: window)
@@ -122,19 +114,16 @@ public extension MirageClientService {
 
     /// Set up or reset controller for a specific stream.
     /// StreamController owns the decoder, reassembler, and resize state machine.
-    internal func setupControllerForStream(
+    func setupControllerForStream(
         _ streamID: StreamID,
         beginPostResizeTransition: Bool = false,
         codec: MirageVideoCodec = .hevc,
         streamDimensions: (width: Int, height: Int)? = nil,
         mediaMaxPacketSize: Int? = nil,
         dimensionToken: UInt16? = nil,
-        forwardsResizeEvents: Bool = true,
-        resizeEventStreamID: StreamID? = nil,
         targetFrameRate: Int? = nil
     )
     async {
-        let resolvedResizeEventStreamID = forwardsResizeEvents ? (resizeEventStreamID ?? streamID) : nil
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
         let payloadSize = miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
@@ -159,14 +148,12 @@ public extension MirageClientService {
                     streamDimensions: streamDimensions,
                     mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                     dimensionToken: dimensionToken,
-                    forwardsResizeEvents: forwardsResizeEvents,
-                    resizeEventStreamID: resolvedResizeEventStreamID,
                     targetFrameRate: resolvedTargetFrameRate
                 )
             }
 
             if !beginPostResizeTransition, let dimensionToken {
-                let reassembler = await existingController.getReassembler()
+                let reassembler = existingController.reassembler
                 reassembler.updateExpectedDimensionToken(dimensionToken)
             }
             await existingController.setDecoderCodec(codec, streamDimensions: streamDimensions)
@@ -183,16 +170,11 @@ public extension MirageClientService {
             let tier = sessionStore.presentationTier(for: streamID)
             await existingController.updateCadenceTarget(
                 sourceFPS: resolvedTargetFrameRate,
-                displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
+                displayFPS: resolvedTargetFrameRate,
                 latencyMode: renderLatencyModeByStream[streamID],
                 reason: "controller reset"
             )
-            await existingController.updatePresentationTier(
-                tier,
-                targetFPS: resolvedTargetFrameRate,
-                displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
-            )
-            decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
+            await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
                 .client(
@@ -212,200 +194,19 @@ public extension MirageClientService {
                 colorDepth: pendingAppRequestedColorDepth
             )
         }
-        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
-
         await controller.setDecoderCodec(codec, streamDimensions: streamDimensions)
         await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await controller.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
         if let dimensionToken {
-            let reassembler = await controller.getReassembler()
+            let reassembler = controller.reassembler
             reassembler.updateExpectedDimensionToken(dimensionToken)
         }
 
-        let capturedStreamID = streamID
-        let mediaFeedbackSender = receiverMediaFeedbackSender()
-        await controller.setCallbacks(
-            onKeyframeNeeded: { [weak self] in
-                self?.sendKeyframeRequest(for: capturedStreamID)
-            },
-            onResizeEvent: { [weak self] event in
-                guard let resolvedResizeEventStreamID else { return }
-                self?.handleResizeEvent(event, for: resolvedResizeEventStreamID)
-            },
-            onResizeStateChanged: nil,
-            onFrameDecoded: { [weak self] metrics in
-                guard let self else { return }
-                metricsStore.updateClientMetrics(
-                    streamID: capturedStreamID,
-                    decodedFPS: metrics.decodedFPS,
-                    receivedFPS: metrics.receivedFPS,
-                    decodedWorstGapMs: metrics.decodedWorstGapMs,
-                    decodedFrameIntervalP95Ms: metrics.decodedFrameIntervalP95Ms,
-                    decodedFrameIntervalP99Ms: metrics.decodedFrameIntervalP99Ms,
-                    receivedWorstGapMs: metrics.receivedWorstGapMs,
-                    receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
-                    receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
-                    droppedFrames: metrics.droppedFrames,
-                    renderStoreEnqueueFPS: metrics.renderStoreEnqueueFPS,
-                    reassemblerPendingFrameCount: metrics.reassemblerPendingFrameCount,
-                    reassemblerPendingKeyframeCount: metrics.reassemblerPendingKeyframeCount,
-                    reassemblerPendingBytes: metrics.reassemblerPendingBytes,
-                    frameBufferPoolRetainedBytes: metrics.frameBufferPoolRetainedBytes,
-                    reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
-                    displayLinkCallbackFPS: metrics.displayLinkCallbackFPS,
-                    displayTickWorkerFPS: metrics.displayTickWorkerFPS,
-                    displayTickMainRelayFPS: metrics.displayTickMainRelayFPS,
-                    displayTickFPS: metrics.displayTickFPS,
-                    presentationPassFPS: metrics.presentationPassFPS,
-                    presentationEligibleFPS: metrics.presentationEligibleFPS,
-                    submitAttemptFPS: metrics.submitAttemptFPS,
-                    layerEnqueueFPS: metrics.layerEnqueueFPS,
-                    uniqueLayerEnqueueFPS: metrics.uniqueLayerEnqueueFPS,
-                    visibleFrameFPS: metrics.visibleFrameFPS,
-                    visibleFrameCadenceKnown: metrics.visibleFrameCadenceKnown,
-                    visiblePresentationStallCount: metrics.visiblePresentationStallCount,
-                    visibleWorstPresentationGapMs: metrics.visibleWorstPresentationGapMs,
-                    visibleFrameIntervalP95Ms: metrics.visibleFrameIntervalP95Ms,
-                    visibleFrameIntervalP99Ms: metrics.visibleFrameIntervalP99Ms,
-                    visibleFrameIntervalMaxMs: metrics.visibleFrameIntervalMaxMs,
-                    repeatedSourceFrameCount: metrics.repeatedSourceFrameCount,
-                    framesSubmittedPerPassAverage: metrics.framesSubmittedPerPassAverage,
-                    framesSubmittedPerPassMax: metrics.framesSubmittedPerPassMax,
-                    pendingFrameCount: metrics.pendingFrameCount,
-                    unsubmittedPendingFrameCount: metrics.unsubmittedPendingFrameCount,
-                    retainedSubmittedFrameCount: metrics.retainedSubmittedFrameCount,
-                    pendingFrameAgeMs: metrics.pendingFrameAgeMs,
-                    oldestUnsubmittedAgeMs: metrics.oldestUnsubmittedAgeMs,
-                    newestUnsubmittedAgeMs: metrics.newestUnsubmittedAgeMs,
-                    overwrittenPendingFrames: metrics.overwrittenPendingFrames,
-                    renderStoreOverwriteFPS: metrics.renderStoreOverwriteFPS,
-                    lowestLatencyFreshBacklogDrops: metrics.lowestLatencyFreshBacklogDrops,
-                    lateFrameDrops: metrics.lateFrameDrops,
-                    displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
-                    sampleBufferRendererNotReadyCount: metrics.sampleBufferRendererNotReadyCount,
-                    displayImmediatelySubmittedCount: metrics.displayImmediatelySubmittedCount,
-                    rendererReadyDrainPassCount: metrics.rendererReadyDrainPassCount,
-                    rendererReadyDrainSubmittedCount: metrics.rendererReadyDrainSubmittedCount,
-                    rendererReadyRearmCount: metrics.rendererReadyRearmCount,
-                    repeatedFrameCount: metrics.repeatedFrameCount,
-                    displayTickNoFrameCount: metrics.displayTickNoFrameCount,
-                    tickNoEligibleFrameCount: metrics.tickNoEligibleFrameCount,
-                    frameArrivedAfterNoFrameTickCount: metrics.frameArrivedAfterNoFrameTickCount,
-                    frameArrivalFallbackCount: metrics.frameArrivalFallbackCount,
-                    frameArrivalFallbackScheduledCount: metrics.frameArrivalFallbackScheduledCount,
-                    frameArrivalFallbackSubmittedCount: metrics.frameArrivalFallbackSubmittedCount,
-                    noFrameTickToFrameArrivalMaxMs: metrics.noFrameTickToFrameArrivalMaxMs,
-                    missedVSyncCount: metrics.missedVSyncCount,
-                    smoothestOneFrameHoldCount: metrics.smoothestOneFrameHoldCount,
-                    displayCadenceBelowSourceCount: metrics.displayCadenceBelowSourceCount,
-                    displayTickIntervalP95Ms: metrics.displayTickIntervalP95Ms,
-                    displayTickIntervalP99Ms: metrics.displayTickIntervalP99Ms,
-                    playoutDelayFrames: metrics.playoutDelayFrames,
-                    presentationStallCount: metrics.presentationStallCount,
-                    worstPresentationGapMs: metrics.worstPresentationGapMs,
-                    frameIntervalP95Ms: metrics.frameIntervalP95Ms,
-                    frameIntervalP99Ms: metrics.frameIntervalP99Ms,
-                    frameIntervalMaxMs: metrics.frameIntervalMaxMs,
-                    displayTickIntervalMaxMs: metrics.displayTickIntervalMaxMs,
-                    displayTickMainDelayMaxMs: metrics.displayTickMainDelayMaxMs,
-                    renderWorkerSubmitDelayMaxMs: metrics.renderWorkerSubmitDelayMaxMs,
-                    decodeBacklogFrames: metrics.decodeBacklogFrames,
-                    decodeSubmissionInFlightCount: metrics.decodeSubmissionInFlightCount,
-                    decodeSubmissionLimit: metrics.decodeSubmissionLimit,
-                    decodeHealthy: metrics.decodeHealthy
-                )
-                metricsStore.updateClientTimingDiagnostics(
-                    streamID: capturedStreamID,
-                    coalescedBeforeSubmitCount: metrics.coalescedBeforeSubmitCount,
-                    duplicateRemoteTimestampCount: metrics.duplicateRemoteTimestampCount,
-                    correctedStreamTimestampCount: metrics.correctedStreamTimestampCount
-                )
-                metricsStore.updateClientPresentationDiagnostics(
-                    streamID: capturedStreamID,
-                    renderStoreClearCount: metrics.renderStoreClearCount,
-                    renderGenerationBumpCount: metrics.renderGenerationBumpCount,
-                    renderMemoryTrimClearCount: metrics.renderMemoryTrimClearCount,
-                    presenterTimingResetCount: metrics.presenterTimingResetCount,
-                    displayLayerLivenessResetCount: metrics.displayLayerLivenessResetCount,
-                    presentationRecoveryRequestCount: metrics.presentationRecoveryRequestCount,
-                    presentationRecoveryHandlerDispatchCount: metrics.presentationRecoveryHandlerDispatchCount,
-                    lastRenderGenerationBumpReason: metrics.lastRenderGenerationBumpReason,
-                    lastPresentationRecoveryOutcome: metrics.lastPresentationRecoveryOutcome
-                )
-                metricsStore.updateClientDecoderTelemetry(
-                    streamID: capturedStreamID,
-                    outputPixelFormat: metrics.decoderOutputPixelFormat,
-                    usingHardwareDecoder: metrics.usingHardwareDecoder
-                )
-                let ingressSnapshot = self.videoPacketIngressProcessors[capturedStreamID]?.snapshot()
-                metricsStore.updateClientVideoIngressMetrics(
-                    streamID: capturedStreamID,
-                    loomStreamDeliveryFPS: ingressSnapshot?.loomStreamDeliveryFPS ?? 0,
-                    loomStreamDeliveryGapMaxMs: ingressSnapshot?.loomStreamDeliveryIntervalMaxMs ?? 0,
-                    rawPacketIngressFPS: ingressSnapshot?.rawPacketIngressFPS ?? 0,
-                    incomingBatchFPS: ingressSnapshot?.incomingBatchFPS ?? 0,
-                    incomingBatchIntervalP95Ms: ingressSnapshot?.incomingBatchIntervalP95Ms ?? 0,
-                    incomingBatchIntervalP99Ms: ingressSnapshot?.incomingBatchIntervalP99Ms ?? 0,
-                    incomingBatchIntervalMaxMs: ingressSnapshot?.incomingBatchIntervalMaxMs ?? 0,
-                    incomingBatchMaxSize: ingressSnapshot?.incomingBatchMaxSize ?? 0,
-                    incomingBatchAverageSize: ingressSnapshot?.incomingBatchAverageSize ?? 0,
-                    queuedBatchCount: ingressSnapshot?.queuedBatchCount ?? 0,
-                    queuedPacketCount: ingressSnapshot?.queuedPacketCount ?? 0,
-                    queueAgeMaxMs: ingressSnapshot?.queueAgeMaxMs ?? 0,
-                    stalePacketDropCount: ingressSnapshot?.stalePacketDropCount ?? 0,
-                    processedPacketCount: ingressSnapshot?.processedPacketCount ?? 0,
-                    processorWakeDelayMaxMs: ingressSnapshot?.processorWakeDelayMaxMs ?? 0,
-                    acceptedMediaMaxPacketSize: self.mediaMaxPacketSizeByStream[capturedStreamID],
-                    mediaPayloadEncryptionEnabled: self.mediaPayloadEncryptionEnabled
-                )
-                if self.activeJitterHoldMs != metrics.activeJitterHoldMs {
-                    self.activeJitterHoldMs = metrics.activeJitterHoldMs
-                }
-                self.logAwdlExperimentTelemetryIfNeeded()
-            },
-            onMediaFeedback: { feedback in
-                mediaFeedbackSender(feedback)
-            },
-            onFirstFrameDecoded: { [weak self] in
-                self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
-                MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(capturedStreamID)")
-            },
-            onPostResizeFrameDecoded: { [weak self] in
-                self?.handlePostResizeFrameDecoded(streamID: capturedStreamID)
-            },
-            onFirstFramePresented: { [weak self] in
-                self?.handleStreamFirstFramePresented(streamID: capturedStreamID)
-                self?.clearStartupAttempt(for: capturedStreamID)
-                MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(capturedStreamID)")
-            },
-            onStallEvent: { [weak self] event in
-                guard let self else { return }
-                self.stallEvents &+= 1
-                self.inputEventSender.activateTemporaryPointerCoalescing(for: capturedStreamID, duration: 1.2)
-                self.handleRuntimeWorkloadSafetyStallEvent(streamID: capturedStreamID, event: event)
-                self.logAwdlExperimentTelemetryIfNeeded()
-            },
-            onRecoveryStatusChanged: { [weak self] status in
-                self?.sessionStore.setClientRecoveryStatus(for: capturedStreamID, status: status)
-                if status == .idle {
-                    self?.handleDesktopPresentationReady(streamID: capturedStreamID)
-                }
-            },
-            onTerminalStartupFailure: { [weak self] failure in
-                Task {
-                    await self?.handleTerminalStartupFailure(failure, for: capturedStreamID)
-                }
-            },
-            onTerminalLiveRecoveryFailure: { [weak self] failure in
-                Task {
-                    await self?.handleTerminalLiveRecoveryFailure(failure, for: capturedStreamID)
-                }
-            }
-        )
+        await configureCallbacks(for: controller, streamID: streamID)
 
         await controller.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
+            displayFPS: resolvedTargetFrameRate,
             latencyMode: renderLatencyModeByStream[streamID],
             reason: "controller setup"
         )
@@ -418,8 +219,7 @@ public extension MirageClientService {
         await controller.start()
         await controller.updatePresentationTier(
             sessionStore.presentationTier(for: streamID),
-            targetFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
+            targetFPS: resolvedTargetFrameRate
         )
         await updateReassemblerSnapshot()
 
@@ -430,7 +230,7 @@ public extension MirageClientService {
         replayPendingApplicationActivationRecoveryIfNeeded(for: streamID)
     }
 
-    internal func prepareControllerForDesktopResize(
+    func prepareControllerForDesktopResize(
         _ streamID: StreamID,
         codec: MirageVideoCodec,
         streamDimensions: (width: Int, height: Int)?,
@@ -491,23 +291,21 @@ public extension MirageClientService {
         await existingController.beginPostResizeTransition()
         await existingController.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate),
+            displayFPS: resolvedTargetFrameRate,
             latencyMode: renderLatencyModeByStream[streamID],
             reason: "desktop resize"
         )
         await existingController.updatePresentationTier(
             sessionStore.presentationTier(for: streamID),
-            targetFPS: resolvedTargetFrameRate,
-            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: resolvedTargetFrameRate)
+            targetFPS: resolvedTargetFrameRate
         )
-        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
         mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
         MirageLogger.client(
             "Prepared existing controller for desktop resize on stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
         )
     }
 
-    internal func applyRenderLatencyMode(
+    func applyRenderLatencyMode(
         to streamID: StreamID,
         preferredLatencyMode: MirageStreamLatencyMode? = nil
     ) {
@@ -518,10 +316,12 @@ public extension MirageClientService {
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: latencyMode)
     }
 
-    func resolvedRequestedMediaMaxPacketSize() -> Int {
+    /// Preferred media packet size for the current control path.
+    var resolvedRequestedMediaMaxPacketSize: Int {
         miragePreferredMediaMaxPacketSize(for: controlPathSnapshot?.kind)
     }
 
+    /// Negotiated media packet size after applying control-path limits.
     func resolvedAcceptedMediaMaxPacketSize(_ accepted: Int?) -> Int {
         mirageNegotiatedMediaMaxPacketSize(
             requested: accepted,
@@ -529,370 +329,20 @@ public extension MirageClientService {
         )
     }
 
-    package func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {
+    func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {
         decoderCompatibilityCurrentColorDepthByStream[streamID] ??
             decoderCompatibilityBaselineColorDepthByStream[streamID] ??
             .standard
     }
 
-    package func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
-        resolvedDecoderColorDepth(for: streamID).bitDepth
-    }
-
-    /// Handle resize event from StreamController.
-    private func handleResizeEvent(_ event: StreamController.ResizeEvent, for streamID: StreamID) {
-        guard let session = activeStreams.first(where: { $0.id == streamID }) else {
-            MirageLogger.error(.client, "No active session for stream \(streamID) during resize")
-            return
-        }
-
-        let resizeEvent = MirageRelativeResizeEvent(
-            windowID: session.window.id,
-            aspectRatio: event.aspectRatio,
-            relativeScale: event.relativeScale,
-            clientScreenSize: event.clientScreenSize,
-            pixelWidth: event.pixelWidth,
-            pixelHeight: event.pixelHeight
-        )
-
-        sendInputFireAndForget(.relativeResize(resizeEvent), forStream: streamID)
-    }
-
-    /// Get the controller for a stream (for view access).
-    internal func controller(for streamID: StreamID) -> StreamController? {
-        controllersByStream[streamID]
-    }
-
-    /// Stop viewing a stream.
-    /// - Parameters:
-    ///   - session: The stream session to stop.
-    ///   - minimizeWindow: Whether to minimize the source window on the host (default: false).
-    ///   - origin: Optional stop-request origin metadata.
-    func stopViewing(
-        _ session: ClientStreamSession,
-        minimizeWindow: Bool = false,
-        origin: MirageClientService.StreamStopOrigin? = nil
-    )
-    async {
-        let streamID = session.id
-
-        sendControlMessageBestEffort(
-            .stopStream,
-            content: StopStreamMessage(
-                streamID: streamID,
-                minimizeWindow: minimizeWindow,
-                origin: origin?.controlMessageOrigin
-            )
-        )
-
-        await forceStopWindowStreamLocally(streamID: streamID)
-    }
-
-    internal func handleTerminalStartupFailure(
-        _ failure: StreamController.TerminalStartupFailure,
-        for streamID: StreamID
-    ) async {
-        let waitReason = failure.waitReason ?? "unknown"
-        MirageLogger.error(
-            .client,
-            "Terminal startup failure for stream \(streamID): hardRecoveries=\(failure.hardRecoveryAttempts), " +
-                "reason=\(failure.reason.logLabel), waitReason=\(waitReason)"
-        )
-
-        let error = MirageError.protocolError(failure.errorMessage)
-
-        if desktopStreamID == streamID {
-            if pendingLocalDesktopStopStreamID == streamID,
-               pendingLocalDesktopStopSessionID == desktopSessionID {
-                MirageLogger.client(
-                    "Suppressing terminal startup failure for stream \(streamID) while a local desktop stop is pending"
-                )
-                await forceStopDesktopStreamLocally(
-                    streamID: streamID,
-                    desktopSessionID: desktopSessionID,
-                    notifyStopReason: .clientRequested
-                )
-                return
-            }
-
-            if await restartDesktopStreamAfterTerminalStartupFailure(failure, failedStreamID: streamID) {
-                return
-            }
-
-            if let desktopSessionID {
-                sendControlMessageBestEffort(
-                    .stopDesktopStream,
-                    content: StopDesktopStreamMessage(
-                        streamID: streamID,
-                        desktopSessionID: desktopSessionID
-                    )
-                )
-            }
-            await forceStopDesktopStreamLocally(
-                streamID: streamID,
-                desktopSessionID: desktopSessionID,
-                notifyStopReason: .error
-            )
-            delegate?.didEncounterError(error)
-            return
-        }
-
-        if activeStreams.contains(where: { $0.id == streamID }) || controllersByStream[streamID] != nil {
-            sendControlMessageBestEffort(
-                .stopStream,
-                content: StopStreamMessage(
-                    streamID: streamID,
-                    minimizeWindow: false,
-                    origin: nil
-                )
-            )
-            await forceStopWindowStreamLocally(streamID: streamID)
-        }
-
-        delegate?.didEncounterError(error)
-    }
-
-    internal func handleTerminalLiveRecoveryFailure(
-        _ failure: StreamController.TerminalLiveRecoveryFailure,
-        for streamID: StreamID
-    ) async {
-        let waitReason = failure.waitReason ?? "unknown"
-        MirageLogger.error(
-            .client,
-            "Terminal live recovery failure for stream \(streamID): hardRecoveries=\(failure.hardRecoveryAttempts), " +
-                "reason=\(failure.reason.logLabel), waitReason=\(waitReason)"
-        )
-
-        if desktopStreamID == streamID {
-            if await restartDesktopStreamAfterTerminalLiveRecoveryFailure(failure, failedStreamID: streamID) {
-                return
-            }
-            delegate?.didEncounterError(MirageError.protocolError(failure.errorMessage))
-            return
-        }
-
-        if let session = activeStreams.first(where: { $0.id == streamID }) {
-            let bundleIdentifier = session.window.application?.bundleIdentifier
-            let recoveryFailure = LiveStreamRecoveryFailure(
-                streamID: streamID,
-                kind: .app(bundleIdentifier: bundleIdentifier),
-                reason: failure.reason.logLabel,
-                hardRecoveryAttempts: failure.hardRecoveryAttempts
-            )
-            onLiveStreamRecoveryFailed?(recoveryFailure)
-            return
-        }
-
-        let recoveryFailure = LiveStreamRecoveryFailure(
-            streamID: streamID,
-            kind: .window,
-            reason: failure.reason.logLabel,
-            hardRecoveryAttempts: failure.hardRecoveryAttempts
-        )
-        onLiveStreamRecoveryFailed?(recoveryFailure)
-    }
-
-    func cancelDesktopStreamStopTimeout() {
-        desktopStreamStopTimeoutTask?.cancel()
-        desktopStreamStopTimeoutTask = nil
-        pendingLocalDesktopStopStreamID = nil
-        pendingLocalDesktopStopSessionID = nil
-    }
-
-    nonisolated static func shouldForceLocalDesktopStopAfterTimeout(
-        requestedStreamID: StreamID,
-        requestedDesktopSessionID: UUID,
-        activeDesktopStreamID: StreamID?,
-        activeDesktopSessionID: UUID?,
-        hasController: Bool,
-        isRegistered: Bool
-    ) -> Bool {
-        if let activeDesktopSessionID,
-           activeDesktopSessionID != requestedDesktopSessionID {
-            return false
-        }
-        return activeDesktopStreamID == requestedStreamID || hasController || isRegistered
-    }
-
-    func scheduleDesktopStreamStopTimeout(for streamID: StreamID, desktopSessionID: UUID) {
-        desktopStreamStopTimeoutTask?.cancel()
-        desktopStreamStopTimeoutTask = nil
-        pendingLocalDesktopStopStreamID = streamID
-        pendingLocalDesktopStopSessionID = desktopSessionID
-        desktopStreamStopTimeoutTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(for: self.desktopStreamStopTimeout)
-            } catch {
-                return
-            }
-
-            guard Self.shouldForceLocalDesktopStopAfterTimeout(
-                requestedStreamID: streamID,
-                requestedDesktopSessionID: desktopSessionID,
-                activeDesktopStreamID: self.desktopStreamID,
-                activeDesktopSessionID: self.desktopSessionID,
-                hasController: self.controllersByStream[streamID] != nil,
-                isRegistered: self.registeredStreamIDs.contains(streamID)
-            ) else {
-                self.desktopStreamStopTimeoutTask = nil
-                if self.pendingLocalDesktopStopStreamID == streamID,
-                   self.pendingLocalDesktopStopSessionID == desktopSessionID {
-                    self.pendingLocalDesktopStopStreamID = nil
-                    self.pendingLocalDesktopStopSessionID = nil
-                }
-                return
-            }
-
-            MirageLogger.client(
-                "Desktop stop acknowledgement timed out for stream \(streamID), session=\(desktopSessionID.uuidString); forcing local teardown"
-            )
-            await self.forceStopDesktopStreamLocally(
-                streamID: streamID,
-                desktopSessionID: desktopSessionID,
-                notifyStopReason: .clientRequested
-            )
-            self.desktopStreamStopTimeoutTask = nil
-        }
-    }
-
-    private func forceStopWindowStreamLocally(streamID: StreamID) async {
-        recordRetiredStreamDiagnosticsSummary(streamID: streamID, reason: "window:local")
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        activeStreams.removeAll { $0.id == streamID }
-        pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
-        renderLatencyModeByStream.removeValue(forKey: streamID)
-
-        metricsStore.clear(streamID: streamID)
-        cursorStore.clear(streamID: streamID)
-        cursorPositionStore.clear(streamID: streamID)
-
-        removeActiveStreamID(streamID)
-        stopVideoStreamReceive(for: streamID)
-        registeredStreamIDs.remove(streamID)
-        clearStreamRefreshRateOverride(streamID: streamID)
-        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
-        clearDecoderColorDepthState(for: streamID)
-        mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
-        clearStartupAttempt(for: streamID)
-        appDimensionTokenByStream.removeValue(forKey: streamID)
-        appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
-        streamStartupBaseTimes.removeValue(forKey: streamID)
-        streamStartupFirstRegistrationSent.remove(streamID)
-        streamStartupFirstPacketReceived.remove(streamID)
-        clearStartupPacketPending(streamID)
-        cancelStartupRegistrationRetry(streamID: streamID)
-        cancelRecoveryKeyframeRetry(for: streamID)
-        activeJitterHoldMs = 0
-
-        if let controller = controllersByStream.removeValue(forKey: streamID) {
-            await controller.setMediaFeedbackSuspended(true)
-            await controller.stop()
-        }
-
-        await updateReassemblerSnapshot()
-        await refreshSharedClipboardBridgeState()
-    }
-
-    func forceStopDesktopStreamLocally(
-        streamID: StreamID,
-        desktopSessionID expectedDesktopSessionID: UUID? = nil,
-        notifyStopReason: DesktopStreamStopReason? = nil
-    ) async {
-        if let expectedDesktopSessionID,
-           let activeDesktopSessionID = desktopSessionID,
-           activeDesktopSessionID != expectedDesktopSessionID {
-            MirageLogger.client(
-                "Skipping local desktop teardown for superseded session \(expectedDesktopSessionID.uuidString); activeSession=\(activeDesktopSessionID.uuidString)"
-            )
-            return
-        }
-        if let sessionID = expectedDesktopSessionID ?? desktopSessionID {
-            retiredDesktopSessionIDs.insert(sessionID)
-        }
-        cancelDesktopStreamStopTimeout()
-        let hadLocalState = desktopStreamID == streamID ||
-            controllersByStream[streamID] != nil ||
-            registeredStreamIDs.contains(streamID)
-
-        if hadLocalState {
-            recordRetiredStreamDiagnosticsSummary(
-                streamID: streamID,
-                reason: "desktop:\(notifyStopReason.map(String.init(describing:)) ?? "local")"
-            )
-        }
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
-        renderLatencyModeByStream.removeValue(forKey: streamID)
-        desktopStreamStartTimeoutTask?.cancel()
-        desktopStreamStartTimeoutTask = nil
-        desktopStreamRequestStartTime = 0
-        if desktopStreamID == streamID {
-            desktopStreamID = nil
-            desktopSessionID = nil
-            desktopStreamResolution = nil
-            desktopStreamPresentationResolution = nil
-            desktopCaptureSource = .virtualDisplay
-            desktopStreamAllowsClientResize = true
-            desktopStreamMode = nil
-            desktopCursorPresentation = nil
-            lastAutomaticDesktopWorkloadReconfigurationSummary = nil
-        }
-        desktopDimensionTokenByStream.removeValue(forKey: streamID)
-        clearPendingEncoderReconfiguration(for: streamID)
-        activeEncoderStreamScaleByStream.removeValue(forKey: streamID)
-        clearStartupAttempt(for: streamID)
-        sessionStore.clearPostResizeTransition(for: streamID)
-        metricsStore.clear(streamID: streamID)
-        cursorStore.clear(streamID: streamID)
-        cursorPositionStore.clear(streamID: streamID)
-        clearStreamRefreshRateOverride(streamID: streamID)
-
-        removeActiveStreamID(streamID)
-        stopVideoStreamReceive(for: streamID)
-        registeredStreamIDs.remove(streamID)
-        streamStartupBaseTimes.removeValue(forKey: streamID)
-        streamStartupFirstRegistrationSent.remove(streamID)
-        streamStartupFirstPacketReceived.remove(streamID)
-        clearStartupPacketPending(streamID)
-        cancelStartupRegistrationRetry(streamID: streamID)
-        cancelRecoveryKeyframeRetry(for: streamID)
-        clearDecoderColorDepthState(for: streamID)
-        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
-        pendingDesktopRequestedColorDepth = nil
-        pendingDesktopRequestedLatencyMode = nil
-        activeJitterHoldMs = 0
-        mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
-        activeStreamCodecs.removeValue(forKey: streamID)
-
-        if let controller = controllersByStream.removeValue(forKey: streamID) {
-            await controller.setMediaFeedbackSuspended(true)
-            await controller.stop()
-        }
-
-        await updateReassemblerSnapshot()
-        await refreshSharedClipboardBridgeState()
-
-        if let notifyStopReason, hadLocalState {
-            onDesktopStreamStopped?(streamID, notifyStopReason)
-        }
-    }
-
-    /// Get the minimum window size for a stream (in points).
-    func getMinimumSize(forStream streamID: StreamID) -> (minWidth: Int, minHeight: Int)? {
-        streamMinSizes[streamID]
-    }
-
+    /// Applies a presentation tier update to the controller for an active stream.
     func applyStreamPresentationTier(_ tier: StreamPresentationTier, to streamID: StreamID) async {
         guard let controller = controllersByStream[streamID] else { return }
         let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
-        await controller.updatePresentationTier(
-            tier,
-            targetFPS: targetFrameRate,
-            displayFPS: resolvedDisplayCadenceFrameRate(for: streamID, fallback: targetFrameRate)
-        )
+        await controller.updatePresentationTier(tier, targetFPS: targetFrameRate)
     }
 
+    /// Applies host-issued stream policies to active controllers.
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
@@ -902,11 +352,17 @@ public extension MirageClientService {
             )
             await controller.updateCadenceTarget(
                 sourceFPS: targetFPS,
-                displayFPS: resolvedDisplayCadenceFrameRate(for: policy.streamID, fallback: targetFPS),
+                displayFPS: targetFPS,
                 latencyMode: renderLatencyModeByStream[policy.streamID],
                 reason: "host stream policy"
             )
-            await controller.applyHostRuntimePolicy(policy, targetFPS: targetFPS)
+            let tier: StreamPresentationTier = switch policy.tier {
+            case .activeLive:
+                .activeLive
+            case .passiveSnapshot:
+                .passiveSnapshot
+            }
+            await controller.updatePresentationTier(tier, targetFPS: targetFPS)
         }
         let policyText = policies.map { policy in
             let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
@@ -917,16 +373,5 @@ public extension MirageClientService {
             return "\(policy.streamID)=\(policy.tier.rawValue):\(targetFPS)fps@\(bitrate)"
         }.joined(separator: ", ")
         MirageLogger.client("Applied host stream policy update epoch=\(epoch): [\(policyText)]")
-    }
-}
-
-private extension MirageClientService.StreamStopOrigin {
-    var controlMessageOrigin: StopStreamMessage.Origin {
-        switch self {
-        case .clientWindowClosed:
-            .clientWindowClosed
-        case .remoteCommand:
-            .remoteCommand
-        }
     }
 }

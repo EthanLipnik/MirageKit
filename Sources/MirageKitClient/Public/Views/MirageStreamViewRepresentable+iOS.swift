@@ -12,9 +12,13 @@ import SwiftUI
 
 // MARK: - SwiftUI Representable (iOS)
 
+/// SwiftUI bridge that embeds the UIKit stream renderer and input capture controller.
 public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
+    /// Logical stream session identifier.
     public let streamID: StreamID
+    /// Media stream identifier used for decoded frames and cursor/input routing.
     public let mediaStreamID: StreamID
+    /// Optional host content rect override used when presenting a cropped app/window stream.
     public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
@@ -131,15 +135,13 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the stream should present locally using aspect fit.
     public var prefersLocalAspectFitPresentation: Bool
 
-    /// Whether the stream should actively claim local input focus.
-    public var inputCaptureEnabled: Bool
-
     /// Whether the UIKit stream view should extend through platform safe areas.
     public var ignoresSafeArea: Bool
 
+    /// Creates a UIKit-backed stream view with rendering, cursor, input, and action bindings.
     public init(
         streamID: StreamID,
-        mediaStreamID: StreamID? = nil,
+        mediaStreamID: StreamID,
         contentRectOverride: CGRect? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
@@ -179,11 +181,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,
         prefersLocalAspectFitPresentation: Bool = false,
-        inputCaptureEnabled: Bool = true,
         ignoresSafeArea: Bool = true
     ) {
         self.streamID = streamID
-        self.mediaStreamID = mediaStreamID ?? streamID
+        self.mediaStreamID = mediaStreamID
         self.contentRectOverride = contentRectOverride
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -223,7 +224,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         self.maxDrawableSize = maxDrawableSize
         self.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
-        self.inputCaptureEnabled = inputCaptureEnabled
         self.ignoresSafeArea = ignoresSafeArea
     }
 
@@ -247,53 +247,23 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     public func makeUIViewController(context: Context) -> MirageStreamViewController {
         let controller = MirageStreamViewControllerCache.shared.controller(for: streamID)
         controller.configureCallbacks(
-            onInputEvent: context.coordinator.handleInputEvent,
-            onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
-            onContainerSizeChanged: context.coordinator.handleContainerSizeChanged,
-            onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
-            onBecomeActive: context.coordinator.handleBecomeActive,
-            onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
-            onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
-            onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
+            onInputEvent: { context.coordinator.onInputEvent?($0) },
+            onDrawableMetricsChanged: { context.coordinator.onDrawableMetricsChanged?($0) },
+            onContainerSizeChanged: { context.coordinator.onContainerSizeChanged?($0) },
+            onRefreshRateOverrideChange: { context.coordinator.onRefreshRateOverrideChange?($0) },
+            onBecomeActive: { context.coordinator.onBecomeActive?() },
+            onHardwareKeyboardPresenceChanged: { context.coordinator.onHardwareKeyboardPresenceChanged?($0) },
+            onSoftwareKeyboardVisibilityChanged: { context.coordinator.onSoftwareKeyboardVisibilityChanged?($0) },
+            onDirectTouchActivity: { context.coordinator.onDirectTouchActivity?() },
             onClientShortcut: onClientShortcut,
             onActionTriggered: onActionTriggered,
             onPencilGestureAction: onPencilGestureAction,
-            onDictationStateChanged: context.coordinator.handleDictationStateChanged,
-            onDictationError: context.coordinator.handleDictationError,
-            onDictationInputLevelChanged: context.coordinator.handleDictationInputLevelChanged,
-            onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
+            onDictationStateChanged: { context.coordinator.onDictationStateChanged?($0) },
+            onDictationError: { context.coordinator.onDictationError?($0) },
+            onDictationInputLevelChanged: { context.coordinator.onDictationInputLevelChanged?($0) },
+            onResolvedPointerLockStateChanged: { context.coordinator.onResolvedPointerLockStateChanged?($0) }
         )
-        controller.updateState(
-            streamID: streamID,
-            mediaStreamID: mediaStreamID,
-            contentRectOverride: contentRectOverride,
-            directTouchInputMode: directTouchInputMode,
-            softwareKeyboardVisible: softwareKeyboardVisible,
-
-            pencilGestureConfiguration: pencilGestureConfiguration,
-            clientShortcuts: clientShortcuts,
-            actions: actions,
-            dictationToggleRequestID: dictationToggleRequestID,
-            dictationMode: dictationMode,
-            dictationLocalePreference: dictationLocalePreference,
-            hideSystemCursor: hideSystemCursor,
-            cursorStore: cursorStore,
-            cursorPositionStore: cursorPositionStore,
-            desktopSessionID: desktopSessionID,
-            hasPresentedFrameForActivationRecovery: hasPresentedFrameForActivationRecovery,
-            cursorLockEnabled: cursorLockEnabled,
-            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-            cursorLockCanRecapture: cursorLockCanRecapture,
-            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-            syntheticCursorEnabled: syntheticCursorEnabled,
-            presentationTier: presentationTier,
-            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-            maxDrawableSize: maxDrawableSize,
-            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-            inputCaptureEnabled: inputCaptureEnabled,
-            ignoresSafeArea: ignoresSafeArea
-        )
+        controller.updateState(MirageStreamViewControllerState(representable: self))
         return controller
     }
 
@@ -314,54 +284,24 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
         uiViewController.configureCallbacks(
-            onInputEvent: context.coordinator.handleInputEvent,
-            onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
-            onContainerSizeChanged: context.coordinator.handleContainerSizeChanged,
-            onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
-            onBecomeActive: context.coordinator.handleBecomeActive,
-            onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
-            onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
-            onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
+            onInputEvent: { context.coordinator.onInputEvent?($0) },
+            onDrawableMetricsChanged: { context.coordinator.onDrawableMetricsChanged?($0) },
+            onContainerSizeChanged: { context.coordinator.onContainerSizeChanged?($0) },
+            onRefreshRateOverrideChange: { context.coordinator.onRefreshRateOverrideChange?($0) },
+            onBecomeActive: { context.coordinator.onBecomeActive?() },
+            onHardwareKeyboardPresenceChanged: { context.coordinator.onHardwareKeyboardPresenceChanged?($0) },
+            onSoftwareKeyboardVisibilityChanged: { context.coordinator.onSoftwareKeyboardVisibilityChanged?($0) },
+            onDirectTouchActivity: { context.coordinator.onDirectTouchActivity?() },
             onClientShortcut: onClientShortcut,
             onActionTriggered: onActionTriggered,
             onPencilGestureAction: onPencilGestureAction,
-            onDictationStateChanged: context.coordinator.handleDictationStateChanged,
-            onDictationError: context.coordinator.handleDictationError,
-            onDictationInputLevelChanged: context.coordinator.handleDictationInputLevelChanged,
-            onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
+            onDictationStateChanged: { context.coordinator.onDictationStateChanged?($0) },
+            onDictationError: { context.coordinator.onDictationError?($0) },
+            onDictationInputLevelChanged: { context.coordinator.onDictationInputLevelChanged?($0) },
+            onResolvedPointerLockStateChanged: { context.coordinator.onResolvedPointerLockStateChanged?($0) }
         )
 
-        uiViewController.updateState(
-            streamID: streamID,
-            mediaStreamID: mediaStreamID,
-            contentRectOverride: contentRectOverride,
-            directTouchInputMode: directTouchInputMode,
-            softwareKeyboardVisible: softwareKeyboardVisible,
-
-            pencilGestureConfiguration: pencilGestureConfiguration,
-            clientShortcuts: clientShortcuts,
-            actions: actions,
-            dictationToggleRequestID: dictationToggleRequestID,
-            dictationMode: dictationMode,
-            dictationLocalePreference: dictationLocalePreference,
-            hideSystemCursor: hideSystemCursor,
-            cursorStore: cursorStore,
-            cursorPositionStore: cursorPositionStore,
-            desktopSessionID: desktopSessionID,
-            hasPresentedFrameForActivationRecovery: hasPresentedFrameForActivationRecovery,
-            cursorLockEnabled: cursorLockEnabled,
-            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-            cursorLockCanRecapture: cursorLockCanRecapture,
-            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-            syntheticCursorEnabled: syntheticCursorEnabled,
-            presentationTier: presentationTier,
-            preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-            maxDrawableSize: maxDrawableSize,
-            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-            inputCaptureEnabled: inputCaptureEnabled,
-            ignoresSafeArea: ignoresSafeArea
-        )
+        uiViewController.updateState(MirageStreamViewControllerState(representable: self))
     }
 
     static func releaseCachedControllerIfPossible(
@@ -370,6 +310,67 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     ) {
         guard sessionStore.sessionByStreamID(streamID) == nil else { return }
         MirageStreamViewControllerCache.shared.releaseController(for: streamID)
+    }
+}
+
+/// Immutable state transferred from SwiftUI into the cached UIKit stream controller.
+package struct MirageStreamViewControllerState {
+    let streamID: StreamID
+    let mediaStreamID: StreamID
+    let contentRectOverride: CGRect?
+    let directTouchInputMode: MirageDirectTouchInputMode
+    let softwareKeyboardVisible: Bool
+    let pencilGestureConfiguration: MiragePencilGestureConfiguration
+    let clientShortcuts: [MirageClientShortcut]
+    let actions: [MirageAction]
+    let dictationToggleRequestID: UInt64
+    let dictationMode: MirageDictationMode
+    let dictationLocalePreference: MirageDictationLocalePreference
+    let hideSystemCursor: Bool
+    let cursorStore: MirageClientCursorStore?
+    let cursorPositionStore: MirageClientCursorPositionStore?
+    let desktopSessionID: UUID?
+    let hasPresentedFrameForActivationRecovery: Bool
+    let cursorLockEnabled: Bool
+    let allowsExtendedDesktopCursorBounds: Bool
+    let cursorLockCanRecapture: Bool
+    let onCursorLockEscapeRequested: (() -> Void)?
+    let onCursorLockRecaptureRequested: (() -> Void)?
+    let syntheticCursorEnabled: Bool
+    let presentationTier: StreamPresentationTier
+    let preferredMaximumRenderFPS: Int?
+    let maxDrawableSize: CGSize?
+    let prefersLocalAspectFitPresentation: Bool
+    let ignoresSafeArea: Bool
+
+    init(representable: MirageStreamViewRepresentable) {
+        streamID = representable.streamID
+        mediaStreamID = representable.mediaStreamID
+        contentRectOverride = representable.contentRectOverride
+        directTouchInputMode = representable.directTouchInputMode
+        softwareKeyboardVisible = representable.softwareKeyboardVisible
+        pencilGestureConfiguration = representable.pencilGestureConfiguration
+        clientShortcuts = representable.clientShortcuts
+        actions = representable.actions
+        dictationToggleRequestID = representable.dictationToggleRequestID
+        dictationMode = representable.dictationMode
+        dictationLocalePreference = representable.dictationLocalePreference
+        hideSystemCursor = representable.hideSystemCursor
+        cursorStore = representable.cursorStore
+        cursorPositionStore = representable.cursorPositionStore
+        desktopSessionID = representable.desktopSessionID
+        hasPresentedFrameForActivationRecovery = representable.hasPresentedFrameForActivationRecovery
+        cursorLockEnabled = representable.cursorLockEnabled
+        allowsExtendedDesktopCursorBounds = representable.allowsExtendedDesktopCursorBounds
+        cursorLockCanRecapture = representable.cursorLockCanRecapture
+        onCursorLockEscapeRequested = representable.onCursorLockEscapeRequested
+        onCursorLockRecaptureRequested = representable.onCursorLockRecaptureRequested
+        syntheticCursorEnabled = representable.syntheticCursorEnabled
+        presentationTier = representable.presentationTier
+        preferredMaximumRenderFPS = representable.preferredMaximumRenderFPS
+        maxDrawableSize = representable.maxDrawableSize
+        prefersLocalAspectFitPresentation = representable.prefersLocalAspectFitPresentation
+        ignoresSafeArea = representable.ignoresSafeArea
     }
 }
 
@@ -393,210 +394,6 @@ private final class MirageStreamViewControllerCache {
 
     func releaseController(for streamID: StreamID) {
         controllersByStreamID.removeValue(forKey: streamID)
-    }
-}
-
-public final class MirageStreamViewController: UIViewController {
-    var currentStreamID: StreamID?
-    private let captureView = InputCapturingView(frame: .zero)
-    private var pointerLockRequested: Bool = false
-    private var pointerLockObserver: NSObjectProtocol?
-    private var lastResolvedPointerLockState: MirageResolvedPointerLockState?
-    private var lastDesktopSessionIDForResponderRecovery: UUID?
-    private var lastDesktopMediaStreamIDForResponderRecovery: StreamID?
-
-    override public func loadView() {
-        view = captureView
-    }
-
-    override public func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        startPointerLockObserverIfNeeded()
-        captureView.requestResponderRecovery(.viewDidAppear)
-    }
-
-    override public func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        captureView.reportContainerSizeIfChanged(view.bounds.size)
-    }
-
-    override public func target(forAction action: Selector, withSender sender: Any?) -> Any? {
-        if captureView.shouldHandleResponderAction(action) {
-            return captureView
-        }
-        return super.target(forAction: action, withSender: sender)
-    }
-
-    override public func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        stopPointerLockObserver()
-        lastResolvedPointerLockState = nil
-        captureView.onResolvedPointerLockStateChanged?(.unavailable)
-        captureView.pointerLockActive = false
-    }
-
-    func configureCallbacks(
-        onInputEvent: ((MirageInputEvent) -> Void)?,
-        onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
-        onContainerSizeChanged: ((CGSize) -> Void)?,
-        onRefreshRateOverrideChange: ((Int) -> Void)?,
-        onBecomeActive: (() -> Void)?,
-        onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
-        onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
-        onDirectTouchActivity: (() -> Void)?,
-        onClientShortcut: ((MirageClientShortcut) -> Void)?,
-        onActionTriggered: ((MirageAction) -> Void)?,
-        onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?,
-        onDictationStateChanged: ((Bool) -> Void)?,
-        onDictationError: ((String) -> Void)?,
-        onDictationInputLevelChanged: ((Float) -> Void)?,
-        onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
-    ) {
-        captureView.onInputEvent = onInputEvent
-        captureView.onDrawableMetricsChanged = onDrawableMetricsChanged
-        captureView.onContainerSizeChanged = onContainerSizeChanged
-        captureView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
-        captureView.onBecomeActive = onBecomeActive
-        captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
-        captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
-        captureView.onDirectTouchActivity = onDirectTouchActivity
-        captureView.onClientShortcut = onClientShortcut
-        captureView.onActionTriggered = onActionTriggered
-        captureView.onPencilGestureAction = onPencilGestureAction
-        captureView.onDictationStateChanged = onDictationStateChanged
-        captureView.onDictationError = onDictationError
-        captureView.onDictationInputLevelChanged = onDictationInputLevelChanged
-        captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
-        captureView.requestResponderRecovery(.callbacksConfigured)
-    }
-
-    func updateState(
-        streamID: StreamID,
-        mediaStreamID: StreamID,
-        contentRectOverride: CGRect?,
-        directTouchInputMode: MirageDirectTouchInputMode,
-        softwareKeyboardVisible: Bool,
-        pencilGestureConfiguration: MiragePencilGestureConfiguration,
-        clientShortcuts: [MirageClientShortcut],
-        actions: [MirageAction],
-        dictationToggleRequestID: UInt64,
-        dictationMode: MirageDictationMode,
-        dictationLocalePreference: MirageDictationLocalePreference,
-        hideSystemCursor: Bool,
-        cursorStore: MirageClientCursorStore?,
-        cursorPositionStore: MirageClientCursorPositionStore?,
-        desktopSessionID: UUID?,
-        hasPresentedFrameForActivationRecovery: Bool,
-        cursorLockEnabled: Bool,
-        allowsExtendedDesktopCursorBounds: Bool,
-        cursorLockCanRecapture: Bool,
-        onCursorLockEscapeRequested: (() -> Void)?,
-        onCursorLockRecaptureRequested: (() -> Void)?,
-        syntheticCursorEnabled: Bool,
-        presentationTier: StreamPresentationTier,
-        preferredMaximumRenderFPS: Int?,
-        maxDrawableSize: CGSize?,
-        prefersLocalAspectFitPresentation: Bool,
-        inputCaptureEnabled: Bool,
-        ignoresSafeArea: Bool
-    ) {
-        // Establish media and logical stream identities before cursor stores refresh.
-        let previousDesktopSessionID = lastDesktopSessionIDForResponderRecovery
-        let previousDesktopMediaStreamID = lastDesktopMediaStreamIDForResponderRecovery
-        currentStreamID = streamID
-        captureView.mediaStreamID = mediaStreamID
-        captureView.streamID = streamID
-        captureView.contentRectOverride = contentRectOverride
-        captureView.directTouchInputMode = directTouchInputMode
-        captureView.softwareKeyboardVisible = softwareKeyboardVisible
-        captureView.pencilGestureConfiguration = pencilGestureConfiguration
-        captureView.clientShortcuts = clientShortcuts
-        captureView.actions = actions
-        captureView.dictationToggleRequestID = dictationToggleRequestID
-        captureView.dictationMode = dictationMode
-        captureView.dictationLocalePreference = dictationLocalePreference
-        captureView.hideSystemCursor = hideSystemCursor
-        captureView.cursorStore = cursorStore
-        captureView.cursorPositionStore = cursorPositionStore
-        captureView.desktopSessionID = desktopSessionID
-        captureView.hasPresentedFrameForActivationRecovery = hasPresentedFrameForActivationRecovery
-        captureView.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
-        captureView.cursorLockEnabled = cursorLockEnabled
-        captureView.canRecaptureCursorLock = cursorLockCanRecapture
-        captureView.onCursorLockEscapeRequested = onCursorLockEscapeRequested
-        captureView.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
-        captureView.syntheticCursorEnabled = syntheticCursorEnabled
-        captureView.presentationTier = presentationTier
-        captureView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
-        captureView.maxDrawableSize = maxDrawableSize
-        captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
-        captureView.inputCaptureEnabled = inputCaptureEnabled
-        captureView.ignoresSafeArea = ignoresSafeArea
-        captureView.activateStreamPresentation()
-
-        pointerLockRequested = cursorLockEnabled
-        updatePointerLockState()
-        let responderRecoveryTrigger: InputCapturingResponderRecoveryTrigger
-        if let desktopSessionID {
-            if previousDesktopSessionID != desktopSessionID {
-                responderRecoveryTrigger = .desktopStreamStarted
-            } else if previousDesktopMediaStreamID != mediaStreamID {
-                responderRecoveryTrigger = .desktopTransitionCommitted
-            } else {
-                responderRecoveryTrigger = .streamIdentityUpdated
-            }
-            lastDesktopSessionIDForResponderRecovery = desktopSessionID
-            lastDesktopMediaStreamIDForResponderRecovery = mediaStreamID
-        } else {
-            lastDesktopSessionIDForResponderRecovery = nil
-            lastDesktopMediaStreamIDForResponderRecovery = nil
-            responderRecoveryTrigger = .streamIdentityUpdated
-        }
-        captureView.requestResponderRecovery(responderRecoveryTrigger)
-    }
-
-    deinit {
-        stopPointerLockObserver()
-    }
-
-    private func startPointerLockObserverIfNeeded() {
-        guard pointerLockObserver == nil else { return }
-        pointerLockObserver = NotificationCenter.default.addObserver(
-            forName: UIPointerLockState.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let self else { return }
-            guard let scene = notification.userInfo?[UIPointerLockState.sceneUserInfoKey] as? UIScene else { return }
-            guard scene === view.window?.windowScene else { return }
-            updatePointerLockState()
-        }
-        updatePointerLockState()
-    }
-
-    private func stopPointerLockObserver() {
-        if let pointerLockObserver {
-            NotificationCenter.default.removeObserver(pointerLockObserver)
-            self.pointerLockObserver = nil
-        }
-    }
-
-    private func updatePointerLockState() {
-        let resolvedState = MirageResolvedPointerLockState(
-            isSupported: view.window?.windowScene?.pointerLockState != nil,
-            isLocked: pointerLockRequested &&
-                (view.window?.windowScene?.pointerLockState?.isLocked ?? false)
-        )
-        captureView.pointerLockActive = resolvedState.isLocked
-        if lastResolvedPointerLockState != resolvedState {
-            lastResolvedPointerLockState = resolvedState
-            captureView.onResolvedPointerLockStateChanged?(resolvedState)
-            if pointerLockRequested, !resolvedState.isLocked {
-                MirageLogger.client("Pointer lock not active for scene.")
-            } else if resolvedState.isLocked {
-                MirageLogger.client("Pointer lock active for scene.")
-            }
-        }
     }
 }
 #endif

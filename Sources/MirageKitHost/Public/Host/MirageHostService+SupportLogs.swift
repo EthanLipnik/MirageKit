@@ -16,6 +16,7 @@ import MirageKit
 extension MirageHostService {
     private static let hostSupportLogArchiveProviderTimeout: Duration = .seconds(8)
 
+    /// Handles a client request to export and transfer host support logs.
     func handleHostSupportLogArchiveRequest(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -59,7 +60,7 @@ extension MirageHostService {
             do {
                 try await clientContext.send(.hostSupportLogArchive, content: response)
             } catch {
-                try? FileManager.default.removeItem(at: archiveURL)
+                removeHostSupportLogArchive(at: archiveURL, context: "response send failure")
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
@@ -109,6 +110,7 @@ extension MirageHostService {
         }
     }
 
+    /// Runs the host log archive provider with a timeout.
     private func exportHostSupportLogArchive(
         using provider: @escaping @MainActor @Sendable () async throws -> URL,
         timeout: Duration
@@ -129,6 +131,7 @@ extension MirageHostService {
         }
     }
 
+    /// Offers the prepared host support log archive over a Loom file transfer.
     private func handleHostSupportLogTransfer(
         _ session: LoomAuthenticatedSession,
         requestID: UUID,
@@ -136,8 +139,8 @@ extension MirageHostService {
         expectedClient: MirageConnectedClient
     ) async {
         defer {
-            Task {
-                try? FileManager.default.removeItem(at: archiveURL)
+            Task { @MainActor [weak self] in
+                self?.removeHostSupportLogArchive(at: archiveURL, context: "transfer completion")
             }
         }
 
@@ -163,7 +166,7 @@ extension MirageHostService {
                 source: source
             )
 
-            let terminalProgress = await terminalProgress(from: outgoing.progressEvents)
+            let terminalProgress = await MirageTransferProgress.terminalProgress(from: outgoing.progressEvents)
             switch terminalProgress?.state {
             case .completed:
                 break
@@ -193,6 +196,19 @@ extension MirageHostService {
         }
     }
 
+    private func removeHostSupportLogArchive(at url: URL, context: String) {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to remove host support log archive after \(context): "
+            )
+        }
+    }
+
+    /// Validates that a transfer session still belongs to the requesting client.
     func validateExistingClientTransferSession(
         _ session: LoomAuthenticatedSession,
         expectedClient: MirageConnectedClient
@@ -207,22 +223,6 @@ extension MirageHostService {
         if context.peerIdentity.deviceID != expectedClient.id {
             throw MirageError.protocolError("Client device mismatch for Loom transfer session")
         }
-    }
-
-    func terminalProgress(
-        from stream: AsyncStream<LoomTransferProgress>
-    ) async -> LoomTransferProgress? {
-        var lastProgress: LoomTransferProgress?
-        for await progress in stream {
-            lastProgress = progress
-            switch progress.state {
-            case .completed, .cancelled, .failed, .declined:
-                return progress
-            case .offered, .waitingForAcceptance, .transferring:
-                break
-            }
-        }
-        return lastProgress
     }
 }
 #endif

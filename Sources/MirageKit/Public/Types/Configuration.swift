@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Encoder Configuration
 
-/// Configuration for video encoding on the host
+/// Configuration for video encoding on the host.
 public struct MirageEncoderConfiguration: Sendable {
     /// Video codec to use
     public var codec: MirageVideoCodec
@@ -45,6 +45,7 @@ public struct MirageEncoderConfiguration: Sendable {
     package var frameQuality: Float
     package var keyframeQuality: Float
 
+    /// Creates an encoder configuration and derives pixel format/color settings from the selected color depth.
     public init(
         codec: MirageVideoCodec = .hevc,
         targetFrameRate: Int = 60,
@@ -73,26 +74,6 @@ public struct MirageEncoderConfiguration: Sendable {
         codec: MirageVideoCodec = .hevc,
         targetFrameRate: Int = 60,
         keyFrameInterval: Int = 1800,
-        bitDepth: MirageVideoBitDepth,
-        scaleFactor: CGFloat = 2.0,
-        captureQueueDepth: Int? = nil,
-        bitrate: Int? = nil
-    ) {
-        self.init(
-            codec: codec,
-            targetFrameRate: targetFrameRate,
-            keyFrameInterval: keyFrameInterval,
-            colorDepth: Self.defaultColorDepth(for: bitDepth),
-            scaleFactor: scaleFactor,
-            captureQueueDepth: captureQueueDepth,
-            bitrate: bitrate
-        )
-    }
-
-    package init(
-        codec: MirageVideoCodec = .hevc,
-        targetFrameRate: Int = 60,
-        keyFrameInterval: Int = 1800,
         colorDepth: MirageStreamColorDepth,
         colorSpace: MirageColorSpace,
         scaleFactor: CGFloat = 2.0,
@@ -104,7 +85,7 @@ public struct MirageEncoderConfiguration: Sendable {
         self.targetFrameRate = targetFrameRate
         self.keyFrameInterval = keyFrameInterval
         self.colorDepth = colorDepth
-        self.bitDepth = Self.bitDepth(for: pixelFormat)
+        bitDepth = Self.bitDepth(for: pixelFormat)
         self.colorSpace = colorSpace
         self.scaleFactor = scaleFactor
         self.pixelFormat = pixelFormat
@@ -112,29 +93,6 @@ public struct MirageEncoderConfiguration: Sendable {
         self.bitrate = bitrate
         frameQuality = 0.8
         keyframeQuality = 0.65
-    }
-
-    package init(
-        codec: MirageVideoCodec = .hevc,
-        targetFrameRate: Int = 60,
-        keyFrameInterval: Int = 1800,
-        colorSpace: MirageColorSpace,
-        scaleFactor: CGFloat = 2.0,
-        pixelFormat: MiragePixelFormat,
-        captureQueueDepth: Int? = nil,
-        bitrate: Int? = nil
-    ) {
-        self.init(
-            codec: codec,
-            targetFrameRate: targetFrameRate,
-            keyFrameInterval: keyFrameInterval,
-            colorDepth: Self.descriptor(for: pixelFormat).colorDepth,
-            colorSpace: colorSpace,
-            scaleFactor: scaleFactor,
-            pixelFormat: pixelFormat,
-            captureQueueDepth: captureQueueDepth,
-            bitrate: bitrate
-        )
     }
 
     /// Default configuration for high-bandwidth local network
@@ -232,30 +190,21 @@ public struct MirageEncoderConfiguration: Sendable {
                 colorDepth: .standard,
                 bitDepth: .eightBit,
                 colorSpace: .sRGB,
-                chromaSampling: .yuv420,
-                capturePixelFormats: [.nv12, .bgra8],
-                encoderProfileCandidates: [.hevcMain],
-                decoderPreferredPixelFormats: [.nv12, .bgra8]
+                capturePixelFormats: [.nv12, .bgra8]
             )
         case .pro:
             MirageColorDepthDescriptor(
                 colorDepth: .pro,
                 bitDepth: .tenBit,
                 colorSpace: .displayP3,
-                chromaSampling: .yuv420,
-                capturePixelFormats: [.p010, .bgr10a2],
-                encoderProfileCandidates: [.hevcMain10],
-                decoderPreferredPixelFormats: [.p010, .bgr10a2]
+                capturePixelFormats: [.p010, .bgr10a2]
             )
         case .ultra:
             MirageColorDepthDescriptor(
                 colorDepth: .ultra,
                 bitDepth: .tenBit,
                 colorSpace: .displayP3,
-                chromaSampling: .yuv444,
-                capturePixelFormats: [.xf44, .p010, .bgr10a2],
-                encoderProfileCandidates: [.hevcMain42210, .hevcMain10],
-                decoderPreferredPixelFormats: [.p010, .bgr10a2]
+                capturePixelFormats: [.xf44, .p010, .bgr10a2]
             )
         }
     }
@@ -270,15 +219,6 @@ public struct MirageEncoderConfiguration: Sendable {
             descriptor(for: .pro)
         case .bgra8,
              .nv12:
-            descriptor(for: .standard)
-        }
-    }
-
-    package static func descriptor(for colorSpace: MirageColorSpace) -> MirageColorDepthDescriptor {
-        switch colorSpace {
-        case .displayP3:
-            descriptor(for: .pro)
-        case .sRGB:
             descriptor(for: .standard)
         }
     }
@@ -326,19 +266,28 @@ public struct MirageEncoderConfiguration: Sendable {
 
 /// Optional overrides for encoder settings supplied by the client.
 public struct MirageEncoderOverrides: Sendable, Codable {
+    /// Preferred video codec.
     public var codec: MirageVideoCodec?
+    /// Preferred keyframe interval in frames.
     public var keyFrameInterval: Int?
+    /// Preferred stream color depth preset.
     public var colorDepth: MirageStreamColorDepth?
+    /// Capture queue depth requested for the stream.
     public var captureQueueDepth: Int?
     /// Client-entered bitrate budget before any desktop geometry scaling.
     /// For custom desktop streaming this remains the user-facing value shown in
     /// settings, while `bitrate` carries the effective target actually sent to
     /// the host.
     public var enteredBitrate: Int?
+    /// Effective target bitrate sent to the host.
     public var bitrate: Int?
+    /// Preferred latency policy for the stream.
     public var latencyMode: MirageStreamLatencyMode?
+    /// Whether the host may adjust quality while the stream is running.
     public var allowRuntimeQualityAdjustment: Bool?
+    /// Whether the host should apply the low-latency compression boost for high-resolution streams.
     public var lowLatencyHighResolutionCompressionBoost: Bool?
+    /// Whether the host should ignore normal resolution caps for this stream.
     public var disableResolutionCap: Bool
     /// Maximum bitrate budget the client-owned adaptation loop may request for
     /// this stream.
@@ -352,6 +301,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     /// Client-requested MetalFX upscaling mode.
     public var upscalingMode: MirageUpscalingMode?
 
+    /// Creates a partial encoder override payload for runtime or stream-start updates.
     public init(
         codec: MirageVideoCodec? = nil,
         keyFrameInterval: Int? = nil,
@@ -382,301 +332,5 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
         self.upscalingMode = upscalingMode
-    }
-
-    package init(
-        bitDepth: MirageVideoBitDepth,
-        keyFrameInterval: Int? = nil,
-        captureQueueDepth: Int? = nil,
-        bitrate: Int? = nil,
-        latencyMode: MirageStreamLatencyMode? = nil,
-        allowRuntimeQualityAdjustment: Bool? = nil,
-        lowLatencyHighResolutionCompressionBoost: Bool? = nil,
-        disableResolutionCap: Bool = false
-    ) {
-        self.init(
-            keyFrameInterval: keyFrameInterval,
-            colorDepth: MirageEncoderConfiguration.defaultColorDepth(for: bitDepth),
-            captureQueueDepth: captureQueueDepth,
-            enteredBitrate: bitrate,
-            bitrate: bitrate,
-            latencyMode: latencyMode,
-            allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
-            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
-            disableResolutionCap: disableResolutionCap
-        )
-    }
-}
-
-/// Stream color depth presets.
-public enum MirageStreamColorDepth: String, Sendable, CaseIterable, Codable {
-    case standard
-    case pro
-    case ultra
-
-    public static let orderedCases: [MirageStreamColorDepth] = [.standard, .pro, .ultra]
-
-    public var displayName: String {
-        switch self {
-        case .standard: "Standard"
-        case .pro: "Pro"
-        case .ultra: "Ultra"
-        }
-    }
-
-    public var nextLowerFallback: MirageStreamColorDepth? {
-        switch self {
-        case .standard:
-            nil
-        case .pro:
-            .standard
-        case .ultra:
-            .pro
-        }
-    }
-
-    public var nextHigherRestore: MirageStreamColorDepth? {
-        switch self {
-        case .standard:
-            .pro
-        case .pro:
-            .ultra
-        case .ultra:
-            nil
-        }
-    }
-
-    package var bitDepth: MirageVideoBitDepth {
-        switch self {
-        case .standard:
-            .eightBit
-        case .pro,
-             .ultra:
-            .tenBit
-        }
-    }
-
-    package var colorSpace: MirageColorSpace {
-        switch self {
-        case .standard:
-            .sRGB
-        case .pro,
-             .ultra:
-            .displayP3
-        }
-    }
-
-    package var sortRank: Int {
-        switch self {
-        case .standard:
-            0
-        case .pro:
-            1
-        case .ultra:
-            2
-        }
-    }
-}
-
-/// Video codec options
-public enum MirageVideoCodec: String, Sendable, CaseIterable, Codable {
-    case hevc = "hvc1"
-    case h264 = "avc1"
-    case proRes4444 = "ap4h"
-
-    public var displayName: String {
-        switch self {
-        case .hevc: "HEVC (H.265)"
-        case .h264: "H.264"
-        case .proRes4444: "ProRes 4444"
-        }
-    }
-}
-
-/// Internal stream bit depth options.
-package enum MirageVideoBitDepth: String, Sendable, CaseIterable, Codable {
-    case eightBit = "8bit"
-    case tenBit = "10bit"
-
-    public var displayName: String {
-        switch self {
-        case .eightBit: "8-bit"
-        case .tenBit: "10-bit"
-        }
-    }
-}
-
-package enum MirageStreamChromaSampling: String, Sendable, Codable, Equatable {
-    case yuv420 = "4:2:0"
-    case yuv422 = "4:2:2"
-    case yuv444 = "4:4:4"
-}
-
-package enum MirageEncoderProfileCandidate: String, Sendable, Codable {
-    case hevcMain
-    case hevcMain10
-    case hevcMain42210
-}
-
-package struct MirageColorDepthDescriptor: Sendable, Equatable {
-    package let colorDepth: MirageStreamColorDepth
-    package let bitDepth: MirageVideoBitDepth
-    package let colorSpace: MirageColorSpace
-    package let chromaSampling: MirageStreamChromaSampling
-    package let capturePixelFormats: [MiragePixelFormat]
-    package let encoderProfileCandidates: [MirageEncoderProfileCandidate]
-    package let decoderPreferredPixelFormats: [MiragePixelFormat]
-
-    package var primaryPixelFormat: MiragePixelFormat {
-        capturePixelFormats[0]
-    }
-}
-
-/// Color space options
-package enum MirageColorSpace: String, Sendable, CaseIterable, Codable {
-    case sRGB
-    case displayP3 = "P3"
-
-    public var displayName: String {
-        switch self {
-        case .sRGB: "sRGB"
-        case .displayP3: "Display P3"
-        }
-    }
-}
-
-/// Pixel format for stream capture and encoding.
-package enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
-    case p010
-    case bgr10a2
-    case bgra8
-    case nv12
-    case xf44
-    case ayuv16
-
-    public var displayName: String {
-        switch self {
-        case .p010: "10-bit (P010)"
-        case .bgr10a2: "10-bit (ARGB2101010)"
-        case .bgra8: "8-bit (BGRA)"
-        case .nv12: "8-bit (NV12)"
-        case .xf44: "10-bit (xf44)"
-        case .ayuv16: "16-bit (4444 YpCbCrA)"
-        }
-    }
-}
-
-// MARK: - Audio Configuration
-
-/// Audio channel layout for streamed host audio.
-public enum MirageAudioChannelLayout: String, Sendable, CaseIterable, Codable {
-    case mono
-    case stereo
-    case surround51
-
-    public var channelCount: Int {
-        switch self {
-        case .mono: 1
-        case .stereo: 2
-        case .surround51: 6
-        }
-    }
-
-    public var displayName: String {
-        switch self {
-        case .mono: "Mono"
-        case .stereo: "Stereo"
-        case .surround51: "Surround (5.1)"
-        }
-    }
-}
-
-/// Audio quality mode for host audio streaming.
-public enum MirageAudioQuality: String, Sendable, CaseIterable, Codable {
-    case low
-    case high
-    case lossless
-
-    public var displayName: String {
-        switch self {
-        case .low: "Low"
-        case .high: "High"
-        case .lossless: "Lossless"
-        }
-    }
-}
-
-/// MetalFX upscaling mode.
-public enum MirageUpscalingMode: String, Sendable, CaseIterable, Codable {
-    case off
-    case spatial
-
-    public var displayName: String {
-        switch self {
-        case .off: "Off"
-        case .spatial: "Spatial"
-        }
-    }
-}
-
-/// Wire codec used for audio packets.
-public enum MirageAudioCodec: UInt8, Sendable, Codable {
-    case aacLC = 1
-    case pcm16LE = 2
-}
-
-/// Client-selected audio streaming configuration.
-public struct MirageAudioConfiguration: Sendable, Codable, Equatable {
-    /// Whether host audio streaming is enabled.
-    public var enabled: Bool
-    /// Requested channel layout.
-    public var channelLayout: MirageAudioChannelLayout
-    /// Requested quality mode.
-    public var quality: MirageAudioQuality
-
-    public init(
-        enabled: Bool = true,
-        channelLayout: MirageAudioChannelLayout = .stereo,
-        quality: MirageAudioQuality = .high
-    ) {
-        self.enabled = enabled
-        self.channelLayout = channelLayout
-        self.quality = quality
-    }
-
-    public static let `default` = MirageAudioConfiguration()
-
-    /// Resolves host-audio policy for a desktop stream mode.
-    /// Secondary display streams are video-only because host audio belongs to
-    /// unified desktop and app/window streaming, not the synthetic display.
-    public func resolvedForDesktopStreamMode(_ mode: MirageDesktopStreamMode) -> MirageAudioConfiguration {
-        guard mode == .secondary, enabled else { return self }
-        var configuration = self
-        configuration.enabled = false
-        return configuration
-    }
-}
-
-// MARK: - Latency Mode
-
-/// Latency preference for stream buffering behavior.
-public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
-    case lowestLatency
-    case smoothest
-
-    public var displayName: String {
-        switch self {
-        case .lowestLatency: "Lowest Latency"
-        case .smoothest: "Smoothest"
-        }
-    }
-
-    public var detailDescription: String {
-        switch self {
-        case .smoothest:
-            "Targets 60Hz continuously, prioritizing visual cadence over interaction latency with deeper buffering and frame hold/repeat when needed."
-        case .lowestLatency:
-            "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
-        }
     }
 }

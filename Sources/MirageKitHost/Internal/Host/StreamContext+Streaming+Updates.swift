@@ -14,37 +14,6 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
-    enum EncoderSettingsUpdateMode: Equatable {
-        case noChange
-        case bitrateOnly
-        case fullReconfiguration
-    }
-
-    static func encoderSettingsUpdateMode(
-        current: MirageEncoderConfiguration,
-        updated: MirageEncoderConfiguration
-    )
-    -> EncoderSettingsUpdateMode {
-        let colorDepthChanged = updated.colorDepth != current.colorDepth
-        let bitrateChanged = updated.bitrate != current.bitrate
-        let frameRateChanged = updated.targetFrameRate != current.targetFrameRate
-
-        guard colorDepthChanged || bitrateChanged || frameRateChanged else {
-            return .noChange
-        }
-        if bitrateChanged, !colorDepthChanged, !frameRateChanged {
-            return .bitrateOnly
-        }
-        return .fullReconfiguration
-    }
-
-    static func captureConfigurationAfterEncoderResolution(
-        requested: MirageEncoderConfiguration,
-        resolvedPixelFormat: MiragePixelFormat
-    ) -> MirageEncoderConfiguration {
-        requested.withInternalOverrides(pixelFormat: resolvedPixelFormat)
-    }
-
     func updateEncoderSettings(
         colorDepth: MirageStreamColorDepth?,
         bitrate: Int?,
@@ -67,20 +36,20 @@ extension StreamContext {
             updatedConfig.bitrate = bitrateAdaptationCeiling
         }
 
-        let updateMode = Self.encoderSettingsUpdateMode(
-            current: encoderConfig,
-            updated: updatedConfig
-        )
-        guard updateMode != .noChange else { return }
+        let colorDepthChanged = updatedConfig.colorDepth != encoderConfig.colorDepth
+        let bitrateChanged = updatedConfig.bitrate != encoderConfig.bitrate
+        let frameRateChanged = updatedConfig.targetFrameRate != encoderConfig.targetFrameRate
+        guard colorDepthChanged || bitrateChanged || frameRateChanged else { return }
+
         let updatedRequestedTargetBitrate: Int? = if updateRequestedTargetBitrate,
-            bitrate != nil,
-            let updatedBitrate = updatedConfig.bitrate {
+                                                     bitrate != nil,
+                                                     let updatedBitrate = updatedConfig.bitrate {
             min(updatedBitrate, bitrateAdaptationCeiling ?? updatedBitrate)
         } else {
             requestedTargetBitrate
         }
 
-        if updateMode == .bitrateOnly {
+        if bitrateChanged, !colorDepthChanged, !frameRateChanged {
             encoderConfig = updatedConfig
             requestedTargetBitrate = updatedRequestedTargetBitrate
             await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
@@ -112,12 +81,9 @@ extension StreamContext {
         await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
         if let encoder {
             try await encoder.updateConfiguration(encoderConfig)
-            let resolvedPixelFormat = await encoder.getActivePixelFormat()
+            let resolvedPixelFormat = await encoder.activePixelFormat
             activePixelFormat = resolvedPixelFormat
-            encoderConfig = Self.captureConfigurationAfterEncoderResolution(
-                requested: encoderConfig,
-                resolvedPixelFormat: resolvedPixelFormat
-            )
+            encoderConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         }
         if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
         updateQueueLimits()
@@ -152,7 +118,6 @@ extension StreamContext {
         let desiredCaptureRate = resolvedCaptureFrameRate(for: clamped)
         if desiredCaptureRate != captureFrameRate { try await captureEngine.updateFrameRate(desiredCaptureRate) }
         currentFrameRate = clamped
-        realtimeMediaSession.updateTargetFrameRate(clamped)
         encoderConfig = encoderConfig.withTargetFrameRate(clamped)
         await refreshCaptureCadence()
         await encoder?.updateFrameRate(clamped)
@@ -239,8 +204,8 @@ extension StreamContext {
             requestedScale: requestedStreamScale,
             logLabel: nil
         )
-        let candidateScaledWidth = StreamContext.alignedEvenPixel(requestedBaseSize.width * candidateScale)
-        let candidateScaledHeight = StreamContext.alignedEvenPixel(requestedBaseSize.height * candidateScale)
+        let candidateScaledWidth = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * candidateScale)
+        let candidateScaledHeight = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * candidateScale)
         let candidateOutputSize = CGSize(width: CGFloat(candidateScaledWidth), height: CGFloat(candidateScaledHeight))
 
         if requestedBaseSize == baseCaptureSize,
@@ -265,8 +230,8 @@ extension StreamContext {
             requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
-        let scaledWidth = StreamContext.alignedEvenPixel(requestedBaseSize.width * resolvedScaleForUpdate)
-        let scaledHeight = StreamContext.alignedEvenPixel(requestedBaseSize.height * resolvedScaleForUpdate)
+        let scaledWidth = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.width * resolvedScaleForUpdate)
+        let scaledHeight = MirageStreamGeometry.alignedEncodedDimension(requestedBaseSize.height * resolvedScaleForUpdate)
         let outputSize = CGSize(width: CGFloat(scaledWidth), height: CGFloat(scaledHeight))
 
         baseCaptureSize = requestedBaseSize
@@ -304,11 +269,7 @@ extension StreamContext {
         }
     }
 
-    func updateStreamScale(
-        _ newScale: CGFloat,
-        forceRecoveryKeyframe: Bool = true
-    )
-    async throws {
+    func updateStreamScale(_ newScale: CGFloat) async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
         let rollbackSnapshot = makeResizeRollbackSnapshot()
         let previousScale = streamScale
@@ -349,7 +310,6 @@ extension StreamContext {
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "stream scale update")
         resetPipelineStateForReconfiguration(reason: "stream scale update")
-        suppressEncodedNonKeyframesUntilKeyframe = true
 
         baseCaptureSize = derivedBaseSize
 
@@ -392,9 +352,7 @@ extension StreamContext {
             updateQueueLimits()
 
             await applyDerivedQuality(for: outputSize, logLabel: "Stream scale update")
-            if forceRecoveryKeyframe {
-                await encoder?.forceKeyframe()
-            }
+            await encoder?.forceKeyframe()
             MirageLogger
                 .stream(
                     "Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))"
@@ -407,100 +365,6 @@ extension StreamContext {
             }
             throw error
         }
-    }
-
-    func hardResetDesktopDisplayCapture(
-        displayWrapper: SCDisplayWrapper,
-        resolution: CGSize
-    )
-    async throws {
-        guard isRunning else { return }
-        guard resolution.width > 0, resolution.height > 0 else { return }
-
-        isResizing = true
-        defer { isResizing = false }
-
-        currentContentRect = .zero
-        dimensionToken &+= 1
-        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
-        advanceEpoch(reason: "desktop resize reset")
-        await packetSender?.bumpGeneration(reason: "desktop resize reset")
-        await packetSender?.resetQueue(reason: "desktop resize reset")
-        resetPipelineStateForReconfiguration(reason: "desktop resize reset")
-
-        baseCaptureSize = resolution
-        streamScale = resolvedStreamScale(
-            for: baseCaptureSize,
-            requestedScale: requestedStreamScale,
-            logLabel: "Resolution cap"
-        )
-        let outputSize = scaledOutputSize(for: baseCaptureSize)
-        let scaledWidth = Int(outputSize.width)
-        let scaledHeight = Int(outputSize.height)
-        guard scaledWidth > 0, scaledHeight > 0 else { return }
-
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-        captureMode = .display
-        updateQueueLimits()
-
-        await captureEngine?.stopCapture()
-
-        guard let encoder else { throw MirageError.protocolError("Desktop resize reset missing encoder") }
-        try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
-        try await encoder.reset()
-        let resolvedPixelFormat = await encoder.getActivePixelFormat()
-        activePixelFormat = resolvedPixelFormat
-
-        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
-        let restartCaptureEngine = WindowCaptureEngine(
-            configuration: captureConfig,
-            capturePressureProfile: capturePressureProfile,
-            latencyMode: latencyMode,
-            captureFrameRate: captureFrameRate,
-            usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(displayWrapper.display.displayID)
-        )
-        captureEngine = restartCaptureEngine
-        if let captureStallStageHandler {
-            await restartCaptureEngine.setCaptureStallStageHandler(captureStallStageHandler)
-        }
-        let frameInbox = self.frameInbox
-        await restartCaptureEngine.setAdmissionDropper { [weak self] in
-            let snapshot = frameInbox.pendingSnapshot()
-            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
-            let backpressure = self?.backpressureActiveSnapshot ?? false
-            guard pendingPressure || backpressure else { return false }
-
-            if frameInbox.scheduleIfNeeded() {
-                Task(priority: .userInitiated) { await self?.processPendingFrames() }
-            }
-            return true
-        }
-
-        try await restartCaptureEngine.startDisplayCapture(
-            display: displayWrapper.display,
-            resolution: outputSize,
-            showsCursor: captureShowsCursor,
-            onFrame: { [weak self] frame in
-                self?.enqueueCapturedFrame(frame)
-            },
-            onAudio: onCapturedAudioBuffer,
-            audioChannelCount: requestedAudioChannelCount
-        )
-        await refreshCaptureCadence()
-        await applyDerivedQuality(for: outputSize, logLabel: "Desktop resize reset")
-        let keyframeStrategy = desktopResizeRecoveryKeyframeStrategy(
-            encodingSuspendedForResize: encodingSuspendedForResize
-        )
-        if keyframeStrategy == .scheduleDuringReset {
-            await scheduleCoalescedRecoveryKeyframe(
-                reason: "Desktop resize reset",
-                ignoreExistingInFlight: true
-            )
-        } else {
-            MirageLogger.stream("Desktop resize reset deferred recovery keyframe until encoding resume")
-        }
-        MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")
     }
 
     func updateCaptureDisplay(_ displayWrapper: SCDisplayWrapper, resolution: CGSize) async throws {
@@ -554,189 +418,6 @@ extension StreamContext {
         } catch {
             MirageLogger.error(.stream, error: error, message: "Failed to update display capture exclusions: ")
         }
-    }
-
-    func pauseForClientBackground() async {
-        guard shouldEncodeFrames else { return }
-        shouldEncodeFrames = false
-        frameInbox.clear()
-        resetStreamingStatsBaseline()
-        await packetSender?.resetQueue(reason: "client background pause")
-        MirageLogger.stream("Stream \(streamID) paused for client background")
-    }
-
-    func resumeAfterClientForeground() async {
-        guard !shouldEncodeFrames else { return }
-        shouldEncodeFrames = true
-        resetStreamingStatsBaseline()
-        lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
-        if let encoder {
-            await encoder.resetFrameNumber()
-            await encoder.forceKeyframe()
-        }
-        MirageLogger.stream("Stream \(streamID) resumed after client foreground")
-    }
-
-    func suspendEncodingForDesktopResize() async {
-        guard !encodingSuspendedForResize else { return }
-        encodingSuspendedForResize = true
-        shouldEncodeFrames = false
-        cachedDesktopResizeFrame = nil
-        frameInbox.clear()
-        resetPipelineStateForReconfiguration(reason: "desktop resize preflight pause")
-        await packetSender?.resetQueue(reason: "desktop resize preflight pause")
-        MirageLogger.stream("Desktop resize preflight: encoding suspended")
-    }
-
-    func resumeEncodingAfterDesktopResize() async {
-        guard encodingSuspendedForResize else { return }
-        encodingSuspendedForResize = false
-        lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
-        let cachedDesktopResizeFrame = self.cachedDesktopResizeFrame
-        self.cachedDesktopResizeFrame = nil
-        var requiresExplicitDrainKick = frameInbox.hasPending()
-        if let cachedDesktopResizeFrame, !frameInbox.hasPending() {
-            let injectedFrame = CapturedFrame(
-                pixelBuffer: cachedDesktopResizeFrame.pixelBuffer,
-                presentationTime: cachedDesktopResizeFrame.presentationTime,
-                duration: cachedDesktopResizeFrame.duration,
-                captureTime: cachedDesktopResizeFrame.captureTime,
-                info: resolvedStartupFrameInjectionInfo(cachedDesktopResizeFrame.info)
-            )
-            _ = frameInbox.enqueue(injectedFrame)
-            requiresExplicitDrainKick = true
-            MirageLogger.stream(
-                "Queued cached post-resize frame for stream \(streamID) idle=\(cachedDesktopResizeFrame.info.isIdleFrame)"
-            )
-        }
-        shouldEncodeFrames = true
-        await scheduleCoalescedRecoveryKeyframe(
-            reason: "Desktop resize resume",
-            resetFrameNumber: true,
-            ignoreExistingInFlight: true
-        )
-        MirageLogger.stream("Desktop resize completion: encoding resumed")
-        if requiresExplicitDrainKick {
-            Task(priority: .userInitiated) { await self.processPendingFrames() }
-        } else {
-            scheduleProcessingIfNeeded()
-        }
-    }
-
-    func allowEncodingAfterRegistration() async {
-        guard !shouldEncodeFrames else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
-        if !startupRegistrationLogged {
-            startupRegistrationLogged = true
-            logStartupEvent("UDP registration confirmed")
-        }
-        enableStartupTransportProtection(now: now)
-
-        // Configure the encoder for a keyframe BEFORE allowing frames through.
-        // The await calls below suspend this actor, which would let queued
-        // processPendingFrames() tasks interleave and encode a P-frame before
-        // the encoder has frameNumber == 0 / forceNextKeyframe set.
-        await scheduleCoalescedStartupKeyframe(
-            reason: "Startup registration confirmed",
-            resetFrameNumber: true
-        )
-
-        let releaseDisposition = startupFrameReleaseDisposition(
-            hasCachedFrame: cachedStartupFrame != nil,
-            hasQueuedFrame: frameInbox.hasPending()
-        )
-        let cachedStartupFrame = self.cachedStartupFrame
-        self.cachedStartupFrame = nil
-        startupFrameCachingEnabled = false
-        var requiresExplicitDrainKick = frameInbox.hasPending()
-        switch releaseDisposition {
-        case .injectCachedFrame:
-            if let cachedStartupFrame {
-                let injectedFrame = CapturedFrame(
-                    pixelBuffer: cachedStartupFrame.pixelBuffer,
-                    presentationTime: cachedStartupFrame.presentationTime,
-                    duration: cachedStartupFrame.duration,
-                    captureTime: cachedStartupFrame.captureTime,
-                    info: resolvedStartupFrameInjectionInfo(cachedStartupFrame.info)
-                )
-                _ = frameInbox.enqueue(injectedFrame)
-                requiresExplicitDrainKick = true
-                MirageLogger.stream(
-                    "Queued cached pre-registration frame for startup stream \(streamID) idle=\(cachedStartupFrame.info.isIdleFrame)"
-                )
-            }
-        case .none:
-            break
-        }
-
-        shouldEncodeFrames = true
-        MirageLogger.signpostEvent(.stream, "Startup.EncodingEnabled", "stream=\(streamID)")
-        MirageLogger.stream("UDP registration confirmed, encoding resumed")
-        if requiresExplicitDrainKick {
-            // A frame enqueued while startup-gated marks the inbox as scheduled even
-            // though no drain task is running yet. Kick the first drain explicitly.
-            Task(priority: .userInitiated) { await self.processPendingFrames() }
-        } else {
-            scheduleProcessingIfNeeded()
-        }
-    }
-
-    func stop() async {
-        guard isRunning else { return }
-        isRunning = false
-        disableStartupTransportProtection()
-
-        await stopAllAuxiliaryCaptures()
-
-        await captureEngine?.stopCapture()
-        captureEngine = nil
-        frameInbox.clear()
-        cachedStartupFrame = nil
-        cachedDesktopResizeFrame = nil
-        startupFrameCachingEnabled = false
-
-        if useVirtualDisplay {
-            let expectedOwner: WindowSpaceManager.WindowBindingOwner?
-            if windowID != 0 {
-                let cachedDisplayID = virtualDisplayContext?.displayID ?? 0
-                let cachedGeneration = virtualDisplayContext?.generation ?? 0
-                expectedOwner = WindowSpaceManager.WindowBindingOwner(
-                    streamID: streamID,
-                    windowID: windowID,
-                    displayID: cachedDisplayID,
-                    generation: cachedGeneration
-                )
-            } else {
-                expectedOwner = nil
-            }
-            await WindowSpaceManager.shared.restoreWindowSilently(
-                windowID,
-                expectedOwner: expectedOwner
-            )
-            await SharedVirtualDisplayManager.shared.releaseAppStreamDisplay()
-            virtualDisplayContext = nil
-            virtualDisplayVisibleBounds = .zero
-            virtualDisplayCaptureSourceRect = .zero
-            virtualDisplayCapturePresentationRect = .zero
-            virtualDisplayVisiblePixelResolution = .zero
-        }
-        useVirtualDisplay = false
-
-        await packetSender?.stop()
-        packetSender = nil
-
-        await encoder?.stopEncoding()
-
-        encoder = nil
-        trafficLightMaskGeometryCache = nil
-        isAppStream = false
-        applicationProcessID = 0
-
-        MirageLogger.stream("Stopped stream \(streamID)")
     }
 }
 

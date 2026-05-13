@@ -20,6 +20,7 @@ import UIKit
 /// Includes periodic polling to catch screen changes that may not trigger
 /// standard UIKit callbacks (e.g., Stage Manager transitions).
 public struct WindowSceneReader: UIViewRepresentable {
+    /// Callback invoked with the current window scene whenever the backing view observes a change.
     public var onUpdate: (UIWindowScene?) -> Void
 
     /// Polling interval in seconds (default 2 seconds).
@@ -124,19 +125,20 @@ public struct WindowSceneReader: UIViewRepresentable {
 }
 
 #if os(iOS)
+
 // MARK: - Screen Reader View Modifier
 
-/// A view modifier that provides the current screen to child views.
-public struct ScreenReaderModifier: ViewModifier {
+/// Publishes the hosting screen through the SwiftUI environment.
+private struct ScreenReaderModifier: ViewModifier {
     @State private var currentScreen: UIScreen?
 
     let onScreenChange: ((UIScreen) -> Void)?
 
-    public init(onScreenChange: ((UIScreen) -> Void)? = nil) {
+    init(onScreenChange: ((UIScreen) -> Void)? = nil) {
         self.onScreenChange = onScreenChange
     }
 
-    public func body(content: Content) -> some View {
+    func body(content: Content) -> some View {
         content
             .background(
                 WindowSceneReader { windowScene in

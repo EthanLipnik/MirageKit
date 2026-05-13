@@ -11,6 +11,10 @@ import zlib
 // MARK: - ZIP Archive Creation
 
 enum MirageLogArchiver {
+    /// Writes a ZIP archive containing the current log and optional diagnostics summary.
+    ///
+    /// The log entry is trimmed before archiving when its compressed ZIP entry would
+    /// exceed `maximumCompressedBytes`.
     static func exportArchive(
         from logData: Data,
         filename: String,
@@ -41,6 +45,7 @@ enum MirageLogArchiver {
 
     // MARK: - Log Fitting
 
+    /// Returns log data that fits inside a compressed single-entry ZIP archive.
     static func fittedLogData(
         from logData: Data,
         filename: String,
@@ -87,6 +92,7 @@ enum MirageLogArchiver {
 
     // MARK: - Truncation
 
+    /// Keeps the beginning and end of a log while replacing removed middle lines with a marker.
     static func truncatedLogData(
         lines: [String],
         keeping keptLineCount: Int,
@@ -121,6 +127,7 @@ enum MirageLogArchiver {
         return encodedLogData(from: preservedLines)
     }
 
+    /// Human-readable marker inserted when support log export trims the middle of a log.
     static func truncationMarker(
         removedLineCount: Int,
         maximumCompressedBytes: Int,
@@ -135,6 +142,7 @@ enum MirageLogArchiver {
         return "... \(truncationLabel) support export was reduced to fit within \(sizeLimit) compressed ..."
     }
 
+    /// Smallest fallback log body used when no head/tail split can fit the compressed limit.
     static func minimalLogData(maximumCompressedBytes: Int, truncationLabel: String) -> Data {
         let message = truncationMarker(
             removedLineCount: 0,
@@ -144,6 +152,7 @@ enum MirageLogArchiver {
         return Data("\(message)\n".utf8)
     }
 
+    /// Encodes log lines with the trailing newline expected by text editors and log viewers.
     static func encodedLogData(from lines: [String]) -> Data {
         guard !lines.isEmpty else { return Data() }
         return Data((lines.joined(separator: "\n") + "\n").utf8)
@@ -151,10 +160,12 @@ enum MirageLogArchiver {
 
     // MARK: - ZIP Archive
 
+    /// Builds a single-entry ZIP archive for sizing tests and log export.
     static func zipArchiveData(for logData: Data, entryName: String) throws -> Data {
         try zipArchiveData(entries: [(name: entryName, data: logData)])
     }
 
+    /// Builds an in-memory deflated ZIP archive for the supplied entries.
     static func zipArchiveData(entries: [(name: String, data: Data)]) throws -> Data {
         var archiveData = Data()
         var centralDirectoryRecords = Data()
@@ -163,8 +174,8 @@ enum MirageLogArchiver {
             let localHeaderOffset = try checkedZIPSize(archiveData.count)
             let record = try zipLocalFileRecord(for: entry.data, entryName: entry.name)
             archiveData.append(record.localFile)
-            centralDirectoryRecords.append(
-                try zipCentralDirectoryRecord(
+            try centralDirectoryRecords.append(
+                zipCentralDirectoryRecord(
                     for: record,
                     localHeaderOffset: localHeaderOffset
                 )
@@ -174,9 +185,9 @@ enum MirageLogArchiver {
         let centralDirectoryOffset = try checkedZIPSize(archiveData.count)
         archiveData.append(centralDirectoryRecords)
         let centralDirectorySize = try checkedZIPSize(centralDirectoryRecords.count)
-        let entryCount = try checkedZIPEntryCount(entries.count)
+        let entryCount = try checkedZIPUInt16(entries.count)
 
-        archiveData.appendLittleEndian(UInt32(0x06054b50))
+        archiveData.appendLittleEndian(UInt32(0x0605_4B50))
         archiveData.appendLittleEndian(UInt16(0))
         archiveData.appendLittleEndian(UInt16(0))
         archiveData.appendLittleEndian(entryCount)
@@ -204,9 +215,10 @@ enum MirageLogArchiver {
         let entryNameData = Data(entryName.utf8)
         let compressedSize = try checkedZIPSize(compressedData.count)
         let uncompressedSize = try checkedZIPSize(logData.count)
+        let entryNameLength = try checkedZIPUInt16(entryNameData.count)
 
         var localFile = Data()
-        localFile.appendLittleEndian(UInt32(0x04034b50))
+        localFile.appendLittleEndian(UInt32(0x0403_4B50))
         localFile.appendLittleEndian(UInt16(20))
         localFile.appendLittleEndian(UInt16(0))
         localFile.appendLittleEndian(UInt16(8))
@@ -215,7 +227,7 @@ enum MirageLogArchiver {
         localFile.appendLittleEndian(checksum)
         localFile.appendLittleEndian(compressedSize)
         localFile.appendLittleEndian(uncompressedSize)
-        localFile.appendLittleEndian(try checkedZIPNameLength(entryNameData.count))
+        localFile.appendLittleEndian(entryNameLength)
         localFile.appendLittleEndian(UInt16(0))
         localFile.append(entryNameData)
         localFile.append(compressedData)
@@ -235,7 +247,7 @@ enum MirageLogArchiver {
         localHeaderOffset: UInt32
     ) throws -> Data {
         var centralDirectory = Data()
-        centralDirectory.appendLittleEndian(UInt32(0x02014b50))
+        centralDirectory.appendLittleEndian(UInt32(0x0201_4B50))
         centralDirectory.appendLittleEndian(UInt16(20))
         centralDirectory.appendLittleEndian(UInt16(20))
         centralDirectory.appendLittleEndian(UInt16(0))
@@ -245,7 +257,7 @@ enum MirageLogArchiver {
         centralDirectory.appendLittleEndian(record.checksum)
         centralDirectory.appendLittleEndian(record.compressedSize)
         centralDirectory.appendLittleEndian(record.uncompressedSize)
-        centralDirectory.appendLittleEndian(try checkedZIPNameLength(record.entryNameData.count))
+        try centralDirectory.appendLittleEndian(checkedZIPUInt16(record.entryNameData.count))
         centralDirectory.appendLittleEndian(UInt16(0))
         centralDirectory.appendLittleEndian(UInt16(0))
         centralDirectory.appendLittleEndian(UInt16(0))
@@ -339,14 +351,7 @@ enum MirageLogArchiver {
         return UInt32(value)
     }
 
-    private static func checkedZIPNameLength(_ value: Int) throws -> UInt16 {
-        guard value <= Int(UInt16.max) else {
-            throw LogArchiveError.sizeOverflow
-        }
-        return UInt16(value)
-    }
-
-    private static func checkedZIPEntryCount(_ value: Int) throws -> UInt16 {
+    private static func checkedZIPUInt16(_ value: Int) throws -> UInt16 {
         guard value <= Int(UInt16.max) else {
             throw LogArchiveError.sizeOverflow
         }
@@ -365,7 +370,7 @@ enum LogArchiveError: Error {
 // MARK: - Data Helpers
 
 extension Data {
-    mutating func appendLittleEndian<T: FixedWidthInteger>(_ value: T) {
+    mutating func appendLittleEndian(_ value: some FixedWidthInteger) {
         var littleEndianValue = value.littleEndian
         Swift.withUnsafeBytes(of: &littleEndianValue) { buffer in
             append(buffer.bindMemory(to: UInt8.self))

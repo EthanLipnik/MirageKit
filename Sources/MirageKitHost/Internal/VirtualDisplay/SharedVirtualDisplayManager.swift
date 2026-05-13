@@ -62,17 +62,10 @@ actor SharedVirtualDisplayManager {
 
     struct DisplayResolutionUpdateResult: Sendable, Equatable {
         let outcome: DisplayResolutionUpdateOutcome
-        let usedCachedResizeTarget: Bool
         let generationChanged: Bool
     }
 
-    /// Cache key for dedicated-display inset calibration.
-    struct DedicatedInsetCacheKey: Hashable, Sendable {
-        let colorSpace: MirageColorSpace
-        let scaleBucket: Int
-    }
-
-    /// Box for non-Sendable display reference
+    /// Box for non-Sendable display references crossing actor boundaries.
     final class UncheckedSendableBox<T>: @unchecked Sendable {
         let value: T
         init(_ value: T) {
@@ -95,7 +88,6 @@ actor SharedVirtualDisplayManager {
 
     /// Consumer types that can acquire the shared display
     enum DisplayConsumer: Hashable, Sendable {
-        case unlockKeyboard
         case desktopStream
         case appStream
         case benchmark
@@ -115,8 +107,6 @@ actor SharedVirtualDisplayManager {
         case spaceNotFound(CGDirectDisplayID)
         case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
         case scDisplayNotFound(CGDirectDisplayID)
-        case scDisplaySizeMismatch(displayID: CGDirectDisplayID, observed: CGSize, expected: CGSize)
-        case residualMirageDisplaysOnline([CGDirectDisplayID])
 
         var errorDescription: String? {
             switch self {
@@ -134,10 +124,6 @@ actor SharedVirtualDisplayManager {
                 "ScreenCaptureKit did not surface virtual display \(displayID) before the startup deadline"
             case let .scDisplayNotFound(displayID):
                 "SCDisplay not found for virtual display \(displayID)"
-            case let .scDisplaySizeMismatch(displayID, observed, expected):
-                "SCDisplay \(displayID) reported \(Int(observed.width))x\(Int(observed.height)) but Mirage expected \(Int(expected.width))x\(Int(expected.height))"
-            case let .residualMirageDisplaysOnline(displayIDs):
-                "Residual Mirage virtual display(s) still online: \(displayIDs)"
             }
         }
     }
@@ -159,9 +145,6 @@ actor SharedVirtualDisplayManager {
     /// Monotonic display generation incremented when the shared display instance changes.
     var displayGeneration: UInt64 = 0
 
-    /// Cached observed inset pixels keyed by color-space + display scale.
-    var dedicatedInsetsByKey: [DedicatedInsetCacheKey: CGSize] = [:]
-
     /// Display IDs that remained online after explicit invalidation + timeout.
     var orphanedDisplayIDs: Set<CGDirectDisplayID> = []
 
@@ -169,17 +152,6 @@ actor SharedVirtualDisplayManager {
     /// `releaseDisplayForConsumer` to avoid destroying a display that another
     /// task is still creating/recreating across an await boundary.
     var pendingAcquisitionCount: Int = 0
-
-    // MARK: - App Stream Shared Display
-
-    /// Single shared virtual display for all app-stream windows.
-    var appStreamDisplay: ManagedDisplayContext?
-
-    /// Size preset currently backing the app stream display.
-    var appStreamPreset: MirageDisplaySizePreset = .standard
-
-    /// Number of active app streams using the shared display (reference counting).
-    var appStreamConsumerCount: Int = 0
 
     /// Handler invoked when the shared display generation changes while streams are active.
     var generationChangeHandler: (@Sendable (DisplaySnapshot, UInt64) -> Void)?
@@ -195,10 +167,6 @@ actor SharedVirtualDisplayManager {
     static func streamRefreshRate(for requested: Int) -> Int {
         guard requested > 0 else { return preferredStreamRefreshRate }
         return min(120, requested)
-    }
-
-    func resolvedRefreshRate(_ requested: Int) -> Int {
-        Self.streamRefreshRate(for: requested)
     }
 }
 

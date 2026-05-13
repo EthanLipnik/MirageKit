@@ -7,11 +7,11 @@
 //  Menu bar passthrough message handling.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
 extension MirageClientService {
+    /// Decodes a host menu-bar snapshot and publishes it to UI observers.
     func handleMenuBarUpdate(_ message: ControlMessage) {
         do {
             let update = try message.decode(MenuBarUpdateMessage.self)
@@ -29,13 +29,4 @@ extension MirageClientService {
         }
     }
 
-    func handleMenuActionResult(_ message: ControlMessage) {
-        do {
-            let result = try message.decode(MenuActionResultMessage.self)
-            MirageLogger.log(.menuBar, "Menu action result for stream \(result.streamID): \(result.success)")
-            onMenuActionResult?(result.streamID, result.success, result.errorMessage)
-        } catch {
-            MirageLogger.error(.menuBar, error: error, message: "Failed to decode menu action result: ")
-        }
-    }
 }

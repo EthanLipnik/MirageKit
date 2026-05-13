@@ -7,34 +7,36 @@
 //  Queue/lock bridge helpers used by the host hot path.
 //
 
+import Dispatch
 import Foundation
-import Network
 import MirageKit
 
 #if os(macOS)
 
 extension MirageHostService {
-    nonisolated func controlWorker(for clientID: UUID) -> SerialWorker {
-        controlWorkersByClientID.withLock { workers in
-            if let existing = workers[clientID] {
+    /// Returns the serial control queue assigned to a client, creating one on first use.
+    nonisolated func controlQueue(for clientID: UUID) -> DispatchQueue {
+        controlQueuesByClientID.withLock { queues in
+            if let existing = queues[clientID] {
                 return existing
             }
-            let worker = SerialWorker(
+            let queue = DispatchQueue(
                 label: "com.mirage.host.control.\(clientID.uuidString.lowercased())",
                 qos: .userInitiated
             )
-            workers[clientID] = worker
-            return worker
+            queues[clientID] = queue
+            return queue
         }
     }
 
+    /// Schedules client-scoped control work so one client's sends remain ordered.
     nonisolated func dispatchControlWork(
         clientID: UUID,
         completion: (@Sendable () -> Void)? = nil,
         _ work: @escaping @MainActor @Sendable () async -> Void
     ) {
-        let worker = controlWorker(for: clientID)
-        worker.submit {
+        let queue = controlQueue(for: clientID)
+        queue.async {
             Task(priority: .userInitiated) { @MainActor in
                 await work()
                 completion?()
@@ -42,11 +44,12 @@ extension MirageHostService {
         }
     }
 
+    /// Schedules main-actor work on the shared host transport worker.
     nonisolated func dispatchMainWork(
         completion: (@Sendable () -> Void)? = nil,
         _ work: @escaping @MainActor @Sendable () async -> Void
     ) {
-        transportWorker.submit {
+        transportQueue.async {
             Task(priority: .userInitiated) { @MainActor in
                 await work()
                 completion?()
@@ -54,6 +57,7 @@ extension MirageHostService {
         }
     }
 
+    /// Stores the receive loop that owns a bootstrapped control session.
     nonisolated func storeReceiveLoop(
         _ loop: HostReceiveLoop,
         sessionID: UUID
@@ -63,12 +67,14 @@ extension MirageHostService {
         }
     }
 
+    /// Removes a receive loop without stopping it.
     nonisolated func removeReceiveLoop(sessionID: UUID) {
         receiveLoopsBySessionID.withLock { loops in
-            loops.removeValue(forKey: sessionID)
+            loops[sessionID] = nil
         }
     }
 
+    /// Stops and removes the receive loop for a control session.
     nonisolated func stopReceiveLoop(sessionID: UUID) {
         let loop = receiveLoopsBySessionID.withLock { loops in
             loops.removeValue(forKey: sessionID)
@@ -76,13 +82,7 @@ extension MirageHostService {
         loop?.stop()
     }
 
-    @MainActor
-    func removeControlWorker(clientID: UUID) {
-        controlWorkersByClientID.withLock { workers in
-            workers.removeValue(forKey: clientID)
-        }
-    }
-
+    /// Registers pointer coalescing state for a stream and forwards capture-stall diagnostics.
     @MainActor
     func registerStallWindowPointerRoute(streamID: StreamID, context: StreamContext) async {
         streamRegistry.registerPointerCoalescingRoute(streamID: streamID)
@@ -94,18 +94,6 @@ extension MirageHostService {
         }
     }
 
-    @MainActor
-    func unregisterStallWindowPointerRoute(streamID: StreamID) {
-        streamRegistry.unregisterPointerCoalescingRoute(streamID: streamID)
-    }
-
-    nonisolated func sendAudioPacketForClient(
-        _ clientID: UUID,
-        data: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void = { _ in }
-    ) {
-        transportRegistry.sendAudio(clientID: clientID, data: data, onComplete: onComplete)
-    }
 }
 
 #endif

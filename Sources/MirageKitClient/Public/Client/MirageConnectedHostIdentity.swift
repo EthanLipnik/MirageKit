@@ -21,6 +21,7 @@ public struct MirageConnectedHostIdentity: Equatable, Sendable {
     /// Device identifier advertised by the provisional discovery peer, if present.
     public let advertisedHostID: UUID?
 
+    /// Creates canonical identity details for a connected host.
     public init(
         acceptedHostID: UUID,
         identityKeyID: String,
@@ -33,6 +34,7 @@ public struct MirageConnectedHostIdentity: Equatable, Sendable {
         self.advertisedHostID = advertisedHostID
     }
 
+    /// Host UUIDs that may identify this same authenticated host across discovery and bootstrap.
     public var uuidAliases: Set<UUID> {
         var aliases: Set<UUID> = [acceptedHostID]
         if let provisionalHostID {

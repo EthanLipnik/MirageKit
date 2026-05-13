@@ -5,9 +5,11 @@
 //  Created by Ethan Lipnik on 4/13/26.
 //
 
+#if os(iOS) || os(visionOS)
 import AVFAudio
 import Foundation
 
+/// Smooths microphone sample buffers into throttled input levels for dictation UI feedback.
 final class MirageDictationInputLevelMeter: @unchecked Sendable {
     private struct State {
         var smoothedLevel: Float = 0
@@ -33,10 +35,12 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         self.releaseSmoothingFactor = releaseSmoothingFactor
     }
 
+    /// Processes a PCM buffer and returns a smoothed level when the emission interval has elapsed.
     func process(_ buffer: AVAudioPCMBuffer, at time: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Float? {
         process(normalizedLevel: Self.normalizedLevel(for: buffer, floorDecibels: floorDecibels), at: time)
     }
 
+    /// Applies attack/release smoothing to an already-normalized level.
     func process(normalizedLevel: Float, at time: CFAbsoluteTime) -> Float? {
         let clampedLevel = min(max(normalizedLevel, 0), 1)
 
@@ -59,12 +63,14 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         return state.smoothedLevel
     }
 
+    /// Clears all smoothing state for a new input-level session.
     func reset() {
         lock.lock()
         state = State()
         lock.unlock()
     }
 
+    /// Converts a PCM buffer into a normalized linear level in the range `0...1`.
     static func normalizedLevel(
         for buffer: AVAudioPCMBuffer,
         floorDecibels: Float = -50
@@ -128,8 +134,8 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         return totalSquares / Double(totalSamples)
     }
 
-    private static func accumulateMeanSquare<Sample: BinaryInteger>(
-        from pointer: UnsafePointer<Sample>,
+    private static func accumulateMeanSquare(
+        from pointer: UnsafePointer<some BinaryInteger>,
         sampleCount: Int,
         scale: Double,
         totalSquares: inout Double,
@@ -145,8 +151,8 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         totalSamples += sampleCount
     }
 
-    private static func accumulateMeanSquare<Sample: BinaryFloatingPoint>(
-        from pointer: UnsafePointer<Sample>,
+    private static func accumulateMeanSquare(
+        from pointer: UnsafePointer<some BinaryFloatingPoint>,
         sampleCount: Int,
         scale: Double,
         totalSquares: inout Double,
@@ -162,3 +168,4 @@ final class MirageDictationInputLevelMeter: @unchecked Sendable {
         totalSamples += sampleCount
     }
 }
+#endif

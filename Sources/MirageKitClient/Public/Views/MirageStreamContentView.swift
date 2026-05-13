@@ -21,71 +21,115 @@ import UIKit
 /// to coordinate focus, resize events, and input forwarding.
 @MainActor
 public struct MirageStreamContentView: View {
+    /// UserDefaults key for enabling stream navigation gestures.
+    public static let navigationGesturesDefaultsKey = "navigationGesturesEnabled"
+
+    /// UserDefaults key for whether local keyboard appearance resizes stream content.
+    public static let keyboardAvoidanceDefaultsKey = "keyboardAvoidanceEnabled"
+
+    /// Maximum wait for host acknowledgement after app-window resize dispatch.
+    static let appResizeAckTimeout: Duration = .seconds(3)
+
+    #if os(iOS) || os(visionOS)
+    /// Foreground transition debounce before dispatching local resize updates.
+    static let foregroundResizeDebounce: Duration = .milliseconds(1250)
+    #endif
+
+    /// Stream session rendered by this content view.
     public let session: MirageStreamSessionState
+    /// Store that owns decoded frames, cursor state, focus, and resize state for active streams.
     public let sessionStore: MirageClientSessionStore
+    /// Client service used to send input, resize, dictation, and action messages.
     public let clientService: MirageClientService
+    /// Whether the session represents desktop streaming rather than app/window streaming.
     public let isDesktopStream: Bool
+    /// Desktop stream mode when `isDesktopStream` is true.
     public let desktopStreamMode: MirageDesktopStreamMode
+    /// Cursor presentation policy for desktop streams.
     public let desktopCursorPresentation: MirageDesktopCursorPresentation
+    /// Handler invoked when the user requests desktop-stream exit.
     public let onExitDesktopStream: (() -> Void)?
+    /// Handler invoked when the dictation shortcut is triggered.
     public let onToggleDictationShortcut: (() -> Void)?
+    /// Shortcut that exits a desktop stream.
     public let desktopExitShortcut: MirageClientShortcut
+    /// Shortcut that remaps Escape for the active stream.
     public let escapeRemapShortcut: MirageClientShortcut
+    /// Shortcut that toggles dictation.
     public let dictationShortcut: MirageClientShortcut
+    /// Unified actions exposed through shortcuts, gestures, or stream controls.
     public let actions: [MirageAction]
+    /// Handler invoked when a unified action is triggered.
     public let onActionTriggered: ((MirageAction) -> Void)?
-    public let onInputActivity: ((MirageInputEvent) -> Void)?
-    public let onDirectTouchActivity: (() -> Void)?
+    /// Handler invoked when hardware keyboard availability changes.
     public let onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
+    /// Handler invoked when software keyboard visibility changes.
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
+    /// Direct-touch translation mode for touch-capable clients.
     public let directTouchInputMode: MirageDirectTouchInputMode
+    /// Whether the software keyboard should currently be visible.
     public let softwareKeyboardVisible: Bool
+    /// Apple Pencil hardware gesture mapping.
     public let pencilGestureConfiguration: MiragePencilGestureConfiguration
+    /// Monotonic request identifier used to trigger dictation toggles.
     public let dictationToggleRequestID: UInt64
+    /// Handler invoked when dictation starts or stops.
     public let onDictationStateChanged: ((Bool) -> Void)?
+    /// Handler invoked with user-facing dictation errors.
     public let onDictationError: ((String) -> Void)?
-    public let onDictationInputLevelChanged: ((Float) -> Void)?
+    /// Handler invoked when the platform resolves pointer-lock state.
     public let onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
+    /// Dictation behavior for live versus finalized output.
     public let dictationMode: MirageDictationMode
+    /// Dictation locale selection.
     public let dictationLocalePreference: MirageDictationLocalePreference
+    /// Optional override for desktop cursor lock enablement.
     public let desktopCursorLockEnabledOverride: Bool?
+    /// Whether a temporary cursor unlock can be recaptured.
     public let desktopCursorLockCanRecapture: Bool
+    /// Handler invoked when cursor lock should escape temporarily.
     public let onCursorLockEscapeRequested: (() -> Void)?
+    /// Handler invoked when cursor lock should be recaptured.
     public let onCursorLockRecaptureRequested: (() -> Void)?
+    /// Whether app streams should use the host window resolution directly.
     public let useHostResolution: Bool
+    /// Whether macOS system shortcuts should be forwarded through Input Monitoring.
     public let macSystemShortcutForwardingEnabled: Bool
+    /// Whether keyboard occlusion should shrink local stream content on touch platforms.
     public let keyboardAvoidanceEnabled: Bool
-    public let inputCaptureEnabled: Bool
+    /// Optional cap for drawable pixel dimensions.
     public let maxDrawableSize: CGSize?
+    /// Handler invoked before the native stream window closes.
     public let onWindowWillClose: (() -> Void)?
+    /// Whether the embedded platform renderer should extend through safe areas.
     public let ignoresSafeArea: Bool
-    private let appResizeAckTimeout: Duration = .seconds(3)
 
     /// Resize holdoff task used during foreground transitions (iOS).
-    @State private var resizeHoldoffTask: Task<Void, Never>?
+    @State var resizeHoldoffTask: Task<Void, Never>?
 
     /// Foreground/background gating for local resize dispatch.
-    @State private var resizeLifecycleState: DesktopResizeLifecycleState = .active
+    @State var resizeLifecycleState: DesktopResizeLifecycleState = .active
 
     /// Whether the client is currently waiting for host to complete resize.
-    @State private var isResizing: Bool = false
+    @State var isResizing: Bool = false
     #if os(iOS) || os(visionOS)
-    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.scenePhase) var scenePhase
     #endif
-    @State private var displayResolutionTask: Task<Void, Never>?
-    @State private var pendingDisplayResolutionDispatchTarget: CGSize = .zero
+    @State var displayResolutionTask: Task<Void, Never>?
+    @State var pendingDisplayResolutionDispatchTarget: CGSize = .zero
     /// Tracks the last requested client display resolution, not the host's encoded output size.
-    @State private var lastSentDisplayResolution: CGSize = .zero
-    @State private var streamScaleTask: Task<Void, Never>?
-    @State private var lastSentEncodedPixelSize: CGSize = .zero
-    @State private var awaitingAppResizeAck: Bool = false
-    @State private var appResizeBaselineAcknowledgement: MirageClientService.StreamStartAcknowledgement?
-    @State private var appResizeAckTimeoutTask: Task<Void, Never>?
-    @State private var latestContainerDisplaySize: CGSize = .zero
-    @State private var latestDrawableViewSize: CGSize = .zero
-    @State private var localKeyboardOcclusionActive = false
-    @State private var suppressNextOrderedPasteKeyUp = false
-    private let foregroundResizeDebounce: Duration = .milliseconds(1250)
+    @State var lastSentDisplayResolution: CGSize = .zero
+    @State var streamScaleTask: Task<Void, Never>?
+    @State var lastSentEncodedPixelSize: CGSize = .zero
+    @State var awaitingAppResizeAck: Bool = false
+    @State var appResizeBaselineAcknowledgement: MirageClientService.StreamStartAcknowledgement?
+    @State var appResizeAckTimeoutTask: Task<Void, Never>?
+    @State var latestContainerDisplaySize: CGSize = .zero
+    @State var latestDrawableViewSize: CGSize = .zero
+    @State var localKeyboardOcclusionActive = false
+    #if canImport(UIKit)
+    @State var suppressNextOrderedPasteKeyUp = false
+    #endif
 
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
@@ -97,8 +141,6 @@ public struct MirageStreamContentView: View {
     ///   - onExitDesktopStream: Optional handler invoked after holding Escape for 5 seconds.
     ///   - onToggleDictationShortcut: Optional handler for the dictation toggle shortcut.
     ///   - dictationShortcut: Client shortcut used for dictation toggle.
-    ///   - onInputActivity: Optional callback invoked for each locally captured input event.
-    ///   - onDirectTouchActivity: Optional callback invoked when direct finger touch input occurs.
     ///   - onHardwareKeyboardPresenceChanged: Optional handler for hardware keyboard availability.
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
     ///   - directTouchInputMode: Direct-touch behavior mode for touch clients.
@@ -107,12 +149,10 @@ public struct MirageStreamContentView: View {
     ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
     ///   - onDictationError: Optional callback for user-facing dictation errors.
-    ///   - onDictationInputLevelChanged: Optional callback for normalized microphone input levels.
     ///   - onResolvedPointerLockStateChanged: Optional callback when UIKit resolves pointer lock.
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
     ///   - dictationLocalePreference: Dictation language selection.
     ///   - macSystemShortcutForwardingEnabled: Whether macOS should use Input Monitoring backed shortcut forwarding.
-    ///   - inputCaptureEnabled: Whether the stream should actively claim local input focus.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
     public init(
         session: MirageStreamSessionState,
@@ -128,8 +168,6 @@ public struct MirageStreamContentView: View {
         dictationShortcut: MirageClientShortcut = .defaultDictationToggle,
         actions: [MirageAction] = [],
         onActionTriggered: ((MirageAction) -> Void)? = nil,
-        onInputActivity: ((MirageInputEvent) -> Void)? = nil,
-        onDirectTouchActivity: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
@@ -138,7 +176,6 @@ public struct MirageStreamContentView: View {
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
-        onDictationInputLevelChanged: ((Float) -> Void)? = nil,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
@@ -149,7 +186,6 @@ public struct MirageStreamContentView: View {
         useHostResolution: Bool = false,
         macSystemShortcutForwardingEnabled: Bool = true,
         keyboardAvoidanceEnabled: Bool = true,
-        inputCaptureEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
         ignoresSafeArea: Bool = true
@@ -167,8 +203,6 @@ public struct MirageStreamContentView: View {
         self.dictationShortcut = dictationShortcut
         self.actions = actions
         self.onActionTriggered = onActionTriggered
-        self.onInputActivity = onInputActivity
-        self.onDirectTouchActivity = onDirectTouchActivity
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         self.directTouchInputMode = directTouchInputMode
@@ -177,7 +211,6 @@ public struct MirageStreamContentView: View {
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
-        self.onDictationInputLevelChanged = onDictationInputLevelChanged
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
@@ -188,28 +221,35 @@ public struct MirageStreamContentView: View {
         self.useHostResolution = useHostResolution
         self.macSystemShortcutForwardingEnabled = macSystemShortcutForwardingEnabled
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
-        self.inputCaptureEnabled = inputCaptureEnabled
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
         self.ignoresSafeArea = ignoresSafeArea
     }
+}
 
-    private var desktopCursorLockEnabled: Bool {
+// MARK: - Presentation State
+
+extension MirageStreamContentView {
+    /// Whether the client should lock the local cursor while forwarding desktop input.
+    var desktopCursorLockEnabled: Bool {
         desktopCursorLockEnabledOverride ??
             (isDesktopStream && desktopCursorPresentation.locksClientCursor(for: desktopStreamMode))
     }
 
-    private var syntheticCursorEnabled: Bool {
+    /// Whether Mirage should draw its own cursor instead of relying solely on the system cursor.
+    var syntheticCursorEnabled: Bool {
         !isDesktopStream ||
             desktopCursorPresentation.rendersSyntheticClientCursor ||
             (desktopCursorLockEnabled && !desktopCursorPresentation.capturesHostCursor)
     }
 
-    private var desktopLocalCursorHidden: Bool {
+    /// Whether the platform cursor should be hidden while the host cursor or synthetic cursor is authoritative.
+    var desktopLocalCursorHidden: Bool {
         isDesktopStream && desktopCursorPresentation.hidesLocalCursor
     }
 
-    private var allowsExtendedDesktopCursorBounds: Bool {
+    /// Whether cursor math can extend outside the visible content rect for secondary desktop streams.
+    var allowsExtendedDesktopCursorBounds: Bool {
         isDesktopStream && desktopStreamMode == .secondary
     }
 
@@ -217,7 +257,7 @@ public struct MirageStreamContentView: View {
     /// Derived from the stream pixel resolution divided by the client's backing scale
     /// (which matches the host's virtual display backing scale since the client
     /// requested the display at that scale).
-    private var hostDisplayPointSize: CGSize? {
+    var hostDisplayPointSize: CGSize? {
         #if os(macOS)
         guard let resolution = clientService.desktopStreamResolution,
               resolution.width > 0, resolution.height > 0 else { return nil }
@@ -231,40 +271,45 @@ public struct MirageStreamContentView: View {
         #endif
     }
 
-    private var suppressesWindowDrivenResizeForLocalPresentation: Bool {
-        MirageStreamPresentationPolicy.suppressesWindowDrivenResizeForLocalPresentation(
-            isDesktopStream: isDesktopStream,
-            useHostResolution: useHostResolution,
-            desktopCaptureSource: clientService.desktopCaptureSource,
-            desktopStreamAllowsClientResize: clientService.desktopStreamAllowsClientResize,
-            keyboardAvoidanceEnabled: keyboardAvoidanceEnabled,
-            softwareKeyboardVisible: softwareKeyboardVisible,
-            localKeyboardOcclusionActive: localKeyboardOcclusionActive
-        )
+    /// Whether local presentation state should temporarily prevent window-size driven resize requests.
+    var suppressesWindowDrivenResizeForLocalPresentation: Bool {
+        (isDesktopStream && (useHostResolution || clientService.desktopCaptureSource == .mainDisplayFallback)) ||
+            (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
     }
 
-    private var prefersLocalAspectFitPresentation: Bool {
+    /// Whether the stream should preserve source aspect instead of resizing the host/window to fill.
+    var prefersLocalAspectFitPresentation: Bool {
         suppressesWindowDrivenResizeForLocalPresentation || appStreamPrefersAspectFitPresentation
     }
 
     #if os(macOS)
-    private var macOSContainerSizingMode: MirageStreamContainerSizingMode {
+    /// macOS container sizing mode chosen from the current resize policy.
+    var macOSContainerSizingMode: MirageStreamContainerSizingMode {
         isDesktopStream && !prefersLocalAspectFitPresentation ? .viewBounds : .contentLayout
     }
     #endif
 
-    private var appStreamPrefersAspectFitPresentation: Bool {
+    /// Whether an app-window stream should be aspect-fit because its content ratio differs from the container.
+    var appStreamPrefersAspectFitPresentation: Bool {
         guard !isDesktopStream else { return false }
         let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
             ? latestContainerDisplaySize
             : latestDrawableViewSize
-        return appStreamAspectFitPresentationDecision(
-            containerSize: containerSize,
-            streamContentSize: appStreamContentReferenceSize
-        ) == .aspectFit
+        guard containerSize.width > 0,
+              containerSize.height > 0,
+              let streamContentSize = appStreamContentReferenceSize,
+              streamContentSize.width > 0,
+              streamContentSize.height > 0 else {
+            return false
+        }
+        let containerAspectRatio = containerSize.width / containerSize.height
+        let streamAspectRatio = streamContentSize.width / streamContentSize.height
+        let relativeAspectDelta = abs(streamAspectRatio - containerAspectRatio) / max(0.001, containerAspectRatio)
+        return relativeAspectDelta > 0.03
     }
 
-    private var appStreamContentReferenceSize: CGSize? {
+    /// Best known app-window content size used to decide between fill and aspect-fit presentation.
+    var appStreamContentReferenceSize: CGSize? {
         if let atlasRegion = session.atlasRegion?.pixelRect,
            atlasRegion.width > 0,
            atlasRegion.height > 0 {
@@ -283,251 +328,27 @@ public struct MirageStreamContentView: View {
         return windowSize
     }
 
-    private var activeDesktopSessionID: UUID? {
+    /// Render FPS ceiling chosen from observed cadence, explicit overrides, and display capability.
+    var preferredMaximumRenderFPS: Int {
+        clientService.observedFrameRateByStream[session.streamID] ??
+            clientService.refreshRateOverridesByStream[session.streamID] ??
+            clientService.screenMaxRefreshRate
+    }
+
+    #if os(iOS) || os(visionOS)
+    /// Active desktop session identity forwarded into the UIKit stream controller for recovery checks.
+    var activeDesktopSessionID: UUID? {
         guard isDesktopStream, clientService.desktopStreamID == session.streamID else { return nil }
         return clientService.desktopSessionID
     }
+    #endif
+}
 
-    private var preferredMaximumRenderFPS: Int {
-        clientService.observedFrameRateByStream[session.streamID] ??
-            clientService.refreshRateOverridesByStream[session.streamID] ??
-            clientService.getScreenMaxRefreshRate()
-    }
+// MARK: - Stream State
 
-    public var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(.black)
-                .mirageStreamIgnoresSafeArea(ignoresSafeArea)
-
-            Group {
-#if os(iOS) || os(visionOS)
-                MirageStreamViewRepresentable(
-                    streamID: session.streamID,
-                    mediaStreamID: session.mediaStreamID,
-                    contentRectOverride: session.atlasRegion?.pixelRect,
-                    onInputEvent: { event in
-                        sendInputEvent(event)
-                    },
-                    onDrawableMetricsChanged: { metrics in
-                        scheduleDrawableMetricsChanged(metrics)
-                    },
-                    onContainerSizeChanged: { size in
-                        scheduleContainerSizeChanged(size)
-                    },
-                    onRefreshRateOverrideChange: { override in
-                        clientService.updateStreamRefreshRateOverride(
-                            streamID: session.streamID,
-                            maxRefreshRate: override
-                        )
-                    },
-                    cursorStore: clientService.cursorStore,
-                    cursorPositionStore: clientService.cursorPositionStore,
-                    desktopSessionID: activeDesktopSessionID,
-                    hasPresentedFrameForActivationRecovery: session.hasPresentedFrame,
-                    onBecomeActive: {
-                        handleForegroundRecovery()
-                    },
-                    onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
-                    onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
-                    onDirectTouchActivity: onDirectTouchActivity,
-                    directTouchInputMode: directTouchInputMode,
-                    softwareKeyboardVisible: softwareKeyboardVisible,
-                    pencilGestureConfiguration: pencilGestureConfiguration,
-                    clientShortcuts: clientReservedShortcuts,
-                    onClientShortcut: handleReservedShortcut,
-                    actions: actions,
-                    onActionTriggered: onActionTriggered,
-                    onPencilGestureAction: handlePencilGestureAction,
-                    dictationToggleRequestID: dictationToggleRequestID,
-                    onDictationStateChanged: onDictationStateChanged,
-                    onDictationError: onDictationError,
-                    onDictationInputLevelChanged: onDictationInputLevelChanged,
-                    onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
-                    dictationMode: dictationMode,
-                    dictationLocalePreference: dictationLocalePreference,
-                    hideSystemCursor: desktopLocalCursorHidden,
-                    cursorLockEnabled: desktopCursorLockEnabled,
-                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                    syntheticCursorEnabled: syntheticCursorEnabled,
-                    presentationTier: streamPresentationTier,
-                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-                    maxDrawableSize: maxDrawableSize,
-                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                    inputCaptureEnabled: inputCaptureEnabled,
-                    ignoresSafeArea: ignoresSafeArea
-                )
-                .blur(radius: resizeBlurRadius)
-#else
-                MirageStreamViewRepresentable(
-                    streamID: session.streamID,
-                    mediaStreamID: session.mediaStreamID,
-                    contentRectOverride: session.atlasRegion?.pixelRect,
-                    onInputEvent: { event in
-                        sendInputEvent(event)
-                    },
-                    onDrawableMetricsChanged: { metrics in
-                        scheduleDrawableMetricsChanged(metrics)
-                    },
-                    onContainerSizeChanged: { size in
-                        scheduleContainerSizeChanged(size)
-                    },
-                    onRefreshRateOverrideChange: { override in
-                        clientService.updateStreamRefreshRateOverride(
-                            streamID: session.streamID,
-                            maxRefreshRate: override
-                        )
-                    },
-                    cursorStore: clientService.cursorStore,
-                    cursorPositionStore: clientService.cursorPositionStore,
-                    hostDisplayPointSize: hostDisplayPointSize,
-                    hideSystemCursor: desktopLocalCursorHidden,
-                    cursorLockEnabled: desktopCursorLockEnabled,
-                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
-                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                    syntheticCursorEnabled: syntheticCursorEnabled,
-                    inputEnabled: macOSInputEnabled,
-                    systemShortcutForwardingEnabled: macSystemShortcutForwardingEnabled,
-                    presentationTier: streamPresentationTier,
-                    preferredMaximumRenderFPS: preferredMaximumRenderFPS,
-                    maxDrawableSize: maxDrawableSize,
-                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                    containerSizingMode: macOSContainerSizingMode,
-                    clientShortcuts: clientReservedShortcuts,
-                    onClientShortcut: handleReservedShortcut,
-                    actions: actions,
-                    onActionTriggered: onActionTriggered
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .blur(radius: resizeBlurRadius)
-#endif
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .overlay {
-            if !isReadyForInitialPresentation {
-                Rectangle()
-                    .fill(.black)
-                    .overlay {
-                        VStack(spacing: 16) {
-                            ProgressView()
-                                .controlSize(.large)
-                                .tint(.white)
-
-                            Text("Connecting to stream...")
-                                .foregroundStyle(.white.opacity(0.7))
-                        }
-                    }
-                    .allowsHitTesting(false)
-            } else if awaitingPostResizeFirstFrame {
-                Rectangle()
-                    .fill(.black.opacity(0.22))
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.regular)
-                            .tint(.white)
-                    }
-                    .allowsHitTesting(false)
-            }
-        }
-        .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
-            guard !isDesktopStream else { return }
-            handleResizeAcknowledgement(minSize)
-        }
-        .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) { _, _ in
-            guard !isDesktopStream else { return }
-            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
-        }
-        .onChange(of: clientService.appStreamStartAcknowledgementByStreamID[session.streamID]) { _, acknowledgement in
-            handleAppStreamStartAcknowledgement(acknowledgement)
-        }
-        .onChange(of: awaitingPostResizeFirstFrame) { _, awaiting in
-            guard isDesktopStream, !awaiting else { return }
-            clientService.handleDesktopPresentationReady(streamID: session.streamID)
-        }
-        .onChange(of: session.hasPresentedFrame) { _, hasPresentedFrame in
-            guard isDesktopStream, hasPresentedFrame else { return }
-            clientService.handleDesktopPresentationReady(streamID: session.streamID)
-        }
-        .onChange(of: maxDrawableSize) { _, _ in
-            guard isDesktopStream else { return }
-            scheduleDesktopResizeForCurrentMetricsIfNeeded()
-        }
-        .onChange(of: useHostResolution) { _, _ in
-            guard isDesktopStream else { return }
-            scheduleDesktopResizeForCurrentMetricsIfNeeded()
-        }
-        .onChange(of: localKeyboardOcclusionActive) { _, isActive in
-            guard isActive else { return }
-            cancelPendingWindowDrivenResizeForLocalPresentation()
-        }
-        .onChange(of: isCurrentStreamActive) { _, isActive in
-            guard isActive else { return }
-            focusCurrentStreamForInputIfNeeded()
-        }
-        .onAppear {
-            focusCurrentStreamForInputIfNeeded(force: true)
-        }
-        .onDisappear {
-            resizeHoldoffTask?.cancel()
-            resizeHoldoffTask = nil
-            displayResolutionTask?.cancel()
-            displayResolutionTask = nil
-            pendingDisplayResolutionDispatchTarget = .zero
-            streamScaleTask?.cancel()
-            streamScaleTask = nil
-            appResizeAckTimeoutTask?.cancel()
-            appResizeAckTimeoutTask = nil
-            awaitingAppResizeAck = false
-            appResizeBaselineAcknowledgement = nil
-            latestContainerDisplaySize = .zero
-            latestDrawableViewSize = .zero
-            localKeyboardOcclusionActive = false
-            resizeLifecycleState = .active
-            if isResizing { isResizing = false }
-            clientService.clearDesktopResizeState(streamID: session.streamID)
-            #if os(iOS) || os(visionOS)
-            MirageStreamViewRepresentable.releaseCachedControllerIfPossible(
-                streamID: session.streamID,
-                sessionStore: sessionStore
-            )
-            #endif
-        }
-        #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            handleLocalKeyboardFrameChange(notification)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            localKeyboardOcclusionActive = false
-        }
-        #endif
-        #if os(iOS) || os(visionOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-            handleResizeLifecycleSuspension(event: .willResignActive)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
-            handleResizeLifecycleSuspension(event: .didEnterBackground)
-        }
-        #endif
-        #if os(macOS)
-        .background(
-            MirageWindowFocusObserver(
-                sessionID: session.id,
-                streamID: session.streamID,
-                sessionStore: sessionStore,
-                clientService: clientService,
-                onWindowWillClose: onWindowWillClose
-            )
-        )
-        #endif
-    }
-
-    private var isCurrentStreamActive: Bool {
+extension MirageStreamContentView {
+    /// Whether this rendered session still belongs to the client's active stream set.
+    var isCurrentStreamActive: Bool {
         if clientService.desktopStreamID == session.streamID || clientService.desktopStreamID == session.mediaStreamID {
             return true
         }
@@ -540,31 +361,35 @@ public struct MirageStreamContentView: View {
             clientService.activeStreamIDsForFiltering.contains(session.mediaStreamID)
     }
 
-    private var canSendInputToHost: Bool {
+    /// Whether input from this view can be sent over the active host connection.
+    var canSendInputToHost: Bool {
         guard case .connected = clientService.connectionState else { return false }
         return isCurrentStreamActive
     }
 
-    private var macOSInputEnabled: Bool {
-        inputCaptureEnabled && canSendInputToHost && sessionStore.focusedSessionID == session.id
+    /// macOS input gate that also requires this stream to own focus in the session store.
+    var macOSInputEnabled: Bool {
+        canSendInputToHost && sessionStore.focusedSessionID == session.id
     }
 
-    private var streamPresentationTier: StreamPresentationTier {
+    /// Current presentation tier for frame scheduling and first-frame readiness.
+    var streamPresentationTier: StreamPresentationTier {
         sessionStore.presentationTier(for: session)
     }
 
-    private var clientReservedShortcuts: [MirageClientShortcut] {
+    /// Shortcuts reserved locally by the stream before forwarding other key events to the host.
+    var clientReservedShortcuts: [MirageClientShortcut] {
         [desktopExitShortcut, escapeRemapShortcut, dictationShortcut]
     }
 
-    private func focusCurrentStreamForInputIfNeeded(force: Bool = false) {
-        guard inputCaptureEnabled else { return }
+    func focusCurrentStreamForInputIfNeeded(force: Bool = false) {
         guard force || sessionStore.focusedSessionID != session.id else { return }
         sessionStore.setFocusedSession(session.id)
         clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
     }
 
-    private var isReadyForInitialPresentation: Bool {
+    /// Whether the stream has produced enough frame state to hide the initial black loading cover.
+    var isReadyForInitialPresentation: Bool {
         switch streamPresentationTier {
         case .activeLive:
             session.hasDecodedFrame || session.hasPresentedFrame
@@ -573,663 +398,50 @@ public struct MirageStreamContentView: View {
         }
     }
 
-    private var awaitingPostResizeFirstFrame: Bool {
+    /// Whether the stream is waiting for the first decoded frame after a desktop resize.
+    var awaitingPostResizeFirstFrame: Bool {
         sessionStore.postResizeAwaitingFirstFrameStreamIDs.contains(session.streamID)
     }
 
-    private var desktopResizeCoordinator: DesktopResizeCoordinator {
+    /// Shared desktop resize coordinator owned by the client service.
+    var desktopResizeCoordinator: DesktopResizeCoordinator {
         clientService.desktopResizeCoordinator
     }
 
-    private var resizeBlurRadius: CGFloat {
+    /// Blur applied while desktop resize recovery masks unstable frame presentation.
+    var resizeBlurRadius: CGFloat {
         if isDesktopStream, awaitingPostResizeFirstFrame { return 24 }
         if isDesktopStream, desktopResizeCoordinator.isResizing || desktopResizeCoordinator.maskActive { return 20 }
         return 0
     }
+}
 
-    private func sendInputEvent(_ event: MirageInputEvent) {
-        guard inputCaptureEnabled else { return }
+// MARK: - Resize Acknowledgements
 
-        if case let .keyDown(keyEvent) = event {
-            if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
-                logDesktopExitShortcutTriggered()
-                onExitDesktopStream()
-                return
-            }
-
-            if dictationShortcut.matches(keyEvent) {
-                onToggleDictationShortcut?()
-                return
-            }
-            if escapeRemapShortcut.matches(keyEvent) {
-                if desktopCursorLockEnabled {
-                    onCursorLockEscapeRequested?()
-                    return
-                }
-                forwardInputEventToHost(.keyDown(remappedEscapeKeyEvent(isRepeat: keyEvent.isRepeat)))
-                return
-            }
-
-            // Intercept Cmd+V on iOS to sync clipboard to host before the paste keypress arrives.
-            #if canImport(UIKit)
-            if isSharedClipboardPasteShortcut(keyEvent),
-               clientService.sharedClipboardEnabled,
-               clientService.clientClipboardSharingEnabled {
-                suppressNextOrderedPasteKeyUp = true
-                sendOrderedSharedClipboardPaste(keyEvent)
-                return
-            }
-            #endif
-        } else if case let .keyUp(keyEvent) = event {
-            #if canImport(UIKit)
-            if isSharedClipboardPasteShortcut(keyEvent), suppressNextOrderedPasteKeyUp {
-                suppressNextOrderedPasteKeyUp = false
-                return
-            }
-            #endif
-            if escapeRemapShortcut.matches(keyEvent) {
-                guard !desktopCursorLockEnabled else { return }
-                forwardInputEventToHost(.keyUp(remappedEscapeKeyEvent()))
-                return
-            }
-        }
-
-        if shouldSuppressDesktopPointerEventDuringResize(event) {
-            return
-        }
-
-        forwardInputEventToHost(event)
-    }
-
-    private func shouldSuppressDesktopPointerEventDuringResize(_ event: MirageInputEvent) -> Bool {
-        guard isDesktopStream,
-              event.isPointerGeometryInput,
-              awaitingPostResizeFirstFrame ||
-              desktopResizeCoordinator.isResizing ||
-              desktopResizeCoordinator.maskActive else {
-            return false
-        }
-        return true
-    }
-
-    #if canImport(UIKit)
-    private func isSharedClipboardPasteShortcut(_ keyEvent: MirageKeyEvent) -> Bool {
-        keyEvent.keyCode == 0x09 && keyEvent.modifiers.contains(.command)
-    }
-
-    private func sendOrderedSharedClipboardPaste(_ keyEvent: MirageKeyEvent) {
-        let keyUpEvent = MirageKeyEvent(
-            keyCode: keyEvent.keyCode,
-            characters: keyEvent.characters,
-            charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
-            modifiers: keyEvent.modifiers,
-            isRepeat: false
-        )
-        Task { @MainActor in
-            let synced = await clientService.syncLocalClipboardToHost()
-            guard synced else {
-                MirageLogger.client("Suppressing paste shortcut because shared clipboard sync did not complete")
-                return
-            }
-            MirageLogger.client("Forwarding paste shortcut after shared clipboard sync")
-            forwardInputEventToHost(.keyDown(keyEvent))
-            forwardInputEventToHost(.keyUp(keyUpEvent))
-        }
-    }
-    #endif
-
-    private func forwardInputEventToHost(_ event: MirageInputEvent) {
-        guard canSendInputToHost else { return }
-        onInputActivity?(event)
-
-        #if os(macOS)
-        guard sessionStore.focusedSessionID == session.id else { return }
-        #else
-        if sessionStore.focusedSessionID != session.id {
-            sessionStore.setFocusedSession(session.id)
-            clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
-        }
-        #endif
-
-        clientService.sendInputFireAndForget(event, forStream: session.streamID)
-    }
-
-    private func remappedEscapeKeyEvent(isRepeat: Bool = false) -> MirageKeyEvent {
-        MirageKeyEvent(
-            keyCode: 0x35,
-            characters: "\u{1b}",
-            charactersIgnoringModifiers: "\u{1b}",
-            modifiers: [],
-            isRepeat: isRepeat
-        )
-    }
-
-    private func handleReservedShortcut(_ shortcut: MirageClientShortcut) {
-        if shortcut == desktopExitShortcut {
-            logDesktopExitShortcutTriggered()
-            onExitDesktopStream?()
-        } else if shortcut == escapeRemapShortcut {
-            if desktopCursorLockEnabled {
-                onCursorLockEscapeRequested?()
-            } else {
-                let escapeEvent = remappedEscapeKeyEvent()
-                forwardInputEventToHost(.keyDown(escapeEvent))
-                forwardInputEventToHost(.keyUp(escapeEvent))
-            }
-        } else if shortcut == dictationShortcut {
-            onToggleDictationShortcut?()
-        }
-    }
-
-    private func handlePencilGestureAction(_ action: MiragePencilGestureAction) {
-        if action == .toggleDictation {
-            onToggleDictationShortcut?()
-        } else if case let .remoteShortcut(shortcut) = action {
-            forwardInputEventToHost(.keyDown(shortcut.keyDownEvent()))
-            forwardInputEventToHost(.keyUp(shortcut.keyUpEvent()))
-        }
-    }
-
-    private func logDesktopExitShortcutTriggered() {
-        guard isDesktopStream else { return }
-        MirageLogger.client("Desktop exit shortcut triggered for stream \(session.streamID)")
-    }
-
-    private func scheduleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
-        Task { @MainActor in
-            await Task.yield()
-            handleDrawableMetricsChanged(metrics)
-        }
-    }
-
-    private func scheduleContainerSizeChanged(_ containerSize: CGSize) {
-        Task { @MainActor in
-            await Task.yield()
-            handleContainerSizeChanged(containerSize, lifecycleEvent: .containerSizeChanged)
-        }
-    }
-
-    private func scheduleDesktopResizeForCurrentMetricsIfNeeded() {
-        let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
-            ? latestContainerDisplaySize
-            : latestDrawableViewSize
-        guard containerSize.width > 0, containerSize.height > 0 else { return }
-        handleContainerSizeChanged(containerSize, lifecycleEvent: .containerSizeChanged)
-    }
-
-    private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
-        guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
-
-        let viewSize = metrics.viewSize
-        let resolvedRawPixelSize = metrics.pixelSize
-        latestDrawableViewSize = viewSize
-
-        #if os(iOS) || os(visionOS)
-        if resolvedRawPixelSize.width > 0, resolvedRawPixelSize.height > 0 {
-            MirageClientService.lastKnownDrawablePixelSize = resolvedRawPixelSize
-        }
-        if let screenPointSize = metrics.screenPointSize,
-           screenPointSize.width > 0,
-           screenPointSize.height > 0 {
-            MirageClientService.lastKnownScreenPointSize = screenPointSize
-        }
-        if let screenScale = metrics.screenScale, screenScale > 0 {
-            MirageClientService.lastKnownScreenScale = screenScale
-        }
-        if let nativePixelSize = metrics.screenNativePixelSize,
-           nativePixelSize.width > 0,
-           nativePixelSize.height > 0 {
-            MirageClientService.lastKnownScreenNativePixelSize = nativePixelSize
-        }
-        if let nativeScale = metrics.screenNativeScale, nativeScale > 0 {
-            MirageClientService.lastKnownScreenNativeScale = nativeScale
-        }
-        #endif
-
-        if isDesktopStream {
-            let targetSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
-                ? latestContainerDisplaySize
-                : viewSize
-            handleContainerSizeChanged(targetSize, lifecycleEvent: .drawableMetricsChanged)
-        } else if latestContainerDisplaySize.width <= 0 || latestContainerDisplaySize.height <= 0 {
-            handleContainerSizeChanged(viewSize, lifecycleEvent: .drawableMetricsChanged)
-        }
-    }
-
-    private func handleContainerSizeChanged(
-        _ containerSize: CGSize,
-        lifecycleEvent: DesktopResizeLifecycleEvent
-    ) {
-        if containerSize.width > 0, containerSize.height > 0 {
-            latestContainerDisplaySize = containerSize
-            #if os(iOS) || os(visionOS)
-            MirageClientService.lastKnownViewSize = containerSize
-            #endif
-        }
-
-        #if os(iOS) || os(visionOS)
-        let currentLifecycleState = isDesktopStream
-            ? desktopResizeCoordinator.resizeLifecycleState
-            : resizeLifecycleState
-        let lifecycleDecision = desktopResizeLifecycleDecision(
-            state: currentLifecycleState,
-            event: lifecycleEvent
-        )
-        if isDesktopStream {
-            desktopResizeCoordinator.resizeLifecycleState = lifecycleDecision.nextState
-        } else {
-            resizeLifecycleState = lifecycleDecision.nextState
-        }
-        guard lifecycleDecision.shouldProcessDrawableMetrics else { return }
-        #endif
-
-        let decision = windowDrivenResizeTargetDecision(
-            containerSize: containerSize,
-            fallbackDrawableSize: latestDrawableViewSize,
-            suppressForLocalPresentation: suppressesWindowDrivenResizeForLocalPresentation
-        )
-        switch decision {
-        case .suppressForLocalPresentation:
-            cancelPendingWindowDrivenResizeForLocalPresentation()
-            return
-        case .ignoreInvalidMetrics:
-            if !isDesktopStream {
-                if !awaitingAppResizeAck, isResizing { isResizing = false }
-            }
-            return
-        case .useContainerSize:
-            break
-        }
-
-        guard case let .useContainerSize(targetViewSize) = decision else { return }
-
-        let lifecycleState = isDesktopStream
-            ? desktopResizeCoordinator.resizeLifecycleState
-            : resizeLifecycleState
-        guard lifecycleState == .active else { return }
-
-        #if os(visionOS)
-        let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: targetViewSize)
-        #endif
-        let desktopDisplaySize = isDesktopStream
-            ? clientService.preferredDesktopDisplayResolution(for: targetViewSize)
-            : .zero
-        if !isDesktopStream {
-            #if os(visionOS)
-            let baseDisplaySize = visionOSDisplaySize
-            #else
-            let baseDisplaySize = clientService.scaledDisplayResolution(targetViewSize)
-            #endif
-            guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
-                if isResizing, !awaitingAppResizeAck { isResizing = false }
-                return
-            }
-            if streamPresentationTier == .passiveSnapshot {
-                displayResolutionTask?.cancel()
-                displayResolutionTask = nil
-                pendingDisplayResolutionDispatchTarget = .zero
-                if awaitingAppResizeAck {
-                    finishAppResizeAwaitingAck()
-                } else if isResizing {
-                    isResizing = false
-                }
-                return
-            }
-
-            // Dedicated app/window virtual-display streams now resize via display-resolution
-            // updates only. Suppress dynamic stream-scale pushes that can fight placement.
-            streamScaleTask?.cancel()
-            streamScaleTask = nil
-            lastSentEncodedPixelSize = .zero
-            guard lastSentDisplayResolution != baseDisplaySize else {
-                if isResizing, !awaitingAppResizeAck { isResizing = false }
-                return
-            }
-            enqueueImmediateAppDisplayResolutionChange(baseDisplaySize)
-            return
-        }
-
-        guard isDesktopStream else { return }
-
-        #if os(visionOS)
-        let preferredDisplaySize = visionOSDisplaySize
-        #else
-        let preferredDisplaySize = desktopDisplaySize
-        #endif
-        let target = clientService.desktopResizeTarget(
-            for: preferredDisplaySize,
-            maxDrawableSize: maxDrawableSize
-        )
-        clientService.queueDesktopResize(
-            streamID: session.streamID,
-            target: target,
-            hasPresentedFrame: session.hasPresentedFrame,
-            useHostResolution: useHostResolution
-        )
-    }
-
-    private func enqueueImmediateAppDisplayResolutionChange(_ targetDisplaySize: CGSize) {
-        guard targetDisplaySize.width > 0, targetDisplaySize.height > 0 else { return }
-        guard pendingDisplayResolutionDispatchTarget != targetDisplaySize || displayResolutionTask == nil else { return }
-
-        pendingDisplayResolutionDispatchTarget = targetDisplaySize
-        guard displayResolutionTask == nil else { return }
-
-        displayResolutionTask = Task { @MainActor [clientService] in
-            defer {
-                displayResolutionTask = nil
-                if pendingDisplayResolutionDispatchTarget == .zero, isResizing, !awaitingAppResizeAck {
-                    isResizing = false
-                }
-            }
-
-            while !Task.isCancelled {
-                let dispatchedTarget = pendingDisplayResolutionDispatchTarget
-                pendingDisplayResolutionDispatchTarget = .zero
-                guard dispatchedTarget.width > 0, dispatchedTarget.height > 0 else { break }
-
-                guard lastSentDisplayResolution != dispatchedTarget else {
-                    if pendingDisplayResolutionDispatchTarget == .zero { break }
-                    continue
-                }
-
-                lastSentDisplayResolution = dispatchedTarget
-                beginAppResizeAwaitingAck()
-                do {
-                    try await clientService.sendDisplayResolutionChange(
-                        streamID: session.streamID,
-                        newResolution: dispatchedTarget
-                    )
-                } catch {
-                    finishAppResizeAwaitingAck()
-                }
-
-                if pendingDisplayResolutionDispatchTarget == .zero { break }
-                await Task.yield()
-            }
-        }
-    }
-
-    private func beginAppResizeAwaitingAck() {
-        appResizeBaselineAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
-        awaitingAppResizeAck = true
-        isResizing = true
-        appResizeAckTimeoutTask?.cancel()
-        appResizeAckTimeoutTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: appResizeAckTimeout)
-            } catch {
-                return
-            }
-            guard awaitingAppResizeAck else { return }
-            finishAppResizeAwaitingAck()
-        }
-    }
-
-    private func finishAppResizeAwaitingAck() {
-        appResizeAckTimeoutTask?.cancel()
-        appResizeAckTimeoutTask = nil
-        awaitingAppResizeAck = false
-        appResizeBaselineAcknowledgement = nil
-        if isResizing { isResizing = false }
-    }
-
-    private func cancelPendingWindowDrivenResizeForLocalPresentation() {
-        if isDesktopStream {
-            clientService.cancelQueuedDesktopResizeForLocalPresentation(streamID: session.streamID)
-            return
-        }
-
-        displayResolutionTask?.cancel()
-        displayResolutionTask = nil
-        pendingDisplayResolutionDispatchTarget = .zero
-        streamScaleTask?.cancel()
-        streamScaleTask = nil
-        if awaitingAppResizeAck {
-            finishAppResizeAwaitingAck()
-        } else if isResizing {
-            isResizing = false
-        }
-    }
-
-    private func handleAppStreamStartAcknowledgement(
+extension MirageStreamContentView {
+    func handleAppStreamStartAcknowledgement(
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
         guard !isDesktopStream else { return }
-        let decision = appStreamStartAcknowledgementHandlingDecision(
-            awaitingResizeAcknowledgement: awaitingAppResizeAck,
-            latest: acknowledgement,
-            baseline: appResizeBaselineAcknowledgement
-        )
-        guard decision == .recheckMinimumSize else { return }
+        guard awaitingAppResizeAck,
+              isMeaningfulAppResizeAcknowledgement(
+                  acknowledgement,
+                  comparedTo: appResizeBaselineAcknowledgement
+              ) else { return }
         if let minimumSize = sessionStore.sessionMinSizes[session.id] {
             handleResizeAcknowledgement(minimumSize)
         }
     }
 
-    private func handleResizeAcknowledgement(_ minSize: CGSize?) {
+    func handleResizeAcknowledgement(_ minSize: CGSize?) {
         guard !isDesktopStream else { return }
         guard awaitingAppResizeAck else { return }
         guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
         let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
-        let decision = appStreamStartAcknowledgementHandlingDecision(
-            awaitingResizeAcknowledgement: awaitingAppResizeAck,
-            latest: acknowledgement,
-            baseline: appResizeBaselineAcknowledgement
-        )
-        guard decision == .recheckMinimumSize else { return }
+        guard isMeaningfulAppResizeAcknowledgement(
+            acknowledgement,
+            comparedTo: appResizeBaselineAcknowledgement
+        ) else { return }
         finishAppResizeAwaitingAck()
-    }
-
-    #if os(iOS)
-    private func handleLocalKeyboardFrameChange(_ notification: Notification) {
-        guard keyboardAvoidanceEnabled else {
-            localKeyboardOcclusionActive = false
-            return
-        }
-
-        guard let keyboardEndFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
-        }
-
-        let screenBounds: CGRect
-        if MirageClientService.lastKnownScreenPointSize.width > 0,
-           MirageClientService.lastKnownScreenPointSize.height > 0 {
-            screenBounds = CGRect(origin: .zero, size: MirageClientService.lastKnownScreenPointSize)
-        } else {
-            screenBounds = UIScreen.main.bounds
-        }
-
-        localKeyboardOcclusionActive = hasLocalKeyboardOcclusion(
-            keyboardEndFrame: keyboardEndFrame,
-            screenBounds: screenBounds,
-            minimumOcclusionHeight: 120
-        )
-    }
-    #endif
-
-    #if os(iOS) || os(visionOS)
-    private func handleResizeLifecycleSuspension(event: DesktopResizeLifecycleEvent) {
-        let currentLifecycleState = isDesktopStream
-            ? desktopResizeCoordinator.resizeLifecycleState
-            : resizeLifecycleState
-        let lifecycleDecision = desktopResizeLifecycleDecision(
-            state: currentLifecycleState,
-            event: event
-        )
-        if isDesktopStream {
-            desktopResizeCoordinator.resizeLifecycleState = lifecycleDecision.nextState
-        } else {
-            resizeLifecycleState = lifecycleDecision.nextState
-        }
-        guard lifecycleDecision.nextState == .suspended else { return }
-        cancelPendingResizeWorkForLifecycleSuspension()
-    }
-
-    private func cancelPendingResizeWorkForLifecycleSuspension() {
-        resizeHoldoffTask?.cancel()
-        resizeHoldoffTask = nil
-        displayResolutionTask?.cancel()
-        displayResolutionTask = nil
-        pendingDisplayResolutionDispatchTarget = .zero
-        streamScaleTask?.cancel()
-        streamScaleTask = nil
-        appResizeAckTimeoutTask?.cancel()
-        appResizeAckTimeoutTask = nil
-        awaitingAppResizeAck = false
-        appResizeBaselineAcknowledgement = nil
-        latestContainerDisplaySize = .zero
-        latestDrawableViewSize = .zero
-        MirageClientService.clearCachedDisplayMetrics()
-        if isResizing { isResizing = false }
-        clientService.clearDesktopResizeState(
-            streamID: session.streamID,
-            preserveLifecycleState: isDesktopStream,
-            preserveLastSentTarget: isDesktopStream
-        )
-    }
-
-    private func scheduleResizeHoldoff() {
-        let updateLifecycleState: (DesktopResizeLifecycleState) -> Void = { nextState in
-            if isDesktopStream {
-                desktopResizeCoordinator.resizeLifecycleState = nextState
-            } else {
-                resizeLifecycleState = nextState
-            }
-        }
-        let currentLifecycleState: () -> DesktopResizeLifecycleState = {
-            if isDesktopStream {
-                return desktopResizeCoordinator.resizeLifecycleState
-            }
-            return resizeLifecycleState
-        }
-
-        if isDesktopStream {
-            desktopResizeCoordinator.resizeHoldoffTask?.cancel()
-        } else {
-            resizeHoldoffTask?.cancel()
-        }
-        updateLifecycleState(.suspended)
-        let holdoffTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: foregroundResizeDebounce)
-            } catch {
-                return
-            }
-            let lifecycleDecision = desktopResizeLifecycleDecision(
-                state: currentLifecycleState(),
-                event: .foregroundHoldoffElapsed
-            )
-            updateLifecycleState(lifecycleDecision.nextState)
-            if isDesktopStream, lifecycleDecision.nextState == .active {
-                scheduleDesktopResizeForCurrentMetricsIfNeeded()
-            }
-        }
-        if isDesktopStream {
-            desktopResizeCoordinator.resizeHoldoffTask = holdoffTask
-        } else {
-            resizeHoldoffTask = holdoffTask
-        }
-    }
-
-    private func handleForegroundRecovery() {
-        let swiftUIScenePhase = MirageStreamForegroundRecoverySwiftUIScenePhase(scenePhase)
-        let decision = MirageStreamForegroundRecoveryPolicy.decisionForInputCaptureApplicationActivation(
-            swiftUIScenePhase: swiftUIScenePhase,
-            isDesktopStream: isDesktopStream,
-            activeDesktopSessionID: activeDesktopSessionID,
-            hasPresentedFrame: session.hasPresentedFrame,
-            hasController: clientService.controller(for: session.streamID) != nil
-        )
-
-        scheduleResizeHoldoff()
-
-        switch decision {
-        case .dispatch(let swiftUIScenePhase):
-            logForegroundRecoveryDispatch(swiftUIScenePhase: swiftUIScenePhase)
-            clientService.requestApplicationActivationRecovery(for: session.streamID)
-
-        case .deferUntilControllerAvailable(let swiftUIScenePhase):
-            MirageLogger.client(
-                "Foreground recovery deferred for stream \(session.streamID) until controller is available " +
-                    "(UIKit activation confirmed, SwiftUI scenePhase=\(swiftUIScenePhase.logLabel))"
-            )
-            clientService.requestApplicationActivationRecovery(for: session.streamID)
-
-        case .skipInactiveDesktopStream:
-            MirageLogger.client(
-                "Foreground recovery skipped for inactive desktop stream \(session.streamID)"
-            )
-
-        case .skipBeforeFirstFrame(let desktopSessionID):
-            MirageLogger.client(
-                "Foreground recovery skipped before first frame for stream \(session.streamID), session=\(desktopSessionID.uuidString)"
-            )
-        }
-    }
-
-    private func logForegroundRecoveryDispatch(
-        swiftUIScenePhase: MirageStreamForegroundRecoverySwiftUIScenePhase
-    ) {
-        if swiftUIScenePhase == .active {
-            MirageLogger.client("Foreground recovery dispatch for stream \(session.streamID)")
-        } else {
-            MirageLogger.client(
-                "Foreground recovery dispatch for stream \(session.streamID) after UIKit-confirmed " +
-                    "activation while SwiftUI scenePhase=\(swiftUIScenePhase.logLabel)"
-            )
-        }
-    }
-    #endif
-}
-
-private struct MirageStreamIgnoresSafeAreaModifier: ViewModifier {
-    let ignoresSafeArea: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if ignoresSafeArea {
-            content.ignoresSafeArea()
-        } else {
-            content
-        }
-    }
-}
-
-private extension MirageInputEvent {
-    var isPointerGeometryInput: Bool {
-        switch self {
-        case .mouseDown,
-             .mouseUp,
-             .mouseMoved,
-             .mouseDragged,
-             .pointerSampleBatch,
-             .rightMouseDown,
-             .rightMouseUp,
-             .rightMouseDragged,
-             .otherMouseDown,
-             .otherMouseUp,
-             .otherMouseDragged,
-             .scrollWheel,
-             .magnify,
-             .rotate,
-             .swipe:
-            true
-        case .flagsChanged,
-             .hostSystemAction,
-             .keyDown,
-             .keyUp,
-             .pixelResize,
-             .relativeResize,
-             .windowFocus,
-             .windowResize:
-            false
-        }
-    }
-}
-
-private extension View {
-    func mirageStreamIgnoresSafeArea(_ ignoresSafeArea: Bool) -> some View {
-        modifier(MirageStreamIgnoresSafeAreaModifier(ignoresSafeArea: ignoresSafeArea))
     }
 }

@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,6 +17,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Stuck Modifier Detection
 
+    /// Starts polling for modifier state that has become stuck on the host.
     func startModifierResetTimerIfNeeded() {
         guard modifierResetTimer == nil else { return }
 
@@ -33,16 +33,17 @@ extension MirageHostInputController {
         modifierResetTimer = timer
     }
 
+    /// Stops the stuck-modifier polling timer.
     func stopModifierResetTimer() {
         modifierResetTimer?.cancel()
         modifierResetTimer = nil
     }
 
+    /// Releases tracked modifiers that have not received fresh events before the timeout.
     private func checkForStuckModifiers() {
         let now = CACurrentMediaTime()
         var stuckModifiers: MirageModifierFlags = []
 
-        // Check each active modifier individually for staleness
         for (flag, timestamp) in modifierLastEventTimes {
             if now - timestamp > modifierStuckTimeoutSeconds { stuckModifiers.insert(flag) }
         }
@@ -56,11 +57,10 @@ extension MirageHostInputController {
             )
         }
 
-        // Also verify system state matches tracked state
         clearUnexpectedSystemModifiers(domain: lastModifierInjectionDomain)
     }
 
-    /// Query the actual system modifier state and clear any modifiers that shouldn't be there.
+    /// Queries actual system modifier state and clears modifiers Mirage is not tracking as held.
     func clearUnexpectedSystemModifiers(domain: HostKeyboardInjectionDomain) {
         let systemFlags = CGEventSource.flagsState(Self.systemStateSource(for: domain))
 
@@ -91,7 +91,7 @@ extension MirageHostInputController {
         postFlagsChangedEvent(lastSentModifiers, domain: domain)
     }
 
-    /// Clear all modifier state.
+    /// Clears all tracked and host-observed modifier state.
     /// - Note: Call when starting a new stream or reconnecting to avoid stuck modifiers.
     public func clearAllModifiers() {
         accessibilityQueue.async { [weak self] in

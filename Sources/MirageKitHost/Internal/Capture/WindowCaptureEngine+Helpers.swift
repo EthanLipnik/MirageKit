@@ -19,18 +19,12 @@ import AppKit
 import ScreenCaptureKit
 
 extension WindowCaptureEngine {
-    nonisolated static let highResolutionPixelThreshold = 3_840 * 2_160
+    nonisolated static let highResolutionPixelThreshold = 3840 * 2160
 
     nonisolated static func isHighResolutionCapture(width: Int, height: Int) -> Bool {
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
         return safeWidth * safeHeight >= highResolutionPixelThreshold
-    }
-
-    nonisolated static func smoothestSCKQueueDepth(frameRate: Int) -> Int {
-        let frameBudgetMs = 1_000.0 / Double(max(1, min(240, frameRate)))
-        let targetLatencyMs = 50.0
-        return min(8, max(3, Int(ceil(targetLatencyMs / frameBudgetMs))))
     }
 
     nonisolated static func resolveSCKQueueDepth(
@@ -47,26 +41,21 @@ extension WindowCaptureEngine {
 
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
-        if frameRate >= 120 {
-            if latencyMode == .smoothest {
-                return smoothestSCKQueueDepth(frameRate: frameRate)
-            }
+        if usesDisplayRefreshCadence, frameRate >= 60 {
             return 8
         }
-        if usesDisplayRefreshCadence, frameRate >= 60 {
-            switch latencyMode {
-            case .lowestLatency:
-                return 3
-            case .smoothest:
-                return smoothestSCKQueueDepth(frameRate: frameRate)
-            }
+        if frameRate >= 120 {
+            // Native-refresh capture is where SCK is most sensitive to queue starvation.
+            // Keep the stream queue at the platform-supported ceiling and use Mirage's
+            // own pool/in-flight tuning to reduce downstream pressure instead.
+            return 8
         }
 
         var depth = 6
         if isHighResolutionCapture(width: safeWidth, height: safeHeight) {
             depth += 1
         }
-        if safeWidth * safeHeight >= 5_120 * 2_880 {
+        if safeWidth * safeHeight >= 5120 * 2880 {
             depth += 1
         }
 
@@ -75,7 +64,6 @@ extension WindowCaptureEngine {
             break
         case .smoothest:
             depth += 1
-            depth = min(depth, smoothestSCKQueueDepth(frameRate: frameRate))
         }
 
         return min(max(3, depth), 8)
@@ -85,7 +73,6 @@ extension WindowCaptureEngine {
         windowID: CGWindowID,
         captureMode: CaptureMode,
         latencyMode: MirageStreamLatencyMode,
-        frameRate: Int,
         configuredSoftStallLimit: CFAbsoluteTime,
         displayStallThreshold: CFAbsoluteTime = 0.6,
         windowStallThreshold: CFAbsoluteTime = 8.0
@@ -149,7 +136,6 @@ extension WindowCaptureEngine {
             windowID: windowID,
             captureMode: captureMode,
             latencyMode: latencyMode,
-            frameRate: frameRate,
             configuredSoftStallLimit: stallThreshold(for: frameRate)
         )
     }
@@ -190,13 +176,6 @@ extension WindowCaptureEngine {
             displayRefreshRate: displayRefreshRate,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         ) else { return requestedFrameRate }
-        if usesNativeRefreshMinimumFrameInterval(
-            requestedFrameRate: requestedFrameRate,
-            displayRefreshRate: displayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
-        ) {
-            return displayRefreshRate
-        }
         return max(1, min(requestedFrameRate, displayRefreshRate))
     }
 
@@ -213,11 +192,7 @@ extension WindowCaptureEngine {
               ) else {
             return false
         }
-        let requestedFrameRate = max(1, requestedFrameRate)
-        if displayRefreshRate >= 90, requestedFrameRate <= displayRefreshRate {
-            return true
-        }
-        return requestedFrameRate >= displayRefreshRate
+        return max(1, requestedFrameRate) >= displayRefreshRate
     }
 
     nonisolated static func resolvedDisplayRefreshRateForCadence(
@@ -254,7 +229,7 @@ extension WindowCaptureEngine {
         return CMTime(value: 1, timescale: CMTimeScale(effectiveRate))
     }
 
-    func minimumFrameIntervalRate() -> Int {
+    var minimumFrameIntervalRate: Int {
         Self.resolvedEffectiveCaptureRate(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
@@ -262,7 +237,7 @@ extension WindowCaptureEngine {
         )
     }
 
-    func usesNativeRefreshMinimumFrameInterval() -> Bool {
+    var usesNativeRefreshMinimumFrameInterval: Bool {
         Self.usesNativeRefreshMinimumFrameInterval(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
@@ -270,7 +245,7 @@ extension WindowCaptureEngine {
         )
     }
 
-    func resolvedMinimumFrameInterval() -> CMTime {
+    var resolvedMinimumFrameInterval: CMTime {
         Self.resolvedMinimumFrameInterval(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
@@ -314,16 +289,6 @@ extension WindowCaptureEngine {
         case .sRGB:
             CGColorSpace.sRGB
         }
-    }
-
-    /// Align a pixel dimension to a 16-byte boundary.  Hardware video encoders
-    /// (HEVC on Apple Silicon) require both width and height to be multiples of
-    /// 16 for NV12/P010 pixel formats; unaligned dimensions cause silent encode
-    /// failures during preheat.
-    static func alignedEvenPixel(_ value: CGFloat) -> Int {
-        let rounded = Int(value.rounded())
-        let aligned = rounded & ~15 // round down to nearest multiple of 16
-        return max(aligned, 16)
     }
 }
 

@@ -78,6 +78,6 @@ private final class RecordingTrustProvider: LoomTrustProvider {
         evaluatedPeers.append(peer)
     }
 
-    func revokeTrust(for deviceID: UUID) async throws {}
+    func revokeTrust(for _: UUID) async throws {}
 }
 #endif

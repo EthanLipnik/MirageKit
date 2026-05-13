@@ -16,26 +16,38 @@ import ApplicationServices
 /// Manages window operations via Accessibility API for Mirage hosts.
 @MainActor
 public final class MirageHostWindowController {
+    /// Delay between follow-up Accessibility frame enforcement attempts.
+    private static let windowFrameEnforcementInterval: TimeInterval = 0.12
+
+    /// Pixel tolerance used to avoid chasing insignificant window-size drift.
+    private static let windowSizeEnforcementTolerance: CGFloat = 2.0
+
+    /// Debounce interval for host resize notifications in milliseconds.
+    private static let resizeDebounceIntervalMs: UInt64 = 150
+
     // MARK: - Dependencies
 
-    /// Reference to host service for virtual display queries.
+    /// Host service used to inspect active streams and virtual-display placement.
     public weak var hostService: MirageHostService?
 
     // MARK: - AX Window Cache
 
-    /// Cached AXUIElement references for windows.
-    private var cachedAXWindows: [WindowID: AXUIElement] = [:]
+    /// Accessibility elements cached by CGWindowID to avoid repeated AX window-list scans.
+    var cachedAXWindows: [WindowID: AXUIElement] = [:]
 
-    /// Minimum window sizes per window.
-    private var minimumWindowSizes: [WindowID: CGSize] = [:]
+    /// Minimum accepted window sizes learned from temporary AX resize probes.
+    var minimumWindowSizes: [WindowID: CGSize] = [:]
 
     /// Cached CGWindowList frames keyed by window ID.
-    private var cachedWindowFrames: [WindowID: CGRect] = [:]
+    var cachedWindowFrames: [WindowID: CGRect] = [:]
 
     // MARK: - Timers
 
+    /// A scheduled frame enforcement pass and its remaining retry budget.
     private struct FrameEnforcementRequest {
+        /// Size the streamed window should retain on the host display.
         let targetSize: CGSize
+        /// Number of follow-up attempts before the controller stops chasing drift.
         let remainingAttempts: Int
     }
 
@@ -48,12 +60,6 @@ public final class MirageHostWindowController {
     /// Whether direct-stream frame enforcement is active.
     private var frameEnforcementEnabled = false
 
-    /// Poll interval for enforcing streamed window frame.
-    private let windowFrameEnforcementInterval: TimeInterval = 0.12
-
-    /// Tolerance for considering two sizes equivalent.
-    private let windowSizeEnforcementTolerance: CGFloat = 2.0
-
     /// Maximum number of follow-up enforcement attempts after a resize.
     private let maxFrameEnforcementAttempts = 20
 
@@ -62,9 +68,6 @@ public final class MirageHostWindowController {
 
     /// Timers for debouncing resize updates keyed by window.
     private var resizeDebounceTimersByWindowID: [WindowID: DispatchSourceTimer] = [:]
-
-    /// Debounce interval for resize events (ms).
-    private let resizeDebounceIntervalMs: UInt64 = 150
 
     /// Creates a window controller with an optional host service reference.
     public init(hostService: MirageHostService? = nil) {
@@ -94,6 +97,7 @@ public final class MirageHostWindowController {
         pendingResizeRequestsByWindowID.removeAll()
     }
 
+    /// Requests frame enforcement for every currently streamed window.
     private func recenterAllStreamedWindows() {
         guard let sessions = hostService?.activeStreams else { return }
         for session in sessions {
@@ -101,6 +105,9 @@ public final class MirageHostWindowController {
         }
     }
 
+    /// Applies one Accessibility size/position enforcement pass for a directly streamed window.
+    ///
+    /// - Returns: `true` when meaningful drift remains and a follow-up pass should be scheduled.
     private func enforceDirectStreamWindowFrame(
         axWindow: AXUIElement,
         window: MirageWindow,
@@ -117,8 +124,8 @@ public final class MirageHostWindowController {
             enforcedSize = constrainSizeToFrame(enforcedSize, frame: visibleFrame)
         }
 
-        let hasMeaningfulSizeDrift = abs(fallbackSize.width - enforcedSize.width) > windowSizeEnforcementTolerance ||
-            abs(fallbackSize.height - enforcedSize.height) > windowSizeEnforcementTolerance
+        let hasMeaningfulSizeDrift = abs(fallbackSize.width - enforcedSize.width) > Self.windowSizeEnforcementTolerance ||
+            abs(fallbackSize.height - enforcedSize.height) > Self.windowSizeEnforcementTolerance
         if hasMeaningfulSizeDrift {
             var mutableSize = enforcedSize
             if let sizeValue = AXValueCreate(.cgSize, &mutableSize) {
@@ -142,13 +149,13 @@ public final class MirageHostWindowController {
         let remainingHeightDrift = abs(finalFrame.height - enforcedSize.height)
         let remainingXDrift = targetFrame.map { abs(finalFrame.origin.x - $0.origin.x) } ?? 0
         let remainingYDrift = targetFrame.map { abs(finalFrame.origin.y - $0.origin.y) } ?? 0
-        return remainingWidthDrift > windowSizeEnforcementTolerance ||
-            remainingHeightDrift > windowSizeEnforcementTolerance ||
-            remainingXDrift > windowSizeEnforcementTolerance ||
-            remainingYDrift > windowSizeEnforcementTolerance
+        return remainingWidthDrift > Self.windowSizeEnforcementTolerance ||
+            remainingHeightDrift > Self.windowSizeEnforcementTolerance ||
+            remainingXDrift > Self.windowSizeEnforcementTolerance ||
+            remainingYDrift > Self.windowSizeEnforcementTolerance
     }
 
-    public func requestFrameEnforcement(
+    func requestFrameEnforcement(
         for window: MirageWindow,
         targetSize: CGSize? = nil,
         remainingAttempts: Int? = nil
@@ -169,7 +176,7 @@ public final class MirageHostWindowController {
         frameEnforcementTasksByWindowID[window.id] = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(
-                    for: .milliseconds(Int((self?.windowFrameEnforcementInterval ?? 0.12) * 1000))
+                    for: .milliseconds(Int(Self.windowFrameEnforcementInterval * 1000))
                 )
             } catch {
                 return
@@ -186,7 +193,7 @@ public final class MirageHostWindowController {
             return
         }
         guard let request = pendingFrameEnforcementByWindowID[windowID] else { return }
-        guard let axWindow = getOrCacheAXWindow(for: session.window) else {
+        guard let axWindow = cachedAXWindow(for: session.window) else {
             pendingFrameEnforcementByWindowID.removeValue(forKey: windowID)
             frameEnforcementTasksByWindowID.removeValue(forKey: windowID)
             return
@@ -210,227 +217,6 @@ public final class MirageHostWindowController {
         frameEnforcementTasksByWindowID.removeValue(forKey: windowID)
     }
 
-    // MARK: - AX Window Caching
-
-    /// Returns a cached AX window element or looks it up if needed.
-    public func getOrCacheAXWindow(for window: MirageWindow) -> AXUIElement? {
-        if let cached = cachedAXWindows[window.id] { return cached }
-
-        guard let axWindow = findAXWindow(for: window) else { return nil }
-
-        cachedAXWindows[window.id] = axWindow
-        return axWindow
-    }
-
-    /// Removes a cached AX window for the provided window ID.
-    public func invalidateCache(for windowID: WindowID) {
-        cachedAXWindows.removeValue(forKey: windowID)
-        cachedWindowFrames.removeValue(forKey: windowID)
-    }
-
-    private func findAXWindow(for window: MirageWindow) -> AXUIElement? {
-        guard let app = window.application else { return nil }
-
-        guard NSRunningApplication(processIdentifier: app.id) != nil else {
-            cachedAXWindows.removeValue(forKey: window.id)
-            return nil
-        }
-
-        let appElement = AXUIElementCreateApplication(app.id)
-
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success, let axWindows = windowsRef as? [AXUIElement] else { return nil }
-
-        if axWindows.count == 1 { return axWindows[0] }
-
-        guard let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
-              let windowInfo = windowList.first(where: { ($0[kCGWindowNumber as String] as? Int) == Int(window.id) }),
-              let bounds = windowInfo[kCGWindowBounds as String] as? [String: CGFloat],
-              let windowX = bounds["X"],
-              let windowY = bounds["Y"] else {
-            return axWindows.first
-        }
-
-        for axWindow in axWindows {
-            var positionRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef)
-
-            if let positionValue = positionRef {
-                var position = CGPoint.zero
-                AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
-
-                if abs(position.x - windowX) < 10, abs(position.y - windowY) < 10 { return axWindow }
-            }
-        }
-
-        return axWindows.first
-    }
-
-    // MARK: - Window Frame Helpers
-
-    /// Returns the current CGWindowList frame for a window ID.
-    public func currentWindowFrame(for windowID: WindowID) -> CGRect? {
-        if let cachedFrame = cachedWindowFrames[windowID] {
-            refreshWindowFrameCache(for: windowID)
-            return cachedFrame
-        }
-        let freshFrame = Self.fetchWindowFrameSnapshot(for: windowID)
-        if let freshFrame {
-            cachedWindowFrames[windowID] = freshFrame
-        }
-        return freshFrame
-    }
-
-    public func refreshWindowFrameCache(for windowID: WindowID) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let frame = await Self.fetchWindowFrameSnapshotAsync(for: windowID)
-            if let frame {
-                self.cachedWindowFrames[windowID] = frame
-            } else {
-                self.cachedWindowFrames.removeValue(forKey: windowID)
-            }
-        }
-    }
-
-    nonisolated private static func fetchWindowFrameSnapshot(for windowID: WindowID) -> CGRect? {
-        if let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
-           let windowInfo = windowList.first,
-           let bounds = windowInfo[kCGWindowBounds as String] as? [String: CGFloat],
-           let x = bounds["X"], let y = bounds["Y"],
-           let w = bounds["Width"], let h = bounds["Height"] {
-            return CGRect(x: x, y: y, width: w, height: h)
-        }
-        return nil
-    }
-
-    nonisolated private static func fetchWindowFrameSnapshotAsync(for windowID: WindowID) async -> CGRect? {
-        await Task.detached(priority: .utility) {
-            fetchWindowFrameSnapshot(for: windowID)
-        }.value
-    }
-
-    /// Returns the AX frame for a window element if available.
-    public func axWindowFrame(_ axWindow: AXUIElement) -> CGRect? {
-        var positionRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef) == .success,
-              AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let positionRef, let sizeRef,
-              CFGetTypeID(positionRef) == AXValueGetTypeID(),
-              CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionRef as! AXValue, .cgPoint, &position),
-              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size) else {
-            return nil
-        }
-
-        return CGRect(origin: position, size: size)
-    }
-
-    // MARK: - Window Sizing
-
-    /// Returns the maximum allowed window size for a streamed window.
-    /// - Parameter window: Window to evaluate.
-    public func maxWindowSize(for window: MirageWindow) -> CGSize? {
-        if let virtualBounds = hostService?.getVirtualDisplayBounds(windowID: window.id) { return virtualBounds.size }
-
-        guard let currentFrame = currentWindowFrame(for: window.id) else { return nil }
-        let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main
-        return screen?.visibleFrame.size
-    }
-
-    /// Returns the visible frame for sizing a streamed window.
-    /// - Parameter window: Window to evaluate.
-    public func maxWindowSizeRect(for window: MirageWindow) -> CGRect? {
-        if let virtualBounds = hostService?.getVirtualDisplayBounds(windowID: window.id) { return virtualBounds }
-
-        guard let currentFrame = currentWindowFrame(for: window.id) else { return nil }
-        let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main
-        return screen?.visibleFrame
-    }
-
-    /// Returns whether the AX window supports size mutation.
-    /// - Parameter axWindow: Accessibility window element.
-    public func isWindowSizeSettable(_ axWindow: AXUIElement) -> Bool? {
-        var isSettable: DarwinBoolean = false
-        let result = AXUIElementIsAttributeSettable(axWindow, kAXSizeAttribute as CFString, &isSettable)
-        return result == .success ? isSettable.boolValue : nil
-    }
-
-    /// Returns the cached minimum size for a window.
-    /// - Parameter windowID: Window identifier to query.
-    public func getMinimumSize(for windowID: WindowID) -> CGSize? {
-        minimumWindowSizes[windowID]
-    }
-
-    /// Probes the app's actual minimum size by requesting a tiny AX size and
-    /// reading back the accepted window size before restoring the original frame.
-    /// - Parameter window: Window to probe.
-    /// - Returns: The discovered minimum size in points, if AX probing succeeded.
-    public func discoverMinimumSize(for window: MirageWindow) async -> CGSize? {
-        if let cached = minimumWindowSizes[window.id] { return cached }
-        guard let axWindow = getOrCacheAXWindow(for: window) else { return nil }
-
-        guard isWindowSizeSettable(axWindow) != false else {
-            guard let actualFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id) else { return nil }
-            updateMinimumSizeCache(for: window.id, size: actualFrame.size)
-            return actualFrame.size
-        }
-
-        guard let originalFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id) else { return nil }
-        guard setAXWindowSize(axWindow, CGSize(width: 1, height: 1)) else { return nil }
-
-        try? await Task.sleep(for: .milliseconds(35))
-        let acceptedFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id)
-
-        _ = setAXWindowSize(axWindow, originalFrame.size)
-        _ = setAXWindowPosition(axWindow, originalFrame.origin)
-        hostService?.updateInputCacheFrame(windowID: window.id, newFrame: originalFrame)
-
-        guard let acceptedFrame, acceptedFrame.width > 0, acceptedFrame.height > 0 else { return nil }
-        updateMinimumSizeCache(for: window.id, size: acceptedFrame.size)
-        return acceptedFrame.size
-    }
-
-    /// Updates the cached minimum size for a window and notifies the host.
-    /// - Parameters:
-    ///   - windowID: Window identifier to update.
-    ///   - size: Minimum size in points.
-    public func updateMinimumSizeCache(for windowID: WindowID, size: CGSize) {
-        guard size.width > 0, size.height > 0 else { return }
-        if let existing = minimumWindowSizes[windowID] {
-            minimumWindowSizes[windowID] = CGSize(
-                width: min(existing.width, size.width),
-                height: min(existing.height, size.height)
-            )
-        } else {
-            minimumWindowSizes[windowID] = size
-        }
-
-        if let minSize = minimumWindowSizes[windowID] { hostService?.updateMinimumSize(for: windowID, minSize: minSize) }
-    }
-
-    private func setAXWindowSize(_ axWindow: AXUIElement, _ size: CGSize) -> Bool {
-        var mutableSize = size
-        guard let sizeValue = AXValueCreate(.cgSize, &mutableSize) else { return false }
-        return AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue) == .success
-    }
-
-    private func setAXWindowPosition(_ axWindow: AXUIElement, _ position: CGPoint) -> Bool {
-        var mutablePosition = position
-        guard let positionValue = AXValueCreate(.cgPoint, &mutablePosition) else { return false }
-        return AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue) == .success
-    }
-
     // MARK: - Window Centering
 
     /// Centers a window on its display and updates the input cache.
@@ -438,8 +224,7 @@ public final class MirageHostWindowController {
     ///   - axWindow: Accessibility window element.
     ///   - newSize: Target size in points.
     ///   - windowID: Optional window identifier for cache updates.
-    @discardableResult
-    public func centerWindowOnScreen(
+    func centerWindowOnScreen(
         _ axWindow: AXUIElement,
         newSize: CGSize,
         windowID: WindowID? = nil,
@@ -450,7 +235,7 @@ public final class MirageHostWindowController {
         let screenFrame: CGRect
         let isVirtualDisplay: Bool
 
-        if let wid = windowID, let virtualBounds = hostService?.getVirtualDisplayBounds(windowID: wid) {
+        if let wid = windowID, let virtualBounds = hostService?.virtualDisplayBounds(windowID: wid) {
             screenFrame = virtualBounds
             isVirtualDisplay = true
         } else {
@@ -500,12 +285,12 @@ public final class MirageHostWindowController {
     /// - Parameters:
     ///   - window: Window to resize.
     ///   - targetSize: Desired size in points.
-    public func resizeAndCenterWindowForStream(_ window: MirageWindow, targetSize: CGSize) {
-        guard let axWindow = getOrCacheAXWindow(for: window) else { return }
+    func resizeAndCenterWindowForStream(_ window: MirageWindow, targetSize: CGSize) {
+        guard let axWindow = cachedAXWindow(for: window) else { return }
 
         let screenFrame: CGRect
         let isVirtualDisplay: Bool
-        if let virtualBounds = hostService?.getVirtualDisplayBounds(windowID: window.id) {
+        if let virtualBounds = hostService?.virtualDisplayBounds(windowID: window.id) {
             screenFrame = virtualBounds
             isVirtualDisplay = true
         } else {
@@ -549,24 +334,17 @@ public final class MirageHostWindowController {
         }
     }
 
-    public func screenScaleFactor(for window: MirageWindow, fallbackFrame: CGRect? = nil) -> CGFloat {
-        let referenceFrame = currentWindowFrame(for: window.id) ?? fallbackFrame ?? window.frame
-        let windowCenter = CGPoint(x: referenceFrame.midX, y: referenceFrame.midY)
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main
-        return screen?.backingScaleFactor ?? 2.0
-    }
-
     /// Debounces capture resolution updates for a window.
     /// - Parameters:
     ///   - windowID: Window identifier to update.
     ///   - width: Target pixel width.
     ///   - height: Target pixel height.
-    public func scheduleResizeUpdate(windowID: WindowID, width: Int, height: Int) {
+    func scheduleResizeUpdate(windowID: WindowID, width: Int, height: Int) {
         pendingResizeRequestsByWindowID[windowID] = (width, height)
         resizeDebounceTimersByWindowID[windowID]?.cancel()
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + .milliseconds(Int(resizeDebounceIntervalMs)))
+        timer.schedule(deadline: .now() + .milliseconds(Int(Self.resizeDebounceIntervalMs)))
         timer.setEventHandler { [weak self] in
             guard let self,
                   let request = pendingResizeRequestsByWindowID.removeValue(forKey: windowID) else {
@@ -586,61 +364,5 @@ public final class MirageHostWindowController {
         resizeDebounceTimersByWindowID[windowID] = timer
     }
 
-    // MARK: - Helper Methods
-
-    /// Constrains a size to fit within a given frame while preserving aspect ratio.
-    /// - Parameters:
-    ///   - size: Size in points to constrain.
-    ///   - frame: Bounding frame to fit within.
-    public func constrainSizeToFrame(_ size: CGSize, frame: CGRect) -> CGSize {
-        guard size.width > 0, size.height > 0 else { return size }
-
-        let aspectRatio = size.width / size.height
-        var width = size.width
-        var height = size.height
-
-        if width > frame.width {
-            width = frame.width
-            height = width / aspectRatio
-        }
-
-        if height > frame.height {
-            height = frame.height
-            width = height * aspectRatio
-        }
-
-        return CGSize(width: width, height: height)
-    }
-
-    /// Calculates a window size based on relative scale and aspect ratio.
-    /// - Parameters:
-    ///   - aspectRatio: Desired aspect ratio for the window.
-    ///   - relativeScale: Target scale relative to the visible frame area.
-    ///   - visibleFrame: Bounding frame of the target display.
-    ///   - minSize: Minimum window size in points.
-    public func calculateHostWindowSize(
-        aspectRatio: CGFloat,
-        relativeScale: CGFloat,
-        visibleFrame: CGRect,
-        minSize: CGSize
-    )
-    -> CGSize {
-        let screenArea = visibleFrame.width * visibleFrame.height
-        let targetArea = screenArea * relativeScale
-
-        var width = sqrt(targetArea * aspectRatio)
-        var height = sqrt(targetArea / aspectRatio)
-
-        if width < minSize.width {
-            width = minSize.width
-            height = width / aspectRatio
-        }
-        if height < minSize.height {
-            height = minSize.height
-            width = height * aspectRatio
-        }
-
-        return constrainSizeToFrame(CGSize(width: width, height: height), frame: visibleFrame)
-    }
 }
 #endif

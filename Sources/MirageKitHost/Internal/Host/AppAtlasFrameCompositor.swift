@@ -11,6 +11,7 @@ import Metal
 import MirageKit
 
 #if os(macOS)
+/// Errors emitted by the Metal app-atlas compositor.
 enum AppAtlasFrameCompositorError: Error, LocalizedError {
     case metalUnavailable
     case unsupportedPixelFormat(OSType)
@@ -40,7 +41,9 @@ enum AppAtlasFrameCompositorError: Error, LocalizedError {
     }
 }
 
+/// Composes captured window frames into a single app-atlas pixel buffer with Metal.
 final class AppAtlasFrameCompositor: @unchecked Sendable {
+    /// Metal shader parameters for one source-to-destination copy.
     private struct CopyRegion {
         var sourceOriginX: UInt32
         var sourceOriginY: UInt32
@@ -54,23 +57,28 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         var destinationHeight: UInt32
     }
 
+    /// Auxiliary frame and geometry composited over a parent window frame.
     struct OverlayFrame {
+        /// Captured auxiliary window frame.
         let frame: CapturedFrame
+        /// Source rectangle copied from the auxiliary frame.
         let sourceRect: CGRect
+        /// Destination rectangle inside the parent output surface.
         let destinationRect: CGRect
     }
 
+    /// Internal copy operation used for both atlas packing and parent overlay composition.
     private struct FrameCopyOperation {
         let frame: CapturedFrame
         let sourceRect: CGRect
         let destinationRect: CGRect
     }
 
-    private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLComputePipelineState
     private var textureCache: CVMetalTextureCache
 
+    /// Creates the Metal pipeline and texture cache used by the compositor.
     init(device: MTLDevice? = MTLCreateSystemDefaultDevice()) throws {
         guard let device,
               let commandQueue = device.makeCommandQueue() else {
@@ -89,11 +97,11 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
             throw AppAtlasFrameCompositorError.textureCreationFailed(status)
         }
 
-        self.device = device
         self.commandQueue = commandQueue
         textureCache = cache
     }
 
+    /// Composes each placed logical window frame into the atlas layout canvas.
     func compose(
         framesByWindowID: [WindowID: CapturedFrame],
         layout: AppAtlasLayout.Result
@@ -109,6 +117,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         return try compose(copyOperations: copyOperations, outputSize: layout.canvasSize)
     }
 
+    /// Composes auxiliary overlays onto a parent frame-sized output surface.
     func compose(
         baseFrame: CapturedFrame,
         overlays: [OverlayFrame],
@@ -135,6 +144,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         return try compose(copyOperations: copyOperations, outputSize: outputSize)
     }
 
+    /// Executes copy operations into a newly allocated BGRA pixel buffer.
     private func compose(
         copyOperations: [FrameCopyOperation],
         outputSize: CGSize
@@ -167,27 +177,15 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
             let sourceRect = operation.sourceRect.integral
             let sourceOriginX = max(0, Int(sourceRect.minX))
             let sourceOriginY = max(0, Int(sourceRect.minY))
-            let sourceCopyWidth = [
-                Int(sourceRect.width),
-                max(0, sourceWidth - sourceOriginX),
-            ].min() ?? 0
-            let sourceCopyHeight = [
-                Int(sourceRect.height),
-                max(0, sourceHeight - sourceOriginY),
-            ].min() ?? 0
+            let sourceCopyWidth = min(Int(sourceRect.width), max(0, sourceWidth - sourceOriginX))
+            let sourceCopyHeight = min(Int(sourceRect.height), max(0, sourceHeight - sourceOriginY))
             let destinationRect = operation.destinationRect.integral
             let destinationOriginX = max(0, Int(destinationRect.minX))
             let destinationOriginY = max(0, Int(destinationRect.minY))
             let destinationWidth = max(0, Int(destinationRect.width))
             let destinationHeight = max(0, Int(destinationRect.height))
-            let copyWidth = [
-                destinationWidth,
-                max(0, width - destinationOriginX),
-            ].min() ?? 0
-            let copyHeight = [
-                destinationHeight,
-                max(0, height - destinationOriginY),
-            ].min() ?? 0
+            let copyWidth = min(destinationWidth, max(0, width - destinationOriginX))
+            let copyHeight = min(destinationHeight, max(0, height - destinationOriginY))
             guard sourceCopyWidth > 0,
                   sourceCopyHeight > 0,
                   destinationWidth > 0,
@@ -244,6 +242,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         return outputBuffer
     }
 
+    /// Allocates a Metal-compatible BGRA output pixel buffer.
     private func makeOutputBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
         let attributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
@@ -267,6 +266,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         return pixelBuffer
     }
 
+    /// Clears a pixel buffer to transparent black before composition.
     private func clear(_ pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         if let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) {
@@ -275,6 +275,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
     }
 
+    /// Wraps a pixel buffer in a Metal texture.
     private func makeTexture(
         pixelBuffer: CVPixelBuffer,
         pixelFormat: MTLPixelFormat,
@@ -301,6 +302,7 @@ final class AppAtlasFrameCompositor: @unchecked Sendable {
         return texture
     }
 
+    /// Builds the small compute library used for nearest-neighbor atlas copies.
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
         let source = """
         #include <metal_stdlib>

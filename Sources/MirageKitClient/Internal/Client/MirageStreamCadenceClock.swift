@@ -7,15 +7,19 @@
 
 import CoreMedia
 import Foundation
+import MirageKit
 
+/// Presentation timing decision for one decoded stream frame.
 struct MirageStreamFrameTiming: Sendable, Equatable {
-    let frameNumber: UInt32
-    let remotePresentationTime: CMTime
+    /// Monotonic timestamp used by the client presentation pipeline.
     let streamPresentationTime: CMTime
+    /// Whether the host repeated the previous remote presentation timestamp.
     let duplicateRemoteTimestamp: Bool
+    /// Whether the clock generated a replacement timestamp instead of trusting the host timestamp.
     let correctedStreamTimestamp: Bool
 }
 
+/// Maintains monotonic client presentation timestamps for stream frames.
 struct MirageStreamCadenceClock: Sendable {
     private(set) var targetFPS: Int
     private var lastFrameNumber: UInt32?
@@ -23,12 +27,12 @@ struct MirageStreamCadenceClock: Sendable {
     private var lastStreamPresentationTime: CMTime = .invalid
 
     init(targetFPS: Int) {
-        self.targetFPS = Self.normalizedFPS(targetFPS)
+        self.targetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
     }
 
     mutating func reset(targetFPS: Int? = nil) {
         if let targetFPS {
-            self.targetFPS = Self.normalizedFPS(targetFPS)
+            self.targetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
         }
         lastFrameNumber = nil
         lastRemotePresentationTime = .invalid
@@ -36,7 +40,7 @@ struct MirageStreamCadenceClock: Sendable {
     }
 
     mutating func updateTargetFPS(_ targetFPS: Int) {
-        let normalized = Self.normalizedFPS(targetFPS)
+        let normalized = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
         guard normalized != self.targetFPS else { return }
         self.targetFPS = normalized
         lastFrameNumber = nil
@@ -71,7 +75,10 @@ struct MirageStreamCadenceClock: Sendable {
             )
             streamPresentationTime = CMTimeAdd(
                 lastStreamPresentationTime,
-                CMTimeMultiply(frameDuration, multiplier: Int32(frameStep))
+                CMTimeMultiply(
+                    CMTime(value: 1, timescale: CMTimeScale(max(1, targetFPS))),
+                    multiplier: Int32(frameStep)
+                )
             )
         } else {
             streamPresentationTime = .zero
@@ -88,20 +95,10 @@ struct MirageStreamCadenceClock: Sendable {
         lastStreamPresentationTime = streamPresentationTime
 
         return MirageStreamFrameTiming(
-            frameNumber: frameNumber,
-            remotePresentationTime: remotePresentationTime,
             streamPresentationTime: streamPresentationTime,
             duplicateRemoteTimestamp: duplicateRemoteTimestamp,
             correctedStreamTimestamp: correctedStreamTimestamp
         )
-    }
-
-    private var frameDuration: CMTime {
-        CMTime(value: 1, timescale: CMTimeScale(max(1, targetFPS)))
-    }
-
-    private static func normalizedFPS(_ fps: Int) -> Int {
-        min(240, max(1, fps))
     }
 
     private static func frameStep(from previous: UInt32, to current: UInt32, targetFPS: Int) -> UInt32 {

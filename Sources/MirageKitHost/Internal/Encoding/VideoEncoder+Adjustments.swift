@@ -44,9 +44,9 @@ extension VideoEncoder {
         let clamped = max(1, fps)
         configuration = configuration.withTargetFrameRate(clamped)
         guard let session = compressionSession else { return }
-        setProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: clamped as CFNumber)
+        _ = setProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: clamped as CFNumber)
         let intervalSeconds = max(1.0, Double(configuration.keyFrameInterval) / Double(clamped))
-        setProperty(
+        _ = setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
             value: intervalSeconds as CFNumber
@@ -57,8 +57,8 @@ extension VideoEncoder {
     func updateInFlightLimit(_ limit: Int) {
         let clamped = max(1, limit)
         encoderInFlightLock.lock()
+        defer { encoderInFlightLock.unlock() }
         encoderInFlightLimit = clamped
-        encoderInFlightLock.unlock()
     }
 
     func setMaximizePowerEfficiencyEnabled(_ enabled: Bool) {
@@ -87,13 +87,11 @@ extension VideoEncoder {
         isUpdatingDimensions = true
         defer { isUpdatingDimensions = false }
 
-        // Increment session version BEFORE completing old frames
-        // This ensures any in-flight callbacks from old session will be discarded
+        // Advance the generation before draining so in-flight callbacks fail the current-session check.
         sessionVersion += 1
         MirageLogger.encoder("Session version incremented to \(sessionVersion)")
         resetEncoderSlots()
 
-        // Complete and invalidate the old session
         if let session = compressionSession {
             VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
             VTCompressionSessionInvalidate(session)
@@ -151,15 +149,11 @@ extension VideoEncoder {
         frameNumber = 0
     }
 
-    func getActivePixelFormat() -> MiragePixelFormat {
-        activePixelFormat
+    var averageEncodeTimeMs: Double {
+        performanceTracker.averageMs
     }
 
-    func getAverageEncodeTimeMs() -> Double {
-        performanceTracker.averageMs()
-    }
-
-    func runtimeValidationSnapshot() -> RuntimeValidationSnapshot {
+    var runtimeValidationSnapshot: RuntimeValidationSnapshot {
         let profileName = activeProfileLevel.map(hevcProfileName(for:))
         let colorPrimaries = sessionStringProperty(kVTCompressionPropertyKey_ColorPrimaries)
         let transferFunction = sessionStringProperty(kVTCompressionPropertyKey_TransferFunction)
@@ -205,15 +199,16 @@ extension VideoEncoder {
 
     private func sessionStringProperty(_ key: CFString) -> String? {
         guard let session = compressionSession else { return nil }
-        var value: Unmanaged<CFTypeRef>?
-        let status = VTSessionCopyProperty(
-            session,
-            key: key,
-            allocator: kCFAllocatorDefault,
-            valueOut: &value
-        )
-        guard status == noErr,
-              let value = value?.takeRetainedValue() else { return nil }
+        var value: CFTypeRef?
+        let status = withUnsafeMutablePointer(to: &value) { valuePointer in
+            VTSessionCopyProperty(
+                session,
+                key: key,
+                allocator: kCFAllocatorDefault,
+                valueOut: valuePointer
+            )
+        }
+        guard status == noErr, let value else { return nil }
         return value as? String
     }
 
@@ -236,7 +231,7 @@ extension VideoEncoder {
 
         MirageLogger.encoder("Resetting encoder session (\(currentWidth)x\(currentHeight))")
         sessionVersion += 1
-        let staleSlots = encoderInFlightSnapshot()
+        let staleSlots = encoderInFlightSnapshot
         if staleSlots > 0 {
             MirageLogger.encoder("Clearing \(staleSlots) stale encoder slots")
         }

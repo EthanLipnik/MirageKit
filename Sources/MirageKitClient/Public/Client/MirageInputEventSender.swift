@@ -10,23 +10,28 @@
 import Foundation
 import MirageKit
 
+/// Serializes client input events and applies bounded coalescing before they enter the control channel.
 public final class MirageInputEventSender: @unchecked Sendable {
-    enum DeliveryMode: Sendable, Equatable {
+    /// Transport reliability requested for a serialized input payload.
+    enum DeliveryMode: Equatable {
         case reliable
         case orderedBestEffort
         case droppableRealtime
     }
 
+    /// Per-stream throttle window used while a window stream is settling after startup or resize.
     private struct TemporaryPointerCoalescingState {
         var deadline: CFAbsoluteTime = 0
         var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
     }
 
+    /// Input event waiting for the non-blocking send queue.
     private struct PendingInput {
         let event: MirageInputEvent
         let streamID: StreamID
     }
 
+    /// Continuous event categories that can be replaced by newer work without changing user intent.
     private enum ReplaceableContinuousInputKind: Equatable {
         case mouseMoved
         case mouseDragged
@@ -77,16 +82,16 @@ public final class MirageInputEventSender: @unchecked Sendable {
     ) {
         let clampedDuration = max(0, duration)
         pointerCoalescingLock.lock()
+        defer { pointerCoalescingLock.unlock() }
         var state = temporaryPointerCoalescingByStreamID[streamID] ?? TemporaryPointerCoalescingState()
         state.deadline = max(state.deadline, now + clampedDuration)
         temporaryPointerCoalescingByStreamID[streamID] = state
-        pointerCoalescingLock.unlock()
     }
 
     func clearTemporaryPointerCoalescing(for streamID: StreamID) {
         pointerCoalescingLock.lock()
+        defer { pointerCoalescingLock.unlock() }
         temporaryPointerCoalescingByStreamID.removeValue(forKey: streamID)
-        pointerCoalescingLock.unlock()
     }
 
     func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
@@ -101,13 +106,14 @@ public final class MirageInputEventSender: @unchecked Sendable {
             path: "client_send_reliable"
         )
         let data = try makeInputMessageData(event: event, streamID: streamID)
-        if let sendHandler = currentSendHandler() {
+        if let sendHandler = currentSendHandler {
             try await sendHandler(data, .reliable)
             return
         }
         throw MirageError.protocolError("Not connected")
     }
 
+    /// Enqueues an input event for best-effort delivery without blocking the caller.
     public func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
         recordInteractionIfNeeded(event)
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
@@ -122,22 +128,19 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
         sendQueue.async { [weak self] in
             guard let self else { return }
-            self.enqueueBestEffort(PendingInput(event: event, streamID: streamID))
+
+            guard currentSendHandler != nil else {
+                pendingInputs.removeAll()
+                return
+            }
+
+            appendPendingInput(PendingInput(event: event, streamID: streamID))
+            trimPendingInputs()
+            scheduleDrain()
         }
     }
 
     // MARK: - Non-Blocking Send
-
-    private func enqueueBestEffort(_ pending: PendingInput) {
-        guard currentSendHandler() != nil else {
-            pendingInputs.removeAll()
-            return
-        }
-
-        appendPendingInput(pending)
-        trimPendingInputs()
-        scheduleDrain()
-    }
 
     private func appendPendingInput(_ pending: PendingInput) {
         if let last = pendingInputs.last,
@@ -168,7 +171,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     private func scheduleDrain() {
         guard !sendInFlight else { return }
         guard !pendingInputs.isEmpty else { return }
-        guard let handler = currentSendHandler() else {
+        guard let handler = currentSendHandler else {
             pendingInputs.removeAll()
             return
         }
@@ -179,7 +182,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let data = try self.makeInputMessageData(event: pending.event, streamID: pending.streamID)
+                let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
                 try await handler(data, Self.deliveryMode(for: pending.event))
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {
@@ -189,34 +192,30 @@ public final class MirageInputEventSender: @unchecked Sendable {
                 }
             }
 
-            self.sendQueue.async { [weak self] in
+            sendQueue.async { [weak self] in
                 guard let self else { return }
-                self.sendInFlight = false
-                self.scheduleDrain()
+                sendInFlight = false
+                scheduleDrain()
             }
         }
     }
 
     private func trimPendingInputs() {
         while pendingInputs.count > Self.maxPendingInputs {
-            if removeFirstPendingInput(where: { isLowPriorityStaleInput($0.event) }) { continue }
+            if removeFirstPendingInput(where: { replaceableContinuousKind(for: $0.event) != nil }) { continue }
             if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
             break
         }
 
-        while pendingContactSampleCount > Self.maxPendingContactSamples {
-            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
-            break
-        }
-    }
-
-    private var pendingContactSampleCount: Int {
-        pendingInputs.reduce(into: 0) { result, input in
+        while pendingInputs.reduce(into: 0, { result, input in
             guard case let .pointerSampleBatch(batch) = input.event,
                   batch.phase == .moved else {
                 return
             }
             result += batch.samples.count
+        }) > Self.maxPendingContactSamples {
+            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
+            break
         }
     }
 
@@ -247,35 +246,23 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return false
     }
 
-    private func currentSendHandler() -> (@Sendable (Data, DeliveryMode) async throws -> Void)? {
+    /// Current transport send closure protected by the sender connection lock.
+    private var currentSendHandler: (@Sendable (Data, DeliveryMode) async throws -> Void)? {
         connectionLock.lock()
-        let handler = sendHandler
-        connectionLock.unlock()
-        return handler
+        defer { connectionLock.unlock() }
+        return sendHandler
     }
 
-    func shouldDropInputForTemporaryCoalescingForTesting(
-        _ event: MirageInputEvent,
-        streamID: StreamID,
-        now: CFAbsoluteTime,
-        minInterval: CFAbsoluteTime = 1.0 / 60.0
-    ) -> Bool {
-        shouldDropInputForTemporaryCoalescing(
-            event,
-            streamID: streamID,
-            now: now,
-            minInterval: minInterval
-        )
-    }
-
+    /// Returns the elapsed time since the last user interaction observed by this sender.
     public func secondsSinceLastInteraction(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> CFAbsoluteTime? {
         interactionLock.lock()
-        let lastInteractionTime = self.lastInteractionTime
-        interactionLock.unlock()
-        guard lastInteractionTime > 0 else { return nil }
-        return max(0, now - lastInteractionTime)
+        defer { interactionLock.unlock() }
+        let lastInteractionTimestamp = lastInteractionTime
+        guard lastInteractionTimestamp > 0 else { return nil }
+        return max(0, now - lastInteractionTimestamp)
     }
 
+    /// Returns whether this sender observed an interaction inside the supplied duration.
     public func hasRecentInteraction(
         within duration: CFAbsoluteTime,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
@@ -284,11 +271,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         return elapsed < duration
     }
 
-    func recordInteractionForTesting(_ event: MirageInputEvent, now: CFAbsoluteTime) {
-        recordInteractionIfNeeded(event, now: now)
-    }
-
-    private func shouldDropInputForTemporaryCoalescing(
+    func shouldDropInputForTemporaryCoalescing(
         _ event: MirageInputEvent,
         streamID: StreamID,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
@@ -346,10 +329,6 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
     }
 
-    private func isLowPriorityStaleInput(_ event: MirageInputEvent) -> Bool {
-        replaceableContinuousKind(for: event) != nil
-    }
-
     private func isDroppableContactMove(_ event: MirageInputEvent) -> Bool {
         guard case let .pointerSampleBatch(batch) = event else { return false }
         return batch.phase == .moved
@@ -388,59 +367,13 @@ public final class MirageInputEventSender: @unchecked Sendable {
         )
     }
 
-    private func recordInteractionIfNeeded(
+    func recordInteractionIfNeeded(
         _ event: MirageInputEvent,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {
         guard event.shouldGateAutomaticProbe else { return }
         interactionLock.lock()
+        defer { interactionLock.unlock() }
         lastInteractionTime = now
-        interactionLock.unlock()
-    }
-}
-
-private extension MirageInputEvent {
-    var hasNativeScrollMetadata: Bool {
-        guard case let .scrollWheel(event) = self else { return false }
-        return event.hasNativeScrollMetadata
-    }
-
-    func mergedWithCompatibleNativeContinuousScrollEvent(_ newerEvent: MirageInputEvent) -> MirageInputEvent? {
-        guard case let .scrollWheel(scrollEvent) = self,
-              case let .scrollWheel(newerScrollEvent) = newerEvent,
-              let mergedEvent = scrollEvent.mergedWithCompatibleNativeContinuousScrollEvent(newerScrollEvent) else {
-            return nil
-        }
-        return .scrollWheel(mergedEvent)
-    }
-
-    var shouldGateAutomaticProbe: Bool {
-        switch self {
-        case .keyDown,
-             .keyUp,
-             .flagsChanged,
-             .mouseDown,
-             .mouseUp,
-             .mouseMoved,
-             .mouseDragged,
-             .pointerSampleBatch,
-             .rightMouseDown,
-             .rightMouseUp,
-             .rightMouseDragged,
-             .otherMouseDown,
-             .otherMouseUp,
-             .otherMouseDragged,
-             .scrollWheel:
-            true
-        case .hostSystemAction,
-             .magnify,
-             .pixelResize,
-             .relativeResize,
-             .rotate,
-             .swipe,
-             .windowFocus,
-             .windowResize:
-            false
-        }
     }
 }

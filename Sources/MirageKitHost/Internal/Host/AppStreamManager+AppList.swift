@@ -15,8 +15,8 @@ import Foundation
 extension AppStreamManager {
     // MARK: - App List
 
-    /// Get list of installed apps with streaming status
-    public func getInstalledApps(
+    /// Returns installed applications with current running and streaming status.
+    func installedApps(
         includeIcons: Bool = true,
         forceRefresh: Bool = false,
         onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)? = nil
@@ -28,13 +28,13 @@ extension AppStreamManager {
         }
 
         let now = Date()
-        let statusSnapshot = snapshotStatus()
+        let currentStatusSnapshot = statusSnapshot
 
         if forceRefresh {
             let scanned = await applicationScanner.scanInstalledApps(
                 includeIcons: includeIcons,
-                runningApps: statusSnapshot.runningApps,
-                streamingApps: statusSnapshot.streamingApps,
+                runningApps: currentStatusSnapshot.runningApps,
+                streamingApps: currentStatusSnapshot.streamingApps,
                 onAppDiscovered: onAppDiscovered
             )
             if Task.isCancelled {
@@ -77,8 +77,8 @@ extension AppStreamManager {
             let task = Task(priority: .utility) { [applicationScanner] in
                 await applicationScanner.scanInstalledApps(
                     includeIcons: true,
-                    runningApps: statusSnapshot.runningApps,
-                    streamingApps: statusSnapshot.streamingApps,
+                    runningApps: currentStatusSnapshot.runningApps,
+                    streamingApps: currentStatusSnapshot.streamingApps,
                     onAppDiscovered: onAppDiscovered
                 )
             }
@@ -119,8 +119,8 @@ extension AppStreamManager {
         let task = Task(priority: .utility) { [applicationScanner] in
             await applicationScanner.scanInstalledApps(
                 includeIcons: false,
-                runningApps: statusSnapshot.runningApps,
-                streamingApps: statusSnapshot.streamingApps,
+                runningApps: currentStatusSnapshot.runningApps,
+                streamingApps: currentStatusSnapshot.streamingApps,
                 onAppDiscovered: onAppDiscovered
             )
         }
@@ -138,6 +138,7 @@ extension AppStreamManager {
         return refreshed
     }
 
+    /// Replays discovered apps to a progress callback from cached results.
     func replayInstalledApps(
         _ apps: [MirageInstalledApp],
         onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)?
@@ -149,13 +150,7 @@ extension AppStreamManager {
         }
     }
 
-    func invalidateAppListCache() {
-        cachedAppsWithIcons.removeAll()
-        cachedAppsWithoutIcons.removeAll()
-        lastAppsScanWithIconsAt = nil
-        lastAppsScanWithoutIconsAt = nil
-    }
-
+    /// Cancels any in-flight installed app scans.
     func cancelAppListScans() {
         appScanTaskWithIcons?.cancel()
         appScanTaskWithoutIcons?.cancel()
@@ -163,6 +158,7 @@ extension AppStreamManager {
         appScanTaskWithoutIcons = nil
     }
 
+    /// Generates icon payload data for an installed app path.
     func iconDataForInstalledApp(
         atPath appPath: String,
         maxPixelSize: Int,
@@ -176,7 +172,8 @@ extension AppStreamManager {
         )
     }
 
-    private func snapshotStatus() -> (runningApps: Set<String>, streamingApps: Set<String>) {
+    /// Current lowercased bundle identifiers for running apps and active app-stream sessions.
+    private var statusSnapshot: (runningApps: Set<String>, streamingApps: Set<String>) {
         let runningApps = Set(
             NSWorkspace.shared.runningApplications
                 .compactMap { $0.bundleIdentifier?.lowercased() }
@@ -185,38 +182,19 @@ extension AppStreamManager {
         return (runningApps, streamingApps)
     }
 
+    /// Refreshes running/streaming state for a list of installed apps.
     private func refreshStatuses(for apps: [MirageInstalledApp]) async -> [MirageInstalledApp] {
-        let statusSnapshot = snapshotStatus()
+        let currentStatusSnapshot = statusSnapshot
         return await applicationScanner.updateStatus(
             for: apps,
-            runningApps: statusSnapshot.runningApps,
-            streamingApps: statusSnapshot.streamingApps
+            runningApps: currentStatusSnapshot.runningApps,
+            streamingApps: currentStatusSnapshot.streamingApps
         )
     }
 
+    /// Returns whether a cached app scan is still within its TTL.
     private func isCacheValid(_ lastScan: Date?, ttl: TimeInterval, now: Date) -> Bool {
-        guard let lastScan else { return false }
-        return now.timeIntervalSince(lastScan) <= ttl
-    }
-
-    /// Check if an app is available for streaming (not already being streamed)
-    public func isAppAvailableForStreaming(_ bundleIdentifier: String) -> Bool {
-        let key = bundleIdentifier.lowercased()
-
-        // Not being streamed
-        guard let session = sessions[key] else { return true }
-
-        // Check if reservation has expired
-        if session.reservationExpired { return true }
-
-        return false
-    }
-
-    /// Get the client ID that has exclusive access to an app (if any)
-    public func clientStreamingApp(_ bundleIdentifier: String) -> UUID? {
-        let key = bundleIdentifier.lowercased()
-        guard let session = sessions[key], !session.reservationExpired else { return nil }
-        return session.clientID
+        lastScan.map { now.timeIntervalSince($0) <= ttl } ?? false
     }
 }
 

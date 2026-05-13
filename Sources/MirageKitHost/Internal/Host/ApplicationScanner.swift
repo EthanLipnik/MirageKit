@@ -7,23 +7,22 @@
 
 import MirageKit
 #if os(macOS)
-import AppKit
+import CoreGraphics
 import Foundation
 import OSLog
 
-/// Scans installed applications on macOS for streaming selection
-/// Based on Vector's AppsService but simplified for Mirage's network-based use case
+/// Scans macOS application bundles and returns streamable app metadata for clients.
 public actor ApplicationScanner {
     let logger = Logger(subsystem: "MirageKit", category: "ApplicationScanner")
     let fileManager = FileManager.default
 
-    /// Directories to scan for applications
+    /// Root directories scanned for application bundles.
     let scanDirectories: [URL]
 
-    /// Icon size for PNG generation
+    /// Pixel size used for app list PNG icons.
     let iconSize: CGFloat = 128
 
-    /// Bundle identifier patterns to exclude (system services, agents, etc.)
+    /// Bundle identifier substrings excluded from CoreServices unless allowlisted.
     let excludedBundlePatterns: [String] = [
         "UIServer",
         "UIAgent",
@@ -41,7 +40,7 @@ public actor ApplicationScanner {
         "XPCService",
     ]
 
-    /// Specific bundle identifiers to always include from CoreServices
+    /// CoreServices bundle identifiers that should appear in the streamable app list.
     let coreServicesAllowlist: Set<String> = [
         "com.apple.finder",
         "com.apple.archiveutility",
@@ -53,7 +52,7 @@ public actor ApplicationScanner {
         "com.apple.DiskImageMounter",
     ]
 
-    /// Excluded directory names when scanning nested bundles
+    /// Directory names skipped when recursively scanning inside allowed bundles.
     let excludedDirectoryNames: Set<String> = [
         "frameworks",
         "sharedframeworks",
@@ -83,14 +82,15 @@ public actor ApplicationScanner {
         "sbin",
     ]
 
-    /// Bundle identifiers that allow nested app scanning (e.g., Xcode contains many apps)
+    /// App bundle identifiers whose contents may contain streamable nested apps.
     let nestedBundleAllowedIdentifiers: Set<String> = [
         "com.apple.dt.xcode",
     ]
 
-    /// Maximum depth for nested bundle scanning
+    /// Maximum recursive depth for nested bundle scans.
     let nestedBundleScanDepth = 7
 
+    /// Creates an application scanner with the standard macOS application search roots.
     public init() {
         var directories: Set<URL> = [
             URL(fileURLWithPath: "/Applications", isDirectory: true),
@@ -107,12 +107,7 @@ public actor ApplicationScanner {
         scanDirectories = Array(directories)
     }
 
-    /// Scans all application directories and returns installed apps
-    /// - Parameters:
-    ///   - includeIcons: Whether to include PNG icon data (slower but needed for client display)
-    ///   - runningApps: Set of bundle identifiers for currently running apps
-    ///   - streamingApps: Set of bundle identifiers for apps currently being streamed
-    /// - Returns: Array of installed apps, sorted by name
+    /// Scans application directories and returns installed apps sorted by display name.
     public func scanInstalledApps(
         includeIcons: Bool = true,
         runningApps: Set<String> = [],
@@ -157,6 +152,7 @@ public actor ApplicationScanner {
         return apps
     }
 
+    /// Enriches a candidate with icon data and current running/streaming state.
     private func installedApp(
         from candidate: AppCandidate,
         includeIcons: Bool,
@@ -179,7 +175,7 @@ public actor ApplicationScanner {
         )
     }
 
-    /// Updates running/streaming status without rescanning
+    /// Updates running and streaming status on an existing app list without rescanning the filesystem.
     public func updateStatus(
         for apps: [MirageInstalledApp],
         runningApps: Set<String>,

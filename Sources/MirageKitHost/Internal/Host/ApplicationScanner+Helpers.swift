@@ -10,7 +10,6 @@
 import MirageKit
 #if os(macOS)
 import AppKit
-import CoreServices
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -18,11 +17,13 @@ import UniformTypeIdentifiers
 // MARK: - Helpers
 
 extension ApplicationScanner {
+    /// Returns a standardized, symlink-resolved directory URL for an app path.
     func canonicalURL(forPath path: String) -> URL {
         let url = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         return url.resolvingSymlinksInPath()
     }
 
+    /// Returns canonical bundle paths for currently running apps, keyed by lowercased bundle identifier.
     func runningAppPathsByBundleIdentifier() -> [String: Set<String>] {
         var runningPathsByBundle: [String: Set<String>] = [:]
         for app in NSWorkspace.shared.runningApplications {
@@ -34,6 +35,7 @@ extension ApplicationScanner {
         return runningPathsByBundle
     }
 
+    /// Resolves and caches the Launch Services default app path for a bundle identifier.
     func defaultAppPath(
         forBundleIdentifier bundleIdentifier: String,
         cachedPaths: inout [String: String],
@@ -52,6 +54,7 @@ extension ApplicationScanner {
         return canonicalPath
     }
 
+    /// Ranks app locations so duplicate bundle identifiers prefer system and user-facing app domains.
     func domainPriority(for url: URL) -> Int {
         let path = url.path
 
@@ -69,6 +72,7 @@ extension ApplicationScanner {
         return 1
     }
 
+    /// Rasterizes an app icon as PNG data for app list payloads.
     func generateIconPNG(for url: URL) async -> Data? {
         let size = iconSize
         return await MainActor.run {
@@ -77,6 +81,7 @@ extension ApplicationScanner {
         }
     }
 
+    /// Rasterizes an app icon using HEIF when possible and PNG as a fallback.
     func generateIconPayloadData(
         for url: URL,
         maxPixelSize: Int,
@@ -95,6 +100,7 @@ extension ApplicationScanner {
         }
     }
 
+    /// Draws an `NSImage` into a square bitmap and returns PNG data.
     nonisolated static func rasterizeIconToPNG(_ icon: NSImage, size: CGFloat) -> Data? {
         let targetSize = NSSize(width: size, height: size)
         let scaledImage = NSImage(size: targetSize)
@@ -119,6 +125,7 @@ extension ApplicationScanner {
         return bitmap.representation(using: .png, properties: [:])
     }
 
+    /// Draws an `NSImage` into a square bitmap and encodes HEIF before falling back to PNG.
     nonisolated static func rasterizeIconToHEIFOrPNG(
         _ icon: NSImage,
         size: CGFloat,

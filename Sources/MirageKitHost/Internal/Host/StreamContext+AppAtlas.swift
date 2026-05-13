@@ -18,7 +18,7 @@ extension StreamContext {
     )
     async throws -> MirageCustomStreamFrameSink {
         guard !isRunning else {
-            return makeAppAtlasFrameSink()
+            return makeCustomStreamFrameSink()
         }
 
         let outputSize = normalizedAppAtlasPixelSize(pixelSize)
@@ -55,14 +55,17 @@ extension StreamContext {
         MirageLogger.stream(
             "Started app atlas stream \(streamID) at \(Int(outputSize.width))x\(Int(outputSize.height))"
         )
-        return makeAppAtlasFrameSink()
+        return makeCustomStreamFrameSink()
     }
 
-    @discardableResult
-    func updateAppAtlasDimensionsIfNeeded(pixelSize: CGSize) async throws -> Bool {
+    func applyAppAtlasDimensionsIfNeeded(pixelSize: CGSize) async throws {
         let outputSize = normalizedAppAtlasPixelSize(pixelSize)
-        guard outputSize != currentEncodedSize else { return false }
+        guard outputSize != currentEncodedSize else { return }
 
+        try await applyAppAtlasDimensions(outputSize)
+    }
+
+    private func applyAppAtlasDimensions(_ outputSize: CGSize) async throws {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "app atlas resize")
@@ -83,26 +86,6 @@ extension StreamContext {
         MirageLogger.stream(
             "App atlas stream \(streamID) resized to \(Int(outputSize.width))x\(Int(outputSize.height))"
         )
-        return true
-    }
-
-    private func makeAppAtlasFrameSink() -> MirageCustomStreamFrameSink {
-        MirageCustomStreamFrameSink { [weak self] frame in
-            guard let self else { return }
-            let info = CapturedFrameInfo(
-                contentRect: frame.contentRect,
-                dirtyPercentage: frame.dirtyPercentage,
-                isIdleFrame: frame.isIdleFrame
-            )
-            let capturedFrame = CapturedFrame(
-                pixelBuffer: frame.pixelBuffer,
-                presentationTime: frame.presentationTime,
-                duration: frame.duration,
-                captureTime: CFAbsoluteTimeGetCurrent(),
-                info: info
-            )
-            self.enqueueCapturedFrame(capturedFrame)
-        }
     }
 
     private func normalizedAppAtlasPixelSize(_ size: CGSize) -> CGSize {

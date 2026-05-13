@@ -11,53 +11,66 @@ import Foundation
 
 // MARK: - Custom Streaming Messages
 
-package struct StartCustomStreamMessage: Codable, Sendable {
+/// Client-to-host request to start an app-defined custom stream.
+package struct StartCustomStreamMessage: Codable {
+    /// Request-scoped identifier used to cancel or reject stale startup work.
     package let startupRequestID: UUID
+
+    /// App-defined stream kind.
     package let kind: String
+
+    /// App-defined metadata describing the requested stream.
     package let metadata: [String: String]
+
+    /// Client display width in points.
     package let displayWidth: Int
+
+    /// Client display height in points.
     package let displayHeight: Int
+
+    /// Client-selected target frame rate in Hz.
     package let targetFrameRate: Int
-    package let scaleFactor: CGFloat?
+
+    /// Client-requested keyframe interval in frames.
     package var keyFrameInterval: Int?
-    package var colorDepth: MirageStreamColorDepth?
+
+    /// Client-requested target bitrate in bits per second.
     package var bitrate: Int?
+
+    /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
+
+    /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
+
+    /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
+
+    /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
+
+    /// Client-requested post-capture stream scale.
     package var streamScale: CGFloat?
+
+    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
     package var bitrateAdaptationCeiling: Int?
+
+    /// Maximum encoded width in pixels for host-computed stream scaling.
     package var encoderMaxWidth: Int?
+
+    /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+
+    /// Requested media packet size for this stream.
     package var mediaMaxPacketSize: Int?
+
+    /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
+
+    /// Client-requested video codec.
     package var codec: MirageVideoCodec?
 
-    enum CodingKeys: String, CodingKey {
-        case startupRequestID
-        case kind
-        case metadata
-        case displayWidth
-        case displayHeight
-        case targetFrameRate
-        case scaleFactor
-        case keyFrameInterval
-        case colorDepth
-        case bitrate
-        case latencyMode
-        case allowRuntimeQualityAdjustment
-        case lowLatencyHighResolutionCompressionBoost
-        case disableResolutionCap
-        case streamScale
-        case bitrateAdaptationCeiling
-        case encoderMaxWidth
-        case encoderMaxHeight
-        case mediaMaxPacketSize
-        case upscalingMode
-        case codec
-    }
-
+    /// Creates a custom-stream startup request.
     package init(
         startupRequestID: UUID = UUID(),
         kind: String,
@@ -65,7 +78,6 @@ package struct StartCustomStreamMessage: Codable, Sendable {
         displayWidth: Int,
         displayHeight: Int,
         targetFrameRate: Int,
-        scaleFactor: CGFloat? = nil,
         streamScale: CGFloat? = nil,
         mediaMaxPacketSize: Int? = nil
     ) {
@@ -75,45 +87,11 @@ package struct StartCustomStreamMessage: Codable, Sendable {
         self.displayWidth = max(1, displayWidth)
         self.displayHeight = max(1, displayHeight)
         self.targetFrameRate = max(1, min(120, targetFrameRate))
-        self.scaleFactor = scaleFactor
         self.streamScale = streamScale
         self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        startupRequestID = (try? container.decodeIfPresent(UUID.self, forKey: .startupRequestID)) ?? UUID()
-        kind = try container.decode(String.self, forKey: .kind)
-        metadata = container.decodeLossyIfPresent([String: String].self, forKey: .metadata) ?? [:]
-        displayWidth = max(1, container.decodeLossyIfPresent(Int.self, forKey: .displayWidth) ?? 1)
-        displayHeight = max(1, container.decodeLossyIfPresent(Int.self, forKey: .displayHeight) ?? 1)
-        targetFrameRate = max(
-            1,
-            min(120, container.decodeLossyIfPresent(Int.self, forKey: .targetFrameRate) ?? 60)
-        )
-        scaleFactor = container.decodeLossyIfPresent(CGFloat.self, forKey: .scaleFactor)
-        keyFrameInterval = container.decodeLossyIfPresent(Int.self, forKey: .keyFrameInterval)
-        colorDepth = container.decodeLossyIfPresent(MirageStreamColorDepth.self, forKey: .colorDepth)
-        bitrate = container.decodeLossyIfPresent(Int.self, forKey: .bitrate)
-        latencyMode = container.decodeLossyIfPresent(MirageStreamLatencyMode.self, forKey: .latencyMode)
-        allowRuntimeQualityAdjustment = container.decodeLossyIfPresent(
-            Bool.self,
-            forKey: .allowRuntimeQualityAdjustment
-        )
-        lowLatencyHighResolutionCompressionBoost = container.decodeLossyIfPresent(
-            Bool.self,
-            forKey: .lowLatencyHighResolutionCompressionBoost
-        )
-        disableResolutionCap = container.decodeLossyIfPresent(Bool.self, forKey: .disableResolutionCap)
-        streamScale = container.decodeLossyIfPresent(CGFloat.self, forKey: .streamScale)
-        bitrateAdaptationCeiling = container.decodeLossyIfPresent(Int.self, forKey: .bitrateAdaptationCeiling)
-        encoderMaxWidth = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxWidth)
-        encoderMaxHeight = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxHeight)
-        mediaMaxPacketSize = container.decodeLossyIfPresent(Int.self, forKey: .mediaMaxPacketSize)
-        upscalingMode = container.decodeLossyIfPresent(MirageUpscalingMode.self, forKey: .upscalingMode)
-        codec = container.decodeLossyIfPresent(MirageVideoCodec.self, forKey: .codec)
-    }
-
+    /// Public request handed to custom stream providers.
     package var publicRequest: MirageCustomStreamRequest {
         MirageCustomStreamRequest(
             requestID: startupRequestID,
@@ -127,30 +105,47 @@ package struct StartCustomStreamMessage: Codable, Sendable {
     }
 }
 
-private extension KeyedDecodingContainer {
-    func decodeLossyIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
-        try? decodeIfPresent(type, forKey: key)
-    }
-}
-
-package struct StopCustomStreamMessage: Codable, Sendable {
+/// Client-to-host request to stop a custom stream.
+package struct StopCustomStreamMessage: Codable {
+    /// Stream to stop.
     package let streamID: StreamID
 
+    /// Creates a custom-stream stop request.
     package init(streamID: StreamID) {
         self.streamID = streamID
     }
 }
 
+/// Host-to-client notification that a custom stream has started.
 public struct MirageCustomStreamStartedMessage: Codable, Sendable, Equatable {
+    /// Client-provided startup request identifier.
     public let startupRequestID: UUID
+
+    /// Stream identifier assigned by the host.
     public let streamID: StreamID
+
+    /// Descriptor for the app-defined source backing the stream.
     public let descriptor: MirageCustomStreamDescriptor
+
+    /// Encoded stream width in pixels.
     public let width: Int
+
+    /// Encoded stream height in pixels.
     public let height: Int
+
+    /// Initial frame rate selected for the stream.
     public let frameRate: Int
+
+    /// Video codec selected for the stream.
     public let codec: MirageVideoCodec
+
+    /// Host startup attempt identifier used for diagnostics.
     public let startupAttemptID: UUID?
+
+    /// Host dimension token used to correlate frame geometry.
     public let dimensionToken: UInt16?
+
+    /// Negotiated media packet size for the stream.
     public let acceptedMediaMaxPacketSize: Int?
 
     package init(
@@ -178,15 +173,27 @@ public struct MirageCustomStreamStartedMessage: Codable, Sendable, Equatable {
     }
 }
 
+/// Host-to-client notification that a custom stream has stopped.
 public struct MirageCustomStreamStoppedMessage: Codable, Sendable, Equatable {
+    /// Reason the custom stream stopped.
     public enum Reason: String, Codable, Sendable {
+        /// Client requested the stop.
         case clientRequested
+
+        /// The app-defined source stopped producing frames.
         case sourceStopped
+
+        /// Host shut down or disconnected.
         case hostShutdown
+
+        /// The stream stopped because of an error.
         case error
     }
 
+    /// Stream identifier that stopped.
     public let streamID: StreamID
+
+    /// Reason the stream stopped.
     public let reason: Reason
 
     package init(streamID: StreamID, reason: Reason) {
@@ -195,21 +202,20 @@ public struct MirageCustomStreamStoppedMessage: Codable, Sendable, Equatable {
     }
 }
 
-package struct CustomStreamFailedMessage: Codable, Sendable {
+/// Host-to-client notification that a custom stream failed to start.
+package struct CustomStreamFailedMessage: Codable {
+    /// Startup request that failed.
     package let startupRequestID: UUID
-    package let kind: String
-    package let reason: String
-    package let errorCode: ErrorMessage.ErrorCode
 
+    /// Human-readable failure reason.
+    package let reason: String
+
+    /// Creates a custom-stream startup failure payload.
     package init(
         startupRequestID: UUID,
-        kind: String,
-        reason: String,
-        errorCode: ErrorMessage.ErrorCode
+        reason: String
     ) {
         self.startupRequestID = startupRequestID
-        self.kind = kind
         self.reason = reason
-        self.errorCode = errorCode
     }
 }

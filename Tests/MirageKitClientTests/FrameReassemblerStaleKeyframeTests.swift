@@ -18,9 +18,9 @@ struct FrameReassemblerStaleKeyframeTests {
     @Test("Initial keyframe 0 anchors P-frame delivery")
     func initialKeyframeZeroDoesNotBlockPFrames() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
+        let deliveredCounter = FrameReassemblerLockedCounter()
 
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             deliveredCounter.increment()
             release()
         }
@@ -52,38 +52,12 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 2)
     }
 
-    @Test("Payload integrity failure enters keyframe wait")
-    func payloadIntegrityFailureEntersKeyframeWait() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
-
-        reassembler.setFrameLossHandler { _, reason in
-            lossReason.value = reason
-        }
-
-        let pFramePayload = Data([0x00, 0x00, 0x00, 0x02, 0x02, 0x03])
-        reassembler.processPacket(
-            pFramePayload,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 1,
-                payload: pFramePayload,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                checksum: 0xDEAD_BEEF
-            )
-        )
-
-        #expect(reassembler.isAwaitingKeyframe())
-        #expect(lossReason.value == .payloadIntegrity)
-    }
-
     @Test("Keyframe-only mode admits dependent P-frames after recovery keyframe")
     func keyframeOnlyModeAdmitsDependentPFramesAfterRecoveryKeyframe() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
+        let deliveredCounter = FrameReassemblerLockedCounter()
 
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             deliveredCounter.increment()
             release()
         }
@@ -115,7 +89,7 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
         #expect(deliveredCounter.value == 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe == false)
 
         let dependentPFramePayload = Data([0x00, 0x00, 0x00, 0x03, 0x02, 0x04])
         reassembler.processPacket(
@@ -135,10 +109,10 @@ struct FrameReassemblerStaleKeyframeTests {
     @Test("Delivered keyframe duplicate is dropped without triggering loss")
     func deliveredKeyframeDuplicateDoesNotTriggerLossLoop() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
 
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             deliveredCounter.increment()
             release()
         }
@@ -194,10 +168,10 @@ struct FrameReassemblerStaleKeyframeTests {
     @Test("Multiple forward gaps stay buffered and drain in order")
     func sustainedForwardGapsDrainWithoutKeyframeWait() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
 
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             deliveredCounter.increment()
             release()
         }
@@ -231,7 +205,7 @@ struct FrameReassemblerStaleKeyframeTests {
                 )
             )
         }
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe == false)
         #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value == 0)
 
@@ -246,7 +220,7 @@ struct FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe == false)
         #expect(deliveredCounter.value == 3)
         #expect(lossCounter.value == 0)
 
@@ -262,7 +236,7 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
         #expect(deliveredCounter.value == 5)
-        #expect(reassembler.isAwaitingKeyframe() == false)
+        #expect(reassembler.isAwaitingKeyframe == false)
 
         let pFrame25 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x25])
         reassembler.processPacket(
@@ -282,11 +256,11 @@ struct FrameReassemblerStaleKeyframeTests {
     @Test("Severe forward gap immediately enters keyframe wait")
     func severeForwardGapImmediatelyEntersKeyframeWait() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+        let lossReason = FrameReassemblerLockedValue<FrameReassembler.FrameLossReason?>(nil)
 
-        reassembler.setFrameHandler { _, _, _, _, _, release in
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
             deliveredCounter.increment()
             release()
         }
@@ -323,871 +297,77 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .severeForwardGap)
-        #expect(reassembler.isAwaitingKeyframe() == true)
+        #expect(reassembler.isAwaitingKeyframe == true)
     }
 
-    @Test("Live P-frame gap stays buffered before hard timeout")
-    func livePFrameGapStaysBufferedBeforeHardTimeout() async throws {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        reassembler.setTargetFrameRate(60)
-        let deliveredFrames = LockedValue<[UInt32]>([])
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, frameNumber, _, _, _, _, release in
-            deliveredFrames.value = deliveredFrames.value + [frameNumber]
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-
-        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
-        reassembler.processPacket(
-            keyframe0,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 0,
-                payload: keyframe0,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        let incompletePFrame1 = Data(repeating: 0xAB, count: 1200)
-        reassembler.processPacket(
-            incompletePFrame1,
-            header: makeHeader(
-                flags: [],
-                frameNumber: 1,
-                payload: incompletePFrame1,
-                fragmentIndex: 0,
-                fragmentCount: 2,
-                frameByteCount: 2400
-            )
-        )
-
-        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
-        reassembler.processPacket(
-            pFrame2,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 2,
-                payload: pFrame2,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-        #expect(deliveredFrames.value == [0])
-
-        try await Task.sleep(for: .milliseconds(70))
-
-        let pFrame3 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
-        reassembler.processPacket(
-            pFrame3,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 3,
-                payload: pFrame3,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        #expect(deliveredFrames.value == [0])
-        #expect(lossCounter.value == 0)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-    }
-
-    @Test("P-frame timeout enters keyframe recovery instead of skipping dependencies")
-    func pFrameTimeoutEntersKeyframeRecoveryInsteadOfSkippingDependencies() async throws {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            deliveredCounter.increment()
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-
-        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
-        reassembler.processPacket(
-            keyframe0,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 0,
-                payload: keyframe0,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-        #expect(deliveredCounter.value == 1)
-
-        let incompletePFrame = Data(repeating: 0xAB, count: 1200)
-        reassembler.processPacket(
-            incompletePFrame,
-            header: makeHeader(
-                flags: [],
-                frameNumber: 1,
-                payload: incompletePFrame,
-                fragmentIndex: 0,
-                fragmentCount: 2,
-                frameByteCount: 2400
-            )
-        )
-
-        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
-        reassembler.processPacket(
-            pFrame2,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 2,
-                payload: pFrame2,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-        #expect(deliveredCounter.value == 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-
-        try await Task.sleep(for: .milliseconds(700))
-
-        let pFrame3 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
-        reassembler.processPacket(
-            pFrame3,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 3,
-                payload: pFrame3,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        #expect(deliveredCounter.value == 1)
-        #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe())
-    }
-
-    @Test("Buffered forward gap without pending expected frame enters keyframe recovery")
-    func bufferedForwardGapWithoutExpectedFrameEntersKeyframeRecovery() async throws {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            deliveredCounter.increment()
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-
-        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
-        reassembler.processPacket(
-            keyframe0,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 0,
-                payload: keyframe0,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-        #expect(deliveredCounter.value == 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-
-        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
-        reassembler.processPacket(
-            pFrame2,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 2,
-                payload: pFrame2,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-        #expect(deliveredCounter.value == 1)
-        #expect(lossCounter.value == 0)
-
-        try await Task.sleep(for: .milliseconds(700))
-
-        let pFrame4 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x04])
-        reassembler.processPacket(
-            pFrame4,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 4,
-                payload: pFrame4,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        #expect(deliveredCounter.value == 1)
-        #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe())
-
-        let pFrame3 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
-        reassembler.processPacket(
-            pFrame3,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 3,
-                payload: pFrame3,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        #expect(deliveredCounter.value == 1)
-        #expect(reassembler.isAwaitingKeyframe())
-    }
-
-    @Test("Newer keyframe progress fast-forwards a stalled P-frame gap")
-    func pendingKeyframeProgressPromotesFastForwardRecovery() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            deliveredCounter.increment()
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-
-        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01])
-        reassembler.processPacket(
-            keyframe0,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 0,
-                payload: keyframe0,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                frameByteCount: 4
-            )
-        )
-        #expect(deliveredCounter.value == 1)
-
-        let pFrame2 = Data([0x00, 0x00, 0x00, 0x02])
-        reassembler.processPacket(
-            pFrame2,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 2,
-                payload: pFrame2,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                frameByteCount: 4
-            )
-        )
-        #expect(reassembler.isAwaitingKeyframe() == false)
-
-        let keyframe4Fragment0 = Data([0x00, 0x00, 0x00, 0x04])
-        reassembler.processPacket(
-            keyframe4Fragment0,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 4,
-                payload: keyframe4Fragment0,
-                fragmentIndex: 0,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        #expect(reassembler.isAwaitingKeyframe() == true)
-        #expect(lossCounter.value >= 1)
-
-        let keyframe4Fragment1 = Data([0x26, 0x04, 0x04, 0x04])
-        let keyframe4Fragment2 = Data([0x40, 0x40, 0x40, 0x40])
-        let keyframe4Fragment3 = Data([0x41, 0x41, 0x41, 0x41])
-
-        reassembler.processPacket(
-            keyframe4Fragment1,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 4,
-                payload: keyframe4Fragment1,
-                fragmentIndex: 1,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-        reassembler.processPacket(
-            keyframe4Fragment2,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 4,
-                payload: keyframe4Fragment2,
-                fragmentIndex: 2,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-        reassembler.processPacket(
-            keyframe4Fragment3,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 4,
-                payload: keyframe4Fragment3,
-                fragmentIndex: 3,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        #expect(deliveredCounter.value == 2)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-    }
-
-    @Test("Keyframe timeout tracks assembly progress instead of first-fragment age")
-    func keyframeTimeoutTracksAssemblyProgress() async throws {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            deliveredCounter.increment()
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-
-        let fragment0 = Data([0x00, 0x00, 0x00, 0x01])
-        reassembler.processPacket(
-            fragment0,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 30,
-                payload: fragment0,
-                fragmentIndex: 0,
-                fragmentCount: 3,
-                frameByteCount: 12
-            )
-        )
-
-        try await Task.sleep(for: .milliseconds(2500))
-
-        let fragment1 = Data([0x26, 0x30, 0x30, 0x30])
-        reassembler.processPacket(
-            fragment1,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 30,
-                payload: fragment1,
-                fragmentIndex: 1,
-                fragmentCount: 3,
-                frameByteCount: 12
-            )
-        )
-
-        try await Task.sleep(for: .milliseconds(1000))
-
-        let timeoutProbe = Data([0x00, 0x00, 0x00, 0x02])
-        reassembler.processPacket(
-            timeoutProbe,
-            header: makeHeader(
-                flags: [],
-                frameNumber: 31,
-                payload: timeoutProbe,
-                fragmentIndex: 0,
-                fragmentCount: 2,
-                frameByteCount: 8
-            )
-        )
-
-        #expect(lossCounter.value == 0)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-
-        let fragment2 = Data([0x40, 0x40, 0x40, 0x40])
-        reassembler.processPacket(
-            fragment2,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 30,
-                payload: fragment2,
-                fragmentIndex: 2,
-                fragmentCount: 3,
-                frameByteCount: 12
-            )
-        )
-
-        #expect(deliveredCounter.value == 1)
-        #expect(lossCounter.value == 0)
-    }
-
-    @Test("Old incomplete keyframes are capped by memory budget")
-    func oldIncompleteKeyframesAreCappedByMemoryBudget() {
-        let reassembler = FrameReassembler(
-            streamID: 1,
-            maxPayloadSize: 4,
-            memoryBudget: FrameReassembler.MemoryBudget(
-                maxPendingFrames: 12,
-                maxPendingKeyframes: 2,
-                maxPendingBytes: 1024
-            )
-        )
-        let lossCounter = LockedCounter()
-        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
-        reassembler.setFrameLossHandler { _, reason in
-            lossCounter.increment()
-            lossReason.value = reason
-        }
-
-        for frameNumber in UInt32(1) ... UInt32(3) {
-            let payload = Data([UInt8(frameNumber), 0x00, 0x00, 0x00])
-            reassembler.processPacket(
-                payload,
-                header: makeHeader(
-                    flags: [.keyframe],
-                    frameNumber: frameNumber,
-                    payload: payload,
-                    fragmentIndex: 0,
-                    fragmentCount: 4,
-                    frameByteCount: 16
-                )
-            )
-        }
-
-        let metrics = reassembler.snapshotMetrics()
-        #expect(metrics.pendingFrameCount == 2)
-        #expect(metrics.pendingKeyframeCount == 2)
-        #expect(metrics.budgetEvictions == 1)
-        #expect(lossCounter.value == 1)
-        #expect(lossReason.value == .memoryBudget)
-        #expect(reassembler.isAwaitingKeyframe() == true)
-    }
-
-    @Test("Memory budget keyframe wait purges dependent P-frame backlog")
-    func memoryBudgetKeyframeWaitPurgesDependentPFrameBacklog() {
-        let reassembler = FrameReassembler(
-            streamID: 1,
-            maxPayloadSize: 4,
-            memoryBudget: FrameReassembler.MemoryBudget(
-                maxPendingFrames: 3,
-                maxPendingKeyframes: 2,
-                maxPendingBytes: 1024
-            )
-        )
-        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
-        reassembler.setFrameLossHandler { _, reason in
-            lossReason.value = reason
-        }
-
-        let keyframePayload = Data([0x00, 0x00, 0x00, 0x01])
-        reassembler.processPacket(
-            keyframePayload,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 0,
-                payload: keyframePayload,
-                fragmentIndex: 0,
-                fragmentCount: 1
-            )
-        )
-
-        for frameNumber in UInt32(1) ... UInt32(4) {
-            let payload = Data([UInt8(frameNumber), 0x00, 0x00, 0x00])
-            reassembler.processPacket(
-                payload,
-                header: makeHeader(
-                    flags: [],
-                    frameNumber: frameNumber,
-                    payload: payload,
-                    fragmentIndex: 0,
-                    fragmentCount: 2,
-                    frameByteCount: 8
-                )
-            )
-        }
-
-        let metrics = reassembler.snapshotMetrics()
-        #expect(metrics.pendingFrameCount == 0)
-        #expect(metrics.budgetEvictions == 1)
-        #expect(lossReason.value == .memoryBudget)
-        #expect(reassembler.isAwaitingKeyframe() == true)
-    }
-
-    @Test("Pending encoded bytes preserve the most progressed keyframe")
-    func pendingEncodedBytesPreserveMostProgressedKeyframe() {
-        let budget = FrameReassembler.MemoryBudget(
-            maxPendingFrames: 12,
-            maxPendingKeyframes: 2,
-            maxPendingBytes: 12
-        )
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
-
-        let payload1 = Data([0x01, 0x01, 0x01, 0x01])
-        reassembler.processPacket(
-            payload1,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 1,
-                payload: payload1,
-                fragmentIndex: 0,
-                fragmentCount: 2,
-                frameByteCount: 8
-            )
-        )
-
-        let payload2 = Data([0x02, 0x02, 0x02, 0x02])
-        reassembler.processPacket(
-            payload2,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 2,
-                payload: payload2,
-                fragmentIndex: 0,
-                fragmentCount: 2,
-                frameByteCount: 8
-            )
-        )
-
-        var metrics = reassembler.snapshotMetrics()
-        #expect(metrics.pendingFrameBytes <= budget.maxPendingBytes)
-        #expect(metrics.pendingFrameCount == 1)
-
-        let oversizedPayload = Data([0x03, 0x03, 0x03, 0x03])
-        reassembler.processPacket(
-            oversizedPayload,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 3,
-                payload: oversizedPayload,
-                fragmentIndex: 0,
-                fragmentCount: 5,
-                frameByteCount: 20
-            )
-        )
-
-        metrics = reassembler.snapshotMetrics()
-        #expect(metrics.pendingFrameCount == 1)
-        #expect(metrics.pendingKeyframeCount == 1)
-        #expect(metrics.pendingFrameBytes == 8)
-        #expect(metrics.pendingFrameBytes <= budget.maxPendingBytes)
-        #expect(metrics.budgetEvictions == 2)
-    }
-
-    @Test("Memory budget prefers newer keyframes until old progress is near complete")
-    func memoryBudgetPrefersNewerKeyframesUntilOldProgressIsNearComplete() {
-        let budget = FrameReassembler.MemoryBudget(
-            maxPendingFrames: 12,
-            maxPendingKeyframes: 2,
-            maxPendingBytes: 20
-        )
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
-
-        let keyframe10Fragment0 = Data([0x10, 0x00, 0x00, 0x00])
-        reassembler.processPacket(
-            keyframe10Fragment0,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 10,
-                payload: keyframe10Fragment0,
-                fragmentIndex: 0,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        let keyframe10Fragment1 = Data([0x10, 0x01, 0x00, 0x00])
-        reassembler.processPacket(
-            keyframe10Fragment1,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 10,
-                payload: keyframe10Fragment1,
-                fragmentIndex: 1,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        let keyframe11Fragment0 = Data([0x11, 0x00, 0x00, 0x00])
-        reassembler.processPacket(
-            keyframe11Fragment0,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 11,
-                payload: keyframe11Fragment0,
-                fragmentIndex: 0,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        let metrics = reassembler.snapshotMetrics()
-        let preservedKeyframe = reassembler.latestPendingKeyframeProgress()
-        #expect(metrics.pendingFrameCount == 1)
-        #expect(metrics.pendingKeyframeCount == 1)
-        #expect(metrics.budgetEvictions == 1)
-        #expect(preservedKeyframe?.frameNumber == 11)
-        #expect(preservedKeyframe?.receivedCount == 1)
-    }
-
-    @Test("Memory budget preserves a nearly complete recovery keyframe")
-    func memoryBudgetPreservesNearlyCompleteRecoveryKeyframe() {
-        let budget = FrameReassembler.MemoryBudget(
-            maxPendingFrames: 12,
-            maxPendingKeyframes: 2,
-            maxPendingBytes: 20
-        )
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
-
-        for fragmentIndex in 0 ..< 3 {
-            let payload = Data([0x10, UInt8(fragmentIndex), 0x00, 0x00])
-            reassembler.processPacket(
-                payload,
-                header: makeHeader(
-                    flags: [.keyframe],
-                    frameNumber: 10,
-                    payload: payload,
-                    fragmentIndex: UInt16(fragmentIndex),
-                    fragmentCount: 4,
-                    frameByteCount: 16
-                )
-            )
-        }
-
-        let keyframe11Fragment0 = Data([0x11, 0x00, 0x00, 0x00])
-        reassembler.processPacket(
-            keyframe11Fragment0,
-            header: makeHeader(
-                flags: [.keyframe],
-                frameNumber: 11,
-                payload: keyframe11Fragment0,
-                fragmentIndex: 0,
-                fragmentCount: 4,
-                frameByteCount: 16
-            )
-        )
-
-        let metrics = reassembler.snapshotMetrics()
-        let preservedKeyframe = reassembler.latestPendingKeyframeProgress()
-        #expect(metrics.pendingFrameCount == 1)
-        #expect(metrics.pendingKeyframeCount == 1)
-        #expect(metrics.budgetEvictions == 1)
-        #expect(preservedKeyframe?.frameNumber == 10)
-        #expect(preservedKeyframe?.receivedCount == 3)
-    }
-
-    @Test("Memory pressure trim clears pending reassembly and requests recovery")
-    func memoryPressureTrimClearsPendingReassemblyAndRequestsRecovery() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
-
-        for frameNumber in UInt32(1) ... UInt32(2) {
-            let payload = Data([UInt8(frameNumber), 0x00, 0x00, 0x00])
-            reassembler.processPacket(
-                payload,
-                header: makeHeader(
-                    flags: [.keyframe],
-                    frameNumber: frameNumber,
-                    payload: payload,
-                    fragmentIndex: 0,
-                    fragmentCount: 3,
-                    frameByteCount: 12
-                )
-            )
-        }
-
-        let trimResult = reassembler.trimForMemoryPressure()
-        let metrics = reassembler.snapshotMetrics()
-        #expect(trimResult.evictedFrames == 2)
-        #expect(trimResult.releasedPendingBytes == 24)
-        #expect(trimResult.purgedRetainedBytes == 24)
-        #expect(trimResult.awaitingKeyframe == true)
-        #expect(metrics.pendingFrameCount == 0)
-        #expect(metrics.pendingFrameBytes == 0)
-        #expect(metrics.frameBufferPoolRetainedBytes == 0)
-        #expect(reassembler.isAwaitingKeyframe() == true)
-    }
-
-    @Test("Mismatched dimension-token keyframe is rejected")
-    func mismatchedDimensionTokenKeyframeIsRejected() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
-        let deliveredCounter = LockedCounter()
-        let lossCounter = LockedCounter()
-
-        reassembler.setFrameHandler { _, _, _, _, _, release in
-            deliveredCounter.increment()
-            release()
-        }
-        reassembler.setFrameLossHandler { _, _ in
-            lossCounter.increment()
-        }
-        reassembler.updateExpectedDimensionToken(2)
-
-        let staleKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
-        reassembler.processPacket(
-            staleKeyframe,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 10,
-                payload: staleKeyframe,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                dimensionToken: 1
-            )
-        )
-
-        #expect(deliveredCounter.value == 0)
-        #expect(reassembler.isAwaitingKeyframe() == true)
-
-        let stalePFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x11])
-        reassembler.processPacket(
-            stalePFrame,
-            header: makeHeader(
-                flags: [.endOfFrame],
-                frameNumber: 11,
-                payload: stalePFrame,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                dimensionToken: 1
-            )
-        )
-
-        #expect(deliveredCounter.value == 0)
-        #expect(lossCounter.value == 0)
-
-        let currentKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x02])
-        reassembler.processPacket(
-            currentKeyframe,
-            header: makeHeader(
-                flags: [.keyframe, .endOfFrame],
-                frameNumber: 12,
-                payload: currentKeyframe,
-                fragmentIndex: 0,
-                fragmentCount: 1,
-                dimensionToken: 2
-            )
-        )
-
-        #expect(deliveredCounter.value == 1)
-        #expect(reassembler.isAwaitingKeyframe() == false)
-    }
-
-    @Test("Keyframe FEC recovery infers startup block size from fragment layout")
-    func keyframeFECRecoveryInfersStartupBlockSize() {
-        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
-        let deliveredFrame = LockedOptionalData()
-
-        reassembler.setFrameHandler { _, data, _, _, _, release in
-            deliveredFrame.set(data)
-            release()
-        }
-
-        let fragment0 = Data([0x00, 0x00, 0x00, 0x18])
-        let fragment1 = Data([0x00, 0x00, 0x00, 0x01])
-        let fragment2 = Data([0x40, 0x01, 0x0C, 0x01])
-        let fragment3 = Data([0xFF, 0xFF, 0x01, 0x60])
-        let fragment4 = Data([0x00, 0x00, 0x00, 0x04])
-        let fragment5 = Data([0x26, 0xAA, 0xBB, 0xCC])
-        let parity0 = xorFragments([fragment0, fragment1, fragment2, fragment3])
-
-        let payloadsByFragment: [(UInt16, FrameFlags, Data)] = [
-            (1, [.keyframe], fragment1),
-            (2, [.keyframe], fragment2),
-            (3, [.keyframe], fragment3),
-            (4, [.keyframe], fragment4),
-            (5, [.keyframe], fragment5),
-            (6, [.keyframe, .fecParity], parity0),
-        ]
-
-        for (fragmentIndex, flags, payload) in payloadsByFragment {
-            reassembler.processPacket(
-                payload,
-                header: makeHeader(
-                flags: flags,
-                frameNumber: 40,
-                payload: payload,
-                fragmentIndex: fragmentIndex,
-                fragmentCount: 8,
-                frameByteCount: 24,
-                fecBlockSize: 4
-            )
-        )
-    }
-
-        let expectedFrame = fragment0 + fragment1 + fragment2 + fragment3 + fragment4 + fragment5
-        #expect(deliveredFrame.value == expectedFrame)
-    }
-
-    private func makeHeader(
-        flags: FrameFlags,
-        frameNumber: UInt32,
-        payload: Data,
-        fragmentIndex: UInt16,
-        fragmentCount: UInt16,
-        frameByteCount: UInt32? = nil,
-        fecBlockSize: UInt8 = 0,
-        dimensionToken: UInt16 = 0,
-        checksum: UInt32? = nil
-    )
-    -> FrameHeader {
-        FrameHeader(
-            flags: flags,
-            streamID: 1,
-            sequenceNumber: frameNumber,
-            timestamp: UInt64(frameNumber),
-            frameNumber: frameNumber,
-            fragmentIndex: fragmentIndex,
-            fragmentCount: fragmentCount,
-            fecBlockSize: fecBlockSize,
-            payloadLength: UInt32(payload.count),
-            frameByteCount: frameByteCount ?? UInt32(payload.count),
-            checksum: checksum ?? crc32(payload),
-            contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-            dimensionToken: dimensionToken,
-            epoch: 0
-        )
-    }
-
-    private func crc32(_ data: Data) -> UInt32 {
-        let polynomial: UInt32 = 0xEDB88320
-        var crc: UInt32 = 0xFFFFFFFF
-        for byte in data {
-            var current = (crc ^ UInt32(byte)) & 0xFF
-            for _ in 0 ..< 8 {
-                if (current & 1) == 1 {
-                    current = (current >> 1) ^ polynomial
-                } else {
-                    current >>= 1
-                }
-            }
-            crc = (crc >> 8) ^ current
-        }
-        return crc ^ 0xFFFFFFFF
-    }
-
-    private func xorFragments(_ fragments: [Data]) -> Data {
-        guard let first = fragments.first else { return Data() }
-        var result = Data(repeating: 0, count: first.count)
-        result.withUnsafeMutableBytes { resultBytes in
-            let resultPointer = resultBytes.bindMemory(to: UInt8.self)
-            guard let resultBase = resultPointer.baseAddress else { return }
-            for fragment in fragments {
-                fragment.withUnsafeBytes { fragmentBytes in
-                    let fragmentPointer = fragmentBytes.bindMemory(to: UInt8.self)
-                    guard let fragmentBase = fragmentPointer.baseAddress else { return }
-                    for index in 0 ..< min(fragment.count, first.count) {
-                        resultBase[index] ^= fragmentBase[index]
-                    }
-                }
-            }
-        }
-        return result
-    }
 }
 
-private final class LockedCounter: @unchecked Sendable {
+func makeHeader(
+    flags: FrameFlags,
+    frameNumber: UInt32,
+    payload: Data,
+    fragmentIndex: UInt16,
+    fragmentCount: UInt16,
+    frameByteCount: UInt32? = nil,
+    fecBlockSize: UInt8 = 0,
+    dimensionToken: UInt16 = 0
+)
+-> FrameHeader {
+    FrameHeader(
+        flags: flags,
+        streamID: 1,
+        sequenceNumber: frameNumber,
+        timestamp: UInt64(frameNumber),
+        frameNumber: frameNumber,
+        fragmentIndex: fragmentIndex,
+        fragmentCount: fragmentCount,
+        fecBlockSize: fecBlockSize,
+        payloadLength: UInt32(payload.count),
+        frameByteCount: frameByteCount ?? UInt32(payload.count),
+        checksum: crc32(payload),
+        contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+        dimensionToken: dimensionToken,
+        epoch: 0
+    )
+}
+
+func crc32(_ data: Data) -> UInt32 {
+    let polynomial: UInt32 = 0xEDB8_8320
+    var crc: UInt32 = 0xFFFF_FFFF
+    for byte in data {
+        var current = (crc ^ UInt32(byte)) & 0xFF
+        for _ in 0 ..< 8 {
+            if (current & 1) == 1 {
+                current = (current >> 1) ^ polynomial
+            } else {
+                current >>= 1
+            }
+        }
+        crc = (crc >> 8) ^ current
+    }
+    return crc ^ 0xFFFF_FFFF
+}
+
+func xorFragments(_ fragments: [Data]) -> Data {
+    guard let first = fragments.first else { return Data() }
+    var result = Data(repeating: 0, count: first.count)
+    result.withUnsafeMutableBytes { resultBytes in
+        let resultPointer = resultBytes.bindMemory(to: UInt8.self)
+        guard let resultBase = resultPointer.baseAddress else { return }
+        for fragment in fragments {
+            fragment.withUnsafeBytes { fragmentBytes in
+                let fragmentPointer = fragmentBytes.bindMemory(to: UInt8.self)
+                guard let fragmentBase = fragmentPointer.baseAddress else { return }
+                for index in 0 ..< min(fragment.count, first.count) {
+                    resultBase[index] ^= fragmentBase[index]
+                }
+            }
+        }
+    }
+    return result
+}
+
+final class FrameReassemblerLockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = 0
 
@@ -1204,7 +384,7 @@ private final class LockedCounter: @unchecked Sendable {
     }
 }
 
-private final class LockedOptionalData: @unchecked Sendable {
+final class FrameReassemblerLockedOptionalData: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: Data?
 
@@ -1221,7 +401,7 @@ private final class LockedOptionalData: @unchecked Sendable {
     }
 }
 
-private final class LockedValue<Value>: @unchecked Sendable {
+final class FrameReassemblerLockedValue<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: Value
 

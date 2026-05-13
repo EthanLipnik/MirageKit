@@ -11,21 +11,13 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    nonisolated static func sharedClipboardFeatureNegotiated(
-        _ negotiatedFeatures: MirageFeatureSet
-    ) -> Bool {
-        negotiatedFeatures.contains(.sharedClipboardV1)
-    }
-
     nonisolated static func shouldEnableSharedClipboard(
         settingEnabled: Bool,
-        negotiatedFeatures: MirageFeatureSet,
         sessionState: LoomSessionAvailability,
         hasAppStreams: Bool,
         hasDesktopStream: Bool
     ) -> Bool {
         guard settingEnabled else { return false }
-        guard sharedClipboardFeatureNegotiated(negotiatedFeatures) else { return false }
         guard sessionState == .ready else { return false }
         return hasAppStreams || hasDesktopStream
     }
@@ -38,14 +30,8 @@ extension MirageHostService {
 
         var hasEligibleActiveClient = false
         for clientContext in clientsBySessionID.values {
-            guard Self.sharedClipboardFeatureNegotiated(clientContext.negotiatedFeatures) else {
-                sharedClipboardStatusByClientID.removeValue(forKey: clientContext.client.id)
-                continue
-            }
-
             let enabled = Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
-                negotiatedFeatures: clientContext.negotiatedFeatures,
                 sessionState: sessionState,
                 hasAppStreams: hasAppStreams,
                 hasDesktopStream: hasDesktopStream
@@ -75,7 +61,6 @@ extension MirageHostService {
 
         guard Self.shouldEnableSharedClipboard(
             settingEnabled: sharedClipboardEnabled,
-            negotiatedFeatures: clientContext.negotiatedFeatures,
             sessionState: sessionState,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamID != nil
@@ -94,14 +79,13 @@ extension MirageHostService {
         Task.detached(priority: .utility) { [weak self] in
             do {
                 let update = try message.decode(SharedClipboardUpdateMessage.self)
-                let decryptedPayload: Data?
-                if let encryptedPayload = update.encryptedPayload {
-                    decryptedPayload = try MirageMediaSecurity.decryptClipboardPayload(
+                let decryptedPayload: Data? = if let encryptedPayload = update.encryptedPayload {
+                    try MirageMediaSecurity.decryptClipboardPayload(
                         encryptedPayload,
                         context: secCtx
                     )
                 } else {
-                    decryptedPayload = nil
+                    nil
                 }
                 await self?.applyReceivedClipboardChunk(
                     representation: update.representation,
@@ -139,10 +123,10 @@ extension MirageHostService {
 
         guard let payload,
               let fullPayload = clipboardChunkBuffer.addChunk(
-                changeID: orderingToken.changeID,
-                chunkIndex: chunkIndex,
-                chunkCount: chunkCount,
-                payload: payload
+                  changeID: orderingToken.changeID,
+                  chunkIndex: chunkIndex,
+                  chunkCount: chunkCount,
+                  payload: payload
               ) else { return }
 
         guard let validatedPayload = MirageSharedClipboard.validatedPayload(
@@ -180,7 +164,6 @@ extension MirageHostService {
         for clientContext in clientsBySessionID.values {
             guard Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
-                negotiatedFeatures: clientContext.negotiatedFeatures,
                 sessionState: sessionState,
                 hasAppStreams: !activeStreams.isEmpty,
                 hasDesktopStream: desktopStreamID != nil
@@ -195,15 +178,16 @@ extension MirageHostService {
                 let messages = try MirageSharedClipboard.makeUpdateMessages(
                     localSend: localSend,
                     sentAtMs: sentAtMs,
-                    mediaSecurityContext: mediaSecurityContext,
-                    source: .host
+                    mediaSecurityContext: mediaSecurityContext
                 )
                 for (index, message) in messages.enumerated() {
                     try await clientContext.send(message)
                     guard index < messages.count - 1 else { continue }
                     await Task.yield()
-                    try? await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
+                    try await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
                 }
+            } catch is CancellationError {
+                return
             } catch {
                 MirageLogger.error(.host, error: error, message: "Failed to send shared clipboard update to \(clientContext.client.name): ")
             }

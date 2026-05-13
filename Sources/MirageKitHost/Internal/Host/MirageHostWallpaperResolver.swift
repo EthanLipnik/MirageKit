@@ -18,14 +18,13 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum MirageHostWallpaperResolver {
-    struct Payload: Sendable {
+    struct Payload {
         let imageData: Data
         let pixelWidth: Int
         let pixelHeight: Int
-        let bytesPerPixelEstimate: Int
     }
 
-    struct WallpaperWindowCandidate: Equatable, Sendable {
+    struct WallpaperWindowCandidate: Equatable {
         let windowID: CGWindowID
         let ownerName: String
         let title: String
@@ -72,10 +71,11 @@ enum MirageHostWallpaperResolver {
             return nil
         }
 
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: false
-        ) else {
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.mirageHostContent()
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to resolve shareable content for host wallpaper: ")
             return nil
         }
 
@@ -189,8 +189,7 @@ enum MirageHostWallpaperResolver {
                 return Payload(
                     imageData: encoded,
                     pixelWidth: cgImage.width,
-                    pixelHeight: cgImage.height,
-                    bytesPerPixelEstimate: 4
+                    pixelHeight: cgImage.height
                 )
             }
 
@@ -270,22 +269,27 @@ enum MirageHostWallpaperResolver {
         configuration.height = max(1, targetPixelHeight)
         configuration.showsCursor = false
 
-        return try? await withCheckedThrowingContinuation { continuation in
-            SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
 
-                guard let image else {
-                    continuation.resume(
-                        throwing: MirageError.protocolError("Wallpaper screenshot capture returned no image")
-                    )
-                    return
-                }
+                    guard let image else {
+                        continuation.resume(
+                            throwing: MirageError.protocolError("Wallpaper screenshot capture returned no image")
+                        )
+                        return
+                    }
 
-                continuation.resume(returning: image)
+                    continuation.resume(returning: image)
+                }
             }
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to capture host wallpaper screenshot: ")
+            return nil
         }
     }
 
@@ -302,13 +306,13 @@ enum MirageHostWallpaperResolver {
 
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  data: nil,
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
               ) else {
             return nil
         }
@@ -325,8 +329,7 @@ enum MirageHostWallpaperResolver {
            fitsInlineControlPayload(
                imageData: jpegData,
                pixelWidth: encodedImage.width,
-               pixelHeight: encodedImage.height,
-               bytesPerPixelEstimate: 4
+               pixelHeight: encodedImage.height
            ) {
             return jpegData
         }
@@ -360,13 +363,13 @@ enum MirageHostWallpaperResolver {
     private static func opaqueEncodedImage(from image: CGImage) -> CGImage? {
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
-                data: nil,
-                width: image.width,
-                height: image.height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+                  data: nil,
+                  width: image.width,
+                  height: image.height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
               ) else {
             return nil
         }
@@ -381,17 +384,19 @@ enum MirageHostWallpaperResolver {
     private static func fitsInlineControlPayload(
         imageData: Data,
         pixelWidth: Int,
-        pixelHeight: Int,
-        bytesPerPixelEstimate: Int
+        pixelHeight: Int
     ) -> Bool {
         let message = HostWallpaperMessage(
             requestID: UUID(),
             imageData: imageData,
             pixelWidth: pixelWidth,
-            pixelHeight: pixelHeight,
-            bytesPerPixelEstimate: bytesPerPixelEstimate
+            pixelHeight: pixelHeight
         )
-        guard let encoded = try? JSONEncoder().encode(message) else {
+        let encoded: Data
+        do {
+            encoded = try JSONEncoder().encode(message)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to encode host wallpaper size probe: ")
             return false
         }
         return encoded.count <= LoomMessageLimits.maxInlineAssetPayloadBytes

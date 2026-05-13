@@ -86,8 +86,8 @@ struct DesktopCursorLockLifecycleTests {
         let streamID: StreamID = 12
         let cursorStore = MirageClientCursorStore()
         let cursorPositionStore = MirageClientCursorPositionStore()
-        cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: false)
-        cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.5, y: 0.5), isVisible: false)
+        _ = cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: false)
+        _ = cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.5, y: 0.5), isVisible: false)
 
         var warps: [CGPoint] = []
         var hideCount = 0
@@ -126,8 +126,8 @@ struct DesktopCursorLockLifecycleTests {
         let streamID: StreamID = 13
         let cursorStore = MirageClientCursorStore()
         let cursorPositionStore = MirageClientCursorPositionStore()
-        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
-        cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.2, y: 0.8), isVisible: true)
+        _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+        _ = cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.2, y: 0.8), isVisible: true)
 
         var appliedCursorTypes: [MirageCursorType] = []
         var mouseLocation = CGPoint.zero
@@ -167,7 +167,7 @@ struct DesktopCursorLockLifecycleTests {
     func mirageCursorModeAppliesHostCursorTypeUpdates() {
         let streamID: StreamID = 14
         let cursorStore = MirageClientCursorStore()
-        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+        _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 
         var appliedCursorTypes: [MirageCursorType] = []
         var mouseLocation = CGPoint.zero
@@ -203,7 +203,7 @@ struct DesktopCursorLockLifecycleTests {
     func mirageCursorModeShowsSyntheticCursorWhenUnlocked() throws {
         let streamID: StreamID = 15
         let cursorStore = MirageClientCursorStore()
-        cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: true)
+        _ = cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: true)
 
         let localPoint = CGPoint(x: 240, y: 180)
         var mouseLocation = CGPoint.zero
@@ -271,7 +271,7 @@ struct DesktopCursorLockLifecycleTests {
     func realMacCursorLockAppliesHostCursorUpdates() {
         let streamID: StreamID = 16
         let cursorStore = MirageClientCursorStore()
-        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+        _ = cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 
         var appliedCursorTypes: [MirageCursorType] = []
         var mouseLocation = CGPoint.zero

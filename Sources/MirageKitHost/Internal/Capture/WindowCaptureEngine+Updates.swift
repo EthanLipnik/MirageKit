@@ -25,8 +25,8 @@ extension WindowCaptureEngine {
         let scale = max(0.1, min(1.0, outputScale ?? self.outputScale))
         self.outputScale = scale
         currentScaleFactor = target.hostScaleFactor * scale
-        let newWidth = Self.alignedEvenPixel(CGFloat(target.width) * scale)
-        let newHeight = Self.alignedEvenPixel(CGFloat(target.height) * scale)
+        let newWidth = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.width) * scale)
+        let newHeight = MirageStreamGeometry.alignedEncodedDimension(CGFloat(target.height) * scale)
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
                 windowID: config.windowID,
@@ -61,18 +61,11 @@ extension WindowCaptureEngine {
         currentHeight = newHeight
 
         // Create new stream configuration with updated dimensions
-        let streamConfig = SCStreamConfiguration()
-        streamConfig.captureResolution = .best
-        streamConfig.width = newWidth
-        streamConfig.height = newHeight
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            width: newWidth,
+            height: newHeight,
+            useBestCaptureResolution: true,
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
             sourceRect: captureSessionConfig?.sourceRect,
             destinationRect: captureSessionConfig?.destinationRect
         )
@@ -119,18 +112,12 @@ extension WindowCaptureEngine {
         }
 
         // Create new stream configuration with client's exact pixel dimensions
-        let streamConfig = SCStreamConfiguration()
-        streamConfig.width = width
-        streamConfig.height = height
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
-            streamConfig.sourceRect = sourceRect
-        }
+        let streamConfig = makeStreamConfigurationForUpdate(
+            width: width,
+            height: height,
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
+            sourceRect: captureSessionConfig?.sourceRect
+        )
 
         try await stream.updateConfiguration(streamConfig)
         MirageLogger.capture("Resolution updated to client dimensions: \(width)x\(height)")
@@ -182,20 +169,12 @@ extension WindowCaptureEngine {
             includedWindows: includedWindows,
             excludedWindows: excludedWindows
         )
-        contentFilter = newFilter
 
         // Create configuration for the new display
-        let streamConfig = SCStreamConfiguration()
-        streamConfig.width = newWidth
-        streamConfig.height = newHeight
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            width: newWidth,
+            height: newHeight,
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
             sourceRect: resolvedSourceRect,
             destinationRect: captureSessionConfig?.destinationRect
         )
@@ -204,7 +183,7 @@ extension WindowCaptureEngine {
         try await stream.updateContentFilter(newFilter)
         try await stream.updateConfiguration(streamConfig)
 
-        let captureRate = minimumFrameIntervalRate()
+        let captureRate = minimumFrameIntervalRate
         let stallPolicy = resolvedStallPolicy(
             windowID: captureSessionConfig?.windowID ?? 0,
             frameRate: captureRate,
@@ -256,7 +235,6 @@ extension WindowCaptureEngine {
             includedWindows: includedWindows,
             excludedWindows: windows
         )
-        contentFilter = newFilter
         try await stream.updateContentFilter(newFilter)
         MirageLogger.capture("Updated display capture exclusions (\(windows.count) windows)")
     }
@@ -307,18 +285,9 @@ extension WindowCaptureEngine {
             includedWindows: includedWindows,
             excludedWindows: existingConfig.excludedWindows
         )
-        contentFilter = newFilter
 
-        let streamConfig = SCStreamConfiguration()
-        applyResolutionSettings(to: streamConfig)
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = existingConfig.showsCursor
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            showsCursor: existingConfig.showsCursor,
             sourceRect: resolvedSourceRect,
             destinationRect: resolvedDestinationRect
         )
@@ -329,7 +298,7 @@ extension WindowCaptureEngine {
         try await stream.updateConfiguration(streamConfig)
         let resolvedWindowID = CGWindowID(resolvedContentWindowID ?? 0)
         streamOutput?.updateWindowID(resolvedWindowID)
-        let captureRate = minimumFrameIntervalRate()
+        let captureRate = minimumFrameIntervalRate
         let stallPolicy = resolvedStallPolicy(
             windowID: resolvedWindowID,
             frameRate: captureRate,
@@ -357,22 +326,14 @@ extension WindowCaptureEngine {
         currentFrameRate = fps
 
         // Create new stream configuration with updated frame rate
-        let streamConfig = SCStreamConfiguration()
-        applyResolutionSettings(to: streamConfig)
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
             sourceRect: captureSessionConfig?.sourceRect,
             destinationRect: captureSessionConfig?.destinationRect
         )
 
         try await stream.updateConfiguration(streamConfig)
-        let captureRate = minimumFrameIntervalRate()
+        let captureRate = minimumFrameIntervalRate
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
         let stallPolicy = resolvedStallPolicy(
@@ -415,16 +376,8 @@ extension WindowCaptureEngine {
 
         guard isCapturing, let stream else { return }
 
-        let streamConfig = SCStreamConfiguration()
-        applyResolutionSettings(to: streamConfig)
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = showsCursor
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            showsCursor: showsCursor,
             sourceRect: captureSessionConfig?.sourceRect,
             destinationRect: captureSessionConfig?.destinationRect
         )
@@ -433,30 +386,18 @@ extension WindowCaptureEngine {
         MirageLogger.capture("Capture cursor visibility updated: showsCursor=\(showsCursor)")
     }
 
-    func getCurrentDimensions() -> (width: Int, height: Int) {
-        (currentWidth, currentHeight)
-    }
-
     func updateConfiguration(_ newConfiguration: MirageEncoderConfiguration) async throws {
         configuration = newConfiguration
         guard isCapturing, let stream else { return }
 
-        let streamConfig = SCStreamConfiguration()
-        applyResolutionSettings(to: streamConfig)
-        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
-        streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = sckQueueDepth
-        applyAudioSettings(to: streamConfig)
-        Self.applyCaptureGeometry(
-            to: streamConfig,
+        let streamConfig = makeStreamConfigurationForUpdate(
+            showsCursor: captureSessionConfig?.showsCursor ?? false,
             sourceRect: captureSessionConfig?.sourceRect,
             destinationRect: captureSessionConfig?.destinationRect
         )
 
         try await stream.updateConfiguration(streamConfig)
-        let captureRate = minimumFrameIntervalRate()
+        let captureRate = minimumFrameIntervalRate
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
         let stallPolicy = resolvedStallPolicy(
@@ -479,43 +420,6 @@ extension WindowCaptureEngine {
             )
     }
 
-    /// Apply resolution settings to a stream configuration.
-    /// Window capture always uses `.best` with explicit dimensions.
-    /// Display capture uses explicit dimensions only when an override resolution was provided.
-    func applyResolutionSettings(to streamConfig: SCStreamConfiguration) {
-        switch captureMode {
-        case .window:
-            streamConfig.captureResolution = .best
-            streamConfig.width = currentWidth
-            streamConfig.height = currentHeight
-        case .display:
-            if displayUsesExplicitResolution {
-                streamConfig.width = currentWidth
-                streamConfig.height = currentHeight
-            } else {
-                streamConfig.captureResolution = .best
-            }
-        case nil:
-            streamConfig.captureResolution = .best
-            streamConfig.width = currentWidth
-            streamConfig.height = currentHeight
-        }
-    }
-
-    func applyAudioSettings(
-        to streamConfig: SCStreamConfiguration,
-        enabled: Bool? = nil,
-        channelCount: Int? = nil
-    ) {
-        let audioEnabled = enabled ?? isAudioCaptureConfigured
-        streamConfig.capturesAudio = audioEnabled
-        guard audioEnabled else { return }
-        let resolvedChannelCount = channelCount ?? captureSessionConfig?.audioChannelCount
-        if let resolvedChannelCount {
-            streamConfig.sampleRate = 48_000
-            streamConfig.channelCount = resolvedChannelCount
-        }
-    }
 }
 
 #endif

@@ -19,6 +19,7 @@ struct QualityTestTransportTests {
         #expect(IncomingMediaStreamKind.classify(label: "video/42") == .video(42))
         #expect(IncomingMediaStreamKind.classify(label: "audio/7") == .audio(7))
         #expect(IncomingMediaStreamKind.classify(label: "quality-test/not-a-uuid") == .unknown)
+        #expect(IncomingMediaStreamKind.classify(label: "loom.transfer.control.v1") == .unknown)
     }
 
     @Test("Zero-packet stage metrics fail validation instead of reporting synthetic loss")
@@ -299,5 +300,4 @@ struct QualityTestTransportTests {
         #expect(resolved.transportHeadroomBps == 31_000_000)
         #expect(resolved.streamingSafeBitrateBps == 0)
     }
-
 }

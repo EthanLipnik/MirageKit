@@ -9,8 +9,11 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Actor-isolated in-memory cache for encoded app icon payloads.
 actor HostAppIconCatalogStore {
-    struct IconPayload: Equatable, Sendable {
+    /// Encoded icon bytes ready for transport to a client.
+    struct IconPayload: Equatable {
+        /// HEIF-encoded image data.
         let data: Data
     }
 
@@ -28,6 +31,7 @@ actor HostAppIconCatalogStore {
     private var payloadsByKey: [CacheKey: IconPayload] = [:]
     private var accessOrder: [CacheKey] = []
 
+    /// Creates an icon cache with a bounded number of entries.
     init(
         fileManager: FileManager = .default,
         entryLimit: Int = 512
@@ -36,6 +40,7 @@ actor HostAppIconCatalogStore {
         self.entryLimit = max(1, entryLimit)
     }
 
+    /// Returns a cached icon payload or loads and stores it when missing.
     func payload(
         for app: MirageInstalledApp,
         maxPixelSize: Int,
@@ -64,11 +69,6 @@ actor HostAppIconCatalogStore {
         return payload
     }
 
-    func removeAll() {
-        payloadsByKey.removeAll(keepingCapacity: false)
-        accessOrder.removeAll(keepingCapacity: false)
-    }
-
     private func cacheKey(
         for app: MirageInstalledApp,
         maxPixelSize: Int,
@@ -78,7 +78,12 @@ actor HostAppIconCatalogStore {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
-        let modificationToken = appBundleModificationToken(path: normalizedPath)
+        let modificationToken = if let attributes = try? fileManager.attributesOfItem(atPath: normalizedPath),
+                                   let modificationDate = attributes[.modificationDate] as? Date {
+            String(format: "%.6f", modificationDate.timeIntervalSinceReferenceDate)
+        } else {
+            "missing"
+        }
         let qualityToken = Int((max(0.1, min(1.0, heifCompressionQuality)) * 1000).rounded())
 
         return CacheKey(
@@ -89,16 +94,6 @@ actor HostAppIconCatalogStore {
             maxPixelSize: max(32, min(512, maxPixelSize)),
             heifQualityToken: qualityToken
         )
-    }
-
-    private func appBundleModificationToken(path: String) -> String {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: path),
-              let modificationDate = attributes[.modificationDate] as? Date
-        else {
-            return "missing"
-        }
-
-        return String(format: "%.6f", modificationDate.timeIntervalSinceReferenceDate)
     }
 
     private func markAccessed(_ key: CacheKey) {
@@ -112,6 +107,5 @@ actor HostAppIconCatalogStore {
             payloadsByKey.removeValue(forKey: oldestKey)
         }
     }
-
 }
 #endif

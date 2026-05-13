@@ -18,6 +18,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Window Activation (runs on accessibilityQueue)
 
+    /// Activates the owning app and raises the requested host window.
     func activateWindow(
         windowID: WindowID,
         app: MirageApplication?
@@ -32,18 +33,19 @@ extension MirageHostInputController {
         let appElement = AXUIElementCreateApplication(app.id)
         AXUIElementSetAttributeValue(appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
 
-        if let axWindow = findAXWindowByID(appElement: appElement, windowID: windowID) {
+        if let axWindow = HostAccessibilityWindowLookup.window(in: appElement, matching: windowID) {
             AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(axWindow, kAXMainAttribute as CFString, kCFBooleanTrue)
         } else {
             Task {
                 await MainActor.run {
-                    MirageHostService.bringWindowToFront(windowID)
+                    MirageHostService.bringWindowToFrontIfPossible(windowID)
                 }
             }
         }
     }
 
+    /// Hides traffic-light buttons while a direct window stream is active.
     func beginTrafficLightProtection(
         windowID: WindowID,
         app: MirageApplication?,
@@ -78,6 +80,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Restores traffic-light button visibility after a stream ends.
     func endTrafficLightProtection(windowID: WindowID) {
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
@@ -102,16 +105,18 @@ extension MirageHostInputController {
         }
     }
 
+    /// Computes the protected traffic-light cluster size from live AX button frames.
     func dynamicTrafficLightClusterSize(
         windowID: WindowID,
         app: MirageApplication?,
         windowFrame: CGRect
     ) -> CGSize? {
         guard let axWindow = resolveAXWindow(windowID: windowID, app: app) else { return nil }
-        let buttonFrames = trafficLightButtonFrames(in: axWindow)
+        let buttonFrames = HostAccessibilityWindowLookup.trafficLightButtonFrames(in: axWindow)
         guard !buttonFrames.isEmpty else { return nil }
 
-        let unionRect = buttonFrames.dropFirst().reduce(buttonFrames[0]) { partial, next in
+        guard let firstButtonFrame = buttonFrames.first else { return nil }
+        let unionRect = buttonFrames.dropFirst().reduce(firstButtonFrame) { partial, next in
             partial.union(next)
         }
 
@@ -133,77 +138,12 @@ extension MirageHostInputController {
         return CGSize(width: clusterWidth, height: clusterHeight)
     }
 
-    private func trafficLightButtonFrames(in axWindow: AXUIElement) -> [CGRect] {
-        let buttonAttributes: [CFString] = [
-            kAXCloseButtonAttribute as CFString,
-            kAXMinimizeButtonAttribute as CFString,
-            kAXZoomButtonAttribute as CFString,
-        ]
-
-        var frames: [CGRect] = []
-        for buttonAttribute in buttonAttributes {
-            guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute),
-                  let frame = axFrame(of: button) else {
-                continue
-            }
-            frames.append(frame)
-        }
-        return frames
-    }
-
+    /// Resolves an accessibility window by CG window ID.
     func resolveAXWindow(windowID: WindowID, app: MirageApplication?) -> AXUIElement? {
-        if let app {
-            let appElement = AXUIElementCreateApplication(app.id)
-            if let axWindow = findAXWindowByID(appElement: appElement, windowID: windowID) {
-                return axWindow
-            }
-        }
-
-        guard let ownerPID = ownerProcessID(for: windowID) else { return nil }
-        let ownerElement = AXUIElementCreateApplication(ownerPID)
-        return findAXWindowByID(appElement: ownerElement, windowID: windowID)
+        HostAccessibilityWindowLookup.resolveWindow(windowID: windowID, processID: app?.id)
     }
 
-    private func ownerProcessID(for windowID: WindowID) -> pid_t? {
-        guard let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
-              let windowInfo = windowList.first else {
-            return nil
-        }
-
-        if let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t {
-            return ownerPID
-        }
-        if let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? Int32 {
-            return pid_t(ownerPID)
-        }
-        if let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? Int {
-            return pid_t(ownerPID)
-        }
-        if let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? NSNumber {
-            return pid_t(ownerPID.int32Value)
-        }
-        return nil
-    }
-
-    func findAXWindowByID(appElement: AXUIElement, windowID: WindowID) -> AXUIElement? {
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success,
-              let windows = windowsRef as? [AXUIElement] else {
-            return nil
-        }
-
-        for axWindow in windows {
-            var cgWindowID: CGWindowID = 0
-            if _AXUIElementGetWindow(axWindow, &cgWindowID) == .success,
-               cgWindowID == windowID {
-                return axWindow
-            }
-        }
-        return nil
-    }
-
+    /// Hides supported traffic-light buttons and returns the previous visibility snapshot.
     private func hideTrafficLightsIfSupported(
         windowID: WindowID,
         axWindow: AXUIElement
@@ -237,13 +177,14 @@ extension MirageHostInputController {
         return snapshot
     }
 
+    /// Hides one traffic-light button when AXHidden is supported.
     private func hideTrafficLightButtonIfSupported(
         in axWindow: AXUIElement,
         buttonAttribute: CFString,
         buttonLabel: String,
         windowID: WindowID
     ) -> Bool? {
-        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
+        guard let button = HostAccessibilityWindowLookup.elementAttributeValue(axWindow, attribute: buttonAttribute) else {
             MirageLogger.debug(
                 .host,
                 "Traffic-light protection hide unsupported for window \(windowID): missing \(buttonLabel) button"
@@ -252,7 +193,7 @@ extension MirageHostInputController {
         }
 
         let hiddenAttribute = "AXHidden" as CFString
-        guard let existingValue = axBooleanAttributeValue(button, attribute: hiddenAttribute) else {
+        guard let existingValue = HostAccessibilityWindowLookup.boolAttribute(hiddenAttribute, from: button) else {
             MirageLogger.debug(
                 .host,
                 "Traffic-light protection hide unsupported for window \(windowID): \(buttonLabel) AXHidden unavailable"
@@ -279,6 +220,7 @@ extension MirageHostInputController {
         return existingValue
     }
 
+    /// Restores all traffic-light buttons that were hidden for protection.
     private func restoreTrafficLightsIfNeeded(
         _ snapshot: HostTrafficLightVisibilitySnapshot,
         windowID: WindowID,
@@ -309,6 +251,7 @@ extension MirageHostInputController {
         MirageLogger.host("Traffic-light protection restored for window \(windowID)")
     }
 
+    /// Restores one traffic-light button to a recorded AXHidden value.
     private func restoreTrafficLightButtonIfNeeded(
         in axWindow: AXUIElement,
         buttonAttribute: CFString,
@@ -317,7 +260,7 @@ extension MirageHostInputController {
         windowID: WindowID
     ) {
         guard let hiddenValue else { return }
-        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
+        guard let button = HostAccessibilityWindowLookup.elementAttributeValue(axWindow, attribute: buttonAttribute) else {
             MirageLogger.debug(
                 .host,
                 "Traffic-light protection restore skipped for window \(windowID): missing \(buttonLabel) button"
@@ -343,63 +286,14 @@ extension MirageHostInputController {
         }
     }
 
-    func axFrame(of element: AXUIElement) -> CGRect? {
-        var positionRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let positionRef,
-              let sizeRef,
-              CFGetTypeID(positionRef) == AXValueGetTypeID(),
-              CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
-            return nil
-        }
-
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionRef as! AXValue, .cgPoint, &position),
-              AXValueGetValue(sizeRef as! AXValue, .cgSize, &size) else {
-            return nil
-        }
-
-        return CGRect(origin: position, size: size)
-    }
-
-    func axElementAttributeValue(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value,
-              CFGetTypeID(value) == AXUIElementGetTypeID() else {
-            return nil
-        }
-
-        return unsafeDowncast(value, to: AXUIElement.self)
-    }
-
-    func axBooleanAttributeValue(_ element: AXUIElement, attribute: CFString) -> Bool? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value else {
-            return nil
-        }
-
-        if let boolValue = value as? Bool {
-            return boolValue
-        }
-
-        if let numberValue = value as? NSNumber {
-            return numberValue.boolValue
-        }
-
-        return nil
-    }
-
+    /// Returns whether an AX attribute can be set.
     func isAXAttributeSettable(_ element: AXUIElement, attribute: CFString) -> Bool {
         var isSettable: DarwinBoolean = false
         let result = AXUIElementIsAttributeSettable(element, attribute, &isSettable)
         return result == .success && isSettable.boolValue
     }
 
+    /// Sets a Boolean AX attribute.
     func setAXBooleanAttributeValue(_ element: AXUIElement, attribute: CFString, value: Bool) -> Bool {
         let targetValue: CFBoolean = value ? kCFBooleanTrue : kCFBooleanFalse
         return AXUIElementSetAttributeValue(element, attribute, targetValue) == .success

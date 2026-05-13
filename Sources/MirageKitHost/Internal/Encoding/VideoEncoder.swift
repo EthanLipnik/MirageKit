@@ -15,23 +15,51 @@ import MirageKit
 
 /// Hardware-accelerated video encoder using VideoToolbox (HEVC or ProRes)
 actor VideoEncoder {
-    enum StreamKind: String, Sendable {
+    /// Logical stream family using this encoder.
+    enum StreamKind: String {
+        /// Individual application window stream.
         case window
+
+        /// Desktop capture stream.
         case desktop
+
+        /// App-provided custom stream.
         case custom
+
+        /// Composited app-atlas stream containing multiple windows.
         case appAtlas
     }
 
-    struct RuntimeValidationSnapshot: Sendable {
+    /// Runtime VideoToolbox and color-pipeline state reported to clients for diagnostics.
+    struct RuntimeValidationSnapshot {
+        /// Pixel format requested for encoder input.
         let pixelFormat: MiragePixelFormat
+
+        /// VideoToolbox profile name observed for the active session.
         let profileName: String?
+
+        /// Whether VideoToolbox reports hardware acceleration.
         let usingHardwareEncoder: Bool?
+
+        /// Registry ID for the GPU backing the encoder, when reported.
         let encoderGPURegistryID: UInt64?
+
+        /// Encoder color primaries attachment.
         let colorPrimaries: String?
+
+        /// Encoder transfer-function attachment.
         let transferFunction: String?
+
+        /// Encoder YCbCr matrix attachment.
         let yCbCrMatrix: String?
+
+        /// Chroma sampling parsed from the encoded bitstream.
         let encodedChromaSampling: MirageStreamChromaSampling?
+
+        /// Whether 10-bit Display P3 output passed runtime validation.
         let tenBitDisplayP3Validated: Bool
+
+        /// Whether Ultra 4:4:4 output passed runtime validation.
         let ultra444Validated: Bool
     }
 
@@ -72,9 +100,9 @@ actor VideoEncoder {
 
     nonisolated(unsafe) var encoderInFlightLimit: Int
     nonisolated(unsafe) var encoderInFlightCount: Int = 0
-    nonisolated let encoderInFlightLock = NSLock()
+    let encoderInFlightLock = NSLock()
     nonisolated(unsafe) var lastBitstreamFailureLogTime: CFAbsoluteTime = 0
-    nonisolated let bitstreamFailureLogLock = NSLock()
+    let bitstreamFailureLogLock = NSLock()
     nonisolated(unsafe) var callbackFailureCount: UInt64 = 0
     nonisolated(unsafe) var lastCallbackFailureLogTime: CFAbsoluteTime = 0
 
@@ -85,10 +113,8 @@ actor VideoEncoder {
     var activeEncoderSpecTier: Int = 0
     static let maxEncoderSpecTier = 2
 
-    /// Session version counter - incremented on each dimension change
-    /// Used to discard frames from old sessions during transitions
-    /// nonisolated(unsafe) because it's accessed from VT callback (different thread)
-    /// and needs to be compared atomically
+    /// Session generation checked by VideoToolbox callbacks during dimension transitions.
+    /// `nonisolated(unsafe)` is required because callbacks arrive off the actor thread.
     nonisolated(unsafe) var sessionVersion: UInt64 = 0
     static let bitstreamFailureLogCooldown: CFAbsoluteTime = 1.0
 
@@ -100,7 +126,7 @@ actor VideoEncoder {
         maximizePowerEfficiencyEnabled: Bool = false
     ) {
         self.configuration = configuration
-        self.codec = configuration.codec
+        codec = configuration.codec
         self.latencyMode = latencyMode
         self.streamKind = streamKind
         self.maximizePowerEfficiencyEnabled = maximizePowerEfficiencyEnabled
@@ -112,6 +138,7 @@ actor VideoEncoder {
             : min(configuration.frameQuality, compressionQualityCeiling)
     }
 
+    /// Core Video pixel format used when creating the compression session.
     var pixelFormatType: OSType {
         switch activePixelFormat {
         case .xf44, .ayuv16:
@@ -127,10 +154,12 @@ actor VideoEncoder {
         }
     }
 
+    /// HEVC profile candidates attempted for the active pixel format.
     var requestedProfileLevels: [CFString] {
         Self.requestedProfileLevels(for: activePixelFormat)
     }
 
+    /// HEVC profile candidates ordered from most specific to most compatible.
     static func requestedProfileLevels(for pixelFormat: MiragePixelFormat) -> [CFString] {
         switch pixelFormat {
         case .xf44, .ayuv16:
@@ -148,51 +177,20 @@ actor VideoEncoder {
         }
     }
 
-    static func shouldApplyQPClamps() -> Bool {
-        // Keep QP clamps active in all modes. On some Macs VT ignores `Quality`,
-        // so QP bounds are the only reliable way to enforce throughput targets.
-        return true
-    }
-
-    // Create the compression session
-
+    /// VideoToolbox quality and quantizer bounds for one encoder update.
     struct QualitySettings {
+        /// VideoToolbox quality scalar.
         let quality: Float
+
+        /// Lower quantizer bound, when enforced.
         let minQP: Int?
+
+        /// Upper quantizer bound, when enforced.
         let maxQP: Int?
     }
 
-    // Pre-heat the encoder with dummy frames to eliminate warm-up latency
-    // VideoToolbox hardware encoders need ~5-10 frames to reach steady-state performance
-    // Without pre-heating, first real frames take 70-80ms instead of 3-4ms
-
-    // Start encoding with a frame handler
-
-    // Stop encoding
-
-    // Encode a frame
-
-    // Update quality dynamically (0.0 to 1.0)
-    // Lower quality reduces frame size during throughput pressure.
-
     // Bitrate targets are enforced via VideoToolbox data rate limits.
     // Encoder quality and QP bounds control compression within that target.
-
-    // Update encoder dimensions (requires session recreation)
-
-    // Force a keyframe on next encode
-
-    // Get the current average encode time (ms) from recent samples.
-
-    // Flush all pending frames from the encoder pipeline and force next keyframe.
-    // This ensures the next frame captured will be encoded as a keyframe immediately,
-    // without waiting for any in-flight frames to complete first.
-
-    // Reset the encoder session to recover from stuck state
-    // This invalidates the current session and creates a new one
-    // Forces a keyframe on the next encode
-
-    // Extract VPS, SPS, PPS from format description and format with Annex B start codes
 }
 
 /// Thread-safe encode timing tracker for recent samples
@@ -213,8 +211,8 @@ final class EncodeInfo: @unchecked Sendable {
     let isProRes: Bool
     /// Retains the originating capture sample buffer until VT finishes with the frame.
     let retainedSampleBuffer: CMSampleBuffer?
-    /// Closure to check current session version (captures encoder reference)
-    let getCurrentVersion: () -> UInt64
+    /// Returns the encoder's current compression-session generation.
+    let currentSessionVersion: () -> UInt64
 
     init(
         frameNumber: UInt64,
@@ -225,7 +223,7 @@ final class EncodeInfo: @unchecked Sendable {
         completion: (@Sendable () -> Void)?,
         isProRes: Bool = false,
         retainedSampleBuffer: CMSampleBuffer? = nil,
-        getCurrentVersion: @escaping () -> UInt64
+        currentSessionVersion: @escaping () -> UInt64
     ) {
         self.frameNumber = frameNumber
         self.handler = handler
@@ -235,12 +233,8 @@ final class EncodeInfo: @unchecked Sendable {
         self.completion = completion
         self.isProRes = isProRes
         self.retainedSampleBuffer = retainedSampleBuffer
-        self.getCurrentVersion = getCurrentVersion
+        self.currentSessionVersion = currentSessionVersion
     }
-
-    /// Check if this frame's session is still current
-    /// Returns false if a dimension change occurred since this frame was queued
-    var isSessionCurrent: Bool { sessionVersion == getCurrentVersion() }
 }
 
 #endif

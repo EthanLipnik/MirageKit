@@ -7,45 +7,33 @@
 //  Stream state helpers and thread-safe snapshots.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
 extension MirageClientService {
-    func addActiveStreamID(_ id: StreamID) {
-        fastPathState.addActiveStreamID(id)
-        updateRegistrationRefreshLoopState()
+    /// Stream IDs readable from nonisolated media fast paths.
+    nonisolated var activeStreamIDsForFiltering: Set<StreamID> {
+        fastPathState.activeStreamIDs
     }
 
-    func removeActiveStreamID(_ id: StreamID) {
-        fastPathState.removeActiveStreamID(id)
-        updateRegistrationRefreshLoopState()
+    /// Stream IDs that currently participate in interactive playback and receive runtime encoder-setting updates.
+    public var activeInteractiveStreamIDs: [StreamID] {
+        var streamIDs: [StreamID] = []
+        if let desktopStreamID {
+            streamIDs.append(desktopStreamID)
+        }
+        streamIDs.append(contentsOf: activeStreams.map(\.id))
+
+        var seen = Set<StreamID>()
+        return streamIDs.filter { seen.insert($0).inserted }
     }
 
-    func clearAllActiveStreamIDs() {
-        fastPathState.clearActiveStreamIDs()
-        updateRegistrationRefreshLoopState()
-    }
-
+    /// Publishes the current controller reassemblers to the fast-path packet ingress snapshot.
     func updateReassemblerSnapshot() async {
         var snapshot: [StreamID: FrameReassembler] = [:]
         for (streamID, controller) in controllersByStream {
-            snapshot[streamID] = await controller.getReassembler()
+            snapshot[streamID] = controller.reassembler
         }
-        storeReassemblerSnapshot(snapshot)
-    }
-
-    private nonisolated func storeReassemblerSnapshot(_ snapshot: [StreamID: FrameReassembler]) {
         fastPathState.setReassemblerSnapshot(snapshot)
-    }
-
-    func updateRegistrationRefreshLoopState() {
-        // Registration refresh is no longer needed; media flows through Loom session streams.
-        stopRegistrationRefreshLoop()
-    }
-
-    func stopRegistrationRefreshLoop() {
-        registrationRefreshTask?.cancel()
-        registrationRefreshTask = nil
     }
 }

@@ -12,19 +12,23 @@ import Loom
 
 #if os(macOS)
 
+/// Telemetry queue used by the bootstrap daemon for app-group handoff.
 public enum MirageBootstrapDaemonTelemetry {
+    /// Configures the app group used for telemetry handoff.
     public static func configure(appGroupIdentifier: String) {
         Task {
             await shared.configure(appGroupIdentifier: appGroupIdentifier)
         }
     }
 
+    /// Enables or disables diagnostic event recording.
     public static func setDiagnosticsEnabled(_ enabled: Bool) {
         Task {
             await shared.setDiagnosticsEnabled(enabled)
         }
     }
 
+    /// Records a daemon analytics event.
     public static func recordAnalytics(
         eventName: String,
         message: String? = nil,
@@ -40,6 +44,7 @@ public enum MirageBootstrapDaemonTelemetry {
         }
     }
 
+    /// Records a daemon diagnostic event.
     public static func recordDiagnostic(
         eventName: String,
         message: String,

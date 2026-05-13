@@ -5,12 +5,12 @@
 //  Created by Ethan Lipnik on 3/5/26.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    /// Starts monitoring host power state changes that may affect encoder low-power mode.
     func configureEncoderLowPowerMonitoring() {
         encoderPowerStateMonitor.start { [weak self] snapshot in
             guard let self else { return }
@@ -19,12 +19,14 @@ extension MirageHostService {
         }
     }
 
+    /// Schedules encoder low-power policy evaluation on the main actor.
     func scheduleEncoderLowPowerPolicyApply(reason: String) {
         Task { @MainActor [weak self] in
             await self?.applyEncoderLowPowerPolicy(reason: reason)
         }
     }
 
+    /// Applies the effective encoder low-power mode to active stream contexts.
     private func applyEncoderLowPowerPolicy(reason: String) async {
         let supportsBatteryPolicy = encoderPowerStateSnapshot.supportsBatteryState
         if encoderLowPowerSupportsBatteryPolicy != supportsBatteryPolicy {

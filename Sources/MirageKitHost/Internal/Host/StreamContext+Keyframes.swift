@@ -21,10 +21,6 @@ extension StreamContext {
         }
     }
 
-    func advanceEpoch(reason: String) {
-        markDiscontinuity(reason: reason, advanceEpoch: true)
-    }
-
     func markKeyframeInFlight() {
         let deadline = CFAbsoluteTimeGetCurrent() + keyframeInFlightCap
         if deadline > keyframeSendDeadline { keyframeSendDeadline = deadline }
@@ -52,7 +48,6 @@ extension StreamContext {
         return false
     }
 
-    @discardableResult
     func queueKeyframe(
         reason: String,
         checkInFlight: Bool,
@@ -77,10 +72,25 @@ extension StreamContext {
             pendingKeyframeRequiresFlush = true
         }
         if requiresFlush { pendingKeyframeRequiresFlush = true }
-        if requiresFlush || requiresReset {
-            suppressEncodedNonKeyframesUntilKeyframe = true
-        }
         return true
+    }
+
+    func queueKeyframeIfPossible(
+        reason: String,
+        checkInFlight: Bool,
+        requiresFlush: Bool = false,
+        requiresReset: Bool = false,
+        advanceEpochOnReset: Bool = true,
+        urgent: Bool = false
+    ) {
+        _ = queueKeyframe(
+            reason: reason,
+            checkInFlight: checkInFlight,
+            requiresFlush: requiresFlush,
+            requiresReset: requiresReset,
+            advanceEpochOnReset: advanceEpochOnReset,
+            urgent: urgent
+        )
     }
 
     func forceKeyframeAfterFallbackResume() {
@@ -94,25 +104,6 @@ extension StreamContext {
             urgent: true
         )
         if !queued { MirageLogger.stream("Fallback resume keyframe skipped (unable to queue)") }
-    }
-
-    func forceKeyframeAfterEncoderReconfiguration() async {
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
-        let queued = queueKeyframe(
-            reason: "Encoder reconfiguration keyframe",
-            checkInFlight: false,
-            requiresFlush: true,
-            requiresReset: true,
-            advanceEpochOnReset: true,
-            urgent: true
-        )
-        guard queued else {
-            MirageLogger.stream("Encoder reconfiguration keyframe skipped (unable to queue)")
-            return
-        }
-        noteLossEvent(reason: "Encoder reconfiguration keyframe", enablePFrameFEC: true)
-        scheduleProcessingIfNeeded()
     }
 
     func forceKeyframeAfterCaptureRestart(
@@ -145,14 +136,6 @@ extension StreamContext {
             qualityRaiseSuppressionUntil,
             CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
         )
-        if latencyMode == .smoothest, reason == .expiredDuringSend {
-            await applySmoothestSenderPressureRelief(reason: "\(label):\(reason.rawValue)")
-            MirageLogger.stream(
-                "\(label) deferred Smoothest recovery keyframe after frame \(frameNumber) (\(reason.rawValue)); awaiting receiver recovery signal"
-            )
-            return
-        }
-
         let queued = queueKeyframe(
             reason: label,
             checkInFlight: true,
@@ -306,7 +289,6 @@ extension StreamContext {
 
     func markKeyframeSent() {
         lastKeyframeTime = CFAbsoluteTimeGetCurrent()
-        keyframeSendDeadline = 0
         suppressEncodedNonKeyframesUntilKeyframe = false
         pendingKeyframeReason = nil
         pendingKeyframeDeadline = 0
@@ -368,125 +350,7 @@ extension StreamContext {
         )
     }
 
-    nonisolated static func shouldScheduleCaptureRestartForRecovery(
-        now: CFAbsoluteTime,
-        lastCapturedFrameTime: CFAbsoluteTime,
-        lastRestartTime: CFAbsoluteTime,
-        stallThreshold: CFAbsoluteTime,
-        cooldown: CFAbsoluteTime
-    )
-    -> Bool {
-        let safeCooldown = max(0, cooldown)
-        if lastRestartTime > 0, now - lastRestartTime < safeCooldown {
-            return false
-        }
-
-        guard lastCapturedFrameTime > 0 else {
-            return true
-        }
-
-        let safeThreshold = max(0, stallThreshold)
-        let captureGap = max(0, now - lastCapturedFrameTime)
-        return captureGap >= safeThreshold
-    }
-
-    private func scheduleCaptureRestartForKeyframeRecoveryIfNeeded(
-        now: CFAbsoluteTime,
-        reason: String
-    )
-        async {
-        guard let captureEngine else { return }
-        guard Self.shouldScheduleCaptureRestartForRecovery(
-            now: now,
-            lastCapturedFrameTime: lastCapturedFrameTime,
-            lastRestartTime: lastCaptureStarvationRestartTime,
-            stallThreshold: captureStarvationRestartThreshold,
-            cooldown: captureStarvationRestartCooldown
-        ) else {
-            return
-        }
-
-        lastCaptureStarvationRestartTime = now
-        let thresholdMs = Int((captureStarvationRestartThreshold * 1000).rounded())
-        let captureGapMs: String = if lastCapturedFrameTime > 0 {
-            String(Int((max(0, now - lastCapturedFrameTime) * 1000).rounded()))
-        } else {
-            "none"
-        }
-
-        await captureEngine.scheduleCaptureRestart(
-            reason: "keyframe_recovery_capture_starved reason=\(reason) captureGapMs=\(captureGapMs) thresholdMs=\(thresholdMs)",
-            debounce: captureStarvationRestartDebounce
-        )
-        MirageLogger.stream(
-            "Capture restart requested for keyframe recovery (\(reason), captureGapMs=\(captureGapMs), thresholdMs=\(thresholdMs))"
-        )
-    }
-
-    /// Request a keyframe from the encoder.
-    @discardableResult
-    func requestKeyframe() async -> KeyframeRecoveryAckMessage {
-        let now = CFAbsoluteTimeGetCurrent()
-        let reason = "Keyframe request"
-
-        if coalesceKeyframeRecoveryForFreshnessBurst(reason: reason) {
-            return keyframeRecoveryAck(accepted: true, reason: "\(reason):freshness-burst")
-        }
-
-        let queued = queueKeyframe(
-            reason: reason,
-            checkInFlight: false,
-            requiresFlush: true,
-            requiresReset: true,
-            advanceEpochOnReset: true,
-            urgent: true
-        )
-        guard queued else {
-            return keyframeRecoveryAck(accepted: false, reason: "\(reason):throttled")
-        }
-
-        softRecoveryCount += 1
-        noteLossEvent(reason: reason, enablePFrameFEC: true)
-        await scheduleCaptureRestartForKeyframeRecoveryIfNeeded(now: now, reason: reason)
-        markKeyframeRequestIssued()
-        scheduleProcessingIfNeeded()
-        MirageLogger
-            .stream(
-                "Recovery keyframe requests=\(softRecoveryCount)"
-            )
-        return keyframeRecoveryAck(accepted: true, reason: reason)
-    }
-
-    private func keyframeRecoveryAck(accepted: Bool, reason: String) -> KeyframeRecoveryAckMessage {
-        let now = CFAbsoluteTimeGetCurrent()
-        let deadlineMs: Int
-        if keyframeSendDeadline > now {
-            deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
-        } else {
-            deadlineMs = Int((keyframeRequestCooldown * 1000).rounded(.up))
-        }
-        return KeyframeRecoveryAckMessage(
-            streamID: streamID,
-            accepted: accepted,
-            hostEpoch: epoch,
-            deadlineMilliseconds: deadlineMs,
-            reason: reason
-        )
-    }
-
-    /// Force an immediate keyframe by flushing the encoder pipeline.
-    func forceImmediateKeyframe() async {
-        if shouldThrottleKeyframeRequest(requestLabel: "Immediate keyframe", checkInFlight: false) { return }
-
-        markKeyframeRequestIssued()
-        advanceEpoch(reason: "Immediate keyframe")
-
-        await packetSender?.resetQueue(reason: "immediate keyframe")
-        await encoder?.flush()
-        MirageLogger.stream("Forced immediate keyframe for stream \(streamID)")
-    }
-
-    func keyframeQuality(for queueBytes: Int) -> Float {
+    var keyframeQuality: Float {
         let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
         guard runtimeQualityAdjustmentEnabled else { return base }
         return max(keyframeQualityFloor, base)

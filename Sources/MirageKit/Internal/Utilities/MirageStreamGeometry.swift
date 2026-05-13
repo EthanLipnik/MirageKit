@@ -8,14 +8,27 @@
 import CoreGraphics
 import Foundation
 
+/// Canonical stream sizing result shared by client display requests and host encoder setup.
 package struct MirageStreamGeometry: Sendable, Equatable {
+    /// Logical point size after Mirage's even-dimension normalization.
     package let logicalSize: CGSize
+
+    /// Effective display scale inferred from the normalized logical and pixel sizes.
     package let displayScaleFactor: CGFloat
+
+    /// Native display pixel size aligned for encoder compatibility.
     package let displayPixelSize: CGSize
+
+    /// Caller-requested stream scale after clamping to Mirage's supported range.
     package let requestedStreamScale: CGFloat
+
+    /// Stream scale after applying encoder limits and resolution caps.
     package let resolvedStreamScale: CGFloat
+
+    /// Final encoded pixel size after scale resolution and encoder alignment.
     package let encodedPixelSize: CGSize
 
+    /// Normalizes logical point sizes to positive even dimensions.
     package static func normalizedLogicalSize(_ size: CGSize) -> CGSize {
         guard size.width > 0, size.height > 0 else { return .zero }
         return CGSize(
@@ -24,6 +37,7 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         )
     }
 
+    /// Resolves logical display geometry and encoded stream geometry in one pass.
     package static func resolve(
         logicalSize: CGSize,
         displayScaleFactor: CGFloat,
@@ -63,6 +77,7 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         )
     }
 
+    /// Resolves encoded stream size from a pixel-size base and optional encoder limits.
     package static func resolveEncodedPlan(
         basePixelSize: CGSize,
         requestedStreamScale: CGFloat = 1.0,
@@ -86,9 +101,8 @@ package struct MirageStreamGeometry: Sendable, Equatable {
             resolvedScale = min(clampedRequestedScale, maxScale)
         }
 
-        let encodedPixelSize = aspectPreservingAlignedEncodedSize(
-            basePixelSize: normalizedBasePixelSize,
-            maxUnalignedSize: CGSize(
+        let encodedPixelSize = alignedEncodedSize(
+            CGSize(
                 width: normalizedBasePixelSize.width * resolvedScale,
                 height: normalizedBasePixelSize.height * resolvedScale
             )
@@ -104,6 +118,7 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         )
     }
 
+    /// Aligns a size to encoder-safe dimensions.
     package static func alignedEncodedSize(_ size: CGSize) -> CGSize {
         guard size.width > 0, size.height > 0 else { return .zero }
         return CGSize(
@@ -112,17 +127,20 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         )
     }
 
+    /// Rounds a dimension down to the nearest 16-pixel encoder boundary.
     package static func alignedEncodedDimension(_ value: CGFloat) -> Int {
         let rounded = Int(value.rounded())
         let aligned = rounded & ~15
         return max(aligned, 16)
     }
 
+    /// Clamps stream scale to Mirage's supported range.
     package static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
         guard scale > 0 else { return 1.0 }
         return max(0.1, min(1.0, scale))
     }
 
+    /// Clamps optional display scale factors to a valid positive display scale.
     package static func clampedDisplayScaleFactor(_ value: CGFloat?) -> CGFloat {
         max(1.0, value ?? 1.0)
     }
@@ -136,55 +154,6 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     private static func positiveEncoderLimit(_ value: Int?) -> CGFloat? {
         guard let value, value > 0 else { return nil }
         return CGFloat(value)
-    }
-
-    private static func aspectPreservingAlignedEncodedSize(
-        basePixelSize: CGSize,
-        maxUnalignedSize: CGSize
-    ) -> CGSize {
-        guard basePixelSize.width > 0,
-              basePixelSize.height > 0,
-              maxUnalignedSize.width > 0,
-              maxUnalignedSize.height > 0 else {
-            return .zero
-        }
-
-        let aspectRatio = basePixelSize.width / basePixelSize.height
-        let maxWidth = CGFloat(alignedEncodedDimension(maxUnalignedSize.width))
-        let maxHeight = CGFloat(alignedEncodedDimension(maxUnalignedSize.height))
-
-        let heightBound = alignedEncodedSize(
-            CGSize(width: maxHeight * aspectRatio, height: maxHeight)
-        )
-        let widthBound = alignedEncodedSize(
-            CGSize(width: maxWidth, height: maxWidth / aspectRatio)
-        )
-
-        let candidates = [heightBound, widthBound].filter { candidate in
-            candidate.width > 0 &&
-                candidate.height > 0 &&
-                candidate.width <= maxWidth &&
-                candidate.height <= maxHeight
-        }
-        guard !candidates.isEmpty else {
-            return CGSize(width: maxWidth, height: maxHeight)
-        }
-
-        return candidates.max { lhs, rhs in
-            let lhsError = aspectError(lhs, targetAspectRatio: aspectRatio)
-            let rhsError = aspectError(rhs, targetAspectRatio: aspectRatio)
-            if lhsError != rhsError {
-                return lhsError > rhsError
-            }
-            return lhs.width * lhs.height < rhs.width * rhs.height
-        } ?? candidates[0]
-    }
-
-    private static func aspectError(_ size: CGSize, targetAspectRatio: CGFloat) -> CGFloat {
-        guard size.width > 0, size.height > 0, targetAspectRatio > 0 else {
-            return .greatestFiniteMagnitude
-        }
-        return abs((size.width / size.height) - targetAspectRatio) / targetAspectRatio
     }
 
     private static func inferredDisplayScaleFactor(

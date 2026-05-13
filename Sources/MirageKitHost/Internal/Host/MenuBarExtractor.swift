@@ -35,7 +35,9 @@ actor MenuBarExtractor {
             &menuBarRef
         )
 
-        guard result == .success, let menuBar = menuBarRef else {
+        guard result == .success,
+              let menuBar = menuBarRef,
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
             MirageLogger.log(.menuBar, "Failed to get menu bar for pid \(pid): AXError \(result.rawValue)")
             return nil
         }
@@ -109,7 +111,9 @@ actor MenuBarExtractor {
         }
 
         // The first child of a menu bar item is the actual menu
-        let menuElement = submenus[0]
+        guard let menuElement = submenus.first else {
+            return MirageMenu(title: title, items: [], menuIndex: menuIndex)
+        }
 
         // Get menu items
         var menuItemsRef: CFTypeRef?
@@ -250,7 +254,7 @@ actor MenuBarExtractor {
         // 1 << 0 = Shift
         // 1 << 1 = Option
         // 1 << 2 = Control
-        // 1 << 3 = (unused, was Caps Lock in some docs)
+        // 1 << 3 is ignored
         // Command is implicit in menu shortcuts
         var modifiers = MirageModifierFlags.command // Always has command for menu shortcuts
 
@@ -323,17 +327,19 @@ actor MenuBarExtractor {
         // Get the menu bar
         var menuBarRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXMenuBarAttribute as CFString, &menuBarRef) == .success,
-              let menuBar = menuBarRef as! AXUIElement? else {
+              let menuBar = menuBarRef,
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else {
             MirageLogger.log(.menuBar, "Failed to get menu bar for action")
             return false
         }
 
         // Get menu bar items
         var menuBarChildrenRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(menuBar, kAXChildrenAttribute as CFString, &menuBarChildrenRef) == .success,
+        guard AXUIElementCopyAttributeValue(menuBar as! AXUIElement, kAXChildrenAttribute as CFString, &menuBarChildrenRef) == .success,
               let menuBarItems = menuBarChildrenRef as? [AXUIElement],
-              actionPath[0] < menuBarItems.count else {
-            MirageLogger.log(.menuBar, "Invalid menu index: \(actionPath[0])")
+              let menuIndex = actionPath.first,
+              menuIndex < menuBarItems.count else {
+            MirageLogger.log(.menuBar, "Invalid menu index: \(actionPath.first.map(String.init) ?? "missing")")
             return false
         }
 
@@ -365,9 +371,10 @@ actor MenuBarExtractor {
 
                 // The first child is the submenu element, get its children
                 var submenuItemsRef: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(children[0], kAXChildrenAttribute as CFString, &submenuItemsRef) ==
-                    .success,
-                    let submenuItems = submenuItemsRef as? [AXUIElement] else {
+                guard let submenuElement = children.first,
+                      AXUIElementCopyAttributeValue(submenuElement, kAXChildrenAttribute as CFString, &submenuItemsRef) ==
+                      .success,
+                      let submenuItems = submenuItemsRef as? [AXUIElement] else {
                     MirageLogger.log(.menuBar, "Failed to get submenu items at depth \(depth)")
                     return false
                 }

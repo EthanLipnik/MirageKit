@@ -20,6 +20,7 @@ extension MirageHostInputController {
 
     private static let staleHoverBatchInterval: TimeInterval = 0.12
 
+    /// Injects high-rate stylus pointer samples into a window stream.
     func injectPointerSampleBatch(
         _ batch: MiragePointerSampleBatch,
         windowFrame: CGRect,
@@ -79,6 +80,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Injects high-rate stylus pointer samples into a desktop stream.
     func injectDesktopPointerSampleBatch(_ batch: MiragePointerSampleBatch, bounds: CGRect) {
         guard !batch.samples.isEmpty else { return }
         guard !Self.shouldRejectStaleHoverBatch(batch) else { return }
@@ -96,20 +98,6 @@ extension MirageHostInputController {
         for sample in batch.samples {
             let point = screenPoint(sample.location, in: bounds)
             if Self.shouldWarpDesktopPointerEvent(type) {
-                if Self.shouldLogDesktopPointerWarpDiagnostic(point: point, bounds: bounds) {
-                    let currentCursorPosition = Self.desktopInjectionCursorPosition(
-                        fromCocoaScreenPosition: NSEvent.mouseLocation,
-                        primaryDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height
-                    )
-                    Self.logDesktopPointerWarpDiagnostic(
-                        source: "desktop-pointer-batch phase=\(batch.phase)",
-                        type: type,
-                        normalizedLocation: sample.location,
-                        point: point,
-                        currentCursorPosition: currentCursorPosition,
-                        bounds: bounds
-                    )
-                }
                 CGWarpMouseCursorPosition(point)
             }
             postTabletPointerSample(sample, batch: batch, type: type, at: point)
@@ -122,6 +110,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Maps a batched pointer phase to the CoreGraphics event type to emit.
     nonisolated static func pointerEventType(for batch: MiragePointerSampleBatch) -> CGEventType {
         switch batch.phase {
         case .hover:
@@ -136,6 +125,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Maps a pressed Mirage mouse button to its CoreGraphics down event.
     private nonisolated static func pointerDownEventType(for button: MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
@@ -149,6 +139,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Maps a released Mirage mouse button to its CoreGraphics up event.
     private nonisolated static func pointerUpEventType(for button: MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
@@ -162,6 +153,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Maps a dragged Mirage mouse button to its CoreGraphics dragged event.
     private nonisolated static func pointerDraggedEventType(for button: MirageMouseButton) -> CGEventType {
         switch button {
         case .left:
@@ -175,6 +167,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Rejects stale hover-only samples so delayed packets do not move the host cursor later.
     private nonisolated static func shouldRejectStaleHoverBatch(_ batch: MiragePointerSampleBatch) -> Bool {
         guard batch.phase == .hover else { return false }
         let age = Date.timeIntervalSinceReferenceDate - batch.timestamp
@@ -183,10 +176,12 @@ extension MirageHostInputController {
 }
 
 private extension MiragePointerSampleBatch {
+    /// Whether the batch represents stylus hover leaving proximity.
     var isHoverExit: Bool {
         phase == .cancelled && samples.allSatisfy(\.stylus.isHovering)
     }
 
+    /// Whether the batch should end stylus contact/proximity after posting samples.
     var endsContact: Bool {
         switch phase {
         case .ended, .cancelled:

@@ -10,23 +10,23 @@
 import MirageKit
 #if os(iOS) || os(visionOS)
 
+/// Tracks the refresh-rate cap requested by a stream view and reports effective changes to the coordinator.
 @MainActor
 final class MirageRefreshRateMonitor: NSObject {
+    /// Called when the normalized refresh-rate override changes.
     var onOverrideChange: ((Int) -> Void)?
 
+    /// Preferred maximum refresh rate requested by the current stream configuration.
     var preferredMaximumRefreshRate: Int = 60 {
         didSet {
-            applyPreferredOverride()
+            setOverride(preferredMaximumRefreshRate)
         }
     }
 
     private var currentOverride: Int = 60
 
+    /// Emits the current preferred refresh-rate override when the stream view attaches.
     func start() {
-        applyPreferredOverride()
-    }
-
-    private func applyPreferredOverride() {
         setOverride(preferredMaximumRefreshRate)
     }
 

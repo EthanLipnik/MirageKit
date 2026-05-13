@@ -17,22 +17,22 @@ struct StreamFrameInboxTests {
     @Test("Newest-first drain returns freshest frame and reports stale backlog drops")
     func newestDrainReturnsFreshestFrame() throws {
         let inbox = StreamFrameInbox(capacity: 4)
-        inbox.enqueue(try makeFrame(captureTime: 1))
-        inbox.enqueue(try makeFrame(captureTime: 2))
-        inbox.enqueue(try makeFrame(captureTime: 3))
+        _ = inbox.enqueue(try makeFrame(captureTime: 1))
+        _ = inbox.enqueue(try makeFrame(captureTime: 2))
+        _ = inbox.enqueue(try makeFrame(captureTime: 3))
 
         let drainResult = inbox.takeNext(policy: .newest)
 
         #expect(drainResult.frame?.captureTime == 3)
         #expect(drainResult.droppedBeforeDelivery == 2)
-        #expect(inbox.pendingCount() == 0)
+        #expect(inbox.pendingCount == 0)
     }
 
     @Test("FIFO drain preserves enqueue order")
     func fifoDrainPreservesOrder() throws {
         let inbox = StreamFrameInbox(capacity: 4)
-        inbox.enqueue(try makeFrame(captureTime: 1))
-        inbox.enqueue(try makeFrame(captureTime: 2))
+        _ = inbox.enqueue(try makeFrame(captureTime: 1))
+        _ = inbox.enqueue(try makeFrame(captureTime: 2))
 
         let first = inbox.takeNext(policy: .fifo)
         let second = inbox.takeNext(policy: .fifo)
@@ -41,7 +41,7 @@ struct StreamFrameInboxTests {
         #expect(first.droppedBeforeDelivery == 0)
         #expect(second.frame?.captureTime == 2)
         #expect(second.droppedBeforeDelivery == 0)
-        #expect(inbox.pendingCount() == 0)
+        #expect(inbox.pendingCount == 0)
     }
 
     @Test("Enqueue marks the inbox as scheduled until a drain completes")

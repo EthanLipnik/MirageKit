@@ -17,19 +17,15 @@ extension MirageClientService {
         transferObserverTask?.cancel()
         transferObserverTask = nil
         pendingIncomingTransfersByKey.removeAll(keepingCapacity: false)
-        for (_, continuation) in transferWaitersByKey {
-            continuation.resume(throwing: CancellationError())
-        }
-        transferWaitersByKey.removeAll(keepingCapacity: false)
+        cancelTransferWaiters()
 
         guard let transferEngine else { return }
         transferObserverTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for await transfer in transferEngine.incomingTransfers {
-                let key = transferKey(
-                    kind: transfer.offer.metadata["mirage.transfer-kind"] ?? "",
-                    requestID: transfer.offer.metadata["mirage.request-id"] ?? ""
-                )
+                let kind = transfer.offer.metadata["mirage.transfer-kind"] ?? ""
+                let requestID = transfer.offer.metadata["mirage.request-id"] ?? ""
+                let key = transferKey(kind: kind, requestID: requestID)
                 if let continuation = transferWaitersByKey.removeValue(forKey: key) {
                     continuation.resume(returning: transfer)
                 } else {
@@ -42,10 +38,7 @@ extension MirageClientService {
     func stopTransferObserver() {
         transferObserverTask?.cancel()
         transferObserverTask = nil
-        for (_, continuation) in transferWaitersByKey {
-            continuation.resume(throwing: CancellationError())
-        }
-        transferWaitersByKey.removeAll(keepingCapacity: false)
+        cancelTransferWaiters()
         pendingIncomingTransfersByKey.removeAll(keepingCapacity: false)
     }
 
@@ -63,7 +56,16 @@ extension MirageClientService {
         }
     }
 
+    /// Stable lookup key for matching Loom transfer offers to Mirage control requests.
     private func transferKey(kind: String, requestID: String) -> String {
         "\(kind)#\(requestID)"
+    }
+
+    /// Cancels pending transfer waiters when the authenticated transfer session changes.
+    private func cancelTransferWaiters() {
+        for continuation in transferWaitersByKey.values {
+            continuation.resume(throwing: CancellationError())
+        }
+        transferWaitersByKey.removeAll(keepingCapacity: false)
     }
 }

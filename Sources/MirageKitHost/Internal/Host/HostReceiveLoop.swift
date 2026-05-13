@@ -13,26 +13,38 @@ import MirageKit
 #if os(macOS)
 /// Per-connection receive loop that keeps input ingestion independent from control handling.
 final class HostReceiveLoop: @unchecked Sendable {
+    /// Terminal receive-loop outcomes reported to the host connection lifecycle.
     enum TerminalReason {
+        /// The remote side completed the connection normally.
         case complete
+        /// A transport error classified as immediately fatal.
         case fatalError(NWError)
+        /// A transient transport error persisted past the configured timeout.
         case persistentError(NWError)
+        /// Incoming bytes did not contain a valid framed control message.
         case protocolViolation(String)
+        /// Buffered receive data exceeded the configured safety cap.
         case receiveBufferOverflow(Int)
     }
 
+    /// Lifecycle events that should bypass normal control-message queueing.
     enum LifecycleSignal {
+        /// Client requested disconnect.
         case disconnect(ControlMessage)
+        /// Client cancelled an in-flight stream setup.
         case cancelStreamSetup(ControlMessage)
+        /// Receive loop reached a terminal state.
         case terminal(TerminalReason)
     }
 
+    /// Internal queue entry used to preserve ordering while coalescing noisy control updates.
     private enum QueueEntry {
         case direct(ControlMessage)
         case coalesced(ControlMessageType)
         case input(ControlMessage)
     }
 
+    /// Mutable receive-loop state protected by `Locked`.
     private struct State {
         var receiveBuffer = Data()
         var entries: [QueueEntry] = []
@@ -47,6 +59,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         .displayResolutionChange,
         .streamScaleChange,
         .streamRefreshRateChange,
+        .streamEncoderSettingsChange,
     ]
 
     private let receiveChunk: @Sendable (
@@ -59,45 +72,11 @@ final class HostReceiveLoop: @unchecked Sendable {
     private let state = Locked(State())
 
     private let onInputMessage: @Sendable (ControlMessage) -> Void
-    private let onPingMessage: @Sendable (ControlMessage) -> Void
-    private let onReceiverMediaFeedbackMessage: @Sendable (ControlMessage) -> Void
-    private let onReceiverMediaFeedbackCoalesced: @Sendable (UInt64) -> Void
+    private let onPingMessage: @Sendable () -> Void
     private let onLifecycleSignal: @Sendable (LifecycleSignal) -> Void
     private let dispatchControlMessage: @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void
     private let onTerminal: @Sendable (TerminalReason) -> Void
     private let isFatalError: @Sendable (NWError) -> Bool
-
-    init(
-        connection: NWConnection,
-        clientName: String,
-        maxControlBacklog: Int = 256,
-        maxReceiveBufferBytes: Int = LoomMessageLimits.maxReceiveBufferBytes,
-        errorTimeoutSeconds: CFAbsoluteTime = 2.0,
-        onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
-        onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
-        onReceiverMediaFeedbackMessage: @escaping @Sendable (ControlMessage) -> Void = { _ in },
-        onReceiverMediaFeedbackCoalesced: @escaping @Sendable (UInt64) -> Void = { _ in },
-        onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
-        dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
-        onTerminal: @escaping @Sendable (TerminalReason) -> Void,
-        isFatalError: @escaping @Sendable (NWError) -> Bool
-    ) {
-        self.clientName = clientName
-        self.maxControlBacklog = max(8, maxControlBacklog)
-        self.maxReceiveBufferBytes = max(8 * 1024, maxReceiveBufferBytes)
-        self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
-        self.onInputMessage = onInputMessage
-        self.onPingMessage = onPingMessage
-        self.onReceiverMediaFeedbackMessage = onReceiverMediaFeedbackMessage
-        self.onReceiverMediaFeedbackCoalesced = onReceiverMediaFeedbackCoalesced
-        self.onLifecycleSignal = onLifecycleSignal
-        self.dispatchControlMessage = dispatchControlMessage
-        self.onTerminal = onTerminal
-        self.isFatalError = isFatalError
-        receiveChunk = { completion in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 65536, completion: completion)
-        }
-    }
 
     init(
         clientName: String,
@@ -108,9 +87,7 @@ final class HostReceiveLoop: @unchecked Sendable {
             @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void
         ) -> Void,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
-        onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
-        onReceiverMediaFeedbackMessage: @escaping @Sendable (ControlMessage) -> Void = { _ in },
-        onReceiverMediaFeedbackCoalesced: @escaping @Sendable (UInt64) -> Void = { _ in },
+        onPingMessage: @escaping @Sendable () -> Void,
         onLifecycleSignal: @escaping @Sendable (LifecycleSignal) -> Void = { _ in },
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
@@ -123,14 +100,13 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.receiveChunk = receiveChunk
         self.onInputMessage = onInputMessage
         self.onPingMessage = onPingMessage
-        self.onReceiverMediaFeedbackMessage = onReceiverMediaFeedbackMessage
-        self.onReceiverMediaFeedbackCoalesced = onReceiverMediaFeedbackCoalesced
         self.onLifecycleSignal = onLifecycleSignal
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
         self.isFatalError = isFatalError
     }
 
+    /// Starts receiving, optionally parsing bytes already read by connection setup.
     func start(initialBuffer: Data = Data()) {
         if !initialBuffer.isEmpty {
             state.withLock { state in
@@ -142,6 +118,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         receiveNext()
     }
 
+    /// Stops receiving and clears queued work.
     func stop() {
         state.withLock { state in
             state.stopped = true
@@ -152,6 +129,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Requests the next network chunk unless the loop has stopped.
     private func receiveNext() {
         let isStopped = state.read { $0.stopped }
         guard !isStopped else { return }
@@ -160,37 +138,38 @@ final class HostReceiveLoop: @unchecked Sendable {
             guard let self else { return }
 
             if let error {
-                self.handleReceiveError(error)
+                handleReceiveError(error)
                 return
             }
 
             if let data, !data.isEmpty {
-                let bufferOverflowed = self.state.withLock { state in
+                let bufferOverflowed = state.withLock { state in
                     state.firstErrorTime = nil
                     state.receiveBuffer.append(data)
                     return state.receiveBuffer.count > self.maxReceiveBufferBytes
                 }
                 if bufferOverflowed {
-                    self.stop()
-                    self.onLifecycleSignal(.terminal(.receiveBufferOverflow(self.maxReceiveBufferBytes)))
-                    self.onTerminal(.receiveBufferOverflow(self.maxReceiveBufferBytes))
+                    stop()
+                    onLifecycleSignal(.terminal(.receiveBufferOverflow(maxReceiveBufferBytes)))
+                    onTerminal(.receiveBufferOverflow(maxReceiveBufferBytes))
                     return
                 }
-                self.parseBufferedMessages()
-                self.scheduleNextControlIfNeeded()
+                parseBufferedMessages()
+                scheduleNextControlIfNeeded()
             }
 
             if isComplete {
-                self.stop()
-                self.onLifecycleSignal(.terminal(.complete))
-                self.onTerminal(.complete)
+                stop()
+                onLifecycleSignal(.terminal(.complete))
+                onTerminal(.complete)
                 return
             }
 
-            self.receiveNext()
+            receiveNext()
         }
     }
 
+    /// Handles fatal and persistent receive errors while tolerating short transient failures.
     private func handleReceiveError(_ error: NWError) {
         if isFatalError(error) {
             stop()
@@ -221,11 +200,10 @@ final class HostReceiveLoop: @unchecked Sendable {
         receiveNext()
     }
 
+    /// Parses buffered bytes into immediate input, ping callbacks, and queued control messages.
     private func parseBufferedMessages() {
         var immediateInputMessages: [ControlMessage] = []
-        var pingMessages: [ControlMessage] = []
-        var receiverMediaFeedbackMessage: ControlMessage?
-        var receiverMediaFeedbackCoalescedCount: UInt64 = 0
+        var pingMessageCount = 0
         var violationReason: String?
 
         state.withLock { state in
@@ -241,12 +219,7 @@ final class HostReceiveLoop: @unchecked Sendable {
                             immediateInputMessages.append(message)
                         }
                     } else if message.type == .ping {
-                        pingMessages.append(message)
-                    } else if message.type == .receiverMediaFeedback {
-                        if receiverMediaFeedbackMessage != nil {
-                            receiverMediaFeedbackCoalescedCount &+= 1
-                        }
-                        receiverMediaFeedbackMessage = message
+                        pingMessageCount += 1
                     } else if message.type == .pong {
                         continue
                     } else {
@@ -280,18 +253,12 @@ final class HostReceiveLoop: @unchecked Sendable {
             onInputMessage(message)
         }
 
-        for message in pingMessages {
-            onPingMessage(message)
-        }
-
-        if let receiverMediaFeedbackMessage {
-            if receiverMediaFeedbackCoalescedCount > 0 {
-                onReceiverMediaFeedbackCoalesced(receiverMediaFeedbackCoalescedCount)
-            }
-            onReceiverMediaFeedbackMessage(receiverMediaFeedbackMessage)
+        for _ in 0 ..< pingMessageCount {
+            onPingMessage()
         }
     }
 
+    /// Enqueues a control message, coalescing noisy update types when possible.
     private func enqueueControl(_ message: ControlMessage, state: inout State) -> Bool {
         let type = message.type
         if Self.coalescedTypes.contains(type) {
@@ -313,6 +280,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Emits lifecycle signals for control messages that need immediate host-side handling.
     private func publishLifecycleSignalIfNeeded(for message: ControlMessage) {
         switch message.type {
         case .disconnect:
@@ -324,6 +292,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Queues input behind a clipboard barrier while preserving newer input under backlog pressure.
     private func enqueueInput(_ message: ControlMessage, state: inout State) {
         if state.entries.count >= maxControlBacklog {
             discardQueuedMessageToPreserveInput(state: &state)
@@ -337,6 +306,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         state.entries.append(.input(message))
     }
 
+    /// Drops the least important queued item so delayed input can still be delivered.
     private func discardQueuedMessageToPreserveInput(state: inout State) {
         if let index = state.entries.firstIndex(where: {
             if case .coalesced = $0 {
@@ -382,6 +352,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Trims stale coalesced control entries when the queue grows past the backlog cap.
     private func trimCoalescedBacklog(state: inout State) {
         while state.entries.count > maxControlBacklog {
             if let index = state.entries.firstIndex(where: {
@@ -400,6 +371,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Starts dispatching the next queued control or delayed input message when idle.
     private func scheduleNextControlIfNeeded() {
         enum ScheduledEntry {
             case control(ControlMessage)
@@ -440,6 +412,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         }
     }
 
+    /// Marks the current queued item complete and advances the queue.
     private func finishScheduledEntry(controlType: ControlMessageType?) {
         state.withLock { state in
             state.controlInFlight = false

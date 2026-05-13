@@ -9,9 +9,13 @@ import MirageKit
 #if os(macOS)
 import SwiftUI
 
+/// SwiftUI bridge that embeds the AppKit stream renderer and input capture view on macOS.
 public struct MirageStreamViewRepresentable: NSViewRepresentable {
+    /// Logical stream session identifier.
     public let streamID: StreamID
+    /// Media stream identifier used for decoded frames and cursor/input routing.
     public let mediaStreamID: StreamID
+    /// Optional host content rect override used when presenting a cropped app/window stream.
     public let contentRectOverride: CGRect?
 
     /// Callback for sending input events to the host
@@ -89,9 +93,10 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Callback when a unified action is triggered.
     public var onActionTriggered: ((MirageAction) -> Void)?
 
+    /// Creates an AppKit-backed stream view with rendering, cursor, input, and action bindings.
     public init(
         streamID: StreamID,
-        mediaStreamID: StreamID? = nil,
+        mediaStreamID: StreamID,
         contentRectOverride: CGRect? = nil,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
@@ -120,7 +125,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         onActionTriggered: ((MirageAction) -> Void)? = nil
     ) {
         self.streamID = streamID
-        self.mediaStreamID = mediaStreamID ?? streamID
+        self.mediaStreamID = mediaStreamID
         self.contentRectOverride = contentRectOverride
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -175,15 +180,15 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         // Store sample-buffer view reference in coordinator
         context.coordinator.sampleBufferView = sampleBufferView
-        sampleBufferView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
-        sampleBufferView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
+        sampleBufferView.onDrawableMetricsChanged = { context.coordinator.onDrawableMetricsChanged?($0) }
+        sampleBufferView.onRefreshRateOverrideChange = { context.coordinator.onRefreshRateOverrideChange?($0) }
         sampleBufferView.preferredMaximumRenderFPS = preferredMaximumRenderFPS
         sampleBufferView.maxDrawableSize = maxDrawableSize
         sampleBufferView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         sampleBufferView.streamPresentationTier = presentationTier
         sampleBufferView.contentRectOverride = contentRectOverride
         sampleBufferView.streamID = mediaStreamID
-        wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
+        wrapper.onContainerSizeChanged = { context.coordinator.onContainerSizeChanged?($0) }
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
@@ -216,12 +221,12 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
                     modifiers: modifiers,
                     isPrecise: isPrecise
                 )
-                coordinator?.handleInputEvent(.scrollWheel(event))
+                coordinator?.onInputEvent?(.scrollWheel(event))
             }
 
         // Configure mouse/keyboard event callback
         wrapper.onMouseEvent = { [weak coordinator = context.coordinator] event in
-            coordinator?.handleInputEvent(event)
+            coordinator?.onInputEvent?(event)
         }
 
         // Configure client shortcut passthrough
@@ -269,7 +274,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.onClientShortcut = onClientShortcut
             wrapper.actions = actions
             wrapper.onActionTriggered = onActionTriggered
-            wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
+            wrapper.onContainerSizeChanged = { context.coordinator.onContainerSizeChanged?($0) }
         }
     }
 }

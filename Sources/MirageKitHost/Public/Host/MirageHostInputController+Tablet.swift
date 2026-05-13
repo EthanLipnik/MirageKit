@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,10 +17,12 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Tablet Mapping Helpers
 
+    /// Returns whether a mouse event should be tagged as tablet/stylus input.
     func appliesTabletSubtype(_ event: MirageMouseEvent) -> Bool {
         event.stylus != nil
     }
 
+    /// Applies tablet fields to a CoreGraphics event when the Mirage event carries stylus data.
     func applyTabletFieldsIfNeeded(
         _ cgEvent: CGEvent,
         from event: MirageMouseEvent,
@@ -29,11 +30,10 @@ extension MirageHostInputController {
         point: CGPoint? = nil
     ) {
         guard let stylus = event.stylus else { return }
-        let pointerButtons: Int64?
-        if let type {
-            pointerButtons = isPointerButtonActive(for: type) ? tabletButtonMask(for: event.button) : 0
+        let pointerButtons: Int64? = if let type {
+            isPointerButtonActive(for: type) ? tabletButtonMask(for: event.button) : 0
         } else {
-            pointerButtons = nil
+            nil
         }
         applyTabletFields(
             cgEvent,
@@ -44,6 +44,7 @@ extension MirageHostInputController {
         )
     }
 
+    /// Posts a pointer event while maintaining synthetic tablet proximity state.
     func postStylusAwarePointerEvent(
         _ cgEvent: CGEvent,
         from event: MirageMouseEvent,
@@ -60,7 +61,7 @@ extension MirageHostInputController {
                 pointerButtons: isPointerButtonActive(for: type) ? tabletButtonMask(for: event.button) : 0
             )
             postEvent(cgEvent)
-            if isPointerButtonRelease(for: type) {
+            if type == .leftMouseUp || type == .rightMouseUp || type == .otherMouseUp {
                 postTabletProximityIfNeeded(entering: false, at: screenPoint)
             }
         } else {
@@ -69,6 +70,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Applies synthetic tablet fields for pressure, tilt, rotation, position, and buttons.
     private func applyTabletFields(
         _ cgEvent: CGEvent,
         from event: MirageMouseEvent,
@@ -97,6 +99,7 @@ extension MirageHostInputController {
         cgEvent.setIntegerValueField(.tabletEventDeviceID, value: Self.syntheticTabletDeviceID)
     }
 
+    /// Posts one batched stylus sample as a synthetic tablet pointer event.
     func postTabletPointerSample(
         _ sample: MiragePointerSample,
         batch: MiragePointerSampleBatch,
@@ -113,6 +116,7 @@ extension MirageHostInputController {
         postEvent(tabletEvent)
     }
 
+    /// Builds a synthetic tablet pointer event from a Mirage mouse event.
     func makeTabletPointerEvent(
         from event: MirageMouseEvent,
         stylus: MirageStylusEvent,
@@ -140,6 +144,7 @@ extension MirageHostInputController {
         return tabletEvent
     }
 
+    /// Builds a synthetic tablet pointer event from a batched pointer sample.
     func makeTabletPointerEvent(
         from sample: MiragePointerSample,
         batch: MiragePointerSampleBatch,
@@ -163,6 +168,7 @@ extension MirageHostInputController {
         )
     }
 
+    /// Posts tablet proximity enter/exit events when proximity state changes.
     func postTabletProximityIfNeeded(entering: Bool, at screenPoint: CGPoint) {
         guard tabletProximityActive != entering else { return }
         guard let proximityEvent = makeTabletProximityEvent(entering: entering, at: screenPoint) else { return }
@@ -171,6 +177,7 @@ extension MirageHostInputController {
         tabletProximityActive = entering
     }
 
+    /// Builds a synthetic tablet proximity event at a host screen point.
     func makeTabletProximityEvent(entering: Bool, at screenPoint: CGPoint) -> CGEvent? {
         guard let proximityEvent = CGEvent(
             mouseEventSource: nil,
@@ -199,10 +206,11 @@ extension MirageHostInputController {
             value: Self.syntheticTabletPointerSerialNumber
         )
         proximityEvent.setIntegerValueField(.tabletProximityEventVendorUniqueID, value: Self.syntheticTabletUniqueID)
-        proximityEvent.setIntegerValueField(.tabletProximityEventCapabilityMask, value: syntheticTabletCapabilityMask)
+        proximityEvent.setIntegerValueField(.tabletProximityEventCapabilityMask, value: Self.syntheticTabletCapabilityMask)
         return proximityEvent
     }
 
+    /// Returns whether a CoreGraphics pointer event has an active button state.
     private func isPointerButtonActive(for type: CGEventType) -> Bool {
         switch type {
         case .leftMouseDown,
@@ -217,17 +225,7 @@ extension MirageHostInputController {
         }
     }
 
-    private func isPointerButtonRelease(for type: CGEventType) -> Bool {
-        switch type {
-        case .leftMouseUp,
-             .rightMouseUp,
-             .otherMouseUp:
-            true
-        default:
-            false
-        }
-    }
-
+    /// Maps Mirage mouse buttons to the tablet button bitmask.
     private func tabletButtonMask(for button: MirageMouseButton) -> Int64 {
         switch button {
         case .left:
@@ -248,18 +246,17 @@ extension MirageHostInputController {
     private static let syntheticTabletVendorID: Int64 = 0x4D52
     private static let syntheticTabletProductID: Int64 = 0x0001
     private static let syntheticTabletPointerSerialNumber: Int64 = 1
-    private static let syntheticTabletUniqueID: Int64 = 0x4D4952414745
-    private var syntheticTabletCapabilityMask: Int64 {
+    private static let syntheticTabletUniqueID: Int64 = 0x4D49_5241_4745
+    private static let syntheticTabletCapabilityMask: Int64 =
         0x0001 | // device ID
-            0x0002 | // absolute X
-            0x0004 | // absolute Y
-            0x0040 | // buttons
-            0x0080 | // tilt X
-            0x0100 | // tilt Y
-            0x0400 | // pressure
-            0x0800 | // tangential pressure
-            0x2000 // rotation
-    }
+        0x0002 | // absolute X
+        0x0004 | // absolute Y
+        0x0040 | // buttons
+        0x0080 | // tilt X
+        0x0100 | // tilt Y
+        0x0400 | // pressure
+        0x0800 | // tangential pressure
+        0x2000 // rotation
 }
 
 #endif

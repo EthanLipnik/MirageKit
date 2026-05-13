@@ -9,14 +9,14 @@ import MirageKit
 #if os(macOS)
 import Foundation
 
-/// Monitors menu bar changes for streamed applications using polling.
+/// Polls Accessibility menu-bar state for streamed applications and publishes structural changes.
 ///
 /// Since Accessibility APIs don't provide direct notifications for menu content changes,
 /// this monitor polls the menu bar periodically and detects changes by comparing versions.
 actor MenuBarMonitor {
     // MARK: - Types
 
-    /// Information about a monitored stream
+    /// Cached menu-bar state and callback for one active stream.
     private struct MonitoredStream {
         let pid: pid_t
         let bundleIdentifier: String
@@ -26,39 +26,36 @@ actor MenuBarMonitor {
 
     // MARK: - Properties
 
-    /// Active streams being monitored
+    /// Active streams keyed by Mirage stream ID.
     private var monitoredStreams: [StreamID: MonitoredStream] = [:]
 
-    /// The menu bar extractor
+    /// Accessibility extractor used for snapshots and menu actions.
     private let extractor = MenuBarExtractor()
 
-    /// Polling interval in seconds
+    /// Delay between menu-bar snapshots.
     private let pollInterval: TimeInterval
 
-    /// Background monitoring task
+    /// Polling task shared by all monitored streams.
     private var monitorTask: Task<Void, Never>?
-
-    /// Whether monitoring is currently active
-    private var isMonitoring: Bool { monitorTask != nil }
 
     // MARK: - Initialization
 
     /// Creates a new menu bar monitor.
     ///
-    /// - Parameter pollInterval: How often to check for menu changes (default 1 second)
+    /// - Parameter pollInterval: How often to check for menu changes.
     init(pollInterval: TimeInterval = 1.0) {
         self.pollInterval = pollInterval
     }
 
     // MARK: - Public API
 
-    /// Starts monitoring menu bar changes for a stream.
+    /// Starts monitoring menu-bar changes for a stream and immediately publishes the first snapshot.
     ///
     /// - Parameters:
-    ///   - streamID: The stream to monitor
-    ///   - pid: Process ID of the application
-    ///   - bundleIdentifier: Bundle identifier of the application
-    ///   - onChange: Callback invoked when menu bar changes (called on actor)
+    ///   - streamID: Stream receiving menu-bar updates.
+    ///   - pid: Process ID of the source application.
+    ///   - bundleIdentifier: Bundle identifier of the source application.
+    ///   - onChange: Callback invoked on the monitor actor when the menu bar changes.
     func startMonitoring(
         streamID: StreamID,
         pid: pid_t,
@@ -66,10 +63,8 @@ actor MenuBarMonitor {
         onChange: @escaping @Sendable (MirageMenuBar) -> Void
     )
     async {
-        // Extract initial menu bar
         let initialMenuBar = await extractor.extractMenuBar(for: pid, bundleIdentifier: bundleIdentifier)
 
-        // Store the stream info
         monitoredStreams[streamID] = MonitoredStream(
             pid: pid,
             bundleIdentifier: bundleIdentifier,
@@ -77,54 +72,22 @@ actor MenuBarMonitor {
             lastMenuBar: initialMenuBar
         )
 
-        // Send initial menu bar if we got one
         if let menuBar = initialMenuBar { onChange(menuBar) }
 
-        // Start polling if not already running
-        if !isMonitoring { startPolling() }
+        if monitorTask == nil { startPolling() }
 
         MirageLogger.log(.menuBar, "Started monitoring menu bar for stream \(streamID)")
     }
 
     /// Stops monitoring menu bar changes for a stream.
     ///
-    /// - Parameter streamID: The stream to stop monitoring
+    /// - Parameter streamID: Stream to remove from menu-bar polling.
     func stopMonitoring(streamID: StreamID) {
         monitoredStreams.removeValue(forKey: streamID)
 
-        // Stop polling if no more streams
         if monitoredStreams.isEmpty { stopPolling() }
 
         MirageLogger.log(.menuBar, "Stopped monitoring menu bar for stream \(streamID)")
-    }
-
-    /// Gets the current menu bar for a stream.
-    ///
-    /// - Parameter streamID: The stream to get menu bar for
-    /// - Returns: The current menu bar, or nil if not found
-    func currentMenuBar(for streamID: StreamID) -> MirageMenuBar? {
-        monitoredStreams[streamID]?.lastMenuBar
-    }
-
-    /// Forces a refresh of the menu bar for a stream.
-    ///
-    /// - Parameter streamID: The stream to refresh
-    /// - Returns: The refreshed menu bar, or nil if extraction failed
-    func refreshMenuBar(for streamID: StreamID) async -> MirageMenuBar? {
-        guard var stream = monitoredStreams[streamID] else { return nil }
-
-        let newMenuBar = await extractor.extractMenuBar(
-            for: stream.pid,
-            bundleIdentifier: stream.bundleIdentifier
-        )
-
-        if let menuBar = newMenuBar {
-            stream.lastMenuBar = menuBar
-            monitoredStreams[streamID] = stream
-            stream.onChange(menuBar)
-        }
-
-        return newMenuBar
     }
 
     // MARK: - Polling
@@ -136,7 +99,11 @@ actor MenuBarMonitor {
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pollAllStreams()
-                try? await Task.sleep(for: .seconds(self?.pollInterval ?? 1.0))
+                do {
+                    try await Task.sleep(for: .seconds(self?.pollInterval ?? 1.0))
+                } catch {
+                    break
+                }
             }
         }
 
@@ -165,19 +132,13 @@ actor MenuBarMonitor {
             bundleIdentifier: stream.bundleIdentifier
         )
 
-        guard let newMenuBar else {
-            // Extraction failed - app might have quit
-            return
-        }
+        guard let newMenuBar else { return }
 
-        // Check if menu bar changed
         if hasMenuBarChanged(old: stream.lastMenuBar, new: newMenuBar) {
-            // Update cached version
             var updatedStream = stream
             updatedStream.lastMenuBar = newMenuBar
             monitoredStreams[streamID] = updatedStream
 
-            // Notify listener
             stream.onChange(newMenuBar)
 
             MirageLogger.log(.menuBar, "Menu bar changed for stream \(streamID)")
@@ -190,47 +151,31 @@ actor MenuBarMonitor {
     /// as we generate version numbers ourselves.
     private func hasMenuBarChanged(old: MirageMenuBar?, new: MirageMenuBar) -> Bool {
         guard let old else { return true }
-
-        // Quick check: different number of menus
         if old.menus.count != new.menus.count { return true }
-
-        // Compare each menu
-        for (oldMenu, newMenu) in zip(old.menus, new.menus) {
-            if menuHasChanged(old: oldMenu, new: newMenu) { return true }
-        }
-
-        return false
+        return zip(old.menus, new.menus).contains { menuHasChanged(old: $0, new: $1) }
     }
 
     /// Checks if a menu has changed.
     private func menuHasChanged(old: MirageMenu, new: MirageMenu) -> Bool {
         if old.title != new.title { return true }
         if old.items.count != new.items.count { return true }
-
-        for (oldItem, newItem) in zip(old.items, new.items) {
-            if menuItemHasChanged(old: oldItem, new: newItem) { return true }
-        }
-
-        return false
+        return zip(old.items, new.items).contains { menuItemHasChanged(old: $0, new: $1) }
     }
 
     /// Checks if a menu item has changed.
     private func menuItemHasChanged(old: MirageMenuItem, new: MirageMenuItem) -> Bool {
-        // Compare basic properties
-        if old.title != new.title { return true }
-        if old.isEnabled != new.isEnabled { return true }
-        if old.isChecked != new.isChecked { return true }
-        if old.isMixed != new.isMixed { return true }
-        if old.isSeparator != new.isSeparator { return true }
+        if old.title != new.title ||
+            old.isEnabled != new.isEnabled ||
+            old.isChecked != new.isChecked ||
+            old.isMixed != new.isMixed ||
+            old.isSeparator != new.isSeparator {
+            return true
+        }
 
-        // Compare submenus
         if let oldSubmenu = old.submenu, let newSubmenu = new.submenu {
             if oldSubmenu.count != newSubmenu.count { return true }
-            for (oldSub, newSub) in zip(oldSubmenu, newSubmenu) {
-                if menuItemHasChanged(old: oldSub, new: newSub) { return true }
-            }
+            return zip(oldSubmenu, newSubmenu).contains { menuItemHasChanged(old: $0, new: $1) }
         } else if old.submenu != nil || new.submenu != nil {
-            // One has submenu, other doesn't
             return true
         }
 
@@ -238,21 +183,6 @@ actor MenuBarMonitor {
     }
 
     // MARK: - Action Execution
-
-    /// Performs a menu action on the application associated with a stream.
-    ///
-    /// - Parameters:
-    ///   - streamID: The stream to perform the action on
-    ///   - actionPath: Path to the menu item
-    /// - Returns: True if the action was performed successfully
-    func performMenuAction(streamID: StreamID, actionPath: [Int]) async -> Bool {
-        guard let stream = monitoredStreams[streamID] else {
-            MirageLogger.log(.menuBar, "No monitored stream for action: \(streamID)")
-            return false
-        }
-
-        return await extractor.performMenuAction(pid: stream.pid, actionPath: actionPath)
-    }
 
     /// Performs a menu action directly on a process.
     ///
@@ -262,14 +192,6 @@ actor MenuBarMonitor {
     /// - Returns: True if the action was performed successfully
     func performMenuAction(pid: pid_t, actionPath: [Int]) async -> Bool {
         await extractor.performMenuAction(pid: pid, actionPath: actionPath)
-    }
-
-    // MARK: - Cleanup
-
-    /// Stops monitoring all streams and cleans up resources.
-    func stopAll() {
-        stopPolling()
-        monitoredStreams.removeAll()
     }
 }
 #endif

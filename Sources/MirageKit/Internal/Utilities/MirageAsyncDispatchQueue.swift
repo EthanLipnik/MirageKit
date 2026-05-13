@@ -35,17 +35,17 @@ package final class MirageAsyncDispatchQueue<Element: Sendable>: @unchecked Send
 
     package func yield(_ element: Element) {
         lock.lock()
-        let continuation = continuation
+        let continuationSnapshot = continuation
         lock.unlock()
-        continuation?.yield(element)
+        continuationSnapshot?.yield(element)
     }
 
     package func finish() {
         lock.lock()
-        let continuation = continuation
-        self.continuation = nil
+        let continuationSnapshot = continuation
+        continuation = nil
         lock.unlock()
-        continuation?.finish()
+        continuationSnapshot?.finish()
         workerTask.cancel()
     }
 }
