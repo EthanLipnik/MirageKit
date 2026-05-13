@@ -54,6 +54,18 @@ struct MirageDictationResultBufferTests {
         #expect(drained == ["hello there"])
     }
 
+    @Test("Reset clears cumulative and buffered dictation state")
+    func resetClearsBufferedState() {
+        var buffer = MirageDictationResultBuffer()
+        _ = buffer.delta(forCumulativeText: "hello")
+        buffer.bufferFinalSegment(text: "first", range: makeRange(start: 0, duration: 0.5))
+
+        buffer.reset()
+
+        #expect(buffer.delta(forCumulativeText: "hello") == "hello")
+        #expect(buffer.drainFinalSegments().isEmpty)
+    }
+
     private func makeRange(start: Double, duration: Double) -> CMTimeRange {
         CMTimeRange(
             start: CMTime(seconds: start, preferredTimescale: 1_000),

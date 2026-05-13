@@ -24,13 +24,13 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         clearDesktopVirtualDisplayStartupTarget(for: plan.request)
         defer { clearDesktopVirtualDisplayStartupTarget(for: plan.request) }
 
-        let attempts = desktopVirtualDisplayStartupAttempts(
+        let attempts = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 3008, height: 1692),
             requestedScaleFactor: 2.0,
             requestedRefreshRate: 120,
             requestedColorDepth: .pro,
             requestedColorSpace: .displayP3
-        )
+        ).attempts
 
         #expect(attempts.count == 3)
         #expect(attempts[0].label == "primary")
@@ -69,13 +69,13 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         clearDesktopVirtualDisplayStartupTarget(for: plan.request)
         defer { clearDesktopVirtualDisplayStartupTarget(for: plan.request) }
 
-        let attempts = desktopVirtualDisplayStartupAttempts(
+        let attempts = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 1920, height: 1080),
             requestedScaleFactor: 1.0,
             requestedRefreshRate: 60,
             requestedColorDepth: .standard,
             requestedColorSpace: .sRGB
-        )
+        ).attempts
 
         #expect(attempts.count == 1)
         #expect(attempts[0].label == "primary")
@@ -97,19 +97,18 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         clearDesktopVirtualDisplayStartupTarget(for: plan.request)
         defer { clearDesktopVirtualDisplayStartupTarget(for: plan.request) }
 
-        let attempts = desktopVirtualDisplayStartupAttempts(
+        let attempts = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 3840, height: 2160),
             requestedScaleFactor: 1.0,
             requestedRefreshRate: 60,
             requestedColorDepth: .standard,
             requestedColorSpace: .sRGB
-        )
+        ).attempts
 
         #expect(attempts.count == 2)
         #expect(attempts[0].label == "retina-equivalent")
         #expect(attempts[0].backingScale.scaleFactor == 2.0)
         #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 3840, height: 2160))
-        #expect(attempts[0].targetTier == .degraded)
         #expect(attempts[1].label == "primary")
         #expect(attempts[1].backingScale.scaleFactor == 1.0)
         #expect(attempts[1].backingScale.pixelResolution == CGSize(width: 3840, height: 2160))
@@ -127,28 +126,22 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         clearDesktopVirtualDisplayStartupTarget(for: initialPlan.request)
         defer { clearDesktopVirtualDisplayStartupTarget(for: initialPlan.request) }
 
-        let cachedAttempt = DesktopVirtualDisplayStartupAttempt(
-            backingScale: DesktopBackingScaleResolution(
-                scaleFactor: 1.0,
-                pixelResolution: CGSize(width: 3008, height: 1680)
-            ),
+        recordDesktopVirtualDisplayStartupTargetSuccess(
+            pixelResolution: CGSize(width: 3008, height: 1680),
+            scaleFactor: 1.0,
             refreshRate: 60,
             colorSpace: .sRGB,
-            label: "conservative-retry",
-            fallbackKind: .conservative,
-            isConservativeRetry: true,
-            isCachedTarget: false,
-            targetTier: .degraded
+            targetTier: .degraded,
+            for: initialPlan.request
         )
-        recordDesktopVirtualDisplayStartupTargetSuccess(cachedAttempt, for: initialPlan.request)
 
-        let attempts = desktopVirtualDisplayStartupAttempts(
+        let attempts = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 3008, height: 1692),
             requestedScaleFactor: 2.0,
             requestedRefreshRate: 120,
             requestedColorDepth: .pro,
             requestedColorSpace: .displayP3
-        )
+        ).attempts
 
         #expect(attempts.count == 3)
         #expect(attempts[0].label == "primary")
@@ -170,36 +163,26 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         defer { clearDesktopVirtualDisplayStartupTarget(for: initialPlan.request) }
 
         recordDesktopVirtualDisplayStartupTargetSuccess(
-            DesktopVirtualDisplayStartupAttempt(
-                backingScale: DesktopBackingScaleResolution(
-                    scaleFactor: 2.0,
-                    pixelResolution: CGSize(width: 6016, height: 3376)
-                ),
-                refreshRate: 120,
-                colorSpace: .displayP3,
-                label: "primary",
-                fallbackKind: .primary,
-                isConservativeRetry: false,
-                isCachedTarget: false,
-                targetTier: .preferred
-            ),
+            pixelResolution: CGSize(width: 6016, height: 3376),
+            scaleFactor: 2.0,
+            refreshRate: 120,
+            colorSpace: .displayP3,
+            targetTier: .preferred,
             for: initialPlan.request
         )
 
-        let attempts = desktopVirtualDisplayStartupAttempts(
+        let attempts = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 3008, height: 1692),
             requestedScaleFactor: 2.0,
             requestedRefreshRate: 120,
             requestedColorDepth: .pro,
             requestedColorSpace: .displayP3
-        )
+        ).attempts
 
         #expect(attempts.count == 3)
         #expect(attempts[0].isCachedTarget)
-        #expect(attempts[0].targetTier == .preferred)
         #expect(attempts[1].label == "descriptor-fallback-sRGB")
         #expect(attempts[2].label == "conservative-retry")
     }
-
 }
 #endif

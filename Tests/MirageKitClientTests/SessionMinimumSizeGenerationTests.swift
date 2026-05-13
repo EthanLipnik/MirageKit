@@ -20,6 +20,7 @@ struct SessionMinimumSizeGenerationTests {
         let store = MirageClientSessionStore()
         let sessionID = store.createSession(
             streamID: 1,
+            mediaStreamID: 1,
             window: testWindow(id: 101),
             hostName: "Host",
             minSize: nil
@@ -50,6 +51,7 @@ struct SessionMinimumSizeGenerationTests {
         let store = MirageClientSessionStore()
         let sessionID = store.createSession(
             streamID: 7,
+            mediaStreamID: 7,
             window: testWindow(id: 701),
             hostName: "Host",
             minSize: nil
@@ -70,8 +72,9 @@ struct SessionMinimumSizeGenerationTests {
     func postResizeTransitionClearsOnFirstFrame() {
         let store = MirageClientSessionStore()
         let streamID: StreamID = 11
-        store.createSession(
+        store.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 1101),
             hostName: "Host",
             minSize: nil
@@ -90,8 +93,9 @@ struct SessionMinimumSizeGenerationTests {
     func decodedAndPresentedReadinessAreTrackedIndependently() {
         let store = MirageClientSessionStore()
         let streamID: StreamID = 21
-        store.createSession(
+        store.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 2101),
             hostName: "Host",
             minSize: nil
@@ -111,8 +115,9 @@ struct SessionMinimumSizeGenerationTests {
     func firstFrameReadinessResetsForFreshPresentationLifecycle() {
         let store = MirageClientSessionStore()
         let streamID: StreamID = 22
-        store.createSession(
+        store.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 2201),
             hostName: "Host",
             minSize: nil
@@ -133,12 +138,14 @@ struct SessionMinimumSizeGenerationTests {
         let store = MirageClientSessionStore()
         let firstSessionID = store.createSession(
             streamID: 31,
+            mediaStreamID: 31,
             window: testWindow(id: 3101),
             hostName: "Host",
             minSize: nil
         )
-        store.createSession(
+        store.registerSession(
             streamID: 32,
+            mediaStreamID: 32,
             window: testWindow(id: 3201),
             hostName: "Host",
             minSize: nil
@@ -347,6 +354,7 @@ struct SessionMinimumSizeGenerationTests {
         let streamID: StreamID = 12
         let sessionID = store.createSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: testWindow(id: 1201),
             hostName: "Host",
             minSize: nil

@@ -12,22 +12,19 @@ import MirageBootstrapShared
 import MirageKit
 
 #if os(macOS)
-extension MirageHostService {
-    nonisolated func handleSessionStateMonitorUpdate(_ newState: LoomSessionAvailability) {
-        Task { @MainActor [weak self] in
-            await self?.handleSessionStateChange(newState)
-        }
-    }
-}
-
 @MainActor
 extension MirageHostService {
+    /// Starts monitoring login/session availability and sends the initial state to connected clients.
     func startSessionStateMonitoring() async {
         if sessionStateMonitor == nil { sessionStateMonitor = SessionStateMonitor() }
 
         guard let sessionStateMonitor else { return }
 
-        await sessionStateMonitor.start(onStateChange: handleSessionStateMonitorUpdate)
+        await sessionStateMonitor.start { [weak self] newState in
+            Task { @MainActor [weak self] in
+                await self?.handleSessionStateChange(newState)
+            }
+        }
 
         let refreshed = await sessionStateMonitor.refreshState(notify: false)
         if refreshed != sessionState { await handleSessionStateChange(refreshed) }
@@ -35,12 +32,14 @@ extension MirageHostService {
         startSessionRefreshLoopIfNeeded()
     }
 
+    /// Refreshes session availability if a monitor is active.
     func refreshSessionStateIfNeeded() async {
         guard let sessionStateMonitor else { return }
         let refreshed = await sessionStateMonitor.refreshState(notify: false)
         if refreshed != sessionState { await handleSessionStateChange(refreshed) }
     }
 
+    /// Applies a session availability change and broadcasts dependent host state.
     func handleSessionStateChange(_ newState: LoomSessionAvailability) async {
         sessionState = newState
         currentSessionToken = UUID().uuidString
@@ -62,12 +61,12 @@ extension MirageHostService {
         await updateLightsOutState()
     }
 
+    /// Sends the current host session availability to a client.
     func sendSessionState(to clientContext: ClientContext) async {
         let message = SessionStateUpdateMessage(
             state: sessionState,
             sessionToken: currentSessionToken,
-            requiresUserIdentifier: sessionState.requiresUserIdentifier,
-            timestamp: Date()
+            requiresUserIdentifier: sessionState.requiresUserIdentifier
         )
 
         do {
@@ -82,6 +81,7 @@ extension MirageHostService {
         }
     }
 
+    /// Sends the current window catalog to a client.
     func sendWindowList(to clientContext: ClientContext) async {
         do {
             let windowList = WindowListMessage(windows: availableWindows)
@@ -92,6 +92,7 @@ extension MirageHostService {
         }
     }
 
+    /// Starts the periodic session refresh loop while clients remain connected.
     func startSessionRefreshLoopIfNeeded() {
         guard sessionRefreshTask == nil else { return }
         guard !clientsBySessionID.isEmpty else { return }
@@ -103,8 +104,11 @@ extension MirageHostService {
             guard let self else { return }
             MirageLogger.host("Session refresh loop started (interval: \(interval))")
             while !Task.isCancelled {
-                try? await Task.sleep(for: interval)
-                if Task.isCancelled { break }
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    break
+                }
                 if clientsBySessionID.isEmpty { break }
                 await refreshSessionStateIfNeeded()
             }
@@ -113,6 +117,7 @@ extension MirageHostService {
         }
     }
 
+    /// Stops periodic session refreshes once no clients need them.
     func stopSessionRefreshLoopIfIdle() {
         guard clientsBySessionID.isEmpty || connectedClients.isEmpty else { return }
         sessionRefreshTask?.cancel()

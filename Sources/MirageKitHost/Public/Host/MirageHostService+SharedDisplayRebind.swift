@@ -12,27 +12,9 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
-import ScreenCaptureKit
-
-enum DesktopGenerationChangeRebindDecision: Equatable {
-    case skipNoChange
-    case skipSharedDisplayTransitionInFlight
-    case rebind
-}
-
-func desktopGenerationChangeRebindDecision(
-    previousGeneration: UInt64,
-    newGeneration: UInt64,
-    sharedDisplayTransitionInFlight: Bool
-)
--> DesktopGenerationChangeRebindDecision {
-    guard previousGeneration != newGeneration else { return .skipNoChange }
-    guard !sharedDisplayTransitionInFlight else { return .skipSharedDisplayTransitionInFlight }
-    return .rebind
-}
-
 @MainActor
 extension MirageHostService {
+    /// Rebinds host stream state after the shared virtual display is recreated.
     func handleSharedDisplayGenerationChange(
         newContext: SharedVirtualDisplayManager.DisplaySnapshot,
         previousGeneration: UInt64
@@ -40,7 +22,7 @@ extension MirageHostService {
     async {
         guard previousGeneration != newContext.generation else { return }
 
-        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+        let displayBounds = CGVirtualDisplayBridge.displayBounds(
             newContext.displayID,
             knownResolution: SharedVirtualDisplayManager.logicalResolution(
                 for: newContext.resolution,
@@ -61,6 +43,7 @@ extension MirageHostService {
         )
     }
 
+    /// Retargets the desktop stream to the new shared-display generation.
     private func handleDesktopStreamSharedDisplayGenerationChange(
         newContext: SharedVirtualDisplayManager.DisplaySnapshot,
         previousGeneration: UInt64,
@@ -85,37 +68,28 @@ extension MirageHostService {
         desktopCaptureSource = .virtualDisplay
         desktopDisplayBounds = displayBounds
         sharedVirtualDisplayScaleFactor = max(1.0, newContext.scaleFactor)
-        let rebindDecision = desktopGenerationChangeRebindDecision(
-            previousGeneration: previousGeneration,
-            newGeneration: newContext.generation,
-            sharedDisplayTransitionInFlight: desktopSharedDisplayTransitionInFlight
-        )
-        if rebindDecision == .skipSharedDisplayTransitionInFlight {
+        if desktopSharedDisplayTransitionInFlight {
             MirageLogger
                 .host(
                     "Skipping desktop generation-change rebind during desktop shared-display transition (\(previousGeneration) -> \(newContext.generation))"
                 )
             return
         }
-        guard rebindDecision == .rebind else { return }
 
         do {
             virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
                 reason: "shared_display_generation_change"
             )
             if desktopStreamMode == .unified {
-                await setupDisplayMirroring(
+                _ = await setupDisplayMirroring(
                     targetDisplayID: newContext.displayID,
                     expectedPixelResolution: newContext.resolution
                 )
             } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
-                await disableDisplayMirroring(displayID: newContext.displayID)
+                _ = await disableDisplayMirroring(displayID: newContext.displayID)
             }
 
-            let captureDisplay = try await findSCDisplayWithRetry(
-                maxAttempts: 6,
-                expectedPixelResolution: newContext.resolution
-            )
+            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6)
             try await desktopContext.updateCaptureDisplay(
                 captureDisplay,
                 resolution: newContext.resolution

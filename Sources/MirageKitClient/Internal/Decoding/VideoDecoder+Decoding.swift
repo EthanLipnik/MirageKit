@@ -18,9 +18,7 @@ private struct SendableOpaquePointer: @unchecked Sendable {
 }
 
 extension VideoDecoder {
-    func startDecoding(
-        onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect, MirageVideoDecodeFrameContext) -> Void
-    ) {
+    func startDecoding(onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect) -> Void) {
         decodedFrameHandler = onDecodedFrame
         isDecoding = true
     }
@@ -67,13 +65,7 @@ extension VideoDecoder {
         MirageLogger.decoder("Decoder reset for new session - awaiting fresh keyframe")
     }
 
-    func decodeFrame(
-        _ data: Data,
-        presentationTime: CMTime,
-        isKeyframe: Bool,
-        contentRect: CGRect,
-        context: MirageVideoDecodeFrameContext
-    ) async throws {
+    func decodeFrame(_ data: Data, presentationTime: CMTime, isKeyframe: Bool, contentRect: CGRect) async throws {
         guard isDecoding else { return }
 
         // CRITICAL: When awaiting dimension change, discard ALL P-frames.
@@ -107,18 +99,7 @@ extension VideoDecoder {
                 let keyframeHeader = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
                 MirageLogger.decoder("Keyframe header: \(keyframeHeader)")
             }
-            let result: Data
-            do {
-                result = try extractFormatDescriptionAndStripParameterSets(from: data)
-            } catch {
-                MirageLogger.error(
-                    .decoder,
-                    error: error,
-                    message: "Dropping malformed keyframe before decode"
-                )
-                errorTracker?.recordError(isKeyframe: true)
-                throw error
-            }
+            let result = try extractFormatDescriptionAndStripParameterSets(from: data)
             frameData = result
             if shouldLogDecoderDiagnostics {
                 let strippedHeader = frameData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
@@ -146,7 +127,9 @@ extension VideoDecoder {
                     }
                     frameData = trimmed
                 } else {
-                    errorTracker?.recordError(isKeyframe: isKeyframe)
+                    if shouldLog {
+                        errorTracker?.recordError(isKeyframe: isKeyframe)
+                    }
                     return
                 }
             }
@@ -162,6 +145,17 @@ extension VideoDecoder {
                 )
             }
             return
+        }
+
+        // Ensure session exists
+        if decompressionSession == nil { try createSession(formatDescription: formatDesc) }
+
+        guard let session = decompressionSession else {
+            throw MirageError.decodingError(NSError(
+                domain: "MirageKit",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No decompression session"]
+            ))
         }
 
         // Create block buffer with owned memory (VideoToolbox decodes asynchronously)
@@ -226,32 +220,9 @@ extension VideoDecoder {
 
         guard sampleStatus == noErr, let sampleBuffer else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(sampleStatus))) }
 
-        guard let submissionLease = await acquireDecodeSubmissionSlot() else { return }
-        if Task.isCancelled {
-            releaseDecodeSubmissionSlot(submissionLease)
-            return
-        }
-
-        // Ensure the session is captured only after the generation-aware decode slot is held.
-        if decompressionSession == nil {
-            do {
-                try createSession(formatDescription: formatDesc)
-            } catch {
-                releaseDecodeSubmissionSlot(submissionLease)
-                throw error
-            }
-        }
-
-        guard let session = decompressionSession else {
-            releaseDecodeSubmissionSlot(submissionLease)
-            throw MirageError.decodingError(NSError(
-                domain: "MirageKit",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "No decompression session"]
-            ))
-        }
-
+        // Decode
         var flags: VTDecodeInfoFlags = []
+        await acquireDecodeSubmissionSlot()
         let sessionGeneration = decompressionSessionGeneration
 
         let decodeInfo = DecodeInfo(
@@ -264,13 +235,10 @@ extension VideoDecoder {
             callbackFailureLogLimiter: callbackFailureLogLimiter,
             sessionGeneration: sessionGeneration,
             colorDepth: preferredOutputColorDepth,
-            frameContext: context,
             onCompletion: { [weak self] in
                 guard let self else { return }
-                Task { await self.releaseDecodeSubmissionSlot(submissionLease) }
-            },
-            releaseBuffer: nil,
-            data: frameData
+                Task { await self.releaseDecodeSubmissionSlot() }
+            }
         )
         let opaqueInfo = SendableOpaquePointer(value: Unmanaged.passRetained(decodeInfo).toOpaque())
         let callbackGenerationFence = decodeCallbackGenerationFence
@@ -282,7 +250,7 @@ extension VideoDecoder {
             infoFlagsOut: &flags
         ) { [weak self] status, _, imageBuffer, presentationTime, _ in
             let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
-            let activeGeneration = callbackGenerationFence.currentGeneration()
+            let activeGeneration = callbackGenerationFence.currentGeneration
             if Self.shouldIgnoreDecodeCallback(
                 callbackGeneration: info.sessionGeneration,
                 activeGeneration: activeGeneration
@@ -337,8 +305,7 @@ extension VideoDecoder {
 
             // Successful decode - reset error counter
             info.errorTracker?.recordSuccess(isKeyframe: info.isKeyframe)
-            let callbackTime = CFAbsoluteTimeGetCurrent()
-            let decodeDurationMs = (callbackTime - info.decodeStartTime) * 1000
+            let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000
             info.performanceTracker?.record(durationMs: decodeDurationMs)
             let outputPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
             Task { [weak self] in
@@ -348,18 +315,7 @@ extension VideoDecoder {
                 )
             }
             MirageColorAttachments.enforceOnPixelBuffer(pixelBuffer, colorSpace: info.colorDepth.colorSpace)
-            if info.handler != nil {
-                let callbackContext = MirageVideoDecodeFrameContext(
-                    renderGeneration: info.frameContext.renderGeneration,
-                    queueEpoch: info.frameContext.queueEpoch,
-                    hostEpoch: info.frameContext.hostEpoch,
-                    dimensionToken: info.frameContext.dimensionToken,
-                    frameNumber: info.frameContext.frameNumber,
-                    remotePresentationTime: info.frameContext.remotePresentationTime,
-                    timeline: info.frameContext.timeline.markingDecodeCallback(at: callbackTime)
-                )
-                info.handler?(pixelBuffer, presentationTime, info.contentRect, callbackContext)
-            } else {
+            if info.handler != nil { info.handler?(pixelBuffer, presentationTime, info.contentRect) } else {
                 MirageLogger.error(.decoder, "Warning: no frame handler set")
             }
             info.onCompletion?()
@@ -367,13 +323,8 @@ extension VideoDecoder {
 
         if decodeStatus != noErr {
             Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).release()
-            releaseDecodeSubmissionSlot(submissionLease)
+            releaseDecodeSubmissionSlot()
             throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
         }
-    }
-
-    func flush() async {
-        guard let session = decompressionSession else { return }
-        VTDecompressionSessionWaitForAsynchronousFrames(session)
     }
 }

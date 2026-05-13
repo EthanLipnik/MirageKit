@@ -19,7 +19,7 @@ struct VideoEncoderSlotResetTests {
         let encoder = VideoEncoder(
             configuration: MirageEncoderConfiguration(
                 targetFrameRate: 60,
-                bitDepth: .eightBit
+                colorDepth: .standard
             ),
             latencyMode: .lowestLatency,
             inFlightLimit: 2
@@ -28,10 +28,10 @@ struct VideoEncoderSlotResetTests {
         #expect(encoder.reserveEncoderSlot())
         #expect(encoder.reserveEncoderSlot())
         #expect(!encoder.reserveEncoderSlot())
-        #expect(encoder.encoderInFlightSnapshot() == 2)
+        #expect(encoder.encoderInFlightSnapshot == 2)
 
         encoder.resetEncoderSlots()
-        #expect(encoder.encoderInFlightSnapshot() == 0)
+        #expect(encoder.encoderInFlightSnapshot == 0)
         #expect(encoder.reserveEncoderSlot())
         #expect(encoder.reserveEncoderSlot())
         #expect(!encoder.reserveEncoderSlot())

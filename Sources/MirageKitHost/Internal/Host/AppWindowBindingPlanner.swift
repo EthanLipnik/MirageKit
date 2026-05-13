@@ -12,17 +12,25 @@ import MirageKit
 #if os(macOS)
 import Foundation
 
-struct ResolvedAppWindowBinding: Sendable {
+/// Pairing between a requested app-window candidate and the live host window selected for capture.
+struct ResolvedAppWindowBinding {
+    /// Client-requested candidate that needs an app stream.
     let candidate: AppStreamWindowCandidate
+    /// Current host window that should back the requested stream.
     let resolvedWindow: MirageWindow
 }
 
-struct AppWindowBindingPlan: Sendable {
+/// Result of matching requested app-window streams against the host's current window inventory.
+struct AppWindowBindingPlan {
+    /// Candidates that can be backed by live windows immediately.
     let resolvedBindings: [ResolvedAppWindowBinding]
+    /// Candidates that need the normal launch/retry path before a stream can start.
     let unresolvedCandidates: [AppStreamWindowCandidate]
 }
 
+/// Builds deterministic one-to-one bindings from requested app streams to live app windows.
 enum AppWindowBindingPlanner {
+    /// Matches each candidate to an unclaimed live window from the same process or bundle.
     static func plan(
         candidates: [AppStreamWindowCandidate],
         liveWindows: [MirageWindow],
@@ -49,16 +57,14 @@ enum AppWindowBindingPlanner {
             let resolvedWindow: MirageWindow
             if let direct = compatible.first(where: { $0.id == candidate.window.id }) {
                 resolvedWindow = direct
+            } else if let bestCompatibleWindow = compatible.min(by: { lhs, rhs in
+                captureCandidateScore(lhs, requestedWindow: candidate.window) <
+                    captureCandidateScore(rhs, requestedWindow: candidate.window)
+            }) {
+                resolvedWindow = bestCompatibleWindow
             } else {
-                let sorted = compatible.sorted { lhs, rhs in
-                    captureCandidateScore(lhs, requestedWindow: candidate.window) <
-                        captureCandidateScore(rhs, requestedWindow: candidate.window)
-                }
-                guard let best = sorted.first else {
-                    unresolvedCandidates.append(candidate)
-                    continue
-                }
-                resolvedWindow = best
+                unresolvedCandidates.append(candidate)
+                continue
             }
 
             claimed.insert(resolvedWindow.id)
@@ -76,25 +82,47 @@ enum AppWindowBindingPlanner {
         )
     }
 
+    /// Scores lower for windows that look more like the requested candidate.
     static func captureCandidateScore(
         _ candidate: MirageWindow,
         requestedWindow: MirageWindow
     ) -> Int {
+        captureCandidateScore(
+            candidateIsOnScreen: candidate.isOnScreen,
+            candidateWindowLayer: candidate.windowLayer,
+            candidateTitle: candidate.title,
+            candidateFrame: candidate.frame,
+            requestedWindowLayer: requestedWindow.windowLayer,
+            requestedTitle: requestedWindow.title,
+            requestedFrame: requestedWindow.frame
+        )
+    }
+
+    /// Scores lower for raw window attributes that better match the requested window.
+    static func captureCandidateScore(
+        candidateIsOnScreen: Bool,
+        candidateWindowLayer: Int,
+        candidateTitle: String?,
+        candidateFrame: CGRect,
+        requestedWindowLayer: Int,
+        requestedTitle: String?,
+        requestedFrame: CGRect
+    ) -> Int {
         var score = 0
 
-        if !candidate.isOnScreen {
+        if !candidateIsOnScreen {
             score += 1_000_000
         }
 
-        if candidate.windowLayer != 0 {
-            score += 2_000
+        if candidateWindowLayer != 0 {
+            score += 2000
         }
-        score += abs(candidate.windowLayer - requestedWindow.windowLayer) * 250
+        score += abs(candidateWindowLayer - requestedWindowLayer) * 250
 
-        let requestedTitle = (requestedWindow.title ?? "")
+        let requestedTitle = (requestedTitle ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let candidateTitle = (candidate.title ?? "")
+        let candidateTitle = (candidateTitle ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         if !requestedTitle.isEmpty {
@@ -107,8 +135,6 @@ enum AppWindowBindingPlanner {
             }
         }
 
-        let requestedFrame = requestedWindow.frame
-        let candidateFrame = candidate.frame
         let sizeDelta = abs(candidateFrame.width - requestedFrame.width) +
             abs(candidateFrame.height - requestedFrame.height)
         let originDelta = abs(candidateFrame.minX - requestedFrame.minX) +
@@ -117,7 +143,7 @@ enum AppWindowBindingPlanner {
         score += Int(originDelta * 0.25)
 
         if candidateFrame.width < 160 || candidateFrame.height < 120 {
-            score += 10_000
+            score += 10000
         }
 
         return score

@@ -12,24 +12,18 @@ import MirageKit
 
 #if os(macOS)
 
-/// Context for a connected client including their connections
+/// Runtime context for a connected client and its negotiated control channel.
 struct ClientContext {
+    /// Stable connection session identifier assigned by the host.
     let sessionID: UUID
+    /// Public client identity advertised during bootstrap.
     let client: MirageConnectedClient
-    let negotiatedFeatures: MirageFeatureSet
+    /// Ordered control transport used for host-to-client messages.
     let controlChannel: MirageControlChannel
-    let remoteEndpoint: NWEndpoint?
+    /// Loom network-path metadata captured when the session was accepted.
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
 
-    /// Check if connection is direct local-network transport.
-    /// Returns true when connected over local WiFi or a wired path to a local network address
-    var isPeerToPeer: Bool {
-        Self.isPeerToPeerConnection(
-            remoteEndpoint: remoteEndpoint,
-            pathSnapshot: pathSnapshot
-        )
-    }
-
+    /// Returns whether a control session appears to be on the local peer-to-peer path.
     static func isPeerToPeerConnection(
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
@@ -43,46 +37,23 @@ struct ClientContext {
         return isLocalNetworkHost("\(host)")
     }
 
+    /// Returns whether a host string identifies a local-link or private-network endpoint.
     static func isLocalNetworkHost(_ host: String) -> Bool {
-        let normalized = normalizedHostLiteral(host)
+        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if normalized.contains(".local") { return true }
-        if isLocalIPv6Host(normalized) { return true }
+        if normalized.hasPrefix("fe80:") || normalized.hasPrefix("[fe80:") { return true }
 
         guard let octets = parseIPv4Octets(from: normalized) else { return false }
-        let first = octets[0]
-        let second = octets[1]
-
-        if first == 10 { return true }
-        if first == 192 && second == 168 { return true }
-        if first == 172 && (16 ... 31).contains(second) { return true }
-        if first == 169 && second == 254 { return true }
-        return false
-    }
-
-    private static func normalizedHostLiteral(_ host: String) -> String {
-        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalized.hasPrefix("["),
-           let closingBracket = normalized.firstIndex(of: "]") {
-            return String(normalized[normalized.index(after: normalized.startIndex) ..< closingBracket])
-        }
-        return normalized
-    }
-
-    private static func isLocalIPv6Host(_ normalized: String) -> Bool {
-        guard normalized.contains(":") else { return false }
-        if normalized == "::1" { return true }
-
-        guard let firstHextet = normalized.split(
-            separator: ":",
-            maxSplits: 1,
-            omittingEmptySubsequences: false
-        ).first,
-            let firstHextetValue = UInt16(firstHextet, radix: 16) else {
+        guard let first = octets.first,
+              let second = octets.dropFirst().first else {
             return false
         }
-        let isLinkLocal = (firstHextetValue & 0xffc0) == 0xfe80
-        let isUniqueLocal = (firstHextetValue & 0xfe00) == 0xfc00
-        return isLinkLocal || isUniqueLocal
+
+        if first == 10 { return true }
+        if first == 192, second == 168 { return true }
+        if first == 172, (16 ... 31).contains(second) { return true }
+        if first == 169, second == 254 { return true }
+        return false
     }
 
     private static func parseIPv4Octets(from text: String) -> [UInt8]? {
@@ -98,30 +69,40 @@ struct ClientContext {
         return octets
     }
 
-    /// Send a control message over TCP
+    /// Sends an encoded control payload over the reliable control channel.
     func send(_ type: ControlMessageType, content: some Encodable) async throws {
         let message = try ControlMessage(type: type, content: content)
         try await controlChannel.send(message)
     }
 
+    /// Sends a prebuilt control message over the reliable control channel.
     func send(_ message: ControlMessage) async throws {
         try await controlChannel.send(message)
     }
 
-    /// Queue a control message over TCP without awaiting contentProcessed.
+    /// Queues an encoded control payload without waiting for transport completion.
     /// Preferred for high-frequency real-time interaction updates where latest-state wins.
     /// Returns false when the message cannot be encoded.
-    @discardableResult
     func sendBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
         guard let message = try? ControlMessage(type: type, content: content) else { return false }
         controlChannel.sendBestEffort(message)
         return true
     }
 
+    /// Queues an encoded control payload when the caller does not need send eligibility.
+    func queueBestEffort(_ type: ControlMessageType, content: some Encodable) {
+        _ = sendBestEffort(type, content: content)
+    }
+
+    /// Queues a no-payload control message without waiting for transport completion.
+    func sendBestEffort(_ type: ControlMessageType) {
+        controlChannel.sendBestEffort(type)
+    }
+
+    /// Queues a prebuilt control message without waiting for transport completion.
     func sendBestEffort(_ message: ControlMessage) {
         controlChannel.sendBestEffort(message)
     }
-
 }
 
 #endif

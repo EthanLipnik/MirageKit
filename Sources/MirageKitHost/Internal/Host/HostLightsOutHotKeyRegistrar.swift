@@ -14,19 +14,26 @@ import MirageKit
 #if os(macOS)
 @MainActor
 protocol HostLightsOutHotKeyRegistering: AnyObject {
+    /// Callback invoked on the main actor when the registered shortcut is pressed.
     var onTrigger: (@MainActor () -> Void)? { get set }
+
+    /// Shortcut currently registered with Carbon, if registration succeeded.
     var registeredShortcut: MirageClientShortcutBinding? { get }
 
-    @discardableResult
+    /// Registers `shortcut`, replacing any previous Lights Out shortcut.
     func register(shortcut: MirageClientShortcutBinding) -> Bool
+
+    /// Removes the active Carbon hotkey and event handler.
     func unregister()
 }
 
+/// Carbon-compatible representation of a Mirage shortcut binding.
 struct HostLightsOutHotKeyRegistrationRequest: Equatable {
     let keyCode: UInt32
     let modifiers: UInt32
 }
 
+/// Registers the host-wide Lights Out recovery shortcut through Carbon hotkeys.
 @MainActor
 final class HostLightsOutHotKeyRegistrar: HostLightsOutHotKeyRegistering {
     var onTrigger: (@MainActor () -> Void)?
@@ -35,7 +42,7 @@ final class HostLightsOutHotKeyRegistrar: HostLightsOutHotKeyRegistering {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
-    @discardableResult
+    /// Installs a Carbon hotkey for `shortcut`, keeping an existing matching registration.
     func register(shortcut: MirageClientShortcutBinding) -> Bool {
         if registeredShortcut == shortcut, hotKeyRef != nil {
             return true
@@ -87,6 +94,7 @@ final class HostLightsOutHotKeyRegistrar: HostLightsOutHotKeyRegistering {
         return true
     }
 
+    /// Unregisters the current hotkey and removes the matching event handler.
     func unregister() {
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
@@ -96,6 +104,7 @@ final class HostLightsOutHotKeyRegistrar: HostLightsOutHotKeyRegistering {
         removeEventHandler()
     }
 
+    /// Converts a Mirage shortcut to the Carbon key code and modifier bitfield.
     nonisolated static func registrationRequest(
         for shortcut: MirageClientShortcutBinding
     ) -> HostLightsOutHotKeyRegistrationRequest {
@@ -105,6 +114,7 @@ final class HostLightsOutHotKeyRegistrar: HostLightsOutHotKeyRegistering {
         )
     }
 
+    /// Maps shortcut modifiers into Carbon modifier bits.
     nonisolated static func carbonModifiers(for modifiers: MirageModifierFlags) -> UInt32 {
         let normalizedModifiers = modifiers.normalizedForShortcutMatching
         var carbonModifiers: UInt32 = 0

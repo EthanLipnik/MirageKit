@@ -59,6 +59,5 @@ struct HostWallpaperResolutionTests {
 
         #expect(candidate?.windowID == 12)
     }
-
 }
 #endif

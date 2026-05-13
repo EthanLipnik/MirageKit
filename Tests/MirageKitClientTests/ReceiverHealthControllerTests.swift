@@ -67,7 +67,7 @@ struct ReceiverHealthControllerTests {
             snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8.1
+            now: 7.1
         )
 
         #expect(firstCleanAction == .none)
@@ -76,8 +76,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Healthy fast-start windows probe upward after stable presentation window")
-    func healthyFastStartWindowsProbeUpwardAfterStablePresentationWindow() {
+    @Test("Healthy fast-start windows probe upward after two clean samples")
+    func healthyFastStartWindowsProbeUpwardAfterTwoCleanSamples() {
         var controller = MirageReceiverHealthController()
         let snapshot = healthySnapshot(activeQuality: 0.62)
 
@@ -91,58 +91,12 @@ struct ReceiverHealthControllerTests {
             snapshots: [snapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8
+            now: 2
         )
 
         #expect(firstAction == .none)
         #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
-    }
-
-    @Test("Missing true presentation cadence suppresses fast-start probes")
-    func missingTruePresentationCadenceSuppressesFastStartProbes() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.clientVisibleFrameFPS = 0
-        snapshot.clientVisibleFrameCadenceKnown = false
-
-        for time in [0.0, 2.0, 8.0, 10.0] {
-            let action = controller.advance(
-                snapshots: [snapshot],
-                currentBitrateBps: 20_000_000,
-                ceilingBps: 300_000_000,
-                now: time
-            )
-            #expect(action == .none)
-        }
-        #expect(controller.state == .stable)
-    }
-
-    @Test("Layer-healthy true presentation collapse blocks probes without transport backoff")
-    func layerHealthyTruePresentationCollapseBlocksProbesWithoutTransportBackoff() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.clientVisibleFrameFPS = 5
-        snapshot.clientVisibleFrameIntervalP99Ms = 210
-        snapshot.clientVisibleWorstPresentationGapMs = 240
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 10
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 136_000_000,
-            now: 12
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .none)
-        #expect(controller.state == .stable)
-        #expect(controller.lastTransportPressureReason == nil)
     }
 
     @Test("Recent interaction defers probes while allowing severe backoff")
@@ -201,18 +155,17 @@ struct ReceiverHealthControllerTests {
             snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8
+            now: 2
         )
         let rollback = controller.advance(
             snapshots: [stressedSnapshot],
             currentBitrateBps: 32_000_000,
             ceilingBps: 300_000_000,
-            now: 10
+            now: 4
         )
 
         #expect(probe == .probe(targetBitrateBps: 32_000_000))
         #expect(rollback == .backoff(targetBitrateBps: 20_000_000))
-        #expect(controller.learnedPromotionCeilingBps == 28_800_000)
     }
 
     @Test("Pending probe ignores decode stalls without unsafe ceiling")
@@ -231,18 +184,17 @@ struct ReceiverHealthControllerTests {
             snapshots: [healthySnapshot],
             currentBitrateBps: 20_000_000,
             ceilingBps: 300_000_000,
-            now: 8
+            now: 2
         )
         let decodeAction = controller.advance(
             snapshots: [decodeStalledSnapshot],
             currentBitrateBps: 32_000_000,
             ceilingBps: 300_000_000,
-            now: 10
+            now: 4
         )
 
         #expect(probe == .probe(targetBitrateBps: 32_000_000))
         #expect(decodeAction == .none)
-        #expect(controller.learnedPromotionCeilingBps == nil)
         #expect(controller.state == .stable)
     }
 
@@ -268,8 +220,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Host cadence limits suppress probing when true presentation is below target")
-    func hostCadenceLimitsSuppressProbingWhenTruePresentationBelowTarget() {
+    @Test("Host cadence limits do not block clean transport probing")
+    func hostCadenceLimitsDoNotBlockCleanTransportProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = captureBoundButTransportHealthySnapshot()
 
@@ -283,10 +235,10 @@ struct ReceiverHealthControllerTests {
             snapshots: [snapshot],
             currentBitrateBps: 48_000_000,
             ceilingBps: 136_000_000,
-            now: 8
+            now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 60_000_000))
     }
 
     @Test("Transport drops trigger backoff even when decode metrics look healthy")
@@ -327,8 +279,8 @@ struct ReceiverHealthControllerTests {
         networkSnapshot.hostEncodedFPS = 60
         networkSnapshot.receivedFPS = 8
         networkSnapshot.decodedFPS = 8
-        networkSnapshot.layerEnqueueFPS = 8
-        networkSnapshot.uniqueLayerEnqueueFPS = 8
+        networkSnapshot.submittedFPS = 8
+        networkSnapshot.uniqueSubmittedFPS = 8
 
         _ = controller.advance(
             snapshots: [networkSnapshot],
@@ -363,84 +315,6 @@ struct ReceiverHealthControllerTests {
         #expect(decodeAction == .none)
     }
 
-    @Test("Clean variable ProMotion cadence above floor does not back off")
-    func cleanVariableProMotionCadenceAboveFloorDoesNotBackOff() {
-        var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.hostTargetFrameRate = 120
-        snapshot.hostFrameBudgetMs = 8.33
-        snapshot.hostCaptureIngressFPS = 120
-        snapshot.hostCaptureFPS = 120
-        snapshot.hostEncodeAttemptFPS = 120
-        snapshot.hostEncodedFPS = 120
-        snapshot.receivedFPS = 80
-        snapshot.decodedFPS = 80
-        snapshot.layerEnqueueFPS = 80
-        snapshot.uniqueLayerEnqueueFPS = 80
-
-        var action: MirageReceiverHealthController.Action = .none
-        for time in [10.0, 12.0, 14.0] {
-            action = controller.advance(
-                snapshots: [snapshot],
-                currentBitrateBps: 80_000_000,
-                ceilingBps: 80_000_000,
-                now: time,
-                minimumHealthyFrameRate: 60
-            )
-        }
-
-        #expect(action == .none)
-        #expect(controller.state == .stable)
-        #expect(controller.lastTransportPressureReason == nil)
-    }
-
-    @Test("Remote keyframe starvation without transport evidence does not back off")
-    func remoteKeyframeStarvationWithoutTransportEvidenceDoesNotBackOff() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = remoteKeyframeStarvedSnapshot()
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 80_000_000,
-            now: 10
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
-            ceilingBps: 80_000_000,
-            now: 12
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .none)
-        #expect(controller.state == .stable)
-        #expect(controller.lastTransportPressureReason == nil)
-    }
-
-    @Test("Remote keyframe starvation still suppresses unsafe promotion")
-    func remoteKeyframeStarvationStillSuppressesUnsafePromotion() {
-        var controller = MirageReceiverHealthController()
-        let snapshot = remoteKeyframeStarvedSnapshot()
-
-        let firstAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 0
-        )
-        let secondAction = controller.advance(
-            snapshots: [snapshot],
-            currentBitrateBps: 20_000_000,
-            ceilingBps: 80_000_000,
-            now: 2
-        )
-
-        #expect(firstAction == .none)
-        #expect(secondAction == .none)
-        #expect(controller.state == .stable)
-    }
-
     @Test("Missing host metrics hold")
     func missingHostMetricsHold() {
         var controller = MirageReceiverHealthController()
@@ -458,14 +332,12 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    private func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {
+    func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
-            layerEnqueueFPS: 60,
-            uniqueLayerEnqueueFPS: 60,
-            clientVisibleFrameFPS: 60,
-            clientVisibleFrameCadenceKnown: true,
+            submittedFPS: 60,
+            uniqueSubmittedFPS: 60,
             pendingFrameCount: 0,
             decodeHealthy: true,
             hostActiveQuality: activeQuality,
@@ -509,20 +381,18 @@ struct ReceiverHealthControllerTests {
     private func decodeStalledButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.decodedFPS = 0
-        snapshot.layerEnqueueFPS = 0
-        snapshot.uniqueLayerEnqueueFPS = 0
-        snapshot.clientVisibleFrameFPS = 0
+        snapshot.submittedFPS = 0
+        snapshot.uniqueSubmittedFPS = 0
         snapshot.decodeHealthy = false
         return snapshot
     }
 
-    private func remoteKeyframeStarvedSnapshot() -> MirageClientMetricsSnapshot {
+    func remoteKeyframeStarvedSnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.receivedFPS = 0
         snapshot.decodedFPS = 0
-        snapshot.layerEnqueueFPS = 0
-        snapshot.uniqueLayerEnqueueFPS = 0
-        snapshot.clientVisibleFrameFPS = 0
+        snapshot.submittedFPS = 0
+        snapshot.uniqueSubmittedFPS = 0
         snapshot.decodeHealthy = false
         snapshot.clientReassemblerPendingKeyframeCount = 2
         snapshot.clientDroppedFrames = 1
@@ -537,16 +407,15 @@ struct ReceiverHealthControllerTests {
         snapshot.hostEncodedFPS = 43
         snapshot.receivedFPS = 43
         snapshot.decodedFPS = 43
-        snapshot.layerEnqueueFPS = 43
-        snapshot.uniqueLayerEnqueueFPS = 43
-        snapshot.clientVisibleFrameFPS = 43
+        snapshot.submittedFPS = 43
+        snapshot.uniqueSubmittedFPS = 43
         return snapshot
     }
 
     private func presentationBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
-        snapshot.layerEnqueueFPS = 43
-        snapshot.uniqueLayerEnqueueFPS = 43
+        snapshot.submittedFPS = 43
+        snapshot.uniqueSubmittedFPS = 43
         snapshot.clientOverwrittenPendingFrames = 2
         snapshot.clientDisplayLayerNotReadyCount = 1
         snapshot.clientPendingFrameAgeMs = 24

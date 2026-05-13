@@ -55,7 +55,11 @@ final class VirtualDisplayMutationCoordinator: @unchecked Sendable {
 
         func release(settleDelay: Duration) async {
             if settleDelay > .zero {
-                try? await Task.sleep(for: settleDelay)
+                do {
+                    try await Task.sleep(for: settleDelay)
+                } catch {
+                    // Cancellation still needs to release the mutation lock.
+                }
             }
 
             guard !waiters.isEmpty else {
@@ -87,6 +91,5 @@ final class VirtualDisplayMutationCoordinator: @unchecked Sendable {
         await gate.release(settleDelay: settleDelay ?? timingPolicy.settleDelay)
         MirageLogger.debug(.host, "Display mutation finished: kind=\(lease.kind.rawValue), sequence=\(lease.sequence)")
     }
-
 }
 #endif

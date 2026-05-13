@@ -34,7 +34,7 @@ struct PacketizerChecksumTests {
         )
 
         await sender.start()
-        let generation = sender.currentGenerationSnapshot()
+        let generation = sender.currentGeneration
         sender.enqueue(
             StreamPacketSender.WorkItem(
                 encodedData: payload,
@@ -91,7 +91,7 @@ struct PacketizerChecksumTests {
         )
 
         await sender.start()
-        let generation = sender.currentGenerationSnapshot()
+        let generation = sender.currentGeneration
         sender.enqueue(
             StreamPacketSender.WorkItem(
                 encodedData: payload,
@@ -136,39 +136,6 @@ struct PacketizerChecksumTests {
         await sender.stop()
     }
 
-    @Test("Stream packet sender reports packet budget utilization from estimated wire bytes")
-    func streamPacketSenderPacketBudgetUtilization() async {
-        let payload = makePayload(byteCount: 420_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _, onComplete in
-            onComplete(nil)
-        })
-
-        await sender.start()
-        await sender.setTargetBitrateBps(2_000_000)
-        let generation = sender.currentGenerationSnapshot()
-        sender.enqueue(
-            makeWorkItem(
-                payload: payload,
-                streamID: 11,
-                frameNumber: 31,
-                sequenceNumberStart: 3000,
-                wireBytes: payload.count,
-                generation: generation
-            )
-        )
-
-        guard let snapshot = await sender.packetBudgetSnapshot() else {
-            Issue.record("Missing packet budget snapshot")
-            await sender.stop()
-            return
-        }
-        #expect(snapshot.targetBitrateBps == 2_000_000)
-        #expect(snapshot.sampleBytes > payload.count)
-        #expect(snapshot.utilization > 1.5)
-
-        await sender.stop()
-    }
-
     @Test("Serialized send path preserves packet order across queued frames")
     func streamPacketSenderPreservesPacketOrder() async throws {
         let recordedSequences = Locked<[UInt32]>([])
@@ -190,7 +157,7 @@ struct PacketizerChecksumTests {
         let secondPayload = makePayload(byteCount: 900)
 
         await sender.start()
-        let generation = sender.currentGenerationSnapshot()
+        let generation = sender.currentGeneration
         sender.enqueue(
             makeWorkItem(
                 payload: firstPayload,
@@ -212,10 +179,7 @@ struct PacketizerChecksumTests {
             )
         )
 
-        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while recordedSequences.read({ $0.count }) < 4, CFAbsoluteTimeGetCurrent() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { recordedSequences.read { $0.count } >= 4 }
 
         #expect(recordedSequences.read { $0 } == [10, 11, 100, 101])
         await sender.stop()
@@ -235,7 +199,7 @@ struct PacketizerChecksumTests {
         )
 
         await sender.start()
-        let generation = sender.currentGenerationSnapshot()
+        let generation = sender.currentGeneration
         sender.enqueue(
             makeWorkItem(
                 payload: payload,
@@ -247,10 +211,7 @@ struct PacketizerChecksumTests {
             )
         )
 
-        let sendStartDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while !sendStarted.read({ $0 }), CFAbsoluteTimeGetCurrent() < sendStartDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { sendStarted.read { $0 } }
         #expect(sendStarted.read { $0 })
 
         let didReset = Locked(false)
@@ -259,10 +220,7 @@ struct PacketizerChecksumTests {
             didReset.withLock { $0 = true }
         }
 
-        let resetDeadline = CFAbsoluteTimeGetCurrent() + 0.25
-        while !didReset.read({ $0 }), CFAbsoluteTimeGetCurrent() < resetDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil(timeout: .milliseconds(250)) { didReset.read { $0 } }
 
         #expect(didReset.read { $0 })
 
@@ -333,13 +291,21 @@ struct PacketizerChecksumTests {
     private func waitForPackets(
         _ captured: Locked<[CapturedVideoPacket]>,
         expectedCount: Int,
-        timeoutSeconds: TimeInterval = 2.0
+        timeout: Duration = .seconds(2)
     ) async throws -> [CapturedVideoPacket] {
-        let deadline = CFAbsoluteTimeGetCurrent() + timeoutSeconds
-        while captured.read({ $0.count }) < expectedCount, CFAbsoluteTimeGetCurrent() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil(timeout: timeout) { captured.read { $0.count } >= expectedCount }
         return captured.read { $0 }
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(2),
+        pollInterval: Duration = .milliseconds(10),
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: pollInterval)
+        }
     }
 
     private func makePayload(byteCount: Int) -> Data {
@@ -348,8 +314,7 @@ struct PacketizerChecksumTests {
 
     private func makeSecurityContext() -> MirageMediaSecurityContext {
         MirageMediaSecurityContext(
-            sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) }),
-            udpRegistrationToken: Data(repeating: 0xA5, count: MirageMediaSecurity.registrationTokenLength)
+            sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) })
         )
     }
 

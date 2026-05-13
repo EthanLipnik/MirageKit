@@ -13,8 +13,12 @@ import IOKit.ps
 import UIKit
 #endif
 
+/// Captures the system power state relevant to Mirage's encoder and decoder policy.
 package struct MiragePowerStateSnapshot: Sendable, Equatable {
+    /// Whether the operating system is currently in Low Power Mode.
     package var isSystemLowPowerModeEnabled: Bool
+
+    /// Whether the device is running on battery, or `nil` when battery state is unavailable.
     package var isOnBattery: Bool?
 
     package init(
@@ -25,11 +29,13 @@ package struct MiragePowerStateSnapshot: Sendable, Equatable {
         self.isOnBattery = isOnBattery
     }
 
+    /// Whether this platform can report battery-backed power state.
     package var supportsBatteryState: Bool {
         isOnBattery != nil
     }
 }
 
+/// Observes system low-power and battery-source changes for adaptive media policy.
 @MainActor
 package final class MiragePowerStateMonitor {
     package typealias UpdateHandler = @MainActor @Sendable (MiragePowerStateSnapshot) -> Void
@@ -50,6 +56,7 @@ package final class MiragePowerStateMonitor {
 
     package init() {}
 
+    /// Starts observing power-state changes and immediately dispatches the current snapshot.
     package func start(onUpdate: @escaping UpdateHandler) {
         updateHandler = onUpdate
         if !isMonitoring {
@@ -62,6 +69,7 @@ package final class MiragePowerStateMonitor {
         }
     }
 
+    /// Stops observing power-state changes and releases the update handler.
     package func stop() {
         isMonitoring = false
         updateHandler = nil
@@ -69,11 +77,29 @@ package final class MiragePowerStateMonitor {
         unregisterPlatformPowerObservers()
     }
 
+    /// Reads the current system low-power and battery-source state.
+    ///
+    /// On macOS, the battery source is cached while monitoring is active and refreshed from IOKit
+    /// before monitoring starts. On iOS-family platforms, the value is read from `UIDevice`.
     package func currentSnapshot() async -> MiragePowerStateSnapshot {
         MiragePowerStateSnapshot(
             isSystemLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            isOnBattery: await currentBatteryState()
+            isOnBattery: await readCurrentBatteryState()
         )
+    }
+
+    private func readCurrentBatteryState() async -> Bool? {
+        #if os(macOS)
+        if !isMonitoring || !hasCachedMacBatteryState {
+            cachedMacBatteryState = await Self.readMacBatteryState()
+            hasCachedMacBatteryState = true
+        }
+        return cachedMacBatteryState
+        #elseif canImport(UIKit)
+        readDeviceBatteryState()
+        #else
+        nil
+        #endif
     }
 
     private func dispatchCurrentSnapshot() async {
@@ -112,20 +138,6 @@ package final class MiragePowerStateMonitor {
         unregisterPowerSourceObserver()
         #elseif canImport(UIKit)
         unregisterBatteryObservers()
-        #endif
-    }
-
-    private func currentBatteryState() async -> Bool? {
-        #if os(macOS)
-        if !isMonitoring || !hasCachedMacBatteryState {
-            cachedMacBatteryState = await Self.readMacBatteryState()
-            hasCachedMacBatteryState = true
-        }
-        return cachedMacBatteryState
-        #elseif canImport(UIKit)
-        readDeviceBatteryState()
-        #else
-        nil
         #endif
     }
 }

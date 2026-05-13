@@ -9,48 +9,52 @@
 
 import Foundation
 
+/// Redacted keyboard diagnostic payload that never includes typed characters.
 package struct MirageKeyboardInputDiagnosticEvent: Sendable, Equatable {
+    /// Event category, such as key-down, key-up, repeat, or modifier-state change.
     package let kind: String
-    package let keyCodeCategory: String
-    package let isRepeat: Bool
 
-    package init(kind: String, keyCodeCategory: String, isRepeat: Bool) {
+    /// Coarse key class used for debugging routing without logging the actual key.
+    package let keyCodeCategory: String
+
+    /// Creates a redacted keyboard diagnostic event.
+    package init(kind: String, keyCodeCategory: String) {
         self.kind = kind
         self.keyCodeCategory = keyCodeCategory
-        self.isRepeat = isRepeat
     }
 
+    /// Stable key used to throttle repeated logs for the same event category.
     package var rateLimitKey: String {
         "\(kind):\(keyCodeCategory)"
     }
 }
 
+/// Shared keyboard-input diagnostic classifier for client send paths and host receive/post paths.
 package enum MirageKeyboardInputDiagnostics {
+    /// Returns a redacted diagnostic event for keyboard input, or nil for non-keyboard input.
     package static func diagnosticEvent(for event: MirageInputEvent) -> MirageKeyboardInputDiagnosticEvent? {
         switch event {
         case let .keyDown(keyEvent):
             MirageKeyboardInputDiagnosticEvent(
                 kind: keyEvent.isRepeat ? "key_down_repeat" : "key_down",
-                keyCodeCategory: keyCodeCategory(keyEvent.keyCode),
-                isRepeat: keyEvent.isRepeat
+                keyCodeCategory: keyCodeCategory(keyEvent.keyCode)
             )
         case let .keyUp(keyEvent):
             MirageKeyboardInputDiagnosticEvent(
                 kind: "key_up",
-                keyCodeCategory: keyCodeCategory(keyEvent.keyCode),
-                isRepeat: keyEvent.isRepeat
+                keyCodeCategory: keyCodeCategory(keyEvent.keyCode)
             )
         case .flagsChanged:
             MirageKeyboardInputDiagnosticEvent(
                 kind: "flags_changed",
-                keyCodeCategory: "modifier_state",
-                isRepeat: false
+                keyCodeCategory: "modifier_state"
             )
         default:
             nil
         }
     }
 
+    /// Maps a hardware key code into a coarse category that is safe to log.
     package static func keyCodeCategory(_ keyCode: UInt16) -> String {
         if keyCode == MirageKeyEvent.unicodeScalarFallbackKeyCode {
             return "unicode_fallback"
@@ -75,15 +79,18 @@ package enum MirageKeyboardInputDiagnostics {
     }
 }
 
+/// Small lock-backed rate limiter for repeated keyboard diagnostic messages.
 package final class MirageKeyboardInputDiagnosticRateLimiter: @unchecked Sendable {
     private let lock = NSLock()
     private let interval: CFTimeInterval
     private var lastLogByKey: [String: CFAbsoluteTime] = [:]
 
+    /// Creates a rate limiter with the minimum interval between logs for the same key.
     package init(interval: CFTimeInterval = 2.0) {
         self.interval = interval
     }
 
+    /// Returns true when a diagnostic with the supplied key should be emitted now.
     package func shouldLog(key: String, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
         lock.lock()
         defer { lock.unlock() }

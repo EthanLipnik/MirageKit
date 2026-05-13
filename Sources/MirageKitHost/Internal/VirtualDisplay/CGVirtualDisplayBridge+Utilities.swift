@@ -16,42 +16,6 @@ import Foundation
 extension CGVirtualDisplayBridge {
     // MARK: - Display Utilities
 
-    private static func expectedColorSpaceNames(for colorSpace: MirageColorSpace) -> Set<String> {
-        switch colorSpace {
-        case .displayP3:
-            return [
-                CGColorSpace.displayP3 as String,
-                CGColorSpace.extendedDisplayP3 as String,
-            ]
-        case .sRGB:
-            return [
-                CGColorSpace.sRGB as String,
-                CGColorSpace.extendedSRGB as String,
-                CGColorSpace.linearSRGB as String,
-            ]
-        }
-    }
-
-    private static func expectedColorSpaces(for colorSpace: MirageColorSpace) -> [CGColorSpace] {
-        expectedColorSpaceNames(for: colorSpace).compactMap { name in
-            CGColorSpace(name: name as CFString)
-        }
-    }
-
-    private static func propertyListData(_ propertyList: CFPropertyList?) -> Data? {
-        guard let propertyList else { return nil }
-        guard let data = CFPropertyListCreateData(
-            kCFAllocatorDefault,
-            propertyList,
-            .binaryFormat_v1_0,
-            0,
-            nil
-        ) else {
-            return nil
-        }
-        return data.takeRetainedValue() as Data
-    }
-
     struct DisplayModeSizes: Sendable {
         let logical: CGSize
         let pixel: CGSize
@@ -71,10 +35,10 @@ extension CGVirtualDisplayBridge {
         return DisplayModeSizes(logical: logical, pixel: pixel)
     }
 
-    /// Get the bounds of a display
-    /// Note: CGDisplayBounds can return stale values for newly created virtual displays
-    /// Prefer using the resolution from VirtualDisplayContext when available
-    static func getDisplayBounds(_ displayID: CGDirectDisplayID) -> CGRect {
+    /// Returns CoreGraphics' current bounds for a display.
+    /// `CGDisplayBounds` can return stale values for newly created virtual displays;
+    /// prefer a known virtual-display resolution when one is available.
+    static func displayBounds(_ displayID: CGDirectDisplayID) -> CGRect {
         CGDisplayBounds(displayID)
     }
 
@@ -135,7 +99,11 @@ extension CGVirtualDisplayBridge {
 
             let sleepMs = Int(max(10.0, pollInterval * 1000.0))
             let boundedSleepMs = startupBudget?.boundedDelayMilliseconds(sleepMs) ?? sleepMs
-            try? await Task.sleep(for: .milliseconds(boundedSleepMs))
+            do {
+                try await Task.sleep(for: .milliseconds(boundedSleepMs))
+            } catch {
+                return nil
+            }
         }
 
         let online = isDisplayOnline(displayID)
@@ -157,13 +125,13 @@ extension CGVirtualDisplayBridge {
         return nil
     }
 
-    /// Get display bounds using known values (more reliable for virtual displays)
-    /// CGDisplayBounds can return stale/incorrect values immediately after display creation
-    /// for BOTH origin and size
+    /// Returns display bounds using a known size when CoreGraphics has not caught up.
+    /// `CGDisplayBounds` can return stale origin and size values immediately after
+    /// virtual-display creation.
     ///
     /// For window centering purposes, the virtual display is treated as starting at (0, 0).
     /// This is the coordinate space where windows will be positioned.
-    static func getDisplayBounds(_ displayID: CGDirectDisplayID, knownResolution: CGSize) -> CGRect {
+    static func displayBounds(_ displayID: CGDirectDisplayID, knownResolution: CGSize) -> CGRect {
         // CGDisplayBounds is unreliable for newly created virtual displays, especially size.
         // If we have non-zero bounds, trust the reported size (points) to keep windows on-screen.
         let rawBounds = CGDisplayBounds(displayID)
@@ -181,7 +149,7 @@ extension CGVirtualDisplayBridge {
                     if originDeltaX > originDriftTolerance || originDeltaY > originDriftTolerance {
                         configuredDisplayOrigins[displayID] = rawBounds.origin
                         MirageLogger.host(
-                            "getDisplayBounds(\(displayID)): configured origin \(configuredOrigin) diverged from raw origin \(rawBounds.origin); adopting raw origin"
+                            "displayBounds(\(displayID)): configured origin \(configuredOrigin) diverged from raw origin \(rawBounds.origin); adopting raw origin"
                         )
                     }
                 }
@@ -193,13 +161,13 @@ extension CGVirtualDisplayBridge {
                 let rawBackedBounds = rawBounds
                 MirageLogger
                     .host(
-                        "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution), modeLogical=\(modeSizes.logical), modePixel=\(modeSizes.pixel); preferring mode-backed raw bounds \(rawBackedBounds)"
+                        "displayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution), modeLogical=\(modeSizes.logical), modePixel=\(modeSizes.pixel); preferring mode-backed raw bounds \(rawBackedBounds)"
                     )
                 return rawBackedBounds
             }
             MirageLogger
                 .host(
-                    "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution) (fallbackOrigin \(fallbackOrigin))"
+                    "displayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution) (fallbackOrigin \(fallbackOrigin))"
                 )
         }
 
@@ -207,7 +175,7 @@ extension CGVirtualDisplayBridge {
         let bounds = CGRect(origin: fallbackOrigin, size: knownResolution)
         MirageLogger
             .host(
-                "getDisplayBounds(\(displayID)): using origin \(fallbackOrigin) with knownSize=\(knownResolution) (rawBounds=\(rawBounds)) -> \(bounds)"
+                "displayBounds(\(displayID)): using origin \(fallbackOrigin) with knownSize=\(knownResolution) (rawBounds=\(rawBounds)) -> \(bounds)"
             )
         return bounds
     }
@@ -219,10 +187,6 @@ extension CGVirtualDisplayBridge {
             }
             return CGDirectDisplayID(number.uint32Value) == displayID
         }
-    }
-
-    static func hasScreen(_ displayID: CGDirectDisplayID) -> Bool {
-        screen(for: displayID) != nil
     }
 
     private static func normalizedVisibleInsets(
@@ -275,12 +239,12 @@ extension CGVirtualDisplayBridge {
 
     /// Returns the display visible bounds in global points (excluding dock/menu bar).
     /// Falls back to full display bounds when no screen match is available.
-    static func getDisplayVisibleBounds(
+    static func displayVisibleBounds(
         _ displayID: CGDirectDisplayID,
         knownBounds: CGRect? = nil
     )
     -> CGRect {
-        let resolvedBounds = knownBounds ?? getDisplayBounds(displayID)
+        let resolvedBounds = knownBounds ?? displayBounds(displayID)
         guard let screen = screen(for: displayID) else { return resolvedBounds }
 
         let screenFrame = screen.frame
@@ -313,45 +277,14 @@ extension CGVirtualDisplayBridge {
         )
     }
 
-    struct DisplayInsets: Sendable, Equatable {
-        let left: CGFloat
-        let right: CGFloat
-        let top: CGFloat
-        let bottom: CGFloat
-
-        var horizontal: CGFloat { left + right }
-        var vertical: CGFloat { top + bottom }
-    }
-
-    static func displayInsets(displayBounds: CGRect, visibleBounds: CGRect) -> DisplayInsets {
-        let left = max(0, visibleBounds.minX - displayBounds.minX)
-        let right = max(0, displayBounds.maxX - visibleBounds.maxX)
-        let top = max(0, visibleBounds.minY - displayBounds.minY)
-        let bottom = max(0, displayBounds.maxY - visibleBounds.maxY)
-        return DisplayInsets(left: left, right: right, top: top, bottom: bottom)
-    }
-
-    struct DisplayColorSpaceValidationResult: Sendable {
-        let coverageStatus: MirageDisplayP3CoverageStatus
-        let observedName: String?
-
-        var isStrictCanonical: Bool {
-            coverageStatus == .strictCanonical
-        }
-
-        var isAcceptableForDisplayP3: Bool {
-            coverageStatus == .strictCanonical || coverageStatus == .wideGamutEquivalent
-        }
-    }
-
     /// Build a display-capture source rect in display-local logical points.
     static func displayCaptureSourceRect(
         _ displayID: CGDirectDisplayID,
         knownBounds: CGRect? = nil
     )
     -> CGRect {
-        let fullBounds = knownBounds ?? getDisplayBounds(displayID)
-        let visibleBounds = getDisplayVisibleBounds(displayID, knownBounds: fullBounds)
+        let fullBounds = knownBounds ?? displayBounds(displayID)
+        let visibleBounds = displayVisibleBounds(displayID, knownBounds: fullBounds)
         let clippedVisible = visibleBounds.intersection(fullBounds)
         guard !clippedVisible.isEmpty else { return .zero }
         // sourceRect uses display-local points in the same top-left-oriented
@@ -366,6 +299,19 @@ extension CGVirtualDisplayBridge {
         )
     }
 
+    /// Attempt to reclaim an orphaned virtual display.  The display was
+    /// already invalidated in a previous session but the OS hadn't finished
+    /// removing it.  We clear our tracking and let the next creation proceed
+    /// with a fresh display ID.
+    static func forceInvalidateOrphan(_ displayID: CGDirectDisplayID) {
+        configuredDisplayOrigins.removeValue(forKey: displayID)
+        if isDisplayOnline(displayID) {
+            MirageLogger.host("Orphaned display \(displayID) still online; will create a new display ID")
+        } else {
+            MirageLogger.host("Orphaned display \(displayID) already reclaimed by OS")
+        }
+    }
+
     static func isDisplayOnline(_ displayID: CGDirectDisplayID) -> Bool {
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &displayCount)
@@ -376,132 +322,10 @@ extension CGVirtualDisplayBridge {
         return displays.contains(displayID)
     }
 
-    static func displayColorSpaceValidation(
-        observedColorSpace: CGColorSpace,
-        expectedColorSpace: MirageColorSpace
-    ) -> DisplayColorSpaceValidationResult {
-        let observedName = observedColorSpace.name.map { $0 as String }
-        let expectedNames = expectedColorSpaceNames(for: expectedColorSpace)
-        let expectedColorSpaces = expectedColorSpaces(for: expectedColorSpace)
-        let sRGBNames = expectedColorSpaceNames(for: .sRGB)
-        guard !expectedColorSpaces.isEmpty else {
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: .unresolved,
-                observedName: observedName
-            )
-        }
-
-        if let observedName, expectedNames.contains(observedName) {
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
-                observedName: observedName
-            )
-        }
-
-        if expectedColorSpaces.contains(where: { CFEqual(observedColorSpace, $0) }) {
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
-                observedName: observedName ?? "strict-equivalent"
-            )
-        }
-
-        if let observedICCData = observedColorSpace.copyICCData() as Data?,
-           expectedColorSpaces.compactMap({ $0.copyICCData() as Data? }).contains(observedICCData) {
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
-                observedName: observedName ?? "icc-match"
-            )
-        }
-
-        if let observedPropertyListData = propertyListData(observedColorSpace.copyPropertyList()) {
-            let expectedPropertyListData = expectedColorSpaces.compactMap { colorSpace in
-                propertyListData(colorSpace.copyPropertyList())
-            }
-            if expectedPropertyListData.contains(observedPropertyListData) {
-                return DisplayColorSpaceValidationResult(
-                    coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
-                    observedName: observedName ?? "property-list-match"
-                )
-            }
-        }
-
-        switch expectedColorSpace {
-        case .displayP3:
-            if let observedName, sRGBNames.contains(observedName) {
-                return DisplayColorSpaceValidationResult(
-                    coverageStatus: .sRGBFallback,
-                    observedName: observedName
-                )
-            }
-
-            if observedColorSpace.model == .rgb {
-                let observedWideGamut = observedColorSpace.isWideGamutRGB
-                if observedName == nil {
-                    return DisplayColorSpaceValidationResult(
-                        coverageStatus: .wideGamutEquivalent,
-                        observedName: observedWideGamut ? "wide-gamut-rgb" : "unnamed-rgb"
-                    )
-                }
-                if observedWideGamut {
-                    return DisplayColorSpaceValidationResult(
-                        coverageStatus: .unresolved,
-                        observedName: observedName
-                    )
-                }
-                return DisplayColorSpaceValidationResult(
-                    coverageStatus: .sRGBFallback,
-                    observedName: observedName ?? "standard-gamut-rgb"
-                )
-            }
-
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: .unresolved,
-                observedName: observedName ?? "unknown"
-            )
-
-        case .sRGB:
-            if observedColorSpace.model == .rgb, !observedColorSpace.isWideGamutRGB {
-                return DisplayColorSpaceValidationResult(
-                    coverageStatus: .sRGBFallback,
-                    observedName: observedName ?? "standard-gamut-rgb"
-                )
-            }
-            return DisplayColorSpaceValidationResult(
-                coverageStatus: .unresolved,
-                observedName: observedName ?? "unknown"
-            )
-        }
-    }
-
-    static func displayColorSpaceValidation(
-        displayID: CGDirectDisplayID,
-        expectedColorSpace: MirageColorSpace
-    ) -> DisplayColorSpaceValidationResult {
-        let observedColorSpace = CGDisplayCopyColorSpace(displayID)
-        return displayColorSpaceValidation(
-            observedColorSpace: observedColorSpace,
-            expectedColorSpace: expectedColorSpace
-        )
-    }
-
     /// Returns true if the display is a Mirage-created virtual display.
     static func isMirageDisplay(_ displayID: CGDirectDisplayID) -> Bool {
         CGDisplayVendorNumber(displayID) == mirageVendorID &&
             CGDisplayModelNumber(displayID) == mirageProductID
-    }
-
-    /// Returns the online displays that belong to Mirage's virtual-display identity.
-    static func onlineMirageDisplayIDs() -> [CGDirectDisplayID] {
-        var displayCount: UInt32 = 0
-        CGGetOnlineDisplayList(0, nil, &displayCount)
-        guard displayCount > 0 else { return [] }
-
-        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
-        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
-        return displays
-            .prefix(Int(displayCount))
-            .filter { isMirageDisplay($0) }
-            .sorted()
     }
 
     /// Returns true if an online Mirage display already uses the given serial number.
@@ -519,9 +343,9 @@ extension CGVirtualDisplayBridge {
         return false
     }
 
-    /// Get the space ID for a display
-    static func getSpaceForDisplay(_ displayID: CGDirectDisplayID) -> CGSSpaceID {
-        CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
+    /// Returns the current Mission Control space ID for a display.
+    static func space(for displayID: CGDirectDisplayID) -> CGSSpaceID {
+        CGSWindowSpaceBridge.currentSpace(for: displayID)
     }
 }
 #endif

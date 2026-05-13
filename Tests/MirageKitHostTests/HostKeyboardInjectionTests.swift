@@ -50,7 +50,7 @@ struct HostKeyboardInjectionTests {
 
     private func unicodeString(from event: CGEvent) -> String {
         var length = 0
-        var buffer = Array<UniChar>(repeating: 0, count: 8)
+        var buffer = [UniChar](repeating: 0, count: 8)
         event.keyboardGetUnicodeString(
             maxStringLength: buffer.count,
             actualStringLength: &length,

@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,11 +17,13 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Key Event Injection (runs on accessibilityQueue)
 
+    /// Keyboard event values used to build a CoreGraphics event.
     struct KeyboardInjectionPlan: Equatable {
         let virtualKey: CGKeyCode
         let unicodeString: String?
     }
 
+    /// Resolves the virtual key or Unicode fallback needed for a key event.
     static func keyboardInjectionPlan(for event: MirageKeyEvent) -> KeyboardInjectionPlan {
         guard event.usesUnicodeScalarFallback else {
             return KeyboardInjectionPlan(
@@ -31,11 +32,10 @@ extension MirageHostInputController {
             )
         }
 
-        let unicodeString: String?
-        if let characters = event.characters, !characters.isEmpty {
-            unicodeString = characters
+        let unicodeString: String? = if let characters = event.characters, !characters.isEmpty {
+            characters
         } else {
-            unicodeString = nil
+            nil
         }
 
         return KeyboardInjectionPlan(
@@ -44,6 +44,7 @@ extension MirageHostInputController {
         )
     }
 
+    /// Builds a CoreGraphics keyboard event with Mirage modifiers and repeat state applied.
     func makeInjectedKeyboardEvent(
         isKeyDown: Bool,
         _ event: MirageKeyEvent
@@ -73,6 +74,7 @@ extension MirageHostInputController {
         return cgEvent
     }
 
+    /// Injects a key-down or key-up event into the requested host event domain.
     func injectKeyEvent(
         isKeyDown: Bool,
         _ event: MirageKeyEvent,
@@ -87,9 +89,6 @@ extension MirageHostInputController {
         )
         postEvent(cgEvent, domain: domain)
 
-        // Refresh timestamps only for modifiers tracked via flagsChanged state.
-        // Shortcut key events can carry temporary modifier flags without implying
-        // a durable held-modifier transition on the host.
         let trackedModifiers = event.modifiers.intersection(lastSentModifiers)
         if !trackedModifiers.isEmpty {
             let now = CACurrentMediaTime()
@@ -103,6 +102,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Injects modifier key transitions needed to reach the requested modifier state.
     func injectFlagsChanged(
         _ modifiers: MirageModifierFlags,
         domain: HostKeyboardInjectionDomain
@@ -141,12 +141,10 @@ extension MirageHostInputController {
         lastModifierInjectionDomain = domain
         lastSentModifiers = modifiers
 
-        // Update per-modifier timestamps
         let now = CACurrentMediaTime()
         for (flag, _) in Self.modifierKeyCodes where modifiers.contains(flag) {
             modifierLastEventTimes[flag] = now
         }
-        // Remove timestamps for released modifiers
         for (flag, _) in Self.modifierKeyCodes where !modifiers.contains(flag) {
             modifierLastEventTimes.removeValue(forKey: flag)
         }
@@ -155,7 +153,6 @@ extension MirageHostInputController {
             stopModifierResetTimer()
         }
     }
-
 }
 
 #endif

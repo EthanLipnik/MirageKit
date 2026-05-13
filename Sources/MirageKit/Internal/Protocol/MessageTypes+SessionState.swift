@@ -12,27 +12,27 @@ import Loom
 
 // MARK: - Session State Messages (Headless Mac Support)
 
-/// Session state update sent from host to client
-/// Sent immediately after connection and whenever state changes
+/// Host-to-client login-session availability update.
+///
+/// The host sends this immediately after connection and whenever the login session state changes.
 package struct SessionStateUpdateMessage: Codable {
-    /// Current session state
+    /// Current host login-session availability.
     package let state: LoomSessionAvailability
-    /// Session token for this state (prevents replay attacks)
-    package let sessionToken: String
-    /// Whether username is needed for unlock
-    package let requiresUserIdentifier: Bool
-    /// Timestamp of this update
-    package let timestamp: Date
 
+    /// Session token associated with this state to prevent replayed unlock requests.
+    package let sessionToken: String
+
+    /// Whether the client must provide a user identifier for unlock.
+    package let requiresUserIdentifier: Bool
+
+    /// Creates a session-state update payload.
     package init(
         state: LoomSessionAvailability,
         sessionToken: String,
-        requiresUserIdentifier: Bool,
-        timestamp: Date
+        requiresUserIdentifier: Bool
     ) {
         self.state = state
         self.sessionToken = sessionToken
         self.requiresUserIdentifier = requiresUserIdentifier
-        self.timestamp = timestamp
     }
 }

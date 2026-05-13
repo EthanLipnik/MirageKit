@@ -11,119 +11,98 @@ import Foundation
 
 // MARK: - Connection Messages
 
-package enum MirageSessionBootstrapRejectionReason: String, Codable, Sendable {
+/// Reason a host rejected a session bootstrap request.
+package enum MirageSessionBootstrapRejectionReason: String, Codable {
+    /// Client and host use incompatible protocol versions.
     case protocolVersionMismatch
-    case protocolFeaturesMismatch
+
+    /// The host is already serving another client.
     case hostBusy
+
+    /// The host is installing or preparing a software update.
     case hostUpdateInProgress
+
+    /// The host rejected the connection without a more specific reason.
     case rejected
+
+    /// Authentication or trust policy denied the client.
     case unauthorized
+
+    /// A busy-host takeover was requested by a client that is not trusted to take over.
     case takeoverRequiresTrustedRequester
 }
 
-package struct MirageSessionBootstrapRequest: Codable, Sendable {
+/// Initial client-to-host bootstrap payload sent before normal control traffic begins.
+package struct MirageSessionBootstrapRequest: Codable {
+    /// Client protocol version.
     package let protocolVersion: Int
-    package let requestedFeatures: MirageFeatureSet
+
+    /// Whether the client requires encrypted media payloads for the session.
     package let clientRequiresMediaEncryption: Bool
-    package let requestHostUpdateOnProtocolMismatch: Bool?
-    package let requestTakeoverIfBusy: Bool?
 
-    private enum CodingKeys: String, CodingKey {
-        case protocolVersion
-        case requestedFeatures
-        case clientRequiresMediaEncryption
-        case requestHostUpdateOnProtocolMismatch
-        case requestTakeoverIfBusy
-    }
+    /// Whether the host may disconnect an existing client to accept this request.
+    package let requestTakeoverIfBusy: Bool
 
+    /// Creates a bootstrap request for protocol validation and media-encryption policy.
     package init(
         protocolVersion: Int,
-        requestedFeatures: MirageFeatureSet,
         clientRequiresMediaEncryption: Bool,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil,
-        requestTakeoverIfBusy: Bool? = nil
+        requestTakeoverIfBusy: Bool = false
     ) {
         self.protocolVersion = protocolVersion
-        self.requestedFeatures = requestedFeatures
         self.clientRequiresMediaEncryption = clientRequiresMediaEncryption
-        self.requestHostUpdateOnProtocolMismatch = requestHostUpdateOnProtocolMismatch
         self.requestTakeoverIfBusy = requestTakeoverIfBusy
-    }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        protocolVersion = try container.decode(Int.self, forKey: .protocolVersion)
-        requestedFeatures = try container.decode(MirageFeatureSet.self, forKey: .requestedFeatures)
-        clientRequiresMediaEncryption = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .clientRequiresMediaEncryption
-        ) ?? false
-        requestHostUpdateOnProtocolMismatch = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .requestHostUpdateOnProtocolMismatch
-        )
-        requestTakeoverIfBusy = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .requestTakeoverIfBusy
-        )
-    }
-
-    package func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(protocolVersion, forKey: .protocolVersion)
-        try container.encode(requestedFeatures, forKey: .requestedFeatures)
-        try container.encode(clientRequiresMediaEncryption, forKey: .clientRequiresMediaEncryption)
-        try container.encodeIfPresent(
-            requestHostUpdateOnProtocolMismatch,
-            forKey: .requestHostUpdateOnProtocolMismatch
-        )
-        try container.encodeIfPresent(requestTakeoverIfBusy, forKey: .requestTakeoverIfBusy)
     }
 }
 
-package struct MirageSessionBootstrapResponse: Codable, Sendable {
+/// Host-to-client response for session bootstrap.
+package struct MirageSessionBootstrapResponse: Codable {
+    /// Whether the host accepted the session.
     package let accepted: Bool
+
+    /// Stable host identifier for the accepted session.
     package let hostID: UUID
+
+    /// Display name for the host.
     package let hostName: String
-    package let selectedFeatures: MirageFeatureSet
+
     /// Whether media payload encryption is required for this session.
     package let mediaEncryptionEnabled: Bool
+
     /// Auth token required for UDP registration packets.
     package let udpRegistrationToken: Data
+
     /// True when the host trust provider indicates a one-time auto-trust notice is appropriate.
-    package let autoTrustGranted: Bool?
-    /// True when the host explicitly allows this client to reuse host-published off-LAN reachability metadata.
-    package let remoteAccessAllowed: Bool?
+    package let autoTrustGranted: Bool
+
+    /// True when the host allows this client to reuse host-published off-LAN reachability metadata.
+    package let remoteAccessAllowed: Bool
+
     /// Explicit rejection reason when `accepted` is false.
     package let rejectionReason: MirageSessionBootstrapRejectionReason?
-    /// Host protocol version reported when the host rejects bootstrap for a version mismatch.
-    package let protocolMismatchHostVersion: Int?
-    /// Client protocol version reported when the host rejects bootstrap for a version mismatch.
-    package let protocolMismatchClientVersion: Int?
-    /// Whether the host accepted a client-requested update install during mismatch handling.
-    package let protocolMismatchUpdateTriggerAccepted: Bool?
-    /// Human-readable host update trigger status returned during mismatch handling.
-    package let protocolMismatchUpdateTriggerMessage: String?
 
+    /// Optional metadata for protocol mismatch handling.
+    package let protocolMismatchHostVersion: Int?
+
+    /// Client protocol version observed by the host when rejecting for mismatch.
+    package let protocolMismatchClientVersion: Int?
+
+    /// Creates a bootstrap response for either an accepted or rejected session.
     package init(
         accepted: Bool,
         hostID: UUID,
         hostName: String,
-        selectedFeatures: MirageFeatureSet,
         mediaEncryptionEnabled: Bool,
         udpRegistrationToken: Data,
-        autoTrustGranted: Bool? = nil,
-        remoteAccessAllowed: Bool? = nil,
+        autoTrustGranted: Bool = false,
+        remoteAccessAllowed: Bool = false,
         rejectionReason: MirageSessionBootstrapRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
-        protocolMismatchClientVersion: Int? = nil,
-        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
-        protocolMismatchUpdateTriggerMessage: String? = nil
+        protocolMismatchClientVersion: Int? = nil
     ) {
         self.accepted = accepted
         self.hostID = hostID
         self.hostName = hostName
-        self.selectedFeatures = selectedFeatures
         self.mediaEncryptionEnabled = mediaEncryptionEnabled
         self.udpRegistrationToken = udpRegistrationToken
         self.autoTrustGranted = autoTrustGranted
@@ -131,60 +110,79 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
         self.rejectionReason = rejectionReason
         self.protocolMismatchHostVersion = protocolMismatchHostVersion
         self.protocolMismatchClientVersion = protocolMismatchClientVersion
-        self.protocolMismatchUpdateTriggerAccepted = protocolMismatchUpdateTriggerAccepted
-        self.protocolMismatchUpdateTriggerMessage = protocolMismatchUpdateTriggerMessage
     }
 }
 
+/// Control message explaining why a session is being disconnected.
 package struct DisconnectMessage: Codable {
+    /// Machine-readable disconnect reason.
     package let reason: DisconnectReason
-    package let message: String?
 
+    /// Reason a host or client is closing the control session.
     package enum DisconnectReason: String, Codable {
+        /// A user explicitly requested disconnection.
         case userRequested
+
+        /// The peer exceeded an inactivity or handshake timeout.
         case timeout
+
+        /// The session closed because of an error.
         case error
+
+        /// The host process is shutting down.
         case hostShutdown
+
+        /// The host is disconnecting to perform a software update.
         case hostUpdateInProgress
+
+        /// Authentication or trust validation failed.
         case authFailed
+
+        /// Another trusted client took over the host session.
         case takenOver
+
+        /// The client's background connection lease expired.
         case backgroundLeaseExpired
     }
 
-    package init(reason: DisconnectReason, message: String? = nil) {
+    /// Creates a disconnect message with a concrete reason.
+    package init(reason: DisconnectReason) {
         self.reason = reason
-        self.message = message
     }
 }
 
-package struct TransportRefreshRequestMessage: Codable, Sendable {
+/// Request to refresh media transport registration or path metadata.
+package struct TransportRefreshRequestMessage: Codable {
+    /// Stream that needs refreshed transport state, or `nil` for session-wide refresh.
     package let streamID: StreamID?
-    package let reason: String
-    package let requestedAtNs: UInt64
 
+    /// Diagnostic reason for requesting the refresh.
+    package let reason: String
+
+    /// Creates a transport refresh request.
     package init(
         streamID: StreamID?,
-        reason: String,
-        requestedAtNs: UInt64 = UInt64(CFAbsoluteTimeGetCurrent() * 1_000_000_000)
+        reason: String
     ) {
         self.streamID = streamID
         self.reason = reason
-        self.requestedAtNs = requestedAtNs
     }
 }
 
-package struct ClientBackgroundLeaseMessage: Codable, Sendable, Equatable {
+/// Lease granted to let a client keep the control session alive briefly while backgrounded.
+package struct ClientBackgroundLeaseMessage: Codable, Equatable {
+    /// Unique identifier for this lease grant.
     package let leaseID: UUID
-    package let durationSeconds: TimeInterval
-    package let requestedAt: Date
 
+    /// Lease duration in seconds.
+    package let durationSeconds: TimeInterval
+
+    /// Creates a background lease grant.
     package init(
         leaseID: UUID = UUID(),
-        durationSeconds: TimeInterval,
-        requestedAt: Date = Date()
+        durationSeconds: TimeInterval
     ) {
         self.leaseID = leaseID
         self.durationSeconds = durationSeconds
-        self.requestedAt = requestedAt
     }
 }

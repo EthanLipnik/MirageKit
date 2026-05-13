@@ -10,6 +10,7 @@
 import Foundation
 import MirageKit
 
+/// Explains why the client heartbeat loop should send or skip a reachability ping.
 enum ClientHeartbeatProbeDecision: Equatable {
     case waitForInboundActivity
     case skipActiveStream
@@ -19,6 +20,11 @@ enum ClientHeartbeatProbeDecision: Equatable {
     case sendPing
 }
 
+/// Decides whether an idle connected client should probe the host for liveness.
+///
+/// Heartbeats are suppressed while other traffic or setup work can already prove the
+/// host is reachable, so pings only run after the connection has been quiet long
+/// enough to exceed the inactivity threshold.
 func clientHeartbeatProbeDecision(
     inactivityDuration: CFAbsoluteTime,
     inactivityThreshold: CFAbsoluteTime,
@@ -35,13 +41,6 @@ func clientHeartbeatProbeDecision(
     guard !hasInFlightPingOrHostOperation else { return .skipOperationInFlight }
     guard inactivityDuration >= inactivityThreshold else { return .waitForInboundActivity }
     return .sendPing
-}
-
-func clientHeartbeatHasInFlightHostOperation(
-    hostWallpaperRequestInFlight: Bool,
-    hostSupportLogExportInFlight: Bool
-) -> Bool {
-    hostWallpaperRequestInFlight || hostSupportLogExportInFlight
 }
 
 @MainActor
@@ -65,12 +64,10 @@ extension MirageClientService {
                 }
                 guard case .connected = self.connectionState else { return }
 
-                let latestInboundActivityTime = self.fastPathState.latestInboundActivityTime()
+                let latestInboundActivityTime = self.fastPathState.latestInboundActivityTime
                 let inactivityDuration = max(0, CFAbsoluteTimeGetCurrent() - latestInboundActivityTime)
-                let hasInFlightHostOperation = clientHeartbeatHasInFlightHostOperation(
-                    hostWallpaperRequestInFlight: self.hostWallpaperContinuation != nil,
-                    hostSupportLogExportInFlight: self.hostSupportLogArchiveContinuation != nil
-                )
+                let hasInFlightHostOperation = self.hostWallpaperContinuation != nil ||
+                    self.hostSupportLogArchiveContinuation != nil
                 let decision = clientHeartbeatProbeDecision(
                     inactivityDuration: inactivityDuration,
                     inactivityThreshold: Self.heartbeatInactivityThreshold,

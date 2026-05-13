@@ -29,75 +29,17 @@ extension SharedVirtualDisplayManager {
         )
     }
 
-    /// Get the shared display ID
-    func getDisplayID() -> CGDirectDisplayID? {
+    /// Current shared virtual display ID.
+    var displayID: CGDirectDisplayID? {
         sharedDisplay?.displayID
     }
 
-    func ownedMirageDisplayIDs() -> Set<CGDirectDisplayID> {
-        var displayIDs = Set<CGDirectDisplayID>()
-        if let sharedDisplay {
-            displayIDs.insert(sharedDisplay.displayID)
-        }
-        if let appStreamDisplay {
-            displayIDs.insert(appStreamDisplay.displayID)
-        }
-        for display in dedicatedDisplaysByStreamID.values {
-            displayIDs.insert(display.displayID)
-        }
-        return displayIDs
-    }
-
-    func refreshResidualMirageDisplayTracking() -> [CGDirectDisplayID] {
-        let onlineMirageDisplayIDs = CGVirtualDisplayBridge.onlineMirageDisplayIDs()
-        let ownedDisplayIDs = ownedMirageDisplayIDs()
-        let residualDisplayIDs = onlineMirageDisplayIDs
-            .filter { !ownedDisplayIDs.contains($0) }
-            .sorted()
-        orphanedDisplayIDs = Set(residualDisplayIDs)
-        if !residualDisplayIDs.isEmpty {
-            MirageLogger.host(
-                "Residual Mirage display(s) online outside the active lease: \(residualDisplayIDs)"
-            )
-        }
-        return residualDisplayIDs
-    }
-
-    func assertNoResidualMirageDisplaysBeforeCreation() throws {
-        let onlineMirageDisplayIDs = CGVirtualDisplayBridge.onlineMirageDisplayIDs()
-        let ownedDisplayIDs = ownedMirageDisplayIDs()
-        switch residualMirageDisplayCreationDecision(
-            onlineDisplayIDs: onlineMirageDisplayIDs,
-            ownedDisplayIDs: ownedDisplayIDs,
-            isMirageDisplay: { _ in true }
-        ) {
-        case .allow:
-            orphanedDisplayIDs.removeAll()
-        case let .block(displayIDs):
-            orphanedDisplayIDs = Set(displayIDs)
-            for displayID in displayIDs {
-                CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-            }
-            MirageLogger.error(
-                .host,
-                "Blocking Mirage virtual display creation because residual display(s) remain online: \(displayIDs)"
-            )
-            throw SharedDisplayError.residualMirageDisplaysOnline(displayIDs)
-        }
-    }
-
-    /// Get the shared display space ID
-    func getSpaceID() -> CGSSpaceID? {
-        sharedDisplay?.spaceID
-    }
-
-    /// Get the shared display snapshot
-    func getDisplaySnapshot() -> DisplaySnapshot? {
+    /// Current shared virtual display snapshot.
+    var displaySnapshot: DisplaySnapshot? {
         guard let display = sharedDisplay else { return nil }
         return snapshot(from: display)
     }
 
-    @discardableResult
     func updateSharedDisplayObservedResolution(
         displayID: CGDirectDisplayID,
         resolution: CGSize
@@ -140,8 +82,8 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: updatedDisplay)
     }
 
-    /// Get the shared display generation.
-    func getDisplayGeneration() -> UInt64 {
+    /// Generation of the current shared display snapshot.
+    var currentDisplayGeneration: UInt64 {
         sharedDisplay?.generation ?? 0
     }
 
@@ -150,57 +92,15 @@ extension SharedVirtualDisplayManager {
         generationChangeHandler = handler
     }
 
-    /// Get the shared display bounds in logical points.
+    /// Shared display bounds in logical points.
     /// Uses the known logical resolution instead of CGDisplayBounds (which can return stale values for new displays).
-    func getDisplayBounds() -> CGRect? {
+    var displayBounds: CGRect? {
         guard let display = sharedDisplay else { return nil }
         let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
             for: display.resolution,
             scaleFactor: display.scaleFactor
         )
-        return CGVirtualDisplayBridge.getDisplayBounds(display.displayID, knownResolution: logicalResolution)
-    }
-
-    /// Check if there's an active shared display
-    func hasActiveDisplay() -> Bool {
-        sharedDisplay != nil
-    }
-
-    /// Get count of active consumers
-    func activeConsumerCount() -> Int {
-        activeConsumers.count
-    }
-
-    /// Get the shared app-stream display snapshot.
-    func getAppStreamDisplaySnapshot() -> DisplaySnapshot? {
-        guard let display = appStreamDisplay else { return nil }
-        return snapshot(from: display)
-    }
-
-    /// Get a dedicated display snapshot for a stream.
-    func getDedicatedDisplaySnapshot(for streamID: StreamID) -> DisplaySnapshot? {
-        guard let display = dedicatedDisplaysByStreamID[streamID] else { return nil }
-        return snapshot(from: display)
-    }
-
-    /// Get dedicated display bounds in logical points for a stream.
-    func getDedicatedDisplayBounds(for streamID: StreamID) -> CGRect? {
-        guard let display = dedicatedDisplaysByStreamID[streamID] else { return nil }
-        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
-            for: display.resolution,
-            scaleFactor: display.scaleFactor
-        )
-        return CGVirtualDisplayBridge.getDisplayBounds(display.displayID, knownResolution: logicalResolution)
-    }
-
-    /// Check whether a dedicated display exists for a stream.
-    func hasDedicatedDisplay(for streamID: StreamID) -> Bool {
-        dedicatedDisplaysByStreamID[streamID] != nil
-    }
-
-    /// Get count of dedicated stream displays.
-    func dedicatedDisplayCount() -> Int {
-        dedicatedDisplaysByStreamID.count
+        return CGVirtualDisplayBridge.displayBounds(display.displayID, knownResolution: logicalResolution)
     }
 }
 #endif

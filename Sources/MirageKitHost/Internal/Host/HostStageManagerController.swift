@@ -24,7 +24,6 @@ actor HostStageManagerController {
         let terminationStatus: Int32?
         let timedOut: Bool
         let stdout: String
-        let stderr: String
         let errorDescription: String?
 
         var succeeded: Bool {
@@ -40,7 +39,8 @@ actor HostStageManagerController {
         self.commandRunner = commandRunner
     }
 
-    func readState() async -> State {
+    /// Reads the current Stage Manager setting from the WindowManager defaults domain.
+    func readCurrentState() async -> State {
         let result = await commandRunner(
             "/usr/bin/defaults",
             ["read", "com.apple.WindowManager", "GloballyEnabled"],
@@ -57,8 +57,8 @@ actor HostStageManagerController {
     )
     async -> Bool {
         let targetState: State = enabled ? .enabled : .disabled
-        let currentState = await readState()
-        if currentState == targetState { return true }
+        let initialState = await readCurrentState()
+        if initialState == targetState { return true }
 
         let boolValue = enabled ? "true" : "false"
         let writeResult = await commandRunner(
@@ -77,30 +77,22 @@ actor HostStageManagerController {
 
         let attempts = max(1, verifyAttempts)
         for attempt in 0 ..< attempts {
-            let observedState = await readState()
+            let observedState = await readCurrentState()
             if observedState == targetState { return true }
-            if attempt + 1 < attempts { try? await Task.sleep(for: pollInterval) }
+            if attempt + 1 < attempts {
+                do {
+                    try await Task.sleep(for: pollInterval)
+                } catch {
+                    return false
+                }
+            }
         }
         return false
     }
 
     nonisolated static func parseState(from output: String) -> State {
-        let normalized = output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty else { return .unknown }
-
-        let token = normalized
-            .split(whereSeparator: { $0.isWhitespace || $0 == ";" })
-            .first
-            .map(String.init) ?? normalized
-
-        switch token {
-        case "1", "true", "yes", "on":
-            return .enabled
-        case "0", "false", "no", "off":
-            return .disabled
-        default:
-            return .unknown
-        }
+        guard let enabled = MirageEnvironmentValue.boolean(output) else { return .unknown }
+        return enabled ? .enabled : .disabled
     }
 
     nonisolated private static func runCommand(
@@ -125,7 +117,6 @@ actor HostStageManagerController {
                 terminationStatus: nil,
                 timedOut: false,
                 stdout: "",
-                stderr: "",
                 errorDescription: error.localizedDescription
             )
         }
@@ -139,13 +130,12 @@ actor HostStageManagerController {
 
         let exit = await waitForProcessExitOrTimeout(process, timeout: timeout)
         let stdoutData = await stdoutTask.value
-        let stderrData = await stderrTask.value
+        _ = await stderrTask.value
 
         return CommandResult(
             terminationStatus: exit.terminationStatus,
             timedOut: exit.timedOut,
             stdout: String(data: stdoutData, encoding: .utf8) ?? "",
-            stderr: String(data: stderrData, encoding: .utf8) ?? "",
             errorDescription: nil
         )
     }
@@ -193,7 +183,11 @@ actor HostStageManagerController {
         guard process.isRunning else { return }
 
         process.terminate()
-        try? await Task.sleep(for: .milliseconds(250))
+        do {
+            try await Task.sleep(for: .milliseconds(250))
+        } catch {
+            return
+        }
 
         guard process.isRunning else { return }
         let processID = process.processIdentifier

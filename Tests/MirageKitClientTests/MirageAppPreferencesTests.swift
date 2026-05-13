@@ -24,8 +24,8 @@ struct MirageAppPreferencesTests {
         #expect(!preferences.showsPinnedOnlyApps(for: hostB))
     }
 
-    @Test("Legacy host preference payloads decode without the pinned-only flag")
-    func legacyHostPreferencePayloadsDecodeWithoutPinnedOnlyFlag() throws {
+    @Test("Host preference payloads decode without the pinned-only flag")
+    func hostPreferencePayloadsDecodeWithoutPinnedOnlyFlag() throws {
         let hostID = "11111111-1111-1111-1111-111111111111"
         let payload = """
         {

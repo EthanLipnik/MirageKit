@@ -5,7 +5,6 @@
 //  Created by Ethan Lipnik on 4/4/26.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
@@ -23,12 +22,13 @@ public extension MirageClientService {
             desktopCursorLockAvailable: desktopCursorLockAvailable,
             desktopCursorLockMode: desktopCursorLockMode
         )
-        sendControlMessageBestEffort(.remoteClientStreamOptionsState, content: update)
+        queueControlMessageBestEffort(.remoteClientStreamOptionsState, content: update)
     }
 }
 
 @MainActor
 extension MirageClientService {
+    /// Decodes host-issued remote controls and fans them out to UI-owned command handlers.
     func handleRemoteClientStreamOptionsCommand(_ message: ControlMessage) {
         do {
             let command = try message.decode(RemoteClientStreamOptionsCommandMessage.self)

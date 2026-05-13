@@ -13,6 +13,7 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    /// Handles a client request for the host hardware icon payload.
     func handleHostHardwareIconRequest(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -25,36 +26,28 @@ extension MirageHostService {
             return
         }
 
-        updatePendingHostHardwareIconRequest(
-            clientID: clientContext.client.id,
-            preferredMaxPixelSize: request.preferredMaxPixelSize
-        )
-        sendPendingHostHardwareIconRequestIfPossible()
-    }
-
-    private func updatePendingHostHardwareIconRequest(
-        clientID: UUID,
-        preferredMaxPixelSize: Int
-    ) {
-        let clampedPreferredMaxPixelSize = min(max(preferredMaxPixelSize, 128), 1024)
+        let clampedPreferredMaxPixelSize = min(max(request.preferredMaxPixelSize, 128), 1024)
         if var pending = pendingHostHardwareIconRequest,
-           pending.clientID == clientID {
+           pending.clientID == clientContext.client.id {
             pending.preferredMaxPixelSize = max(
                 pending.preferredMaxPixelSize,
                 clampedPreferredMaxPixelSize
             )
             pendingHostHardwareIconRequest = pending
-            return
+        } else {
+            pendingHostHardwareIconRequest = PendingHostHardwareIconRequest(
+                clientID: clientContext.client.id,
+                preferredMaxPixelSize: clampedPreferredMaxPixelSize
+            )
         }
-        pendingHostHardwareIconRequest = PendingHostHardwareIconRequest(
-            clientID: clientID,
-            preferredMaxPixelSize: clampedPreferredMaxPixelSize
-        )
+
+        sendPendingHostHardwareIconRequestIfPossible()
     }
 
+    /// Sends a pending host hardware icon response when interactive work is idle.
     func sendPendingHostHardwareIconRequestIfPossible() {
         guard let pending = pendingHostHardwareIconRequest else { return }
-        guard !isInteractiveWorkloadActiveForAppListRequests() else {
+        guard !isInteractiveWorkloadActiveForAppListRequests else {
             MirageLogger.host("Deferring host hardware icon response while interactive workload is active")
             return
         }
@@ -125,6 +118,7 @@ extension MirageHostService {
         }
     }
 
+    /// Handles a client request for the host wallpaper payload.
     func handleHostWallpaperRequest(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -137,42 +131,30 @@ extension MirageHostService {
             return
         }
 
-        updatePendingHostWallpaperRequest(
-            clientID: clientContext.client.id,
-            requestID: request.requestID,
+        let clampedSize = MirageHostWallpaperResolver.clampedRequestedOutputSize(
             preferredMaxPixelWidth: request.preferredMaxPixelWidth,
             preferredMaxPixelHeight: request.preferredMaxPixelHeight
-        )
-        sendPendingHostWallpaperRequestIfPossible()
-    }
-
-    private func updatePendingHostWallpaperRequest(
-        clientID: UUID,
-        requestID: UUID,
-        preferredMaxPixelWidth: Int,
-        preferredMaxPixelHeight: Int
-    ) {
-        let clampedSize = MirageHostWallpaperResolver.clampedRequestedOutputSize(
-            preferredMaxPixelWidth: preferredMaxPixelWidth,
-            preferredMaxPixelHeight: preferredMaxPixelHeight
         )
         let clampedWidth = Int(clampedSize.width)
         let clampedHeight = Int(clampedSize.height)
         if var pending = pendingHostWallpaperRequest,
-           pending.clientID == clientID {
+           pending.clientID == clientContext.client.id {
             pending.preferredMaxPixelWidth = max(pending.preferredMaxPixelWidth, clampedWidth)
             pending.preferredMaxPixelHeight = max(pending.preferredMaxPixelHeight, clampedHeight)
             pendingHostWallpaperRequest = pending
-            return
+        } else {
+            pendingHostWallpaperRequest = PendingHostWallpaperRequest(
+                clientID: clientContext.client.id,
+                requestID: request.requestID,
+                preferredMaxPixelWidth: clampedWidth,
+                preferredMaxPixelHeight: clampedHeight
+            )
         }
-        pendingHostWallpaperRequest = PendingHostWallpaperRequest(
-            clientID: clientID,
-            requestID: requestID,
-            preferredMaxPixelWidth: clampedWidth,
-            preferredMaxPixelHeight: clampedHeight
-        )
+
+        sendPendingHostWallpaperRequestIfPossible()
     }
 
+    /// Sends a pending host wallpaper response to the requesting client.
     func sendPendingHostWallpaperRequestIfPossible() {
         guard let pending = pendingHostWallpaperRequest else { return }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
@@ -199,10 +181,13 @@ extension MirageHostService {
                     requestID: requestID,
                     pixelWidth: 0,
                     pixelHeight: 0,
-                    bytesPerPixelEstimate: 0,
                     errorMessage: "Host wallpaper is unavailable."
                 )
-                try? await clientContext.send(.hostWallpaper, content: response)
+                do {
+                    try await clientContext.send(.hostWallpaper, content: response)
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to send hostWallpaper error response: ")
+                }
                 if hostWallpaperRequestToken == token,
                    pendingHostWallpaperRequest?.clientID == clientID {
                     pendingHostWallpaperRequest = nil
@@ -216,8 +201,7 @@ extension MirageHostService {
                 requestID: requestID,
                 imageData: payload.imageData,
                 pixelWidth: payload.pixelWidth,
-                pixelHeight: payload.pixelHeight,
-                bytesPerPixelEstimate: payload.bytesPerPixelEstimate
+                pixelHeight: payload.pixelHeight
             )
 
             do {

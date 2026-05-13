@@ -80,4 +80,39 @@ struct MirageRenderFrame: @unchecked Sendable {
     let frameNumber: UInt32?
     let queueEpoch: UInt64?
     var timeline: FrameTimeline?
+
+    var sequence: UInt64 {
+        cursor.sequence
+    }
+
+    init(
+        pixelBuffer: CVPixelBuffer,
+        contentRect: CGRect,
+        sequence: UInt64,
+        generation: UInt64 = 0,
+        decodeTime: CFAbsoluteTime,
+        presentationTime: CMTime,
+        remotePresentationTime: CMTime,
+        hostEpoch: UInt16? = nil,
+        dimensionToken: UInt16? = nil,
+        frameNumber: UInt32? = nil,
+        queueEpoch: UInt64? = nil,
+        timeline: FrameTimeline? = nil
+    ) {
+        self.pixelBuffer = pixelBuffer
+        self.contentRect = contentRect
+        self.presentationMetadata = MirageRenderFramePresentationMetadata(
+            pixelBuffer: pixelBuffer,
+            contentRect: contentRect
+        )
+        self.cursor = MirageRenderCursor(generation: generation, sequence: sequence)
+        self.decodeTime = decodeTime
+        self.presentationTime = presentationTime
+        self.remotePresentationTime = remotePresentationTime
+        self.hostEpoch = hostEpoch
+        self.dimensionToken = dimensionToken
+        self.frameNumber = frameNumber
+        self.queueEpoch = queueEpoch
+        self.timeline = timeline
+    }
 }

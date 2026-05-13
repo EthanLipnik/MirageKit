@@ -15,10 +15,15 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-enum EncodedFrameExtractionError: Error, Equatable, Sendable {
+/// Failure while extracting encoded bytes from a VideoToolbox sample buffer.
+enum EncodedFrameExtractionError: Error, Equatable {
+    /// The sample buffer did not contain encoded byte data.
     case emptyData
+
+    /// `CMBlockBuffer` could not provide a contiguous encoded payload.
     case copyFailed(status: OSStatus, totalLength: Int, pointerStatus: OSStatus, contiguousLength: Int)
 
+    /// Short diagnostic text for frame-drop logging.
     var logSummary: String {
         switch self {
         case .emptyData:
@@ -29,169 +34,37 @@ enum EncodedFrameExtractionError: Error, Equatable, Sendable {
     }
 }
 
+/// Reason a captured frame was skipped before encoder submission.
 enum EncodeSkipReason: String {
+    /// The frame was superseded by a pending stream dimension update.
     case dimensionUpdate = "dimension update"
+
+    /// The encoder has been deactivated.
     case encoderInactive = "encoder inactive"
+
+    /// No active VideoToolbox compression session is available.
     case noSession = "no session"
+
+    /// The encoder in-flight limit is already full.
     case queueFull = "queue full"
 }
 
+/// Admission result for a captured frame entering the encoder.
 enum EncodeAdmission {
+    /// The frame was submitted to VideoToolbox.
     case accepted
+
+    /// The frame was intentionally skipped before submission.
     case skipped(EncodeSkipReason)
 }
 
+/// Sendable wrapper for the retained encode-info pointer passed through VideoToolbox callbacks.
 private struct SendableEncodeInfoToken: @unchecked Sendable {
+    /// Raw pointer retained until the asynchronous encode callback consumes it.
     let rawPointer: UnsafeMutableRawPointer
 }
 
 extension VideoEncoder {
-    /// Returns `true` if the encoder produced at least one valid output frame.
-    @discardableResult
-    func preheat() async throws -> Bool {
-        guard let session = compressionSession else {
-            MirageLogger.error(.encoder, "Cannot preheat: no compression session")
-            return false
-        }
-
-        let preheatStartTime = CFAbsoluteTimeGetCurrent()
-        let preheatFrameCount = 10 // Enough frames to warm up rate control and hardware
-
-        // Create a dummy pixel buffer at session dimensions
-        var pixelBuffer: CVPixelBuffer?
-        let targetWidth = max(1, currentWidth)
-        let targetHeight = max(1, currentHeight)
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            targetWidth, targetHeight,
-            pixelFormatType,
-            [
-                kCVPixelBufferMetalCompatibilityKey: true,
-                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
-            ] as CFDictionary,
-            &pixelBuffer
-        )
-
-        guard status == noErr, let buffer = pixelBuffer else {
-            MirageLogger.error(.encoder, "Failed to create preheat buffer: \(status)")
-            return false
-        }
-
-        // Fill with gray (neutral content for rate control)
-        CVPixelBufferLockBaseAddress(buffer, [])
-        if CVPixelBufferIsPlanar(buffer) {
-            let planeCount = CVPixelBufferGetPlaneCount(buffer)
-            for plane in 0 ..< planeCount {
-                guard let baseAddress = CVPixelBufferGetBaseAddressOfPlane(buffer, plane) else { continue }
-                let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
-                let height = CVPixelBufferGetHeightOfPlane(buffer, plane)
-                memset(baseAddress, 0x80, bytesPerRow * height)
-            }
-        } else if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
-            let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-            let height = CVPixelBufferGetHeight(buffer)
-            memset(baseAddress, 0x80, bytesPerRow * height)
-        }
-        CVPixelBufferUnlockBaseAddress(buffer, [])
-
-        MirageLogger.encoder("Pre-heating encoder with \(preheatFrameCount) dummy frames...")
-
-        let timescale = CMTimeScale(max(1, configuration.targetFrameRate))
-
-        // Track how many preheat frames produce valid encoded output
-        let validOutputCount = Locked<Int>(0)
-        let callbackErrorCount = Locked<Int>(0)
-        let lastCallbackStatus = Locked<OSStatus>(noErr)
-        var submittedCount = 0
-
-        for i in 0 ..< preheatFrameCount {
-            let pts = CMTime(value: CMTimeValue(i), timescale: timescale)
-            let duration = CMTime(value: 1, timescale: timescale)
-
-            var properties: [CFString: Any] = [:]
-            if i == 0 {
-                // First frame must be keyframe
-                properties[kVTEncodeFrameOptionKey_ForceKeyFrame] = true
-            }
-
-            let encodeStatus = VTCompressionSessionEncodeFrame(
-                session,
-                imageBuffer: buffer,
-                presentationTimeStamp: pts,
-                duration: duration,
-                frameProperties: properties.isEmpty ? nil : properties as CFDictionary,
-                infoFlagsOut: nil
-            ) { cbStatus, infoFlags, sampleBuffer in
-                guard cbStatus == noErr,
-                      !infoFlags.contains(.frameDropped),
-                      let sampleBuffer,
-                      CMSampleBufferGetDataBuffer(sampleBuffer) != nil else {
-                    callbackErrorCount.withLock { $0 += 1 }
-                    if cbStatus != noErr {
-                        lastCallbackStatus.withLock { $0 = cbStatus }
-                    }
-                    return
-                }
-                validOutputCount.withLock { $0 += 1 }
-            }
-
-            if encodeStatus != noErr {
-                MirageLogger.error(.encoder, "Preheat encode failed at frame \(i): \(encodeStatus)")
-                break
-            }
-            submittedCount += 1
-        }
-
-        // VTCompressionSessionCompleteFrames is synchronous — all callbacks
-        // will have fired by the time it returns.
-        VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-
-        // Reset frame counter so first real frame is frame 0
-        frameNumber = 0
-        forceNextKeyframe = true // First real frame should be keyframe
-
-        let preheatDuration = (CFAbsoluteTimeGetCurrent() - preheatStartTime) * 1000
-        let valid = validOutputCount.withLock { $0 }
-        let errors = callbackErrorCount.withLock { $0 }
-
-        if valid == 0 && submittedCount > 0 {
-            let lastStatus = lastCallbackStatus.withLock { $0 }
-            MirageLogger.error(
-                .encoder,
-                "Encoder pre-heat FAILED: 0/\(submittedCount) frames produced valid output (\(errors) callback errors, lastStatus=\(lastStatus)), format=\(activePixelFormat.displayName), \(currentWidth)x\(currentHeight)"
-            )
-            return false
-        }
-
-        MirageLogger.timing(
-            "Encoder pre-heat complete: \(String(format: "%.1f", preheatDuration))ms, valid=\(valid)/\(submittedCount)"
-        )
-        return true
-    }
-
-    func startEncoding(
-        onEncodedFrame: @escaping @Sendable (Data, Bool, CMTime) -> Void,
-        onFrameComplete: @escaping @Sendable () -> Void
-    ) {
-        encodedFrameHandler = onEncodedFrame
-        frameCompletionHandler = onFrameComplete
-        isEncoding = true
-    }
-
-    func stopEncoding() {
-        sessionVersion &+= 1
-        resetEncoderSlots()
-        isEncoding = false
-        encodedFrameHandler = nil
-        frameCompletionHandler = nil
-
-        if let session = compressionSession {
-            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
-            VTCompressionSessionInvalidate(session)
-        }
-        compressionSession = nil
-    }
-
     func encodeFrame(_ frame: CapturedFrame, forceKeyframe: Bool = false) async throws -> EncodeAdmission {
         let encodeStartTime = CFAbsoluteTimeGetCurrent() // Timing: encode start
 
@@ -258,7 +131,7 @@ extension VideoEncoder {
             completion: frameCompletionHandler,
             isProRes: isProRes,
             retainedSampleBuffer: frame.backingSampleBuffer,
-            getCurrentVersion: { [weak self] in self?.sessionVersion ?? 0 }
+            currentSessionVersion: { [weak self] in self?.sessionVersion ?? 0 }
         )
         frameNumber += 1
 
@@ -292,12 +165,12 @@ extension VideoEncoder {
                 return
             }
 
-            // CRITICAL: Discard frames from old sessions during dimension transitions
-            // This prevents sending P-frames encoded at old dimensions after a resize
-            guard info.isSessionCurrent else {
+            // Dimension changes invalidate queued frames from earlier compression sessions.
+            let currentSessionVersion = info.currentSessionVersion()
+            guard info.sessionVersion == currentSessionVersion else {
                 MirageLogger
                     .encoder(
-                        "Discarding frame \(info.frameNumber) from old session (version \(info.sessionVersion) != \(info.getCurrentVersion()))"
+                        "Discarding frame \(info.frameNumber) from old session (version \(info.sessionVersion) != \(currentSessionVersion))"
                     )
                 return
             }
@@ -393,17 +266,9 @@ extension VideoEncoder {
                             MirageLogger.encoder("Prepended \(parameterSets.count) bytes of parameter sets")
                         } else {
                             MirageLogger.error(.encoder, "Failed to extract parameter sets from format description")
-                            Task { [weak self] in
-                                await self?.scheduleRecoveryKeyframe(reason: "missing-keyframe-parameter-sets")
-                            }
-                            return
                         }
                     } else {
                         MirageLogger.error(.encoder, "No format description available for keyframe")
-                        Task { [weak self] in
-                            await self?.scheduleRecoveryKeyframe(reason: "missing-keyframe-format-description")
-                        }
-                        return
                     }
                 }
             }
@@ -428,89 +293,6 @@ extension VideoEncoder {
             throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status)))
         }
         return .accepted
-    }
-
-    @discardableResult
-    nonisolated static func extractEncodedFrameData(from dataBuffer: CMBlockBuffer) throws -> Data {
-        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
-        guard totalLength > 0 else { throw EncodedFrameExtractionError.emptyData }
-
-        var contiguousLength = 0
-        var totalLengthOut = 0
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        let pointerStatus = CMBlockBufferGetDataPointer(
-            dataBuffer,
-            atOffset: 0,
-            lengthAtOffsetOut: &contiguousLength,
-            totalLengthOut: &totalLengthOut,
-            dataPointerOut: &dataPointer
-        )
-
-        if pointerStatus == noErr,
-           totalLengthOut == totalLength,
-           contiguousLength == totalLength,
-           let dataPointer {
-            return Data(bytes: dataPointer, count: totalLength)
-        }
-
-        var copiedData = Data(count: totalLength)
-        let copyStatus = copiedData.withUnsafeMutableBytes { bytes -> OSStatus in
-            guard let baseAddress = bytes.baseAddress else { return -12700 }
-            return CMBlockBufferCopyDataBytes(
-                dataBuffer,
-                atOffset: 0,
-                dataLength: totalLength,
-                destination: baseAddress
-            )
-        }
-
-        guard copyStatus == noErr else {
-            throw EncodedFrameExtractionError.copyFailed(
-                status: copyStatus,
-                totalLength: totalLength,
-                pointerStatus: pointerStatus,
-                contiguousLength: contiguousLength
-            )
-        }
-
-        return copiedData
-    }
-
-    nonisolated func recordCallbackFailure(frameNumber: UInt64, status: OSStatus) {
-        bitstreamFailureLogLock.lock()
-        callbackFailureCount += 1
-        let count = callbackFailureCount
-        let now = CFAbsoluteTimeGetCurrent()
-        let shouldLog = lastCallbackFailureLogTime == 0 ||
-            now - lastCallbackFailureLogTime >= Self.bitstreamFailureLogCooldown
-        if shouldLog { lastCallbackFailureLogTime = now }
-        bitstreamFailureLogLock.unlock()
-
-        if shouldLog {
-            MirageLogger.error(
-                .encoder,
-                "Encoder callback failure: frame=\(frameNumber), status=\(status), totalFailures=\(count)"
-            )
-        }
-    }
-
-    nonisolated func getAndResetCallbackFailureCount() -> UInt64 {
-        bitstreamFailureLogLock.lock()
-        let count = callbackFailureCount
-        callbackFailureCount = 0
-        bitstreamFailureLogLock.unlock()
-        return count
-    }
-
-    nonisolated func shouldLogBitstreamFailure(at now: CFAbsoluteTime) -> Bool {
-        bitstreamFailureLogLock.lock()
-        defer { bitstreamFailureLogLock.unlock() }
-        if lastBitstreamFailureLogTime > 0,
-           now - lastBitstreamFailureLogTime < Self.bitstreamFailureLogCooldown {
-            return false
-        }
-        lastBitstreamFailureLogTime = now
-        return true
     }
 
     func scheduleRecoveryKeyframe(reason: String) {

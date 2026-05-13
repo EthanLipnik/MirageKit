@@ -38,32 +38,9 @@ package struct MirageNetworkPathSnapshot: Sendable, Equatable {
     package let usesOther: Bool
     package let localEndpointDescription: String?
     package let remoteEndpointDescription: String?
-
-    package var isReady: Bool {
-        status == "satisfied"
-    }
 }
 
 package enum MirageNetworkPathClassifier {
-    package static func classify(_ path: NWPath) -> MirageNetworkPathSnapshot {
-        let interfaces = path.availableInterfaces.map { $0.name.lowercased() }
-        return classify(
-            interfaceNames: interfaces,
-            usesWiFi: path.usesInterfaceType(.wifi),
-            usesWired: path.usesInterfaceType(.wiredEthernet),
-            usesCellular: path.usesInterfaceType(.cellular),
-            usesLoopback: path.usesInterfaceType(.loopback),
-            usesOther: path.usesInterfaceType(.other),
-            status: String(describing: path.status),
-            isExpensive: path.isExpensive,
-            isConstrained: path.isConstrained,
-            supportsIPv4: path.supportsIPv4,
-            supportsIPv6: path.supportsIPv6,
-            localEndpointDescription: endpointDescription(path.localEndpoint),
-            remoteEndpointDescription: endpointDescription(path.remoteEndpoint)
-        )
-    }
-
     package static func classify(_ snapshot: LoomSessionNetworkPathSnapshot) -> MirageNetworkPathSnapshot {
         classify(
             interfaceNames: snapshot.interfaceNames,
@@ -90,11 +67,7 @@ package enum MirageNetworkPathClassifier {
         usesLoopback: Bool,
         usesOther: Bool
     ) -> MirageNetworkPathKind {
-        let sortedNames = interfaceNames
-            .map { $0.lowercased() }
-            .sorted()
-        let hasAWDLInterface = sortedNames.contains { $0.hasPrefix("awdl") }
-        let hasOverlayInterface = sortedNames.contains { $0.hasPrefix("utun") }
+        let interfaces = InterfaceSummary(interfaceNames)
 
         if usesWiFi {
             return .wifi
@@ -108,10 +81,10 @@ package enum MirageNetworkPathClassifier {
         if usesLoopback {
             return .loopback
         }
-        if hasAWDLInterface {
+        if interfaces.hasAWDL {
             return .awdl
         }
-        if hasOverlayInterface {
+        if interfaces.hasOverlay {
             return .vpn
         }
         if usesOther {
@@ -135,15 +108,11 @@ package enum MirageNetworkPathClassifier {
         localEndpointDescription: String? = nil,
         remoteEndpointDescription: String? = nil
     ) -> MirageNetworkPathSnapshot {
-        let sortedNames = interfaceNames
-            .map { $0.lowercased() }
-            .sorted()
-        let hasAWDLInterface = sortedNames.contains { $0.hasPrefix("awdl") }
-        let hasOverlayInterface = sortedNames.contains { $0.hasPrefix("utun") }
+        let interfaces = InterfaceSummary(interfaceNames)
         let kind: MirageNetworkPathKind
-        if hasAWDLInterface {
+        if interfaces.hasAWDL {
             kind = .awdl
-        } else if hasOverlayInterface {
+        } else if interfaces.hasOverlay {
             kind = .vpn
         } else if usesWiFi {
             kind = .wifi
@@ -162,7 +131,7 @@ package enum MirageNetworkPathClassifier {
         let signature =
             "status=\(status)" +
             "|kind=\(kind.rawValue)" +
-            "|if=\(sortedNames.joined(separator: ","))" +
+            "|if=\(interfaces.names.joined(separator: ","))" +
             "|exp=\(isExpensive)" +
             "|con=\(isConstrained)" +
             "|v4=\(supportsIPv4)" +
@@ -174,7 +143,7 @@ package enum MirageNetworkPathClassifier {
             kind: kind,
             status: status,
             signature: signature,
-            interfaceNames: sortedNames,
+            interfaceNames: interfaces.names,
             isExpensive: isExpensive,
             isConstrained: isConstrained,
             supportsIPv4: supportsIPv4,
@@ -187,6 +156,21 @@ package enum MirageNetworkPathClassifier {
             localEndpointDescription: localEndpointDescription,
             remoteEndpointDescription: remoteEndpointDescription
         )
+    }
+
+    /// Normalizes Network.framework interface names before path-specific classification.
+    private struct InterfaceSummary {
+        let names: [String]
+        let hasAWDL: Bool
+        let hasOverlay: Bool
+
+        init(_ interfaceNames: [String]) {
+            names = interfaceNames
+                .map { $0.lowercased() }
+                .sorted()
+            hasAWDL = names.contains { $0.hasPrefix("awdl") }
+            hasOverlay = names.contains { $0.hasPrefix("utun") }
+        }
     }
 
     private static func endpointDescription(_ endpoint: NWEndpoint?) -> String? {

@@ -26,8 +26,8 @@ public extension MirageClientService {
     ) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
-        let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
-        let normalizedKnownIconBundleIdentifiers = Self.normalizedPriorityBundleIdentifiers(knownIconBundleIdentifiers)
+        let normalizedPriority = mirageNormalizedBundleIdentifiers(priorityBundleIdentifiers)
+        let normalizedKnownIconBundleIdentifiers = mirageNormalizedBundleIdentifiers(knownIconBundleIdentifiers)
         let requestID = UUID()
         MirageLogger.client(
             "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(forceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconBundleIdentifiers.count), requestID: \(requestID.uuidString))"
@@ -59,8 +59,6 @@ public extension MirageClientService {
     /// Request the connected host's hardware icon payload.
     /// - Parameter preferredMaxPixelSize: Preferred max pixel size for the returned PNG.
     func requestHostHardwareIcon(preferredMaxPixelSize: Int = 512) async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-
         let request = HostHardwareIconRequestMessage(preferredMaxPixelSize: preferredMaxPixelSize)
         try await sendControlMessage(.hostHardwareIconRequest, content: request)
         // Hardware-icon payloads are large enough to compete with heartbeat pings.
@@ -101,9 +99,13 @@ public extension MirageClientService {
             hostWallpaperContinuation = continuation
             hostWallpaperTimeoutTask?.cancel()
             hostWallpaperTimeoutTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: self?.hostWallpaperTimeout ?? .seconds(45))
+                do {
+                    try await Task.sleep(for: self?.hostWallpaperTimeout ?? .seconds(45))
+                } catch {
+                    return
+                }
                 guard let self,
-                      self.hostWallpaperContinuation != nil else {
+                      hostWallpaperContinuation != nil else {
                     return
                 }
                 completeHostWallpaperRequest(
@@ -150,11 +152,11 @@ public extension MirageClientService {
         guard let displayResolution else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
-        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution)
+        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(displayResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
-        let targetFrameRate = getScreenMaxRefreshRate()
+        let targetFrameRate = screenMaxRefreshRate
         let startupRequestID = UUID()
         let appSessionID = UUID()
         pendingStreamSetupRequestID = startupRequestID
@@ -164,7 +166,6 @@ public extension MirageClientService {
             startupRequestID: startupRequestID,
             appSessionID: appSessionID,
             bundleIdentifier: bundleIdentifier,
-            dataPort: nil,
             targetFrameRate: targetFrameRate,
             scaleFactor: nil,
             displayWidth: effectiveDisplayResolution.width > 0 ? Int(effectiveDisplayResolution.width) : nil,
@@ -172,12 +173,11 @@ public extension MirageClientService {
             keyFrameInterval: nil,
             colorDepth: nil,
             bitrate: nil,
-            streamScale: nil,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
             bitrateAllocationPolicy: bitrateAllocationPolicy,
             sizePreset: sizePreset,
-            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
+            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
@@ -186,7 +186,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: clampedStreamScale(),
+            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: encoderRequest.encoderMaxWidth,
             encoderMaxHeight: encoderRequest.encoderMaxHeight,
             disableResolutionCap: encoderRequest.disableResolutionCap == true
@@ -196,7 +196,7 @@ public extension MirageClientService {
         if encoderRequest.bitrateAdaptationCeiling != nil {
             scaledBitrate = encoderRequest.bitrate
         } else if let bitrate = encoderRequest.bitrate, bitrate > 0 {
-            let baselinePixels: Double = 2560.0 * 1440.0
+            let baselinePixels = 2560.0 * 1440.0
             let scaleFactor = min(
                 max(
                     Double(geometry.displayPixelSize.width) * Double(geometry.displayPixelSize.height) / baselinePixels,
@@ -212,7 +212,6 @@ public extension MirageClientService {
             startupRequestID: encoderRequest.startupRequestID,
             appSessionID: encoderRequest.appSessionID,
             bundleIdentifier: encoderRequest.bundleIdentifier,
-            dataPort: encoderRequest.dataPort,
             targetFrameRate: encoderRequest.targetFrameRate,
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
@@ -225,7 +224,6 @@ public extension MirageClientService {
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: encoderRequest.lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: encoderRequest.disableResolutionCap,
-            streamScale: geometry.resolvedStreamScale,
             audioConfiguration: encoderRequest.audioConfiguration,
             maxConcurrentVisibleWindows: encoderRequest.maxConcurrentVisibleWindows,
             bitrateAllocationPolicy: encoderRequest.bitrateAllocationPolicy,
@@ -264,7 +262,6 @@ public extension MirageClientService {
         targetSlotStreamID: StreamID,
         targetWindowID: WindowID
     ) async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         let request = AppWindowSwapRequestMessage(
             bundleIdentifier: bundleIdentifier,
             targetSlotStreamID: targetSlotStreamID,
@@ -279,7 +276,6 @@ public extension MirageClientService {
         actionID: String,
         presentingStreamID: StreamID
     ) async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         let request = AppWindowCloseAlertActionRequestMessage(
             alertToken: alertToken,
             actionID: actionID,
@@ -297,22 +293,4 @@ public extension MirageClientService {
         availableAppsByBundleIdentifier.removeAll(keepingCapacity: false)
         orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: false)
     }
-
-    private static func normalizedPriorityBundleIdentifiers(_ bundleIdentifiers: [String]) -> [String] {
-        var seen: Set<String> = []
-        var ordered: [String] = []
-        ordered.reserveCapacity(bundleIdentifiers.count)
-
-        for bundleIdentifier in bundleIdentifiers {
-            let normalized = bundleIdentifier
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            guard !normalized.isEmpty else { continue }
-            guard seen.insert(normalized).inserted else { continue }
-            ordered.append(normalized)
-        }
-
-        return ordered
-    }
-
 }

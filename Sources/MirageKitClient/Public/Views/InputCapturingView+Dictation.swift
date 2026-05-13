@@ -10,7 +10,6 @@
 import MirageKit
 #if os(iOS) || os(visionOS)
 import AVFAudio
-import CoreMedia
 import Speech
 import UIKit
 
@@ -53,8 +52,8 @@ extension InputCapturingView {
                         inputLevelHandler: inputLevelHandler
                     )
                 } else {
-                    MirageLogger.client("Starting legacy dictation recognizer locale=\(dictationLocale.identifier)")
-                    try startSpeechRecognizerDictationLegacy(
+                    MirageLogger.client("Starting Speech recognizer dictation locale=\(dictationLocale.identifier)")
+                    try startSpeechRecognizerDictation(
                         locale: dictationLocale,
                         inputLevelHandler: inputLevelHandler
                     )
@@ -98,7 +97,11 @@ extension InputCapturingView {
                 defer { self?.dictationFinalizeTask = nil }
                 if #available(iOS 26.0, visionOS 26.0, *),
                    let analyzer = analyzerObject as? SpeechAnalyzer {
-                    try? await analyzer.finalizeAndFinishThroughEndOfInput()
+                    do {
+                        try await analyzer.finalizeAndFinishThroughEndOfInput()
+                    } catch {
+                        MirageLogger.error(.client, error: error, message: "Failed to finalize dictation analyzer: ")
+                    }
                 }
                 if let resultTask = self?.dictationResultTask {
                     await resultTask.value
@@ -116,7 +119,13 @@ extension InputCapturingView {
             dictationResultTask = nil
             if #available(iOS 26.0, visionOS 26.0, *),
                let analyzer = analyzerObject as? SpeechAnalyzer {
-                Task { try? await analyzer.finalizeAndFinishThroughEndOfInput() }
+                Task {
+                    do {
+                        try await analyzer.finalizeAndFinishThroughEndOfInput()
+                    } catch {
+                        MirageLogger.error(.client, error: error, message: "Failed to finalize cancelled dictation analyzer: ")
+                    }
+                }
             }
             if #available(iOS 26.0, visionOS 26.0, *), let reservedLocale {
                 Task { _ = await AssetInventory.release(reservedLocale: reservedLocale) }
@@ -130,7 +139,11 @@ extension InputCapturingView {
             recognitionRequest?.endAudio()
             dictationFinalizeTask = Task { @MainActor [weak self] in
                 defer { self?.dictationFinalizeTask = nil }
-                try? await Task.sleep(for: .milliseconds(350))
+                do {
+                    try await Task.sleep(for: .milliseconds(350))
+                } catch {
+                    return
+                }
                 recognitionTask.cancel()
             }
         } else {
@@ -198,8 +211,8 @@ extension InputCapturingView {
         return { [weak self, meter] buffer in
             guard let level = meter.process(buffer) else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.dictationInputLevelGeneration == generation else { return }
-                self.onDictationInputLevelChanged?(level)
+                guard let self, dictationInputLevelGeneration == generation else { return }
+                onDictationInputLevelChanged?(level)
             }
         }
     }
@@ -210,186 +223,19 @@ extension InputCapturingView {
         onDictationInputLevelChanged?(0)
     }
 
-    @available(iOS 26.0, visionOS 26.0, *)
-    private func startSpeechAnalyzerDictationModern(
-        locale: Locale,
-        inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
-    ) async throws {
-        let moduleChoice = DictationModuleChoice(locale: locale, mode: dictationMode)
-        MirageLogger.client("Dictation analyzer module=\(String(describing: moduleChoice)) locale=\(locale.identifier)")
-        dictationResultBuffer.reset()
-        if let selectedLocale = moduleChoice.selectedLocale {
-            do {
-                let reserved = try await AssetInventory.reserve(locale: selectedLocale)
-                if reserved { dictationReservedLocale = selectedLocale }
-            } catch {
-                MirageLogger.client("Dictation locale reservation failed: \(error.localizedDescription)")
-            }
-        }
-
-        var streamContinuation: AsyncStream<AnalyzerInput>.Continuation?
-        let stream = AsyncStream<AnalyzerInput> { continuation in
-            streamContinuation = continuation
-        }
-        guard let streamContinuation else { throw DictationError.streamInitializationFailed }
-
-        let analyzer = SpeechAnalyzer(modules: [moduleChoice.module])
-        dictationAnalyzer = analyzer
-
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        let preferredAnalyzerFormatCandidate = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [moduleChoice.module],
-            considering: inputFormat
-        )
-        let secondaryAnalyzerFormatCandidate = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: [moduleChoice.module]
-        )
-        let preferredAnalyzerFormat = preferredAnalyzerFormatCandidate ?? secondaryAnalyzerFormatCandidate
-        guard let analyzerInputFormat = speechAnalyzerInputFormat(
-            forAnalyzerPreferredFormat: preferredAnalyzerFormat,
-            fallback: inputFormat
-        ) else {
-            throw DictationError.streamInitializationFailed
-        }
-        let analyzerSink = AnalyzerInputSink(continuation: streamContinuation)
-        let analyzerConverter = DictationAnalyzerConverter(
-            sourceFormat: inputFormat,
-            targetFormat: analyzerInputFormat
-        )
-        dictationAnalyzerInputSink = analyzerSink
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(
-            onBus: 0,
-            bufferSize: 1024,
-            format: nil,
-            block: makeAnalyzerInputTapBlock(
-                sink: analyzerSink,
-                converter: analyzerConverter,
-                inputLevelHandler: inputLevelHandler
-            )
-        )
-
-        try engine.start()
-        dictationAudioEngine = engine
-
-        dictationResultTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                switch moduleChoice {
-                case let .speechTranscriber(transcriber):
-                    for try await result in transcriber.results {
-                        if dictationMode == .best, !result.isFinal { continue }
-                        if dictationMode == .best {
-                            bufferDictationFinalResult(String(result.text.characters), range: result.range)
-                        } else {
-                            handleDictationResultText(String(result.text.characters))
-                        }
-                    }
-                case let .dictationTranscriber(transcriber):
-                    for try await result in transcriber.results {
-                        if dictationMode == .best, !result.isFinal { continue }
-                        if dictationMode == .best {
-                            bufferDictationFinalResult(String(result.text.characters), range: result.range)
-                        } else {
-                            handleDictationResultText(String(result.text.characters))
-                        }
-                    }
-                }
-            } catch {
-                if !Task.isCancelled {
-                    stopDictation()
-                    onDictationError?(dictationErrorMessage(for: error))
-                }
-            }
-        }
-
-        dictationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await analyzer.start(inputSequence: stream)
-            } catch {
-                if !Task.isCancelled {
-                    stopDictation()
-                    onDictationError?(dictationErrorMessage(for: error))
-                }
-            }
-        }
-    }
-
-    private func startSpeechRecognizerDictationLegacy(
-        locale: Locale,
-        inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
-    ) throws {
-        dictationResultBuffer.reset()
-
-        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-            MirageLogger.client("Legacy dictation recognizer unavailable locale=\(locale.identifier)")
-            throw DictationError.recognizerUnavailable
-        }
-
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = dictationMode == .realTime
-        dictationRecognitionRequest = request
-
-        dictationRecognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-
-                if let result {
-                    if dictationMode == .best {
-                        if result.isFinal {
-                            handleDictationResultText(result.bestTranscription.formattedString)
-                        }
-                    } else {
-                        handleDictationResultText(result.bestTranscription.formattedString)
-                    }
-                }
-
-                if let error {
-                    stopDictation()
-                    onDictationError?(dictationErrorMessage(for: error))
-                }
-            }
-        }
-
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        let recognitionRequest = request
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(
-            onBus: 0,
-            bufferSize: 1024,
-            format: inputFormat,
-            block: makeLegacyRecognitionTapBlock(
-                request: recognitionRequest,
-                inputLevelHandler: inputLevelHandler
-            )
-        )
-
-        try engine.start()
-        dictationAudioEngine = engine
-    }
-
-    private func handleDictationResultText(_ fullText: String) {
+    func handleDictationResultText(_ fullText: String) {
         guard let delta = dictationResultBuffer.delta(forCumulativeText: fullText) else { return }
         sendDictationText(delta)
     }
 
-    private func bufferDictationFinalResult(_ text: String, range: CMTimeRange) {
-        dictationResultBuffer.bufferFinalSegment(text: text, range: range)
-    }
-
-    private func flushBufferedDictationFinalSegments() {
+    func flushBufferedDictationFinalSegments() {
         let orderedSegments = dictationResultBuffer.drainFinalSegments()
         for segment in orderedSegments {
             sendDictationText(segment)
         }
     }
 
-    private func sendDictationText(_ text: String) {
+    func sendDictationText(_ text: String) {
         let modifiers: MirageModifierFlags = []
         for scalar in text {
             let character = String(scalar)
@@ -403,7 +249,10 @@ extension InputCapturingView {
                 continue
             }
 
-            guard let event = softwareKeyEvent(for: character, baseModifiers: modifiers) else { continue }
+            guard let event = MirageClientKeyEventBuilder.softwareKeyEvent(
+                for: character,
+                baseModifiers: modifiers
+            ) else { continue }
             sendSoftwareKeyEvent(
                 keyCode: event.keyCode,
                 characters: event.characters,
@@ -413,7 +262,7 @@ extension InputCapturingView {
         }
     }
 
-    private func dictationErrorMessage(for error: Error) -> String {
+    func dictationErrorMessage(for error: Error) -> String {
         if let dictationError = error as? DictationError {
             switch dictationError {
             case .microphonePermissionDenied:
@@ -435,241 +284,6 @@ extension InputCapturingView {
         }
         return "Dictation failed."
     }
-
 }
 
-@available(iOS 26.0, visionOS 26.0, *)
-private enum DictationModuleChoice {
-    case speechTranscriber(SpeechTranscriber)
-    case dictationTranscriber(DictationTranscriber)
-
-    init(locale: Locale, mode: MirageDictationMode) {
-        if SpeechTranscriber.isAvailable {
-            switch mode {
-            case .realTime:
-                self = .speechTranscriber(SpeechTranscriber(locale: locale, preset: .progressiveTranscription))
-            case .best:
-                self = .speechTranscriber(SpeechTranscriber(locale: locale, preset: .transcription))
-            }
-        } else {
-            switch mode {
-            case .realTime:
-                self = .dictationTranscriber(DictationTranscriber(locale: locale, preset: .progressiveLongDictation))
-            case .best:
-                self = .dictationTranscriber(DictationTranscriber(locale: locale, preset: .longDictation))
-            }
-        }
-    }
-
-    var module: any SpeechModule {
-        switch self {
-        case let .speechTranscriber(module):
-            return module
-        case let .dictationTranscriber(module):
-            return module
-        }
-    }
-
-    var selectedLocale: Locale? {
-        switch self {
-        case let .speechTranscriber(module):
-            return module.selectedLocales.first
-        case let .dictationTranscriber(module):
-            return module.selectedLocales.first
-        }
-    }
-}
-
-private enum DictationError: Error {
-    case microphonePermissionDenied
-    case speechPermissionDenied
-    case recognizerUnavailable
-    case streamInitializationFailed
-    case audioSessionUnavailable
-}
-
-private enum SpeechAuthorizationBridge {
-    static func requestStatus() async -> SFSpeechRecognizerAuthorizationStatus {
-        await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
-    }
-}
-
-@available(iOS 26.0, visionOS 26.0, *)
-private final class AnalyzerInputSink: @unchecked Sendable {
-    private let continuation: AsyncStream<AnalyzerInput>.Continuation
-    private let queue = DispatchQueue(label: "io.miragekit.client.dictation.analyzer-input", qos: .userInitiated)
-    private var finished = false
-
-    init(continuation: AsyncStream<AnalyzerInput>.Continuation) {
-        self.continuation = continuation
-    }
-
-    func yield(_ buffer: AVAudioPCMBuffer) {
-        queue.async { [weak self] in
-            guard let self, !self.finished else { return }
-            guard buffer.format.commonFormat == .pcmFormatInt16 else { return }
-            self.continuation.yield(AnalyzerInput(buffer: buffer))
-        }
-    }
-
-    func finish() {
-        queue.async { [weak self] in
-            guard let self, !self.finished else { return }
-            self.finished = true
-            self.continuation.finish()
-        }
-    }
-}
-
-@available(iOS 26.0, visionOS 26.0, *)
-private final class DictationAnalyzerConverter: @unchecked Sendable {
-    let sourceFormat: AVAudioFormat
-    let targetFormat: AVAudioFormat
-    private let converter: AVAudioConverter?
-
-    init(sourceFormat: AVAudioFormat, targetFormat: AVAudioFormat) {
-        self.sourceFormat = sourceFormat
-        self.targetFormat = targetFormat
-        if sourceFormat == targetFormat {
-            converter = nil
-        } else {
-            converter = AVAudioConverter(from: sourceFormat, to: targetFormat)
-        }
-    }
-
-    func convert(_ sourceBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let converter else {
-            guard sourceBuffer.format.commonFormat == .pcmFormatInt16 else { return nil }
-            return copyPCMBufferForDictation(sourceBuffer)
-        }
-
-        let outputFrameCapacity = AVAudioFrameCount(
-            (Double(sourceBuffer.frameLength) * targetFormat.sampleRate / sourceFormat.sampleRate).rounded(.up)
-        )
-        guard outputFrameCapacity > 0 else { return nil }
-        guard let convertedBuffer = AVAudioPCMBuffer(
-            pcmFormat: targetFormat,
-            frameCapacity: outputFrameCapacity + 1
-        ) else {
-            return nil
-        }
-
-        var consumedSource = false
-        var conversionError: NSError?
-        let status = converter.convert(to: convertedBuffer, error: &conversionError) { _, outStatus in
-            if consumedSource {
-                outStatus.pointee = .noDataNow
-                return nil
-            }
-            consumedSource = true
-            outStatus.pointee = .haveData
-            return sourceBuffer
-        }
-
-        if let conversionError {
-            MirageLogger.client("Dictation converter error: \(conversionError.localizedDescription)")
-            return nil
-        }
-
-        switch status {
-        case .haveData, .inputRanDry, .endOfStream:
-            if convertedBuffer.frameLength > 0, convertedBuffer.format.commonFormat == .pcmFormatInt16 {
-                return convertedBuffer
-            }
-            return nil
-        case .error:
-            return nil
-        @unknown default:
-            return nil
-        }
-    }
-}
-
-@available(iOS 26.0, visionOS 26.0, *)
-private func makeAnalyzerInputTapBlock(
-    sink: AnalyzerInputSink,
-    converter: DictationAnalyzerConverter,
-    inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
-) -> AVAudioNodeTapBlock {
-    { buffer, _ in
-        inputLevelHandler?(buffer)
-        guard let copiedBuffer = copyPCMBufferForDictation(buffer) else { return }
-        guard let convertedBuffer = converter.convert(copiedBuffer) else { return }
-        sink.yield(convertedBuffer)
-    }
-}
-
-private func makeLegacyRecognitionTapBlock(
-    request: SFSpeechAudioBufferRecognitionRequest,
-    inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
-) -> AVAudioNodeTapBlock {
-    { buffer, _ in
-        inputLevelHandler?(buffer)
-        request.append(buffer)
-    }
-}
-
-private func speechAnalyzerInputFormat(
-    forAnalyzerPreferredFormat preferredFormat: AVAudioFormat?,
-    fallback fallbackFormat: AVAudioFormat
-) -> AVAudioFormat? {
-    if let preferredFormat {
-        if preferredFormat.commonFormat == .pcmFormatInt16 { return preferredFormat }
-
-        if let int16Preferred = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: preferredFormat.sampleRate,
-            channels: max(preferredFormat.channelCount, 1),
-            interleaved: preferredFormat.isInterleaved
-        ) {
-            return int16Preferred
-        }
-    }
-
-    if let int16SpeechDefault = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: 16_000,
-        channels: 1,
-        interleaved: false
-    ) {
-        return int16SpeechDefault
-    }
-
-    if let int16Fallback = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
-        sampleRate: fallbackFormat.sampleRate,
-        channels: max(fallbackFormat.channelCount, 1),
-        interleaved: false
-    ) {
-        return int16Fallback
-    }
-
-    return nil
-}
-
-private func copyPCMBufferForDictation(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-    guard let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameCapacity) else {
-        return nil
-    }
-    copy.frameLength = source.frameLength
-
-    let sourceBufferList = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
-    let destinationBufferList = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
-    guard sourceBufferList.count == destinationBufferList.count else { return copy }
-
-    for index in 0 ..< sourceBufferList.count {
-        let sourceBuffer = sourceBufferList[index]
-        let destinationBuffer = destinationBufferList[index]
-        guard let sourceData = sourceBuffer.mData, let destinationData = destinationBuffer.mData else {
-            continue
-        }
-        memcpy(destinationData, sourceData, Int(sourceBuffer.mDataByteSize))
-    }
-
-    return copy
-}
 #endif

@@ -18,10 +18,12 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Helpers
 
+    /// Posts an event to the session event tap.
     func postEvent(_ event: CGEvent) {
         postEvent(event, domain: .session)
     }
 
+    /// Posts an event to the requested host injection domain.
     func postEvent(_ event: CGEvent, domain: HostKeyboardInjectionDomain) {
         switch domain {
         case .session:
@@ -31,6 +33,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Posts a synthetic flags-changed event for the requested modifier state.
     func postFlagsChangedEvent(_ modifiers: MirageModifierFlags, domain: HostKeyboardInjectionDomain) {
         guard let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) else {
             return
@@ -40,6 +43,7 @@ extension MirageHostInputController {
         postEvent(cgEvent, domain: domain)
     }
 
+    /// Returns the current CoreGraphics window frame for a host window ID.
     func currentWindowFrame(for windowID: WindowID) -> CGRect? {
         if let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
            let windowInfo = windowList.first,
@@ -51,6 +55,7 @@ extension MirageHostInputController {
         return nil
     }
 
+    /// Resolves the input target frame, preferring recent OS-reported geometry when available.
     func resolvedInputWindowFrame(for windowID: WindowID, streamFrame: CGRect) -> CGRect {
         let now = CFAbsoluteTimeGetCurrent()
 
@@ -61,16 +66,12 @@ extension MirageHostInputController {
                 streamFrame,
                 tolerance: inputWindowFrameSourceTolerance
             )
-            if cacheFresh && streamFrameStable {
+            if cacheFresh, streamFrameStable {
                 return cached.resolvedFrame
             }
         }
 
         let sampledFrame = currentWindowFrame(for: windowID)
-        // Trust CGWindowList when available — it reflects the OS-reported window
-        // position and is authoritative even when the input cache is stale (e.g.
-        // after orphaned virtual display displacement).  Fall back to the cached
-        // stream frame only when the CGWindowList query fails.
         let resolvedFrame = sampledFrame ?? streamFrame
         inputWindowFrameCacheByWindowID[windowID] = CachedInputWindowFrame(
             streamFrame: streamFrame,
@@ -81,6 +82,7 @@ extension MirageHostInputController {
         return resolvedFrame
     }
 
+    /// Removes stale input-frame cache entries.
     func pruneInputWindowFrameCache(now: CFAbsoluteTime) {
         guard !inputWindowFrameCacheByWindowID.isEmpty else { return }
         inputWindowFrameCacheByWindowID = inputWindowFrameCacheByWindowID.filter {
@@ -88,6 +90,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Returns whether two frames are close enough to be treated as equivalent.
     func framesAreClose(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 2) -> Bool {
         abs(a.origin.x - b.origin.x) <= tolerance &&
             abs(a.origin.y - b.origin.y) <= tolerance &&

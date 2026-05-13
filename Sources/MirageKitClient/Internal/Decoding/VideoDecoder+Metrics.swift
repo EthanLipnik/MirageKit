@@ -26,16 +26,14 @@ extension DecodeErrorTracker {
         }
         let now = CFAbsoluteTimeGetCurrent()
 
-        // A VideoToolbox decode failure usually means the HEVC dependency chain
-        // is no longer trustworthy. Fence P-frame admission immediately and
-        // request a recovery keyframe, with dispatch throttled below.
-        if consecutiveErrors >= 1, !thresholdFired {
+        // Initial threshold fire
+        if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
             thresholdFired = true
             let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
             guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {
                 let remainingMs = Int(((thresholdDispatchCooldown - timeSinceLastThreshold) * 1000).rounded(.up))
                 MirageLogger.decoder(
-                    "Decode error recovery requested (\(consecutiveErrors) errors) - dispatch throttled \(remainingMs)ms"
+                    "Decode error threshold reached (\(consecutiveErrors) errors) - threshold dispatch throttled \(remainingMs)ms"
                 )
                 return
             }
@@ -44,7 +42,7 @@ extension DecodeErrorTracker {
             recoveryRequiresKeyframeDecode = true
             // Call handler outside lock to avoid deadlocks
             lock.unlock()
-            MirageLogger.decoder("Decode error recovery requested (\(consecutiveErrors) errors) - requesting keyframe")
+            MirageLogger.decoder("Decode error threshold reached (\(consecutiveErrors) errors) - requesting keyframe")
             onThresholdReached()
             lock.lock()
             return
@@ -121,12 +119,14 @@ extension DecodeErrorTracker {
 
     func requestKeyframeForDimensionChange() {
         lock.lock()
-        consecutiveErrors = 0 // Reset since dimension change makes error count meaningless
-        thresholdFired = true // Mark as already fired to prevent duplicate immediate requests
-        lastThresholdTime = CFAbsoluteTimeGetCurrent()
-        recoverySuccessCount = 0
-        recoveryRequiresKeyframeDecode = true
-        lock.unlock()
+        do {
+            defer { lock.unlock() }
+            consecutiveErrors = 0 // Reset since dimension change makes error count meaningless
+            thresholdFired = true // Mark as already fired to prevent duplicate immediate requests
+            lastThresholdTime = CFAbsoluteTimeGetCurrent()
+            recoverySuccessCount = 0
+            recoveryRequiresKeyframeDecode = true
+        }
 
         MirageLogger.decoder("Requesting keyframe due to dimension change")
         onThresholdReached()
@@ -206,28 +206,13 @@ extension DecodeErrorTracker {
         }
         return false
     }
-
-    func totalErrorsSnapshot() -> UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        return totalErrors
-    }
 }
 
 extension DecodePerformanceTracker {
     func record(durationMs: Double) {
         lock.lock()
+        defer { lock.unlock() }
         samples.append(durationMs)
         if samples.count > maxSamples { samples.removeFirst(samples.count - maxSamples) }
-        lock.unlock()
-    }
-
-    func averageMs() -> Double {
-        lock.lock()
-        let snapshot = samples
-        lock.unlock()
-        guard !snapshot.isEmpty else { return 0 }
-        let total = snapshot.reduce(0, +)
-        return total / Double(snapshot.count)
     }
 }

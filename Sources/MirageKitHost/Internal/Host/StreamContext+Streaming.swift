@@ -31,7 +31,6 @@ enum StreamCaptureEngineSetupError: Error, LocalizedError {
 }
 
 extension StreamContext {
-
     /// Configures the packet sender for encoded frame output.
     func setupPacketSender(
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
@@ -40,7 +39,6 @@ extension StreamContext {
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext,
-            diagnosticsBuffer: diagnosticsBuffer,
             sendPacket: sendPacket,
             onSendError: onSendError,
             onDependencyFrameDropped: { [weak self] streamID, frameNumber, reason in
@@ -53,7 +51,7 @@ extension StreamContext {
                 }
             }
         )
-        self.packetSender = sender
+        packetSender = sender
         await sender.start()
         await sender.setTargetBitrateBps(encoderConfig.bitrate)
     }
@@ -78,11 +76,10 @@ extension StreamContext {
         if !preheatOK {
             MirageLogger.error(.stream, "Encoder preheat failed on all pixel formats and spec tiers; streaming may not work")
         }
-        activePixelFormat = await encoder.getActivePixelFormat()
+        activePixelFormat = await encoder.activePixelFormat
         shouldEncodeFrames = false
         startupFrameCachingEnabled = true
         cachedStartupFrame = nil
-        cachedDesktopResizeFrame = nil
         MirageLogger.stream("Waiting for UDP registration before encoding")
     }
 
@@ -96,32 +93,31 @@ extension StreamContext {
         pinnedContentRect: CGRect?,
         logPrefix: String
     ) async {
-        let streamID = streamID
-        guard let packetSender = self.packetSender, let encoder = self.encoder else {
-            MirageLogger.stream("startEncoderWithSharedCallback skipped — stream \(streamID) already stopped")
+        let currentStreamID = streamID
+        guard let packetSender, let encoder else {
+            MirageLogger.stream("startEncoderWithSharedCallback skipped — stream \(currentStreamID) already stopped")
             return
         }
         let callbackSequencer = StreamEncodingCallbackSequencer()
-        let baseFrameFlags = self.baseFrameFlags
+        let baseFrameFlagsSnapshot = baseFrameFlags
 
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
 
                 let now = CFAbsoluteTimeGetCurrent()
-                if !isKeyframe, self.suppressEncodedNonKeyframesUntilKeyframe {
+                if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe {
                     return
                 }
                 if isKeyframe {
-                    self.suppressEncodedNonKeyframesUntilKeyframe = false
+                    suppressEncodedNonKeyframesUntilKeyframe = false
                 }
 
-                let fecBlockSize = self.resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
+                let fecBlockSize = resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
                 let reservation = callbackSequencer.reserve(
                     frameByteCount: encodedData.count,
-                    maxPayloadSize: self.maxPayloadSize,
-                    fecBlockSize: fecBlockSize,
-                    isKeyframe: isKeyframe
+                    maxPayloadSize: maxPayloadSize,
+                    fecBlockSize: fecBlockSize
                 )
 
                 if isKeyframe {
@@ -136,22 +132,15 @@ extension StreamContext {
                         frameBytes: encodedData
                     )
                 }
-                self.diagnosticsBuffer.recordFrameMarker(
-                    streamID: streamID,
-                    frameSizeBytes: encodedData.count,
-                    isKeyframe: isKeyframe,
-                    now: now
-                )
-
-                let contentRect = pinnedContentRect ?? self.currentContentRect
+                let contentRect = pinnedContentRect ?? currentContentRect
                 let pacingOverride = isKeyframe ? Self.keyframePacingOverride() : nil
                 let frameByteCount = encodedData.count
 
-                let flags = baseFrameFlags.union(self.dynamicFrameFlags)
-                let dimToken = self.dimensionToken
-                let epoch = self.epoch
+                let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
+                let dimToken = dimensionToken
+                let currentEpoch = epoch
 
-                let generation = packetSender.currentGenerationSnapshot()
+                let generation = packetSender.currentGeneration
                 if isKeyframe {
                     Task(priority: .userInitiated) {
                         await self.markKeyframeInFlight()
@@ -169,19 +158,13 @@ extension StreamContext {
                     sequenceNumberStart: reservation.sequenceNumberStart,
                     additionalFlags: flags,
                     dimensionToken: dimToken,
-                    epoch: epoch,
+                    epoch: currentEpoch,
                     fecBlockSize: fecBlockSize,
                     wireBytes: reservation.wireBytes,
                     logPrefix: logPrefix,
                     generation: generation,
                     encodedAt: now,
-                    sendDeadline: Self.packetSendDeadline(
-                        encodedAt: now,
-                        isKeyframe: isKeyframe,
-                        targetFrameRate: self.currentFrameRate,
-                        latencyMode: self.latencyMode
-                    ),
-                    targetFrameRate: self.currentFrameRate,
+                    targetFrameRate: currentFrameRate,
                     pacingOverride: pacingOverride
                 )
                 packetSender.enqueue(workItem)
@@ -199,7 +182,7 @@ extension StreamContext {
             throw StreamCaptureEngineSetupError.encoderUnavailable
         }
 
-        let resolvedPixelFormat = await encoder.getActivePixelFormat()
+        let resolvedPixelFormat = await encoder.activePixelFormat
         guard isRunning, self.encoder != nil else {
             throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
         }
@@ -212,28 +195,28 @@ extension StreamContext {
             captureFrameRate: captureFrameRate,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )
-        self.captureEngine = engine
+        captureEngine = engine
         if let captureStallStageHandler {
             guard isRunning, self.encoder != nil else {
-                self.captureEngine = nil
+                captureEngine = nil
                 throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
             }
             await engine.setCaptureStallStageHandler(captureStallStageHandler)
         }
-        let frameInbox = self.frameInbox
+        let frameInboxSnapshot = frameInbox
         guard isRunning, self.encoder != nil else {
-            self.captureEngine = nil
+            captureEngine = nil
             throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
         }
         await engine.setAdmissionDropper { [weak self] in
-            let snapshot = frameInbox.pendingSnapshot()
+            let snapshot = frameInboxSnapshot.pendingSnapshot
             let backpressure = self?.backpressureActiveSnapshot ?? false
             let pendingThreshold = backpressure
                 ? max(1, snapshot.capacity - 1)
                 : snapshot.capacity
             let pendingPressure = snapshot.pending >= pendingThreshold
             guard pendingPressure || backpressure else { return false }
-            if frameInbox.scheduleIfNeeded() {
+            if frameInboxSnapshot.scheduleIfNeeded() {
                 Task(priority: .userInitiated) { await self?.processPendingFrames() }
             }
             return true
@@ -268,15 +251,11 @@ extension StreamContext {
 
     func hasObservedDisplayStartupSample() async -> Bool {
         guard captureMode == .display, let captureEngine else { return false }
-        return await captureEngine.hasObservedDisplayStartupSample()
+        return await captureEngine.hasObservedDisplayStartupSample
     }
 
-    func hasCachedStartupFrame() -> Bool {
+    var hasCachedStartupFrame: Bool {
         cachedStartupFrame != nil
-    }
-
-    func hasCachedDesktopResizeFrame() -> Bool {
-        cachedDesktopResizeFrame != nil
     }
 
     func seedDisplayStartupFrameIfNeeded() async -> Bool {
@@ -294,25 +273,6 @@ extension StreamContext {
         cachedStartupFrame = seededFrame
         MirageLogger.stream(
             "Cached screenshot startup frame for stream \(streamID) pending first live display sample"
-        )
-        return true
-    }
-
-    func seedSyntheticDisplayStartupFrameIfNeeded(reason: String) async -> Bool {
-        guard captureMode == .display,
-              startupFrameCachingEnabled,
-              cachedStartupFrame == nil,
-              let captureEngine else {
-            return cachedStartupFrame != nil
-        }
-
-        guard let syntheticFrame = await captureEngine.captureSyntheticDisplayStartupFrame() else {
-            return false
-        }
-
-        cachedStartupFrame = syntheticFrame
-        MirageLogger.stream(
-            "Cached synthetic startup frame for stream \(streamID) pending first live display sample reason=\(reason)"
         )
         return true
     }

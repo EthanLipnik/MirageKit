@@ -9,9 +9,13 @@ import CoreGraphics
 import MirageKit
 
 #if os(macOS)
+/// Packs multiple logical app windows into one encoder-aligned app-atlas video surface.
 enum AppAtlasLayout {
-    struct Window: Identifiable, Sendable, Equatable {
+    /// Input window geometry for app-atlas packing.
+    struct Window: Identifiable, Equatable {
+        /// Host window identifier represented by this logical atlas window.
         let id: WindowID
+        /// Source rectangle in the captured window surface.
         let sourceRect: CGRect
 
         init(id: WindowID, sourceRect: CGRect) {
@@ -19,13 +23,7 @@ enum AppAtlasLayout {
             self.sourceRect = sourceRect.standardized
         }
 
-        var aspectRatio: CGFloat {
-            let size = sourceRect.size
-            guard size.width > 0, size.height > 0 else { return 1 }
-            let ratio = size.width / size.height
-            return ratio.isFinite && ratio > 0 ? ratio : 1
-        }
-
+        /// Whether the source rectangle can produce a non-empty encoded region.
         var isValid: Bool {
             sourceRect.width > 0 &&
                 sourceRect.height > 0 &&
@@ -34,47 +32,24 @@ enum AppAtlasLayout {
         }
     }
 
-    struct Placement: Identifiable, Sendable, Equatable {
+    /// Mapping from one source window rectangle into the atlas canvas.
+    struct Placement: Identifiable, Equatable {
+        /// Host window identifier placed in the atlas.
         let id: WindowID
+        /// Window-local source rectangle copied into the atlas.
         let sourceRect: CGRect
+        /// Atlas-local destination rectangle occupied by the source.
         let destinationRect: CGRect
-        let normalizedDestinationRect: CGRect
-
-        func sourcePoint(forCanvasPoint point: CGPoint) -> CGPoint? {
-            guard destinationRect.width > 0,
-                  destinationRect.height > 0,
-                  sourceRect.width > 0,
-                  sourceRect.height > 0,
-                  destinationRect.contains(point) else {
-                return nil
-            }
-
-            let normalizedX = (point.x - destinationRect.minX) / destinationRect.width
-            let normalizedY = (point.y - destinationRect.minY) / destinationRect.height
-            return CGPoint(
-                x: sourceRect.minX + normalizedX * sourceRect.width,
-                y: sourceRect.minY + normalizedY * sourceRect.height
-            )
-        }
     }
 
-    struct Result: Sendable, Equatable {
+    /// Packed atlas canvas and its per-window placements.
+    struct Result: Equatable {
+        /// Encoder-aligned pixel size of the atlas canvas.
         let canvasSize: CGSize
-        let contentRect: CGRect
+        /// Ordered window placements inside the atlas.
         let placements: [Placement]
 
-        func placement(containing point: CGPoint) -> Placement? {
-            placements.first { $0.destinationRect.contains(point) }
-        }
-
-        func sourcePoint(forCanvasPoint point: CGPoint) -> (id: WindowID, point: CGPoint)? {
-            guard let placement = placement(containing: point),
-                  let sourcePoint = placement.sourcePoint(forCanvasPoint: point) else {
-                return nil
-            }
-            return (placement.id, sourcePoint)
-        }
-
+        /// Converts the internal placement result into the wire-layout message sent to clients.
         func makePublicLayout(
             mediaStreamID: StreamID,
             layoutEpoch: UInt64,
@@ -101,13 +76,7 @@ enum AppAtlasLayout {
         }
     }
 
-    private struct Candidate: Sendable {
-        let result: Result
-        let usedArea: CGFloat
-        let rowCount: Int
-    }
-
-    private struct NativeCandidate: Sendable {
+    private struct NativeCandidate {
         let result: Result
         let area: CGFloat
         let aspectPenalty: CGFloat
@@ -116,44 +85,14 @@ enum AppAtlasLayout {
     private static let maxExhaustiveWindowCount = 10
     private static let maxFallbackRows = 6
 
-    static func fixedCanvasLayout(
-        windows: [Window],
-        canvasSize: CGSize,
-        spacing requestedSpacing: CGFloat = 0
-    ) -> Result {
-        let resolvedCanvasSize = normalizedCanvasSize(canvasSize)
-        guard resolvedCanvasSize.width > 0, resolvedCanvasSize.height > 0 else {
-            return Result(canvasSize: .zero, contentRect: .zero, placements: [])
-        }
-
-        let validWindows = windows.filter(\.isValid)
-        guard !validWindows.isEmpty else {
-            return Result(canvasSize: resolvedCanvasSize, contentRect: .zero, placements: [])
-        }
-
-        let spacing = normalizedSpacing(requestedSpacing)
-        let candidates = rowPartitions(for: validWindows).compactMap { rows in
-            layoutCandidate(
-                rows: rows,
-                canvasSize: resolvedCanvasSize,
-                spacing: spacing
-            )
-        }
-
-        guard let best = candidates.max(by: isLowerPriority(_:than:)) else {
-            return Result(canvasSize: resolvedCanvasSize, contentRect: .zero, placements: [])
-        }
-
-        return best.result
-    }
-
+    /// Builds a native-resolution atlas layout without scaling individual windows.
     static func nativePackedLayout(
         windows: [Window],
         spacing requestedSpacing: CGFloat = 0
     ) -> Result {
         let validWindows = windows.filter(\.isValid)
         guard !validWindows.isEmpty else {
-            return Result(canvasSize: .zero, contentRect: .zero, placements: [])
+            return Result(canvasSize: .zero, placements: [])
         }
 
         if validWindows.count == 1, let window = validWindows.first {
@@ -163,13 +102,9 @@ enum AppAtlasLayout {
             let placement = Placement(
                 id: window.id,
                 sourceRect: CGRect(origin: window.sourceRect.origin, size: size),
-                destinationRect: destinationRect,
-                normalizedDestinationRect: normalizedRect(
-                    destinationRect,
-                    canvasSize: canvasSize
-                )
+                destinationRect: destinationRect
             )
-            return Result(canvasSize: canvasSize, contentRect: destinationRect, placements: [placement])
+            return Result(canvasSize: canvasSize, placements: [placement])
         }
 
         let spacing = normalizedSpacing(requestedSpacing)
@@ -178,157 +113,13 @@ enum AppAtlasLayout {
         }
 
         guard let best = candidates.min(by: isHigherNativePriority(_:than:)) else {
-            return Result(canvasSize: .zero, contentRect: .zero, placements: [])
+            return Result(canvasSize: .zero, placements: [])
         }
 
         return best.result
     }
 
-    static func aspectFittedRect(
-        sourceSize: CGSize,
-        in bounds: CGRect
-    ) -> CGRect {
-        let normalizedBounds = bounds.standardized
-        guard sourceSize.width > 0,
-              sourceSize.height > 0,
-              normalizedBounds.width > 0,
-              normalizedBounds.height > 0 else {
-            return normalizedBounds
-        }
-
-        let sourceAspectRatio = sourceSize.width / sourceSize.height
-        guard sourceAspectRatio.isFinite, sourceAspectRatio > 0 else {
-            return normalizedBounds
-        }
-
-        let boundsAspectRatio = normalizedBounds.width / normalizedBounds.height
-        let fittedSize: CGSize
-        if boundsAspectRatio > sourceAspectRatio {
-            fittedSize = CGSize(
-                width: floor(normalizedBounds.height * sourceAspectRatio),
-                height: normalizedBounds.height
-            )
-        } else {
-            fittedSize = CGSize(
-                width: normalizedBounds.width,
-                height: floor(normalizedBounds.width / sourceAspectRatio)
-            )
-        }
-
-        return CGRect(
-            x: normalizedBounds.minX + floor((normalizedBounds.width - fittedSize.width) * 0.5),
-            y: normalizedBounds.minY + floor((normalizedBounds.height - fittedSize.height) * 0.5),
-            width: max(1, fittedSize.width),
-            height: max(1, fittedSize.height)
-        )
-    }
-
-    private static func layoutCandidate(
-        rows: [[Window]],
-        canvasSize: CGSize,
-        spacing: CGFloat
-    ) -> Candidate? {
-        guard !rows.isEmpty else { return nil }
-
-        let verticalSpacing = resolvedSpacing(
-            spacing,
-            itemCount: rows.count,
-            availableLength: canvasSize.height
-        )
-        let availableRowHeight = canvasSize.height - verticalSpacing * CGFloat(max(0, rows.count - 1))
-        guard availableRowHeight > 0 else { return nil }
-
-        let naturalRowHeights = rows.map { row -> CGFloat in
-            let horizontalSpacing = resolvedSpacing(
-                spacing,
-                itemCount: row.count,
-                availableLength: canvasSize.width
-            )
-            let availableRowWidth = canvasSize.width - horizontalSpacing * CGFloat(max(0, row.count - 1))
-            let rowAspect = row.reduce(CGFloat.zero) { $0 + $1.aspectRatio }
-            guard availableRowWidth > 0, rowAspect > 0 else { return 0 }
-            return availableRowWidth / rowAspect
-        }
-        let naturalHeight = naturalRowHeights.reduce(CGFloat.zero, +)
-        guard naturalHeight > 0 else { return nil }
-
-        let scale = min(1, availableRowHeight / naturalHeight)
-        guard scale.isFinite, scale > 0 else { return nil }
-
-        var rowLayouts: [(windows: [Window], height: CGFloat, widths: [CGFloat], spacing: CGFloat, width: CGFloat)] = []
-        rowLayouts.reserveCapacity(rows.count)
-
-        for (rowIndex, row) in rows.enumerated() {
-            let rowHeight = floor(naturalRowHeights[rowIndex] * scale)
-            guard rowHeight >= 1 else { return nil }
-
-            let horizontalSpacing = resolvedSpacing(
-                spacing,
-                itemCount: row.count,
-                availableLength: canvasSize.width
-            )
-            let widths = row.map { floor($0.aspectRatio * rowHeight) }
-            guard widths.allSatisfy({ $0 >= 1 }) else { return nil }
-
-            let rowWidth = widths.reduce(CGFloat.zero, +) +
-                horizontalSpacing * CGFloat(max(0, row.count - 1))
-            guard rowWidth <= canvasSize.width + 0.0001 else { return nil }
-
-            rowLayouts.append((row, rowHeight, widths, horizontalSpacing, rowWidth))
-        }
-
-        let laidOutHeight = rowLayouts.reduce(CGFloat.zero) { $0 + $1.height } +
-            verticalSpacing * CGFloat(max(0, rowLayouts.count - 1))
-        guard laidOutHeight <= canvasSize.height + 0.0001 else { return nil }
-
-        var placements: [Placement] = []
-        placements.reserveCapacity(rows.reduce(0) { $0 + $1.count })
-
-        var y = floor((canvasSize.height - laidOutHeight) * 0.5)
-        for rowLayout in rowLayouts {
-            var x = floor((canvasSize.width - rowLayout.width) * 0.5)
-            for (index, window) in rowLayout.windows.enumerated() {
-                let destinationRect = CGRect(
-                    x: x,
-                    y: y,
-                    width: rowLayout.widths[index],
-                    height: rowLayout.height
-                )
-                placements.append(
-                    Placement(
-                        id: window.id,
-                        sourceRect: window.sourceRect,
-                        destinationRect: destinationRect,
-                        normalizedDestinationRect: normalizedRect(
-                            destinationRect,
-                            canvasSize: canvasSize
-                        )
-                    )
-                )
-                x += rowLayout.widths[index] + rowLayout.spacing
-            }
-            y += rowLayout.height + verticalSpacing
-        }
-
-        let contentRect = placements.reduce(CGRect.null) { partialResult, placement in
-            partialResult.isNull
-                ? placement.destinationRect
-                : partialResult.union(placement.destinationRect)
-        }
-
-        return Candidate(
-            result: Result(
-                canvasSize: canvasSize,
-                contentRect: contentRect.isNull ? .zero : contentRect.standardized,
-                placements: placements
-            ),
-            usedArea: placements.reduce(CGFloat.zero) {
-                $0 + $1.destinationRect.width * $1.destinationRect.height
-            },
-            rowCount: rows.count
-        )
-    }
-
+    /// Builds one candidate layout for a specific partition of windows into rows.
     private static func nativeLayoutCandidate(
         rows: [[Window]],
         spacing: CGFloat
@@ -369,11 +160,7 @@ enum AppAtlasLayout {
                     Placement(
                         id: window.id,
                         sourceRect: CGRect(origin: window.sourceRect.origin, size: size),
-                        destinationRect: destinationRect,
-                        normalizedDestinationRect: normalizedRect(
-                            destinationRect,
-                            canvasSize: canvasSize
-                        )
+                        destinationRect: destinationRect
                     )
                 )
                 x += size.width + spacing
@@ -381,14 +168,8 @@ enum AppAtlasLayout {
             y += rowLayout.height + spacing
         }
 
-        let contentRect = placements.reduce(CGRect.null) { partialResult, placement in
-            partialResult.isNull
-                ? placement.destinationRect
-                : partialResult.union(placement.destinationRect)
-        }
         let result = Result(
             canvasSize: canvasSize,
-            contentRect: contentRect.isNull ? .zero : contentRect.standardized,
             placements: placements
         )
         let area = canvasSize.width * canvasSize.height
@@ -400,6 +181,7 @@ enum AppAtlasLayout {
         )
     }
 
+    /// Returns candidate row partitions for exhaustive search or balanced fallback.
     private static func rowPartitions(for windows: [Window]) -> [[[Window]]] {
         guard !windows.isEmpty else { return [] }
         guard windows.count > 1 else { return [[windows]] }
@@ -428,6 +210,7 @@ enum AppAtlasLayout {
         }
     }
 
+    /// Splits a large window list into roughly even rows for fallback layout search.
     private static func balancedPartition(windows: [Window], rowCount: Int) -> [[Window]] {
         guard rowCount > 1 else { return [windows] }
 
@@ -445,26 +228,7 @@ enum AppAtlasLayout {
         return rows
     }
 
-    private static func isLowerPriority(_ lhs: Candidate, than rhs: Candidate) -> Bool {
-        let areaDelta = lhs.usedArea - rhs.usedArea
-        if abs(areaDelta) > 0.5 {
-            return lhs.usedArea < rhs.usedArea
-        }
-
-        let lhsContentArea = lhs.result.contentRect.width * lhs.result.contentRect.height
-        let rhsContentArea = rhs.result.contentRect.width * rhs.result.contentRect.height
-        let contentDelta = lhsContentArea - rhsContentArea
-        if abs(contentDelta) > 0.5 {
-            return lhsContentArea < rhsContentArea
-        }
-
-        if lhs.rowCount != rhs.rowCount {
-            return lhs.rowCount > rhs.rowCount
-        }
-
-        return false
-    }
-
+    /// Ranks native layout candidates by canvas area, aspect ratio, then retained placements.
     private static func isHigherNativePriority(_ lhs: NativeCandidate, than rhs: NativeCandidate) -> Bool {
         let areaDelta = lhs.area - rhs.area
         if abs(areaDelta) > 0.5 {
@@ -479,48 +243,18 @@ enum AppAtlasLayout {
         return lhs.result.placements.count > rhs.result.placements.count
     }
 
-    private static func normalizedRect(
-        _ rect: CGRect,
-        canvasSize: CGSize
-    ) -> CGRect {
-        guard canvasSize.width > 0, canvasSize.height > 0 else { return .zero }
-        return CGRect(
-            x: rect.minX / canvasSize.width,
-            y: rect.minY / canvasSize.height,
-            width: rect.width / canvasSize.width,
-            height: rect.height / canvasSize.height
-        )
-    }
-
-    private static func resolvedSpacing(
-        _ spacing: CGFloat,
-        itemCount: Int,
-        availableLength: CGFloat
-    ) -> CGFloat {
-        guard itemCount > 1, spacing > 0, spacing.isFinite, availableLength > 0 else { return 0 }
-        let maximumSpacing = max(0, (availableLength - CGFloat(itemCount)) / CGFloat(itemCount - 1))
-        return floor(min(spacing, maximumSpacing))
-    }
-
-    private static func normalizedCanvasSize(_ size: CGSize) -> CGSize {
-        guard size.width.isFinite,
-              size.height.isFinite,
-              size.width > 0,
-              size.height > 0 else {
-            return .zero
-        }
-        return CGSize(width: floor(size.width), height: floor(size.height))
-    }
-
+    /// Normalizes requested spacing to a non-negative whole-pixel value.
     private static func normalizedSpacing(_ spacing: CGFloat) -> CGFloat {
         guard spacing.isFinite, spacing > 0 else { return 0 }
         return floor(spacing)
     }
 
+    /// Returns an even pixel size for encoder-friendly source copies.
     private static func evenSize(_ size: CGSize) -> CGSize {
         CGSize(width: evenLength(size.width), height: evenLength(size.height))
     }
 
+    /// Rounds a length down to the nearest even positive pixel count.
     private static func evenLength(_ value: CGFloat) -> CGFloat {
         guard value.isFinite, value > 0 else { return 0 }
         let rounded = Int(value.rounded())
@@ -528,6 +262,7 @@ enum AppAtlasLayout {
         return CGFloat(max(2, even))
     }
 
+    /// Aligns an atlas canvas size to encoder macroblock boundaries.
     private static func encoderAlignedCanvasSize(_ size: CGSize) -> CGSize {
         CGSize(
             width: encoderAlignedCanvasLength(size.width),
@@ -535,6 +270,7 @@ enum AppAtlasLayout {
         )
     }
 
+    /// Aligns a canvas dimension up to a 16-pixel boundary.
     private static func encoderAlignedCanvasLength(_ value: CGFloat) -> CGFloat {
         guard value.isFinite, value > 0 else { return 0 }
         let rounded = max(1, Int(ceil(value)))

@@ -7,22 +7,35 @@
 
 import Darwin
 import Foundation
-#if canImport(UIKit)
-import UIKit
-#endif
 
+/// Collects app, device, and hardware metadata for support and diagnostics exports.
 public enum MirageSupportInfo {
-    public static func appVersion() -> String? {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    }
+    private static let knownMacStudioModelIdentifiers: Set<String> = [
+        "mac13,1",
+        "mac13,2",
+        "mac14,13",
+        "mac14,14",
+        "mac15,14",
+        "mac16,9",
+    ]
 
-    public static func buildNumber() -> String? {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-    }
+    private static let knownMacMiniModelIdentifiers: Set<String> = [
+        "mac14,3",
+        "mac14,12",
+        "mac16,10",
+        "mac16,11",
+    ]
 
-    public static func appVersionSummary() -> String? {
-        let version = trimmedValue(appVersion())
-        let build = trimmedValue(buildNumber())
+    /// App marketing version from the main bundle.
+    public static let appVersion: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+
+    /// App build number from the main bundle.
+    public static let buildNumber: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+
+    /// Combined app version and build number when either value is available.
+    public static let appVersionSummary: String? = {
+        let version = trimmedValue(appVersion)
+        let build = trimmedValue(buildNumber)
 
         switch (version, build) {
         case let (version?, build?):
@@ -34,62 +47,71 @@ public enum MirageSupportInfo {
         default:
             return nil
         }
-    }
+    }()
 
-    public static func deviceDisplayName() -> String {
-#if os(visionOS)
-        return "Apple Vision Pro"
-#elseif os(iOS)
-        let displayName = deviceDisplayName(for: hardwareModel())
+    /// User-facing device family or hardware display name.
+    public static let deviceDisplayName: String = {
+        #if os(visionOS)
+        "Apple Vision Pro"
+        #elseif os(iOS)
+        let displayName = deviceDisplayName(for: hardwareModel)
         if displayName != "Unknown" {
             return displayName
         }
 
-        switch UIDevice.current.userInterfaceIdiom {
-        case .phone:
+        let hardwareIdentifier = hardwareModel
+        if hardwareIdentifier.hasPrefix("iPhone") {
             return "iPhone"
-        case .pad:
-            return "iPad"
-        default:
-            return trimmedValue(UIDevice.current.model) ?? "iOS Device"
         }
-#elseif os(macOS)
-        let displayName = deviceDisplayName(for: hardwareModel())
+        if hardwareIdentifier.hasPrefix("iPad") {
+            return "iPad"
+        }
+        return "iOS Device"
+        #elseif os(macOS)
+        let displayName = deviceDisplayName(for: hardwareModel)
         return displayName == "Unknown" ? "Mac" : displayName
-#else
-        let hardwareIdentifier = hardwareModel()
+        #else
+        let hardwareIdentifier = hardwareModel
         let displayName = deviceDisplayName(for: hardwareIdentifier)
-        return displayName == "Unknown" ? displayValue(hardwareIdentifier) : displayName
-#endif
-    }
+        displayName == "Unknown" ? displayValue(hardwareIdentifier) : displayName
+        #endif
+    }()
 
-    public static func hardwareModel() -> String {
-#if targetEnvironment(simulator)
+    /// Raw hardware model identifier reported by the current device.
+    public static let hardwareModel: String = {
+        #if targetEnvironment(simulator)
         if let simulatorModelIdentifier = trimmedValue(ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"]) {
             return simulatorModelIdentifier
         }
-#endif
-        readSysctlString(preferredHardwareIdentifierKey())
-            ?? readSysctlString(fallbackHardwareIdentifierKey())
+        #endif
+        #if os(macOS)
+        let preferredHardwareIdentifierKey = "hw.model"
+        let fallbackHardwareIdentifierKey = "hw.machine"
+        #else
+        let preferredHardwareIdentifierKey = "hw.machine"
+        let fallbackHardwareIdentifierKey = "hw.model"
+        #endif
+
+        return readSysctlString(preferredHardwareIdentifierKey)
+            ?? readSysctlString(fallbackHardwareIdentifierKey)
             ?? "Unknown"
-    }
+    }()
 
-    public static func deviceModelIdentifier() -> String {
-        hardwareModel()
-    }
+    /// CPU or SoC name when the current platform exposes one.
+    public static let chipName: String? = {
+        #if os(macOS)
+        trimmedValue(readSysctlString("machdep.cpu.brand_string"))
+        #else
+        nil
+        #endif
+    }()
 
-    public static func chipName() -> String? {
-#if os(macOS)
-        return chipName(systemCPUBrand: readSysctlString("machdep.cpu.brand_string"))
-#else
-        return nil
-#endif
-    }
-
+    /// Returns a trimmed value or `"Unknown"` when the value is empty.
     public static func displayValue(_ value: String?) -> String {
         trimmedValue(value) ?? "Unknown"
     }
 
+    /// Returns a whitespace-trimmed value, treating empty strings as missing.
     public static func trimmedValue(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else {
@@ -105,10 +127,10 @@ public enum MirageSupportInfo {
         if let displayName = iOSDeviceDisplayName(for: normalizedIdentifier) {
             return displayName
         }
-        if isKnownMacStudioModelIdentifier(normalizedIdentifier) {
+        if knownMacStudioModelIdentifiers.contains(normalizedIdentifier) {
             return "Mac Studio"
         }
-        if isKnownMacMiniModelIdentifier(normalizedIdentifier) {
+        if knownMacMiniModelIdentifiers.contains(normalizedIdentifier) {
             return "Mac mini"
         }
 
@@ -146,221 +168,181 @@ public enum MirageSupportInfo {
     private static func iOSDeviceDisplayName(for identifier: String) -> String? {
         switch identifier {
         case "iphone11,2":
-            return "iPhone XS"
+            "iPhone XS"
         case "iphone11,4",
              "iphone11,6":
-            return "iPhone XS Max"
+            "iPhone XS Max"
         case "iphone11,8":
-            return "iPhone XR"
+            "iPhone XR"
         case "iphone12,1":
-            return "iPhone 11"
+            "iPhone 11"
         case "iphone12,3":
-            return "iPhone 11 Pro"
+            "iPhone 11 Pro"
         case "iphone12,5":
-            return "iPhone 11 Pro Max"
+            "iPhone 11 Pro Max"
         case "iphone12,8":
-            return "iPhone SE (2nd generation)"
+            "iPhone SE (2nd generation)"
         case "iphone13,1":
-            return "iPhone 12 mini"
+            "iPhone 12 mini"
         case "iphone13,2":
-            return "iPhone 12"
+            "iPhone 12"
         case "iphone13,3":
-            return "iPhone 12 Pro"
+            "iPhone 12 Pro"
         case "iphone13,4":
-            return "iPhone 12 Pro Max"
+            "iPhone 12 Pro Max"
         case "iphone14,2":
-            return "iPhone 13 Pro"
+            "iPhone 13 Pro"
         case "iphone14,3":
-            return "iPhone 13 Pro Max"
+            "iPhone 13 Pro Max"
         case "iphone14,4":
-            return "iPhone 13 mini"
+            "iPhone 13 mini"
         case "iphone14,5":
-            return "iPhone 13"
+            "iPhone 13"
         case "iphone14,6":
-            return "iPhone SE (3rd generation)"
+            "iPhone SE (3rd generation)"
         case "iphone14,7":
-            return "iPhone 14"
+            "iPhone 14"
         case "iphone14,8":
-            return "iPhone 14 Plus"
+            "iPhone 14 Plus"
         case "iphone15,2":
-            return "iPhone 14 Pro"
+            "iPhone 14 Pro"
         case "iphone15,3":
-            return "iPhone 14 Pro Max"
+            "iPhone 14 Pro Max"
         case "iphone15,4":
-            return "iPhone 15"
+            "iPhone 15"
         case "iphone15,5":
-            return "iPhone 15 Plus"
+            "iPhone 15 Plus"
         case "iphone16,1":
-            return "iPhone 15 Pro"
+            "iPhone 15 Pro"
         case "iphone16,2":
-            return "iPhone 15 Pro Max"
+            "iPhone 15 Pro Max"
         case "iphone17,1":
-            return "iPhone 16 Pro"
+            "iPhone 16 Pro"
         case "iphone17,2":
-            return "iPhone 16 Pro Max"
+            "iPhone 16 Pro Max"
         case "iphone17,3":
-            return "iPhone 16"
+            "iPhone 16"
         case "iphone17,4":
-            return "iPhone 16 Plus"
+            "iPhone 16 Plus"
         case "iphone17,5":
-            return "iPhone 16e"
+            "iPhone 16e"
         case "iphone18,1":
-            return "iPhone 17 Pro"
+            "iPhone 17 Pro"
         case "iphone18,2":
-            return "iPhone 17 Pro Max"
+            "iPhone 17 Pro Max"
         case "iphone18,3":
-            return "iPhone 17"
+            "iPhone 17"
         case "iphone18,4":
-            return "iPhone Air"
+            "iPhone Air"
         case "iphone18,5":
-            return "iPhone 17e"
+            "iPhone 17e"
         case "ipad7,1",
              "ipad7,2":
-            return "iPad Pro 12.9-inch (2nd generation)"
+            "iPad Pro 12.9-inch (2nd generation)"
         case "ipad7,3",
              "ipad7,4":
-            return "iPad Pro 10.5-inch"
+            "iPad Pro 10.5-inch"
         case "ipad7,5",
              "ipad7,6":
-            return "iPad (6th generation)"
+            "iPad (6th generation)"
         case "ipad7,11",
              "ipad7,12":
-            return "iPad (7th generation)"
+            "iPad (7th generation)"
         case "ipad8,1",
              "ipad8,2",
              "ipad8,3",
              "ipad8,4":
-            return "iPad Pro 11-inch (1st generation)"
+            "iPad Pro 11-inch (1st generation)"
         case "ipad8,5",
              "ipad8,6",
              "ipad8,7",
              "ipad8,8":
-            return "iPad Pro 12.9-inch (3rd generation)"
+            "iPad Pro 12.9-inch (3rd generation)"
         case "ipad8,9",
              "ipad8,10":
-            return "iPad Pro 11-inch (2nd generation)"
+            "iPad Pro 11-inch (2nd generation)"
         case "ipad8,11",
              "ipad8,12":
-            return "iPad Pro 12.9-inch (4th generation)"
+            "iPad Pro 12.9-inch (4th generation)"
         case "ipad11,1",
              "ipad11,2":
-            return "iPad mini (5th generation)"
+            "iPad mini (5th generation)"
         case "ipad11,3",
              "ipad11,4":
-            return "iPad Air (3rd generation)"
+            "iPad Air (3rd generation)"
         case "ipad11,6",
              "ipad11,7":
-            return "iPad (8th generation)"
+            "iPad (8th generation)"
         case "ipad12,1",
              "ipad12,2":
-            return "iPad (9th generation)"
+            "iPad (9th generation)"
         case "ipad13,1",
              "ipad13,2":
-            return "iPad Air (4th generation)"
+            "iPad Air (4th generation)"
         case "ipad13,4",
              "ipad13,5",
              "ipad13,6",
              "ipad13,7":
-            return "iPad Pro 11-inch (3rd generation)"
+            "iPad Pro 11-inch (3rd generation)"
         case "ipad13,8",
              "ipad13,9",
              "ipad13,10",
              "ipad13,11":
-            return "iPad Pro 12.9-inch (5th generation)"
+            "iPad Pro 12.9-inch (5th generation)"
         case "ipad13,16",
              "ipad13,17":
-            return "iPad Air (5th generation)"
+            "iPad Air (5th generation)"
         case "ipad13,18",
              "ipad13,19":
-            return "iPad (10th generation)"
+            "iPad (10th generation)"
         case "ipad14,1",
              "ipad14,2":
-            return "iPad mini (6th generation)"
+            "iPad mini (6th generation)"
         case "ipad14,3",
              "ipad14,4":
-            return "iPad Pro 11-inch (4th generation)"
+            "iPad Pro 11-inch (4th generation)"
         case "ipad14,5",
              "ipad14,6":
-            return "iPad Pro 12.9-inch (6th generation)"
+            "iPad Pro 12.9-inch (6th generation)"
         case "ipad14,8",
              "ipad14,9":
-            return "iPad Air 11-inch (M2)"
+            "iPad Air 11-inch (M2)"
         case "ipad14,10",
              "ipad14,11":
-            return "iPad Air 13-inch (M2)"
+            "iPad Air 13-inch (M2)"
         case "ipad15,3",
              "ipad15,4":
-            return "iPad Air 11-inch (M3)"
+            "iPad Air 11-inch (M3)"
         case "ipad15,5",
              "ipad15,6":
-            return "iPad Air 13-inch (M3)"
+            "iPad Air 13-inch (M3)"
         case "ipad15,7",
              "ipad15,8":
-            return "iPad (A16)"
+            "iPad (A16)"
         case "ipad16,1",
              "ipad16,2":
-            return "iPad mini (A17 Pro)"
+            "iPad mini (A17 Pro)"
         case "ipad16,3",
              "ipad16,4":
-            return "iPad Pro 11-inch (M4)"
+            "iPad Pro 11-inch (M4)"
         case "ipad16,5",
              "ipad16,6":
-            return "iPad Pro 13-inch (M4)"
+            "iPad Pro 13-inch (M4)"
         case "ipad16,8",
              "ipad16,9":
-            return "iPad Air 11-inch (M4)"
+            "iPad Air 11-inch (M4)"
         case "ipad16,10",
              "ipad16,11":
-            return "iPad Air 13-inch (M4)"
+            "iPad Air 13-inch (M4)"
         case "ipad17,1",
              "ipad17,2":
-            return "iPad Pro 11-inch (M5)"
+            "iPad Pro 11-inch (M5)"
         case "ipad17,3",
              "ipad17,4":
-            return "iPad Pro 13-inch (M5)"
+            "iPad Pro 13-inch (M5)"
         default:
-            return nil
+            nil
         }
-    }
-
-    private static func isKnownMacStudioModelIdentifier(_ identifier: String) -> Bool {
-        [
-            "mac13,1",
-            "mac13,2",
-            "mac14,13",
-            "mac14,14",
-            "mac15,14",
-            "mac16,9",
-        ].contains(identifier)
-    }
-
-    private static func isKnownMacMiniModelIdentifier(_ identifier: String) -> Bool {
-        [
-            "mac14,3",
-            "mac14,12",
-            "mac16,10",
-            "mac16,11",
-        ].contains(identifier)
-    }
-
-    static func chipName(systemCPUBrand: String?) -> String? {
-        trimmedValue(systemCPUBrand)
-    }
-
-    private static func preferredHardwareIdentifierKey() -> String {
-#if os(macOS)
-        "hw.model"
-#else
-        "hw.machine"
-#endif
-    }
-
-    private static func fallbackHardwareIdentifierKey() -> String {
-#if os(macOS)
-        "hw.machine"
-#else
-        "hw.model"
-#endif
     }
 
     private static func readSysctlString(_ key: String) -> String? {
@@ -376,18 +358,16 @@ public enum MirageSupportInfo {
             return nil
         }
 
-        return trimmedValue(String.mirageDecodedCString(buffer))
+        guard let decodedValue = String.mirageDecodedCString(buffer) else {
+            return nil
+        }
+        return trimmedValue(decodedValue)
     }
 }
 
 package extension String {
-    static func mirageDecodedCString(_ buffer: [CChar]) -> String {
+    static func mirageDecodedCString(_ buffer: [CChar]) -> String? {
         let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
-    }
-
-    static func mirageDecodedCString(_ pointer: UnsafePointer<CChar>) -> String {
-        let bytes = UnsafeBufferPointer(start: pointer, count: strlen(pointer)).map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
+        return String(bytes: bytes, encoding: .utf8)
     }
 }

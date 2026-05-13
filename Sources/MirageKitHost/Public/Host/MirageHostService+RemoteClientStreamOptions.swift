@@ -11,21 +11,6 @@ import MirageKit
 #if os(macOS)
 @MainActor
 public extension MirageHostService {
-    /// Whether the connected client currently has an active desktop stream.
-    var isDesktopStreamActive: Bool {
-        desktopStreamID != nil
-    }
-
-    /// Whether the connected client currently exposes desktop cursor lock controls.
-    var activeDesktopCursorLockAvailable: Bool {
-        desktopStreamID != nil && remoteClientDesktopCursorLockAvailable
-    }
-
-    /// Client currently receiving the active desktop stream, if any.
-    var activeDesktopStreamClient: MirageConnectedClient? {
-        desktopStreamClientContext?.client
-    }
-
     /// Sends a display-mode preference change to the connected client.
     func setRemoteClientStreamOptionsDisplayMode(_ displayMode: MirageStreamOptionsDisplayMode) async {
         remoteClientStreamOptionsDisplayMode = displayMode
@@ -74,6 +59,7 @@ public extension MirageHostService {
 }
 
 extension MirageHostService {
+    /// Handles the client's current stream-options state snapshot.
     func handleRemoteClientStreamOptionsState(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -100,11 +86,12 @@ extension MirageHostService {
         }
     }
 
+    /// Sends a remote-client stream-options command over the active control channel.
     private func sendRemoteClientStreamOptionsCommand(
         _ command: RemoteClientStreamOptionsCommandMessage,
         operation: String
     ) async {
-        guard let clientContext = remoteClientCommandContext() else { return }
+        guard let clientContext = desktopStreamClientContext ?? clientsBySessionID.values.first else { return }
 
         do {
             try await clientContext.send(.remoteClientStreamOptionsCommand, content: command)
@@ -116,14 +103,6 @@ extension MirageHostService {
                 sessionID: clientContext.sessionID
             )
         }
-    }
-
-    private func remoteClientCommandContext() -> ClientContext? {
-        if let desktopStreamClientContext {
-            return desktopStreamClientContext
-        }
-
-        return clientsBySessionID.values.first
     }
 }
 #endif

@@ -4,28 +4,27 @@
 //
 //  Created by Ethan Lipnik on 2/18/26.
 //
-//  Coverage for conservative adaptive decode submission scheduling.
+//  Coverage for adaptive decode submission scheduling with a 60Hz baseline of 2.
 //
 
-@testable import MirageKit
 @testable import MirageKitClient
 import Testing
 
 #if os(macOS)
 @Suite("Decode Submission Scheduler")
 struct DecodeSubmissionSchedulerTests {
-    @Test("60 Hz low-latency stays single submission under decode-bound stress")
-    func lowLatencySixtyHertzStaysSingleSubmissionUnderStress() async {
+    @Test("Scheduler escalates to three in-flight slots during sustained decode-bound stress")
+    func escalatesOnDecodeBoundStress() async {
         let controller = StreamController(streamID: 900, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 1)
+        #expect(await controller.decoder.decodeSubmissionLimit == 2)
 
         for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
             await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40, receivedFPS: 56)
         }
 
-        let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 1)
+        let decoderLimit = await controller.decoder.decodeSubmissionLimit
+        #expect(decoderLimit == 3)
         await controller.stop()
     }
 
@@ -33,60 +32,50 @@ struct DecodeSubmissionSchedulerTests {
     func sourceBoundStressDoesNotEscalate() async {
         let controller = StreamController(streamID: 901, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 1)
+        #expect(await controller.decoder.decodeSubmissionLimit == 2)
 
         for _ in 0 ..< (StreamController.decodeSubmissionStressWindows + 2) {
             await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40, receivedFPS: 40)
         }
 
-        let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 1)
-        await controller.stop()
-    }
-
-    @Test("High-FPS Smoothest starts at two decode submissions")
-    func highFPSSmoothestStartsAtTwoDecodeSubmissions() async {
-        let controller = StreamController(streamID: 902, maxPayloadSize: 1200)
-        await controller.updateCadenceTarget(
-            sourceFPS: 120,
-            displayFPS: 120,
-            latencyMode: .smoothest,
-            reason: "test"
-        )
-        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
-
-        for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
-            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 70, receivedFPS: 118)
-        }
-
-        let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
+        let decoderLimit = await controller.decoder.decodeSubmissionLimit
         #expect(decoderLimit == 2)
         await controller.stop()
     }
 
-    @Test("Switching back to 60 Hz clamps an existing high-FPS limit")
-    func switchingBackToSixtyHertzClampsHighFPSLimit() async {
-        let controller = StreamController(streamID: 903, maxPayloadSize: 1200)
-        await controller.updateCadenceTarget(
-            sourceFPS: 120,
-            displayFPS: 120,
-            latencyMode: .smoothest,
-            reason: "test high fps"
-        )
+    @Test("Scheduler keeps baseline slots after sustained recovery")
+    func recoversAfterHealthyWindows() async {
+        let controller = StreamController(streamID: 902, maxPayloadSize: 1200)
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        #expect(await controller.decoder.decodeSubmissionLimit == 2)
+
         for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
-            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 70, receivedFPS: 118)
+            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40, receivedFPS: 56)
         }
-        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
+        for _ in 0 ..< StreamController.decodeSubmissionHealthyWindows {
+            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 60, receivedFPS: 60)
+        }
 
-        await controller.updateCadenceTarget(
-            sourceFPS: 60,
-            displayFPS: 60,
-            latencyMode: .smoothest,
-            reason: "test 60 fps"
-        )
+        let decoderLimit = await controller.decoder.decodeSubmissionLimit
+        #expect(decoderLimit == 2)
+        await controller.stop()
+    }
 
-        let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 1)
+    @Test("Unchanged target refresh update does not reset elevated submission limit")
+    func unchangedTargetUpdateDoesNotResetElevatedLimit() async {
+        let controller = StreamController(streamID: 903, maxPayloadSize: 1200)
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        #expect(await controller.decoder.decodeSubmissionLimit == 2)
+
+        for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
+            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40, receivedFPS: 56)
+        }
+        #expect(await controller.decoder.decodeSubmissionLimit == 3)
+
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+
+        let decoderLimit = await controller.decoder.decodeSubmissionLimit
+        #expect(decoderLimit == 3)
         await controller.stop()
     }
 }

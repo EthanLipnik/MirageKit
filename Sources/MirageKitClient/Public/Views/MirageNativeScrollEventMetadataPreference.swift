@@ -5,8 +5,10 @@
 //  Created by Ethan Lipnik on 5/8/26.
 //
 
-/// User defaults keys for native scroll phase metadata behavior.
+import Foundation
+
+/// Preference namespace for native scroll-event metadata capture.
 public enum MirageNativeScrollEventMetadataPreference {
-    /// Enables forwarding native scroll phase and momentum phase metadata.
+    /// UserDefaults key for enabling metadata-backed native scroll events.
     public static let defaultsKey = "nativeScrollEventMetadataEnabled"
 }

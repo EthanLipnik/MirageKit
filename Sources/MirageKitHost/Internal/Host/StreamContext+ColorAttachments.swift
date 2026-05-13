@@ -33,11 +33,11 @@ extension StreamContext {
         colorSpace: MirageColorSpace
     ) {
         let expected = expectedCaptureColorAttachments(for: colorSpace)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferTransferFunctionKey, value: expected.transferFunction)
-        setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey, value: expected.yCbCrMatrix)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferColorPrimariesKey, value: expected.colorPrimaries)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferTransferFunctionKey, value: expected.transferFunction)
+        MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey, value: expected.yCbCrMatrix)
         if let colorSpace = CGColorSpace(name: expected.cgColorSpaceName) {
-            setAttachmentIfNeeded(pixelBuffer, key: kCVImageBufferCGColorSpaceKey, value: colorSpace)
+            MirageCVBufferAttachments.setIfNeeded(pixelBuffer, key: kCVImageBufferCGColorSpaceKey, value: colorSpace)
         }
     }
 
@@ -58,17 +58,6 @@ extension StreamContext {
                 cgColorSpaceName: CGColorSpace.sRGB
             )
         }
-    }
-
-    private static func setAttachmentIfNeeded(
-        _ buffer: CVBuffer,
-        key: CFString,
-        value: CFTypeRef
-    ) {
-        if let existing = CVBufferCopyAttachment(buffer, key, nil), CFEqual(existing, value) {
-            return
-        }
-        CVBufferSetAttachment(buffer, key, value, .shouldPropagate)
     }
 }
 #endif

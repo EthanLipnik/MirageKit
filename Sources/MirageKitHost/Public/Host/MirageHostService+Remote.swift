@@ -4,12 +4,10 @@
 //
 //  Created by Ethan Lipnik on 2/10/26.
 //
-//  Remote QUIC publication helpers backed by Loom direct listeners.
+//  Remote QUIC listener keepalive helpers.
 //
 
-import Foundation
 import Loom
-import Network
 import MirageKit
 
 #if os(macOS)
@@ -25,7 +23,6 @@ extension MirageHostService {
 
         guard remoteTransportEnabled, isHosting else {
             remoteControlListenerReady = false
-            remoteRelayPublicationState.reset()
             stunKeepalive?.stop()
             stunKeepalive = nil
             natPortMapping?.stop()
@@ -65,80 +62,6 @@ extension MirageHostService {
                 }
             }
         }
-    }
-
-    @_spi(HostApp)
-    public func resolveRemoteRelayPublicationDecision() async -> MirageRemoteRelayPublicationDecision {
-        let freshCandidates = await collectFreshRemoteCandidates()
-        return remoteRelayPublicationState.decision(
-            listenerReady: remoteControlListenerReady,
-            freshCandidates: freshCandidates
-        )
-    }
-
-    @_spi(HostApp)
-    public func recordRemoteRelayAdvertiseSuccess(candidates: [LoomRemoteCandidate]) {
-        remoteRelayPublicationState.recordPublishedCandidates(candidates)
-    }
-
-    private func collectFreshRemoteCandidates() async -> [LoomRemoteCandidate] {
-        guard remoteTransportEnabled,
-              remoteControlListenerReady,
-              let localPort = remoteControlPort else {
-            MirageLogger.host("Remote candidate collection skipped (transport disabled or listener port unavailable)")
-            return []
-        }
-
-        guard loomNode.configuration.enabledDirectTransports.contains(.quic) else {
-            return []
-        }
-
-        var candidates: [LoomRemoteCandidate] = []
-
-        // Prefer NAT-PMP / PCP mapping — provides a stable external port that
-        // doesn't change between keepalive probes, reliable through symmetric NATs.
-        if let mapping = natPortMapping?.latestMapping {
-            let candidate = LoomRemoteCandidate(
-                transport: .quic,
-                address: mapping.externalAddress,
-                port: mapping.externalPort
-            )
-            candidates.append(candidate)
-            MirageLogger.host("Remote candidate from NAT-PMP: \(mapping.externalAddress):\(mapping.externalPort)")
-        }
-
-        // Also include the STUN keepalive candidate for redundancy — some
-        // routers don't support NAT-PMP but the STUN mapping may still work.
-        if let keepaliveResult = stunKeepalive?.latestResult,
-           keepaliveResult.reachable,
-           let address = keepaliveResult.mappedAddress,
-           let port = keepaliveResult.mappedPort {
-            let stunCandidate = LoomRemoteCandidate(transport: .quic, address: address, port: port)
-            // Only add if it differs from the NAT-PMP candidate.
-            if !candidates.contains(stunCandidate) {
-                candidates.append(stunCandidate)
-                MirageLogger.host("Remote candidate from STUN keepalive: \(address):\(port)")
-            } else {
-                MirageLogger.host("Remote candidate from keepalive: \(address):\(port) (same as NAT-PMP)")
-            }
-        }
-
-        if !candidates.isEmpty {
-            return candidates
-        }
-
-        // Fallback: run a one-shot STUN probe via the collector.
-        let collectedCandidates = await LoomDirectCandidateCollector.collect(
-            configuration: loomNode.configuration,
-            listeningPorts: [.quic: localPort]
-        )
-        MirageLogger.host("Remote candidate collection completed: \(collectedCandidates.count) candidate(s)")
-        for candidate in collectedCandidates {
-            MirageLogger.host(
-                "  candidate transport=\(candidate.transport) address=\(candidate.address) port=\(candidate.port)"
-            )
-        }
-        return collectedCandidates
     }
 }
 #endif

@@ -5,30 +5,12 @@
 //  Created by Ethan Lipnik on 1/11/26.
 //
 
-import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
 
-// MARK: - Menu Bar Passthrough
-
-func shouldAcceptStopDesktopStreamRequest(
-    requestedStreamID: StreamID,
-    requestedDesktopSessionID: UUID,
-    activeDesktopStreamID: StreamID?,
-    activeDesktopSessionID: UUID?
-) -> Bool {
-    guard requestedStreamID == activeDesktopStreamID,
-          let activeDesktopSessionID else {
-        return false
-    }
-
-    return requestedDesktopSessionID == activeDesktopSessionID
-}
-
 extension MirageHostService {
-    /// Handle a menu action request from a client
+    /// Handles a client request to invoke an item in a streamed app's menu bar.
     func handleMenuActionRequest(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -38,36 +20,22 @@ extension MirageHostService {
             let request = try message.decode(MenuActionRequestMessage.self)
             MirageLogger.log(.menuBar, "Client \(clientContext.client.name) requested menu action: \(request.actionPath)")
 
-            // Find the session and its application
             guard let session = activeSessionByStreamID[request.streamID],
                   let app = session.window.application else {
-                let result = MenuActionResultMessage(
-                    streamID: request.streamID,
-                    success: false,
-                    errorMessage: "Stream not found"
-                )
-                let response = try ControlMessage(type: .menuActionResult, content: result)
-                clientContext.sendBestEffort(response)
+                MirageLogger.log(.menuBar, "Menu action skipped for missing stream \(request.streamID)")
                 return
             }
 
-            // Execute the menu action
             let success = await menuBarMonitor.performMenuAction(pid: app.id, actionPath: request.actionPath)
-
-            // Send result
-            let result = MenuActionResultMessage(
-                streamID: request.streamID,
-                success: success,
-                errorMessage: success ? nil : "Failed to execute menu action"
-            )
-            let response = try ControlMessage(type: .menuActionResult, content: result)
-            clientContext.sendBestEffort(response)
+            if !success {
+                MirageLogger.log(.menuBar, "Failed to execute menu action for stream \(request.streamID)")
+            }
         } catch {
             MirageLogger.error(.menuBar, error: error, message: "Failed to handle menu action request: ")
         }
     }
 
-    /// Start menu bar monitoring for a stream
+    /// Starts menu bar monitoring for an application stream.
     func startMenuBarMonitoring(streamID: StreamID, app: MirageApplication, clientContext: ClientContext) async {
         await menuBarMonitor.startMonitoring(
             streamID: streamID,
@@ -81,253 +49,10 @@ extension MirageHostService {
         }
     }
 
-    /// Send menu bar update to a client
+    /// Sends the latest menu bar snapshot to a client.
     func sendMenuBarUpdate(streamID: StreamID, menuBar: MirageMenuBar, to clientContext: ClientContext) async {
         let update = MenuBarUpdateMessage(streamID: streamID, menuBar: menuBar)
-        if let message = try? ControlMessage(type: .menuBarUpdate, content: update) { clientContext.sendBestEffort(message) }
-    }
-
-    /// Stop menu bar monitoring for a stream
-    func stopMenuBarMonitoring(streamID: StreamID) async {
-        await menuBarMonitor.stopMonitoring(streamID: streamID)
-    }
-
-    // MARK: - Desktop Streaming Handlers
-
-    /// Handle a request to start desktop streaming
-    func handleStartDesktopStream(
-        _ message: ControlMessage,
-        from clientContext: ClientContext
-    )
-    async {
-        var pendingLightsOutSetup = false
-        do {
-            let request = try message.decode(StartDesktopStreamMessage.self)
-            await cancelQualityTest(
-                for: clientContext.client.id,
-                reason: "desktop stream startup"
-            )
-            MirageLogger
-                .host(
-                    "Client \(clientContext.client.name) requested desktop stream: " +
-                        "\(request.displayWidth)x\(request.displayHeight) pts, mode=\(request.mode?.displayName ?? "Unified")"
-                )
-            let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
-            let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
-            let ceilingText = request.bitrateAdaptationCeiling.map(Self.formatBitrateForLogging) ?? "none"
-            MirageLogger.host(
-                "Desktop bitrate contract received: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText)"
-            )
-
-            let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
-            MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
-            let latencyMode = request.latencyMode ?? .lowestLatency
-            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
-            let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
-                requested: request.mediaMaxPacketSize,
-                pathKind: pathKind
-            )
-            MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
-            let audioConfiguration = request.audioConfiguration ?? .default
-
-            let displayResolution: CGSize = if request.useHostResolution == true {
-                Self.hostMainDisplayLogicalResolution()
-                    ?? CGSize(width: request.displayWidth, height: request.displayHeight)
-            } else {
-                CGSize(width: request.displayWidth, height: request.displayHeight)
-            }
-            if request.useHostResolution == true {
-                MirageLogger.host(
-                    "Using host display resolution: \(Int(displayResolution.width))x\(Int(displayResolution.height)) pts"
-                )
-            }
-
-            guard beginStreamSetup(
-                clientSessionID: clientContext.sessionID,
-                startupRequestID: request.startupRequestID
-            ) else {
-                MirageLogger.host("Ignoring cancelled desktop setup before side effects")
-                return
-            }
-            defer {
-                finishStreamSetup(
-                    clientSessionID: clientContext.sessionID,
-                    startupRequestID: request.startupRequestID
-                )
-            }
-            desktopStreamMode = request.mode ?? .unified
-            desktopUsesHostResolution = request.useHostResolution == true
-            desktopCursorPresentation = request.cursorPresentation ?? .simulatedCursor
-            pendingLightsOutSetup = true
-            await beginPendingDesktopStreamLightsOutSetup()
-            try await startDesktopStream(
-                to: clientContext,
-                displayResolution: displayResolution,
-                clientScaleFactor: request.scaleFactor,
-                mode: request.mode ?? .unified,
-                cursorPresentation: request.cursorPresentation ?? .simulatedCursor,
-                keyFrameInterval: request.keyFrameInterval,
-                colorDepth: request.colorDepth,
-                captureQueueDepth: request.captureQueueDepth,
-                enteredBitrate: request.enteredBitrate,
-                bitrate: request.bitrate,
-                latencyMode: latencyMode,
-                allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
-                lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost ?? false,
-                disableResolutionCap: request.disableResolutionCap ?? false,
-                streamScale: request.streamScale,
-                audioConfiguration: audioConfiguration,
-                targetFrameRate: targetFrameRate,
-                bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
-                encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight,
-                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
-                upscalingMode: request.upscalingMode,
-                codec: request.codec,
-                startupRequestID: request.startupRequestID
-            )
-            if pendingLightsOutSetup {
-                pendingLightsOutSetup = false
-                await endPendingDesktopStreamLightsOutSetup()
-            }
-        } catch {
-            if pendingLightsOutSetup {
-                pendingLightsOutSetup = false
-                await endPendingDesktopStreamLightsOutSetup()
-            }
-            if Self.isExpectedDesktopStartRejection(error) {
-                MirageLogger.host("Desktop stream request rejected: \(error.localizedDescription)")
-            } else {
-                MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
-            }
-            let errorPayload = Self.desktopStartErrorPayload(for: error)
-            let failedMessage = DesktopStreamFailedMessage(
-                reason: errorPayload.message,
-                errorCode: errorPayload.code
-            )
-            do {
-                try await clientContext.send(.desktopStreamFailed, content: failedMessage)
-            } catch {
-                // Fallback to generic error if the dedicated message fails
-                if let response = try? ControlMessage(type: .error, content: errorPayload) {
-                    clientContext.sendBestEffort(response)
-                }
-            }
-        }
-    }
-
-    /// Handle a request to stop desktop streaming
-    func handleStopDesktopStream(_ message: ControlMessage) async {
-        do {
-            let request = try message.decode(StopDesktopStreamMessage.self)
-            MirageLogger.host(
-                "Client requested stop desktop stream: stream=\(request.streamID), session=\(request.desktopSessionID.uuidString)"
-            )
-
-            guard shouldAcceptStopDesktopStreamRequest(
-                requestedStreamID: request.streamID,
-                requestedDesktopSessionID: request.desktopSessionID,
-                activeDesktopStreamID: desktopStreamID,
-                activeDesktopSessionID: desktopSessionID
-            ) else {
-                MirageLogger.host(
-                    "Ignoring stale desktop stop request: requestedStream=\(request.streamID), requestedSession=\(request.desktopSessionID.uuidString), activeStream=\(desktopStreamID.map(String.init) ?? "nil"), activeSession=\(desktopSessionID?.uuidString ?? "nil")"
-                )
-                return
-            }
-
-            await stopDesktopStream(reason: .clientRequested)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle stop desktop stream: ")
-        }
-    }
-
-    /// Handle a client request to cancel in-progress stream setup.
-    func handleCancelStreamSetup(_ message: ControlMessage, from clientContext: ClientContext) async {
-        let request = (try? message.decode(CancelStreamSetupMessage.self)) ?? CancelStreamSetupMessage()
-        MirageLogger.host(
-            "Client cancelled stream setup request=\(request.startupRequestID?.uuidString ?? "unscoped") kind=\(request.kind?.rawValue ?? "any")"
-        )
-
-        if let startupRequestID = request.startupRequestID {
-            cancelStreamSetup(
-                clientSessionID: clientContext.sessionID,
-                startupRequestID: startupRequestID
-            )
-        } else {
-            cancelAllStreamSetup(clientSessionID: clientContext.sessionID)
-        }
-
-        if request.kind != .app {
-            await cancelPendingDesktopStreamLightsOutSetup(reason: "client cancelled desktop stream setup")
-        }
-
-        // If desktop stream is already fully set up, stop it directly
-        if request.kind != .app, desktopStreamID != nil {
-            await stopDesktopStream(reason: .clientRequested)
-        }
-
-        if request.kind != .desktop,
-           let appSessionID = request.appSessionID {
-            await cancelStartingAppSession(appSessionID: appSessionID)
-        }
-    }
-
-    private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
-        if error is MirageRuntimeConditionError { return true }
-        if case let MirageError.protocolError(message) = error {
-            if message.contains("Desktop stream already active") {
-                return true
-            }
-            return message.contains("Virtual display acquisition failed for desktop stream:") ||
-                message.contains("client disconnected during startup") ||
-                message.contains("cancelled by client")
-        }
-        return false
-    }
-
-    private nonisolated static func formatBitrateForLogging(_ bitrate: Int) -> String {
-        (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))) + "Mbps"
-    }
-
-    private nonisolated static func isDesktopStartDecodeError(_ error: Error) -> Bool {
-        if error is DecodingError {
-            return true
-        }
-
-        let nsError = error as NSError
-        guard nsError.domain == NSCocoaErrorDomain else { return false }
-        return nsError.code == 3_840 || nsError.code == 4_864
-    }
-
-    private nonisolated static func desktopStartErrorCode(for error: Error) -> ErrorMessage.ErrorCode {
-        if isDesktopStartDecodeError(error) {
-            return .invalidMessage
-        }
-        return .virtualDisplayStartFailed
-    }
-
-    private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {
-        if let runtimeCondition = error as? MirageRuntimeConditionError {
-            return ErrorMessage(code: .init(runtimeCondition), message: runtimeCondition.message)
-        }
-
-        return ErrorMessage(
-            code: desktopStartErrorCode(for: error),
-            message: "Failed to start desktop stream: \(error.localizedDescription)"
-        )
-    }
-
-    // MARK: - Host Display Resolution
-
-    /// Query the host's current main display resolution in logical points.
-    static func hostMainDisplayLogicalResolution() -> CGSize? {
-        let mainDisplay = CGMainDisplayID()
-        let modeLogicalResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(mainDisplay)?.logical
-        return resolvedHostLogicalDisplayResolution(
-            bounds: CGDisplayBounds(mainDisplay),
-            modeLogicalResolution: modeLogicalResolution
-        )
+        clientContext.queueBestEffort(.menuBarUpdate, content: update)
     }
 }
 

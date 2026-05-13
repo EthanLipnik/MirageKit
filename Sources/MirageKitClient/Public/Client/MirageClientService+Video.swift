@@ -4,101 +4,16 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Loom stream video transport and keyframe recovery.
+//  Loom media stream receive loops.
 //
 
 import Foundation
 import Loom
-import Network
 import MirageKit
-
-private enum MirageClientStreamRecoveryTrigger: Equatable, Sendable {
-    case manual
-    case applicationActivation
-    case decoderCompatibilityFallback
-
-    var logLabel: String {
-        switch self {
-        case .manual:
-            "manual"
-        case .applicationActivation:
-            "application-activation"
-        case .decoderCompatibilityFallback:
-            "decoder-compatibility-fallback"
-        }
-    }
-
-    var awaitFirstPresentedFrame: Bool {
-        switch self {
-        case .manual:
-            false
-        case .applicationActivation,
-             .decoderCompatibilityFallback:
-            true
-        }
-    }
-
-    var firstPresentedFrameWaitReason: String? {
-        switch self {
-        case .manual:
-            nil
-        case .applicationActivation:
-            "application-activation-recovery"
-        case .decoderCompatibilityFallback:
-            "decoder-compatibility-recovery"
-        }
-    }
-}
-
-enum RecoveryKeyframeRetryDisposition: Equatable {
-    case recovered
-    case retry(packetFlowResumed: Bool, awaitingKeyframe: Bool)
-    case waitForTransport(awaitingKeyframe: Bool)
-}
-
-enum IncomingMediaStreamKind: Equatable {
-    case video(StreamID)
-    case audio(StreamID)
-    case qualityTest(UUID)
-    case transferControl
-    case transferData
-    case unknown
-
-    static func classify(label: String) -> IncomingMediaStreamKind {
-        if label == "loom.transfer.control.v1" {
-            return .transferControl
-        }
-
-        if label.hasPrefix("loom.transfer.data.") {
-            return .transferData
-        }
-
-        if label.hasPrefix("video/") {
-            let streamIDString = String(label.dropFirst("video/".count))
-            guard let streamID = StreamID(streamIDString) else { return .unknown }
-            return .video(streamID)
-        }
-
-        if label.hasPrefix("audio/") {
-            let streamIDString = String(label.dropFirst("audio/".count))
-            guard let streamID = StreamID(streamIDString) else { return .unknown }
-            return .audio(streamID)
-        }
-
-        if label.hasPrefix("quality-test/") {
-            let testIDString = String(label.dropFirst("quality-test/".count))
-            guard let testID = UUID(uuidString: testIDString) else { return .unknown }
-            return .qualityTest(testID)
-        }
-
-        return .unknown
-    }
-}
+import Network
 
 @MainActor
 extension MirageClientService {
-    nonisolated private static let controlPathHistoryLimit = 8
-
     // MARK: - Loom Media Stream Listener
 
     /// Start listening for incoming media streams on the authenticated Loom session.
@@ -112,9 +27,11 @@ extension MirageClientService {
             for await stream in observer {
                 guard !Task.isCancelled else { break }
                 guard let service = serviceBox.value else { break }
-                guard await service.isCurrentLoomSession(sessionID: session.id) else { break }
+                guard await service.loomSession?.id == session.id else { break }
                 guard let label = stream.label else {
-                    MirageLogger.client("Ignoring incoming Loom stream with no label (id=\(stream.id))")
+                    MirageLogger.client(
+                        "Ignoring incoming Loom stream with no label (id=\(stream.id))"
+                    )
                     continue
                 }
                 await service.handleObservedIncomingMediaStream(
@@ -131,17 +48,10 @@ extension MirageClientService {
         mediaStreamListenerTask?.cancel()
         mediaStreamListenerTask = nil
         cancelRecoveryKeyframeRetries()
-        for (label, stream) in activeMediaStreams where label.hasPrefix("video/") {
-            stream.clearIncomingBytesBatchHandler()
-        }
         for task in videoStreamReceiveTasks.values {
             task.cancel()
         }
         videoStreamReceiveTasks.removeAll()
-        for processor in videoPacketIngressProcessors.values {
-            processor.finish()
-        }
-        videoPacketIngressProcessors.removeAll()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         for task in qualityTestStreamReceiveTasks.values {
@@ -156,24 +66,19 @@ extension MirageClientService {
     /// Start receiving video packets from a Loom multiplexed stream.
     private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
-        videoPacketIngressProcessors[streamID]?.finish()
         let serviceBox = WeakSendableBox(self)
-        let ingressProcessor = ClientVideoPacketIngressProcessor(streamID: streamID) { data, streamID in
-            serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
-        }
-        videoPacketIngressProcessors[streamID] = ingressProcessor
-        stream.setIncomingBytesBatchHandler(
-            maxBatchSize: 32,
-            maxDelay: .milliseconds(1)
-        ) { [ingressProcessor] batch in
-            ingressProcessor.enqueue(batch)
-        }
-        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
-            for await _ in stream.incomingBytes {
+        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) {
+            [stream, streamID, serviceBox] in
+            for await data in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
+                serviceBox.value?.handleIncomingVideoData(data, expectedStreamID: streamID)
             }
             guard let service = serviceBox.value else { return }
-            await service.finishVideoStreamReceiveLoop(streamID: streamID)
+            await MainActor.run {
+                service.videoStreamReceiveTasks.removeValue(forKey: streamID)
+                service.activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+                MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
+            }
         }
     }
 
@@ -191,12 +96,16 @@ extension MirageClientService {
                 serviceBox.value?.handleIncomingQualityTestData(data, expectedTestID: testID)
             }
             guard let service = serviceBox.value else { return }
-            await service.finishQualityTestStreamReceiveLoop(testID: testID, label: label)
+            await MainActor.run {
+                service.qualityTestStreamReceiveTasks.removeValue(forKey: testID)
+                service.activeMediaStreams.removeValue(forKey: label)
+                MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
+            }
         }
     }
 
     /// Process a single video packet received from a Loom stream.
-    nonisolated func processIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
+    private nonisolated func handleIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
         guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
             return
         }
@@ -234,9 +143,9 @@ extension MirageClientService {
         }
 
         let wirePayload = data.dropFirst(mirageHeaderSize)
-        // Media encryption is negotiated per session; local peer-to-peer sessions may use raw media
-        // while remote or policy-enforced sessions carry an authenticated encrypted payload.
-        let expectedWireLength = header.flags.contains(.encryptedPayload)
+        // Local media encryption adds packet-level auth tags on top of the Loom session.
+        let expectedWireLength =
+            header.flags.contains(.encryptedPayload)
             ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
             : Int(header.payloadLength)
         guard wirePayload.count == expectedWireLength else {
@@ -309,22 +218,20 @@ extension MirageClientService {
         }
         streamStartupFirstPacketReceived.insert(streamID)
         let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
-        MirageLogger.signpostEvent(.client, "Startup.FirstVideoPacketReceived", "stream=\(streamID)")
-        MirageLogger.client("Desktop start: first video packet received for stream \(streamID) (+\(deltaMs)ms)")
+        MirageLogger.signpostEvent(
+            .client, "Startup.FirstVideoPacketReceived", "stream=\(streamID)"
+        )
+        MirageLogger.client(
+            "Desktop start: first video packet received for stream \(streamID) (+\(deltaMs)ms)"
+        )
     }
 
     /// Stop the video stream receive task for a specific stream.
     func stopVideoStreamReceive(for streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoStreamReceiveTasks.removeValue(forKey: streamID)
-        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
-        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
         cancelRecoveryKeyframeRetry(for: streamID)
-    }
-
-    func isCurrentLoomSession(sessionID: UUID) -> Bool {
-        loomSession?.id == sessionID
     }
 
     private func handleObservedIncomingMediaStream(
@@ -339,106 +246,29 @@ extension MirageClientService {
         }
 
         switch IncomingMediaStreamKind.classify(label: label) {
-        case .video(let streamID):
+        case let .video(streamID):
             MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
             activeMediaStreams[label] = stream
             startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
 
-        case .audio(let streamID):
+        case let .audio(streamID):
             MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
             activeMediaStreams[label] = stream
             await startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
 
-        case .qualityTest(let testID):
-            MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")
+        case let .qualityTest(testID):
+            MirageLogger.client(
+                "Accepted incoming quality-test stream for test \(testID.uuidString)"
+            )
             activeMediaStreams[label] = stream
             startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
 
-        case .transferControl, .transferData:
+        case .transferData:
             break
 
         case .unknown:
             MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
         }
-    }
-
-    private func finishVideoStreamReceiveLoop(streamID: StreamID) {
-        videoStreamReceiveTasks.removeValue(forKey: streamID)
-        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
-        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
-        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
-        MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
-    }
-
-    private func finishQualityTestStreamReceiveLoop(testID: UUID, label: String) {
-        qualityTestStreamReceiveTasks.removeValue(forKey: testID)
-        activeMediaStreams.removeValue(forKey: label)
-        MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
-    }
-
-    // MARK: - Control Path Handling
-
-    func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
-        let previous = controlPathSnapshot
-        controlPathSnapshot = snapshot
-        recordControlPathHistory(snapshot)
-        guard let previous, previous.signature != snapshot.signature else { return }
-        if previous.kind != snapshot.kind {
-            awdlPathSwitches &+= 1
-            MirageLogger.client(
-                "Control path switch \(previous.kind.rawValue) -> \(snapshot.kind.rawValue) (count \(awdlPathSwitches))"
-            )
-        }
-    }
-
-    func logAwdlExperimentTelemetryIfNeeded() {
-        guard MirageSteadyStateDiagnostics.isEnabled else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 5.0 else { return }
-        lastAwdlTelemetryLogTime = now
-        MirageLogger.metrics(
-            "AWDL telemetry: stalls=\(stallEvents), pathSwitches=\(awdlPathSwitches), registrationRefresh=\(registrationRefreshCount), hostRefreshReq=\(transportRefreshRequests), activeJitterHoldMs=\(activeJitterHoldMs)"
-        )
-    }
-
-    func resetControlPathHistory() {
-        controlPathHistory.removeAll(keepingCapacity: false)
-    }
-
-    func recordControlPathHistory(
-        _ snapshot: MirageNetworkPathSnapshot,
-        observedAt: Date = Date()
-    ) {
-        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
-        controlPathHistory = Self.appendedControlPathHistory(
-            controlPathHistory,
-            status: status,
-            observedAt: observedAt
-        )
-    }
-
-    nonisolated static func appendedControlPathHistory(
-        _ history: [MirageClientNetworkPathHistoryEntry],
-        status: MirageClientNetworkPathStatus,
-        observedAt: Date,
-        maxCount: Int = controlPathHistoryLimit
-    ) -> [MirageClientNetworkPathHistoryEntry] {
-        guard maxCount > 0 else { return [] }
-        if history.last?.status == status {
-            return history
-        }
-
-        var updated = history
-        updated.append(
-            MirageClientNetworkPathHistoryEntry(
-                observedAt: observedAt,
-                status: status
-            )
-        )
-        if updated.count > maxCount {
-            updated.removeFirst(updated.count - maxCount)
-        }
-        return updated
     }
 
     // MARK: - Keyframe Requests
@@ -467,596 +297,40 @@ extension MirageClientService {
         }
         lastKeyframeRequestTime[streamID] = now
 
-        sendControlMessageBestEffort(.keyframeRequest, content: KeyframeRequestMessage(streamID: streamID))
+        let request = KeyframeRequestMessage(streamID: streamID)
+        guard sendControlMessageBestEffort(.keyframeRequest, content: request) else {
+            MirageLogger.error(.client, "Failed to create keyframe request message")
+            return
+        }
+
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
-        MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
-    }
-
-    func sendReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
-        guard case .connected = connectionState else { return }
-        sendControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
-    }
-
-    func receiverMediaFeedbackSender() -> @Sendable (ReceiverMediaFeedbackMessage) -> Void {
-        guard case .connected = connectionState,
-              let controlChannel else {
-            return { _ in }
-        }
-        return { feedback in
-            if let message = try? ControlMessage(type: .receiverMediaFeedback, content: feedback) {
-                controlChannel.sendBestEffort(message)
-            }
-        }
+        MirageLogger.client(
+            "Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)"
+        )
     }
 
     func handleKeyframeRecoveryAck(_ message: ControlMessage) {
-        guard let ack = try? message.decode(KeyframeRecoveryAckMessage.self),
-              let controller = controllersByStream[ack.streamID] else {
+        let ack: KeyframeRecoveryAckMessage
+        do {
+            ack = try message.decode(KeyframeRecoveryAckMessage.self)
+        } catch {
+            MirageLogger.error(
+                .client, error: error, message: "Failed to decode keyframe recovery ack: "
+            )
             return
         }
+        guard let controller = controllersByStream[ack.streamID] else { return }
         Task {
             await controller.handleKeyframeRecoveryAck(ack)
         }
     }
 
-    nonisolated static func shouldSendKeyframeRequest(
+    private nonisolated static func shouldSendKeyframeRequest(
         lastRequestTime: CFAbsoluteTime?,
         now: CFAbsoluteTime,
         cooldown: CFAbsoluteTime
     ) -> Bool {
         guard let lastRequestTime else { return true }
         return now - lastRequestTime >= cooldown
-    }
-
-    // MARK: - Stream Recovery
-
-    /// Request stream recovery by forcing a keyframe.
-    public func requestStreamRecovery(for streamID: StreamID) {
-        requestStreamRecovery(for: streamID, trigger: .manual)
-    }
-
-    func requestApplicationActivationRecovery(for streamID: StreamID) {
-        requestStreamRecovery(for: streamID, trigger: .applicationActivation)
-    }
-
-    func replayPendingApplicationActivationRecoveryIfNeeded(for streamID: StreamID) {
-        guard pendingApplicationActivationRecoveryStreamIDs.remove(streamID) != nil else { return }
-        MirageLogger.client(
-            "Replaying deferred application activation recovery for stream \(streamID)"
-        )
-        requestStreamRecovery(for: streamID, trigger: .applicationActivation)
-    }
-
-    public func foregroundStreamHealthSnapshot(
-        for streamID: StreamID
-    ) async -> ForegroundStreamHealthSnapshot {
-        let controller = controllersByStream[streamID]
-        let reassembler = await controller?.getReassembler()
-        let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        let metricsSnapshot = metricsStore.snapshot(for: streamID)
-        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        let clientRecoveryStatus = await controller?.clientRecoveryStatus ?? .idle
-
-        return ForegroundStreamHealthSnapshot(
-            streamID: streamID,
-            hasController: controller != nil,
-            hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
-            latestPacketTime: reassembler?.latestPacketReceivedTime() ?? 0,
-            submittedSequence: submissionSnapshot.visibleCursor.sequence,
-            isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true,
-            decodedFPS: metricsSnapshot?.decodedFPS ?? renderTelemetry.decodeFPS,
-            layerEnqueueFPS: metricsSnapshot?.layerEnqueueFPS ?? renderTelemetry.layerEnqueueFPS,
-            uniqueLayerEnqueueFPS: metricsSnapshot?.uniqueLayerEnqueueFPS ?? renderTelemetry.uniqueLayerEnqueueFPS,
-            visibleFrameFPS: metricsSnapshot?.clientVisibleFrameFPS ?? renderTelemetry.visibleFrameFPS,
-            visibleFrameCadenceKnown: metricsSnapshot?.clientVisibleFrameCadenceKnown ??
-                renderTelemetry.visibleFrameCadenceKnown,
-            decodeHealthy: metricsSnapshot?.decodeHealthy ?? renderTelemetry.decodeHealthy,
-            severeDecodeUnderrun: renderTelemetry.severeDecodeUnderrun,
-            clientRecoveryStatus: clientRecoveryStatus,
-            hostTargetFrameRate: metricsSnapshot?.hostTargetFrameRate ?? renderTelemetry.targetFPS,
-            hostEncodedFPS: metricsSnapshot?.hostEncodedFPS ?? 0
-        )
-    }
-
-    private func requestStreamRecovery(
-        for streamID: StreamID,
-        trigger: MirageClientStreamRecoveryTrigger
-    ) {
-        guard case .connected = connectionState else {
-            MirageLogger.client("Stream recovery skipped (\(trigger.logLabel)) - not connected")
-            return
-        }
-        guard let controller = controllersByStream[streamID] else {
-            if trigger == .applicationActivation,
-               desktopStreamID == streamID || activeStreams.contains(where: { $0.id == streamID }) {
-                pendingApplicationActivationRecoveryStreamIDs.insert(streamID)
-                MirageLogger.client(
-                    "Stream recovery deferred (\(trigger.logLabel)) - controller missing for active stream \(streamID)"
-                )
-                return
-            }
-            MirageLogger.client(
-                "Stream recovery skipped (\(trigger.logLabel)) - stream \(streamID) is no longer active"
-            )
-            return
-        }
-
-        MirageLogger.client("Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)")
-
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
-        cancelRecoveryKeyframeRetry(for: streamID)
-        if trigger.awaitFirstPresentedFrame {
-            startRecoveryKeyframeRetry(for: streamID, controller: controller, trigger: trigger)
-        }
-
-        Task { [weak self] in
-            guard let self else { return }
-            await controller.requestRecovery(
-                reason: .manualRecovery,
-                awaitFirstPresentedFrame: trigger.awaitFirstPresentedFrame,
-                firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
-            )
-            self.sendKeyframeRequest(for: streamID)
-        }
-    }
-
-    private func startRecoveryKeyframeRetry(
-        for streamID: StreamID,
-        controller: StreamController,
-        trigger: MirageClientStreamRecoveryTrigger
-    ) {
-        let token = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.finishRecoveryKeyframeRetry(for: streamID, token: token) }
-
-            let reassembler = await controller.getReassembler()
-            let baselineSubmittedSequence = MirageRenderStreamStore.shared
-                .submissionSnapshot(for: streamID)
-                .cursor.sequence
-            var lastPacketTime = reassembler.latestPacketReceivedTime()
-
-            for attempt in 1...self.recoveryKeyframeRetryLimit {
-                do {
-                    try await Task.sleep(for: self.recoveryKeyframeRetryInterval)
-                } catch {
-                    return
-                }
-
-                guard case .connected = self.connectionState,
-                      self.controllersByStream[streamID] != nil else {
-                    return
-                }
-
-                let latestPacketTime = reassembler.latestPacketReceivedTime()
-                let latestSubmittedSequence = MirageRenderStreamStore.shared
-                    .submissionSnapshot(for: streamID)
-                    .cursor.sequence
-                let disposition = Self.recoveryKeyframeRetryDisposition(
-                    baselineSubmittedSequence: baselineSubmittedSequence,
-                    latestSubmittedSequence: latestSubmittedSequence,
-                    previousPacketTime: lastPacketTime,
-                    latestPacketTime: latestPacketTime,
-                    awaitingKeyframe: reassembler.isAwaitingKeyframe()
-                )
-
-                switch disposition {
-                case .recovered:
-                    MirageLogger.client(
-                        "Recovery presentation resumed for stream \(streamID); ending retry loop trigger=\(trigger.logLabel)"
-                    )
-                    return
-
-                case let .waitForTransport(awaitingKeyframe):
-                    let keyframeText = awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
-                    MirageLogger.client(
-                        "Recovery not yet presented for stream \(streamID); waiting for packet flow before retrying keyframe " +
-                            "(attempt \(attempt)/\(self.recoveryKeyframeRetryLimit), state=\(keyframeText)) " +
-                            "trigger=\(trigger.logLabel)"
-                    )
-
-                case let .retry(packetFlowResumed, awaitingKeyframe):
-                    let packetFlowText = packetFlowResumed ? "flowing" : "stalled"
-                    let keyframeText = awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
-                    MirageLogger.client(
-                        "Recovery not yet presented for stream \(streamID); retrying keyframe " +
-                            "(\(attempt)/\(self.recoveryKeyframeRetryLimit), packets=\(packetFlowText), state=\(keyframeText)) " +
-                            "trigger=\(trigger.logLabel)"
-                    )
-
-                    self.sendKeyframeRequest(for: streamID)
-                }
-                lastPacketTime = latestPacketTime
-            }
-        }
-
-        recoveryKeyframeRetryTasks[streamID] = (token: token, task: task)
-    }
-
-    nonisolated static func recoveryKeyframeRetryDisposition(
-        baselineSubmittedSequence: UInt64,
-        latestSubmittedSequence: UInt64,
-        previousPacketTime: CFAbsoluteTime,
-        latestPacketTime: CFAbsoluteTime,
-        awaitingKeyframe: Bool,
-        stableSubmittedFrameThreshold: UInt64 = UInt64(StreamController.recoveryStabilizationPresentedFrameThreshold)
-    ) -> RecoveryKeyframeRetryDisposition {
-        if latestSubmittedSequence >= baselineSubmittedSequence + stableSubmittedFrameThreshold {
-            return .recovered
-        }
-        guard latestPacketTime > previousPacketTime else {
-            return .waitForTransport(awaitingKeyframe: awaitingKeyframe)
-        }
-        return .retry(
-            packetFlowResumed: true,
-            awaitingKeyframe: awaitingKeyframe
-        )
-    }
-
-    func cancelRecoveryKeyframeRetry(for streamID: StreamID) {
-        guard let retry = recoveryKeyframeRetryTasks.removeValue(forKey: streamID) else { return }
-        retry.task.cancel()
-    }
-
-    private func cancelRecoveryKeyframeRetries() {
-        let retries = recoveryKeyframeRetryTasks.values
-        recoveryKeyframeRetryTasks.removeAll()
-        for retry in retries {
-            retry.task.cancel()
-        }
-    }
-
-    private func finishRecoveryKeyframeRetry(for streamID: StreamID, token: UUID) {
-        guard recoveryKeyframeRetryTasks[streamID]?.token == token else { return }
-        recoveryKeyframeRetryTasks.removeValue(forKey: streamID)
-    }
-
-    // MARK: - Encoder Settings
-
-    public func sendStreamEncoderSettingsChange(
-        streamID: StreamID,
-        colorDepth: MirageStreamColorDepth? = nil,
-        bitrate: Int? = nil,
-        streamScale: CGFloat? = nil,
-        targetFrameRate: Int? = nil
-    )
-    async throws {
-        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        guard colorDepth != nil || bitrate != nil || streamScale != nil || targetFrameRate != nil else { return }
-
-        let clampedScale = streamScale.map(clampStreamScale)
-        let clampedFrameRate = targetFrameRate.map {
-            Self.runtimeWorkloadSafetyCappedFrameRate(
-                $0,
-                cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
-            )
-        }
-        let requestID = UUID()
-        let request = StreamEncoderSettingsChangeMessage(
-            requestID: requestID,
-            streamID: streamID,
-            colorDepth: colorDepth,
-            bitrate: bitrate,
-            streamScale: clampedScale,
-            targetFrameRate: clampedFrameRate
-        )
-        if let bitrate {
-            let bitrateText = (Double(bitrate) / 1_000_000.0)
-                .formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.client(
-                "Requesting encoder bitrate update for stream \(streamID): \(bitrateText) Mbps"
-            )
-        }
-        if let clampedFrameRate {
-            MirageLogger.client(
-                "Requesting encoder frame-rate update for stream \(streamID): \(clampedFrameRate)fps"
-            )
-        }
-        if let clampedScale {
-            MirageLogger.client(
-                "Requesting encoder stream-scale update for stream \(streamID): \(String(format: "%.3f", clampedScale))"
-            )
-        }
-        pendingEncoderReconfigurationsByRequestID[requestID] = PendingEncoderReconfiguration(
-            requestID: requestID,
-            streamID: streamID,
-            requestedStreamScale: clampedScale,
-            requestedFrameRate: clampedFrameRate,
-            requestedColorDepth: colorDepth
-        )
-        pendingEncoderReconfigurationRequestIDByStream[streamID] = requestID
-        do {
-            try await sendControlMessage(.streamEncoderSettingsChange, content: request)
-        } catch {
-            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: requestID)
-            if pendingEncoderReconfigurationRequestIDByStream[streamID] == requestID {
-                pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: streamID)
-            }
-            throw error
-        }
-        if let clampedScale {
-            activeEncoderStreamScaleByStream[streamID] = clampedScale
-        }
-        if let clampedFrameRate {
-            refreshRateOverridesByStream[streamID] = clampedFrameRate
-            await applyStreamCadenceTarget(
-                clampedFrameRate,
-                for: streamID,
-                reason: "encoder settings change"
-            )
-        }
-    }
-
-    func handleStreamEncoderSettingsChangeAck(_ message: ControlMessage) async {
-        do {
-            let ack = try message.decode(StreamEncoderSettingsChangeAckMessage.self)
-            await applyStreamEncoderSettingsChangeAck(ack)
-        } catch {
-            MirageLogger.error(
-                .client,
-                error: error,
-                message: "Failed to decode stream encoder settings ack: "
-            )
-        }
-    }
-
-    private func applyStreamEncoderSettingsChangeAck(
-        _ ack: StreamEncoderSettingsChangeAckMessage
-    ) async {
-        guard let pending = pendingEncoderReconfigurationsByRequestID[ack.requestID] else {
-            MirageLogger.client(
-                "Ignoring stale encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID)"
-            )
-            return
-        }
-        guard pending.streamID == ack.streamID else {
-            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
-            MirageLogger.client(
-                "Ignoring mismatched encoder settings ack \(ack.requestID.uuidString): " +
-                    "pendingStream=\(pending.streamID) ackStream=\(ack.streamID)"
-            )
-            return
-        }
-        guard pendingEncoderReconfigurationRequestIDByStream[ack.streamID] == ack.requestID else {
-            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
-            MirageLogger.client(
-                "Ignoring superseded encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID)"
-            )
-            return
-        }
-
-        pendingEncoderReconfigurationsByRequestID.removeValue(forKey: ack.requestID)
-        pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: ack.streamID)
-
-        if let requestedScale = pending.requestedStreamScale {
-            activeEncoderStreamScaleByStream[ack.streamID] = requestedScale
-        }
-        refreshRateOverridesByStream[ack.streamID] =
-            MirageRenderModePolicy.normalizedTargetFPS(ack.frameRate)
-        decoderCompatibilityCurrentColorDepthByStream[ack.streamID] = ack.colorDepth
-        if decoderCompatibilityBaselineColorDepthByStream[ack.streamID] == nil,
-           pending.requestedColorDepth != nil {
-            decoderCompatibilityBaselineColorDepthByStream[ack.streamID] = ack.colorDepth
-        }
-        desktopDimensionTokenByStream[ack.streamID] = ack.dimensionToken
-        appDimensionTokenByStream[ack.streamID] = ack.dimensionToken
-
-        await applyStreamCadenceTarget(
-            ack.frameRate,
-            for: ack.streamID,
-            reason: "encoder settings ack"
-        )
-
-        if let controller = controllersByStream[ack.streamID] {
-            await controller.primeForEncoderReconfiguration(
-                dimensionToken: ack.dimensionToken,
-                streamDimensions: (width: ack.encodedWidth, height: ack.encodedHeight),
-                colorDepth: ack.colorDepth
-            )
-        }
-
-        MirageLogger.client(
-            "Accepted encoder settings ack \(ack.requestID.uuidString) for stream \(ack.streamID): " +
-                "\(ack.encodedWidth)x\(ack.encodedHeight)@\(ack.frameRate)fps, " +
-                "dimensionToken=\(ack.dimensionToken), requiresReset=\(ack.requiresReset)"
-        )
-    }
-
-    func clearPendingEncoderReconfiguration(for streamID: StreamID) {
-        if let requestID = pendingEncoderReconfigurationRequestIDByStream.removeValue(forKey: streamID) {
-            pendingEncoderReconfigurationsByRequestID.removeValue(forKey: requestID)
-        }
-    }
-
-    func clearAllPendingEncoderReconfigurations() {
-        pendingEncoderReconfigurationsByRequestID.removeAll()
-        pendingEncoderReconfigurationRequestIDByStream.removeAll()
-    }
-
-    // MARK: - Adaptive Fallback
-
-    func handleAdaptiveFallbackTrigger(for streamID: StreamID) {
-        let resolvedBitDepth = resolvedDecoderBitDepth(for: streamID)
-        let now = CFAbsoluteTimeGetCurrent()
-        if Self.shouldApplyDecoderCompatibilityFallback(
-            mode: adaptiveFallbackMode,
-            resolvedBitDepth: resolvedBitDepth,
-            lastAppliedTime: decoderCompatibilityFallbackLastAppliedTime[streamID],
-            now: now,
-            cooldown: decoderCompatibilityFallbackCooldown
-        ) {
-            applyDecoderCompatibilityFallback(for: streamID, at: now)
-            return
-        }
-        if adaptiveFallbackMode == .disabled, resolvedBitDepth == .tenBit {
-            let lastApplied = decoderCompatibilityFallbackLastAppliedTime[streamID] ?? now
-            let remainingMs = Int(((decoderCompatibilityFallbackCooldown - (now - lastApplied)) * 1000).rounded(.up))
-            MirageLogger.client(
-                "Decoder compatibility fallback cooldown \(max(0, remainingMs))ms for stream \(streamID)"
-            )
-            return
-        }
-
-        switch adaptiveFallbackMode {
-        case .disabled:
-            applyEmergencyReceiverFallback(for: streamID, at: now)
-        case .adaptive:
-            MirageLogger.client("Adaptive receiver-health recovery is app-owned for stream \(streamID)")
-        }
-    }
-
-    private func applyEmergencyReceiverFallback(for streamID: StreamID, at now: CFAbsoluteTime) {
-        let cooldown: CFAbsoluteTime = 20
-        if let lastApplied = emergencyReceiverFallbackLastAppliedTimeByStream[streamID],
-           now - lastApplied < cooldown {
-            MirageLogger.client("Emergency receiver fallback cooldown active for stream \(streamID)")
-            return
-        }
-
-        guard let snapshot = metricsStore.snapshot(for: streamID) else {
-            MirageLogger.client("Emergency receiver fallback skipped; no metrics for stream \(streamID)")
-            return
-        }
-
-        let currentBitrate = snapshot.hostCurrentBitrate ??
-            snapshot.hostRequestedTargetBitrate ??
-            snapshot.hostEnteredBitrate
-        let targetBitrate = currentBitrate.map { max(8_000_000, Int(Double($0) * 0.65)) }
-        let targetFrameRate: Int? = snapshot.hostTargetFrameRate > 30 ? 30 : nil
-        guard targetBitrate != nil || targetFrameRate != nil else {
-            MirageLogger.client("Emergency receiver fallback skipped; no lower workload available for stream \(streamID)")
-            return
-        }
-
-        emergencyReceiverFallbackLastAppliedTimeByStream[streamID] = now
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await sendStreamEncoderSettingsChange(
-                    streamID: streamID,
-                    bitrate: targetBitrate,
-                    targetFrameRate: targetFrameRate
-                )
-                let bitrateText = targetBitrate.map {
-                    let mbps = Double($0) / 1_000_000.0
-                    return "\(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps"
-                } ?? "current bitrate"
-                let fpsText = targetFrameRate.map { " and \($0)fps" } ?? ""
-                let message = "Mirage reduced stream workload to \(bitrateText)\(fpsText) to recover from a freeze."
-                MirageLogger.client(message)
-                onEmergencyReceiverFallback?(message)
-            } catch {
-                MirageLogger.client(
-                    "Emergency receiver fallback failed for stream \(streamID): \(error.localizedDescription)"
-                )
-            }
-        }
-    }
-
-    nonisolated static func shouldApplyDecoderCompatibilityFallback(
-        mode: AdaptiveFallbackMode,
-        resolvedBitDepth: MirageVideoBitDepth,
-        lastAppliedTime: CFAbsoluteTime?,
-        now: CFAbsoluteTime,
-        cooldown: CFAbsoluteTime
-    )
-    -> Bool {
-        guard mode == .disabled else { return false }
-        guard resolvedBitDepth == .tenBit else { return false }
-        guard let lastAppliedTime, lastAppliedTime > 0 else { return true }
-        return now - lastAppliedTime >= cooldown
-    }
-
-    private func applyDecoderCompatibilityFallback(for streamID: StreamID, at now: CFAbsoluteTime) {
-        // ProRes uses fixed quality — do not apply decoder compatibility fallback
-        if activeStreamCodecs[streamID] == .proRes4444 {
-            MirageLogger.client("Skipping decoder compatibility fallback for ProRes stream \(streamID)")
-            return
-        }
-
-        decoderCompatibilityFallbackLastAppliedTime[streamID] = now
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await sendStreamEncoderSettingsChange(
-                    streamID: streamID,
-                    colorDepth: .standard
-                )
-                decoderCompatibilityCurrentColorDepthByStream[streamID] = .standard
-                if let controller = controllersByStream[streamID] {
-                    await controller.setPreferredDecoderColorDepth(.standard)
-                }
-                MirageLogger.client(
-                    "Decoder compatibility fallback forced color depth Pro/Ultra -> Standard for stream \(streamID)"
-                )
-                requestStreamRecovery(for: streamID, trigger: .decoderCompatibilityFallback)
-            } catch {
-                decoderCompatibilityFallbackLastAppliedTime.removeValue(forKey: streamID)
-                MirageLogger.error(
-                    .client,
-                    error: error,
-                    message: "Failed to apply decoder compatibility fallback for stream \(streamID): "
-                )
-            }
-        }
-    }
-
-    func configureDecoderColorDepthBaseline(
-        for streamID: StreamID,
-        colorDepth: MirageStreamColorDepth?
-    ) {
-        if let colorDepth {
-            decoderCompatibilityCurrentColorDepthByStream[streamID] = colorDepth
-            decoderCompatibilityBaselineColorDepthByStream[streamID] = colorDepth
-        } else {
-            decoderCompatibilityCurrentColorDepthByStream.removeValue(forKey: streamID)
-            decoderCompatibilityBaselineColorDepthByStream.removeValue(forKey: streamID)
-        }
-        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
-    }
-
-    func clearDecoderColorDepthState(for streamID: StreamID) {
-        decoderCompatibilityCurrentColorDepthByStream.removeValue(forKey: streamID)
-        decoderCompatibilityBaselineColorDepthByStream.removeValue(forKey: streamID)
-        decoderCompatibilityFallbackLastAppliedTime.removeValue(forKey: streamID)
-    }
-
-    // MARK: - Network Endpoint Utilities
-
-    nonisolated static func host(from endpoint: NWEndpoint?) -> NWEndpoint.Host? {
-        guard let endpoint else { return nil }
-        if case let .hostPort(host, _) = endpoint {
-            return host
-        }
-        return nil
-    }
-
-    nonisolated static func serviceName(from endpoint: NWEndpoint?) -> String? {
-        guard let endpoint else { return nil }
-        if case let .service(name, _, _, _) = endpoint {
-            return name
-        }
-        return nil
-    }
-
-    nonisolated static func expandedBonjourHosts(for host: NWEndpoint.Host) -> [NWEndpoint.Host] {
-        if let localQualified = localQualifiedBonjourHost(for: host) {
-            return [localQualified]
-        }
-        return [host]
-    }
-
-    nonisolated static func localQualifiedBonjourHost(for host: NWEndpoint.Host) -> NWEndpoint.Host? {
-        let rawValue = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard shouldQualifyBonjourHostWithLocalDomain(rawValue) else { return nil }
-        return NWEndpoint.Host("\(rawValue).local")
-    }
-
-    nonisolated static func shouldQualifyBonjourHostWithLocalDomain(_ value: String) -> Bool {
-        guard !value.isEmpty else { return false }
-        guard !value.contains("."), !value.contains(":"), !value.contains("%") else { return false }
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
-        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 }

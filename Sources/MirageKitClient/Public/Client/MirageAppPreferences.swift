@@ -13,6 +13,7 @@ public struct MirageAppPreferences: Codable, Equatable {
     /// Per-host preferences keyed by host UUID string.
     public var hostPreferences: [String: MirageHostAppPreferences] = [:]
 
+    /// Creates client app preferences.
     public init(hostPreferences: [String: MirageHostAppPreferences] = [:]) {
         self.hostPreferences = hostPreferences
     }
@@ -100,6 +101,7 @@ public struct MirageHostAppPreferences: Codable, Equatable {
     /// Whether to show only pinned apps for the host.
     public var showPinnedOnlyApps: Bool = false
 
+    /// Creates per-host app preferences.
     public init(
         pinnedApps: Set<String> = [],
         recentApps: [String: Date] = [:],
@@ -119,6 +121,7 @@ public struct MirageHostAppPreferences: Codable, Equatable {
         case showPinnedOnlyApps
     }
 
+    /// Decodes host app preferences, defaulting missing fields for older persisted data.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
@@ -137,18 +140,25 @@ public extension MirageAppPreferences {
     /// Load preferences from UserDefaults.
     /// - Returns: Stored preferences or defaults if none exist.
     static func load() -> MirageAppPreferences {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
-              let prefs = try? JSONDecoder().decode(MirageAppPreferences.self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else {
             return MirageAppPreferences()
         }
-        return prefs
+        do {
+            return try JSONDecoder().decode(MirageAppPreferences.self, from: data)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app preferences: ")
+            return MirageAppPreferences()
+        }
     }
 
     /// Save preferences to UserDefaults.
     /// - Note: Persisted immediately on the main actor.
     func save() {
-        if let data = try? JSONEncoder().encode(self) {
+        do {
+            let data = try JSONEncoder().encode(self)
             UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to encode app preferences: ")
         }
     }
 }

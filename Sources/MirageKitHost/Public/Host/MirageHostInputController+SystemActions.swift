@@ -17,6 +17,7 @@ extension MirageHostInputController {
     private static let systemActionCooldown: CFAbsoluteTime = 0.45
     static let missionControlApplicationURL = URL(filePath: "/System/Applications/Mission Control.app")
 
+    /// Executes a host-level system action requested by a client.
     func executeHostSystemAction(_ request: MirageHostSystemActionRequest) {
         guard beginSystemActionIfAllowed(request.action) else {
             MirageLogger.host("Skipping host system action \(request.action.diagnosticLabel) during cooldown")
@@ -26,6 +27,7 @@ extension MirageHostInputController {
         executeResolvedHostSystemAction(request, allowApplicationFallback: true)
     }
 
+    /// Starts a cooldown window for a system action if one is not already active.
     private func beginSystemActionIfAllowed(_ action: MirageHostSystemAction) -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
         if let inFlightUntil = systemActionInFlightUntilByAction[action],
@@ -36,6 +38,7 @@ extension MirageHostInputController {
         return true
     }
 
+    /// Returns Mission Control app launch arguments for actions that support app fallback.
     static func missionControlLaunchArguments(for action: MirageHostSystemAction) -> [String]? {
         switch action {
         case .missionControl:
@@ -47,6 +50,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Launches Mission Control as a fallback for disabled or unavailable symbolic hot keys.
     private func launchMissionControl(
         arguments: [String],
         fallbackRequest: MirageHostSystemActionRequest
@@ -74,6 +78,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Resolves a host system action to a configured shortcut, app fallback, or built-in shortcut.
     private func executeResolvedHostSystemAction(
         _ request: MirageHostSystemActionRequest,
         allowApplicationFallback: Bool
@@ -100,6 +105,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Falls back to the protocol-provided built-in shortcut for a system action.
     private func fallbackToBuiltInHostSystemShortcut(
         _ request: MirageHostSystemActionRequest,
         reason: String
@@ -116,6 +122,7 @@ extension MirageHostInputController {
         injectHostShortcut(fallbackKeyEvent)
     }
 
+    /// Injects a shortcut and releases its key/modifier state after a short delay.
     private func injectHostShortcut(_ keyEvent: MirageKeyEvent) {
         let domain = Self.systemActionInjectionDomain
         clearUnexpectedSystemModifiers(domain: domain)
@@ -130,15 +137,16 @@ extension MirageHostInputController {
         ) { [weak self] in
             guard let self else { return }
 
-            self.injectKeyEvent(isKeyDown: false, keyEvent, domain: domain)
+            injectKeyEvent(isKeyDown: false, keyEvent, domain: domain)
             if !keyEvent.modifiers.isEmpty {
-                self.injectFlagsChanged([], domain: domain)
+                injectFlagsChanged([], domain: domain)
             }
         }
     }
 }
 
 private extension MirageHostSystemAction {
+    /// Human-readable label used in host system action diagnostics.
     var diagnosticLabel: String {
         switch self {
         case .spaceLeft:

@@ -10,15 +10,24 @@
 import CoreGraphics
 import MirageKit
 
+/// Current drawable, view, and screen metrics used to drive stream resize decisions.
 public struct MirageDrawableMetrics: Sendable, Equatable {
+    /// Backing drawable size in pixels.
     public let pixelSize: CGSize
+    /// Stream view size in points.
     public let viewSize: CGSize
+    /// Effective backing scale used to derive ``pixelSize`` from ``viewSize``.
     public let scaleFactor: CGFloat
+    /// Current screen size in points when available.
     public let screenPointSize: CGSize?
+    /// Current screen scale when available.
     public let screenScale: CGFloat?
+    /// Native screen pixel size when available.
     public let screenNativePixelSize: CGSize?
+    /// Native screen scale when available.
     public let screenNativeScale: CGFloat?
 
+    /// Creates a drawable metrics snapshot.
     public init(
         pixelSize: CGSize,
         viewSize: CGSize,
@@ -35,13 +44,5 @@ public struct MirageDrawableMetrics: Sendable, Equatable {
         self.screenScale = screenScale
         self.screenNativePixelSize = screenNativePixelSize
         self.screenNativeScale = screenNativeScale
-    }
-
-    static func shouldReportChange(
-        from previous: MirageDrawableMetrics?,
-        to next: MirageDrawableMetrics
-    )
-    -> Bool {
-        previous != next
     }
 }

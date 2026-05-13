@@ -16,122 +16,117 @@ extension MirageHostService {
     func sendControlError(
         _ code: ErrorMessage.ErrorCode,
         message: String,
-        streamID: StreamID? = nil,
         to clientContext: ClientContext
     ) {
-        let payload = ErrorMessage(code: code, message: message, streamID: streamID)
-        guard let response = try? ControlMessage(type: .error, content: payload) else {
+        let payload = ErrorMessage(code: code, message: message)
+        guard clientContext.sendBestEffort(.error, content: payload) else {
             MirageLogger.error(.host, "Failed to encode error response: \(message)")
             return
         }
-        clientContext.sendBestEffort(response)
     }
 
     func registerControlMessageHandlers() {
         controlMessageHandlers = [
-            .startStream: { [weak self] message, clientContext in
+            .startStream: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStartStreamMessage(message, from: clientContext)
             },
-            .displayResolutionChange: { [weak self] message, _ in
+            .displayResolutionChange: .message { [weak self] message in
                 await self?.handleDisplayResolutionChangeMessage(message)
             },
-            .streamScaleChange: { [weak self] message, _ in
+            .streamScaleChange: .message { [weak self] message in
                 await self?.handleStreamScaleChangeMessage(message)
             },
-            .streamRefreshRateChange: { [weak self] message, _ in
+            .streamRefreshRateChange: .message { [weak self] message in
                 await self?.handleStreamRefreshRateChangeMessage(message)
             },
-            .streamReady: { [weak self] message, _ in
+            .streamReady: .message { [weak self] message in
                 await self?.handleStreamReadyMessage(message)
             },
-            .streamEncoderSettingsChange: { [weak self] message, clientContext in
-                await self?.handleStreamEncoderSettingsChangeMessage(message, from: clientContext)
+            .streamEncoderSettingsChange: .message { [weak self] message in
+                await self?.handleStreamEncoderSettingsChangeMessage(message)
             },
-            .receiverMediaFeedback: { [weak self] message, _ in
-                await self?.handleReceiverMediaFeedbackMessage(message)
-            },
-            .desktopCursorPresentationChange: { [weak self] message, _ in
+            .desktopCursorPresentationChange: .message { [weak self] message in
                 await self?.handleDesktopCursorPresentationChangeMessage(message)
             },
-            .stopStream: { [weak self] message, _ in
+            .stopStream: .message { [weak self] message in
                 await self?.handleStopStreamMessage(message)
             },
-            .keyframeRequest: { [weak self] message, clientContext in
+            .keyframeRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleKeyframeRequestMessage(message, from: clientContext)
             },
-            .ping: { [weak self] _, clientContext in
-                self?.handlePingMessage(clientContext: clientContext)
+            .ping: .client { clientContext in
+                clientContext.sendBestEffort(.pong)
             },
-            .inputEvent: { [weak self] message, clientContext in
-                await self?.handleInputEventMessage(message, from: clientContext.client)
+            .inputEvent: .message { [weak self] message in
+                await self?.handleInputEventMessage(message)
             },
-            .disconnect: { [weak self] message, clientContext in
+            .disconnect: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleDisconnectMessage(message, from: clientContext)
             },
-            .appListRequest: { [weak self] message, clientContext in
+            .appListRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleAppListRequest(message, from: clientContext)
             },
-            .selectApp: { [weak self] message, clientContext in
+            .selectApp: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleSelectApp(message, from: clientContext)
             },
-            .appWindowSwapRequest: { [weak self] message, clientContext in
+            .appWindowSwapRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleAppWindowSwapRequest(message, from: clientContext)
             },
-            .appWindowCloseAlertActionRequest: { [weak self] message, clientContext in
+            .appWindowCloseAlertActionRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleAppWindowCloseAlertActionRequest(message, from: clientContext)
             },
-            .menuActionRequest: { [weak self] message, clientContext in
+            .menuActionRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleMenuActionRequest(message, from: clientContext)
             },
-            .hostHardwareIconRequest: { [weak self] message, clientContext in
+            .hostHardwareIconRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleHostHardwareIconRequest(message, from: clientContext)
             },
-            .hostWallpaperRequest: { [weak self] message, clientContext in
+            .hostWallpaperRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleHostWallpaperRequest(message, from: clientContext)
             },
-            .remoteClientStreamOptionsState: { [weak self] message, clientContext in
+            .remoteClientStreamOptionsState: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleRemoteClientStreamOptionsState(message, from: clientContext)
             },
-            .hostSupportLogArchiveRequest: { [weak self] message, clientContext in
+            .hostSupportLogArchiveRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleHostSupportLogArchiveRequest(message, from: clientContext)
             },
-            .startDesktopStream: { [weak self] message, clientContext in
+            .startDesktopStream: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStartDesktopStream(message, from: clientContext)
             },
-            .stopDesktopStream: { [weak self] message, _ in
+            .stopDesktopStream: .message { [weak self] message in
                 await self?.handleStopDesktopStream(message)
             },
-            .qualityTestRequest: { [weak self] message, clientContext in
+            .qualityTestRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleQualityTestRequest(message, from: clientContext)
             },
-            .qualityTestCancel: { [weak self] message, clientContext in
+            .qualityTestCancel: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleQualityTestCancel(message, from: clientContext)
             },
-            .hostSoftwareUpdateStatusRequest: { [weak self] message, clientContext in
+            .hostSoftwareUpdateStatusRequest: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleHostSoftwareUpdateStatusRequest(message, from: clientContext)
             },
-            .hostSoftwareUpdateInstallRequest: { [weak self] message, clientContext in
-                await self?.handleHostSoftwareUpdateInstallRequest(message, from: clientContext)
+            .hostSoftwareUpdateInstallRequest: .client { [weak self] clientContext in
+                await self?.handleHostSoftwareUpdateInstallRequest(from: clientContext)
             },
-            .hostApplicationRestartRequest: { [weak self] message, clientContext in
-                await self?.handleHostApplicationRestartRequest(message, from: clientContext)
+            .hostApplicationRestartRequest: .client { [weak self] clientContext in
+                await self?.handleHostApplicationRestartRequest(from: clientContext)
             },
-            .sharedClipboardUpdate: { [weak self] message, clientContext in
+            .sharedClipboardUpdate: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleSharedClipboardUpdate(message, from: clientContext)
             },
-            .streamPauseAll: { [weak self] message, clientContext in
+            .streamPauseAll: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStreamPauseAll(message, from: clientContext)
             },
-            .streamResumeAll: { [weak self] _, clientContext in
+            .streamResumeAll: .client { [weak self] clientContext in
                 await self?.handleStreamResumeAll(from: clientContext)
             },
-            .cancelStreamSetup: { [weak self] message, clientContext in
+            .cancelStreamSetup: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleCancelStreamSetup(message, from: clientContext)
             },
-            .startCustomStream: { [weak self] message, clientContext in
+            .startCustomStream: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStartCustomStream(message, from: clientContext)
             },
-            .stopCustomStream: { [weak self] message, clientContext in
+            .stopCustomStream: .messageAndClient { [weak self] message, clientContext in
                 await self?.handleStopCustomStream(message, from: clientContext)
             }
         ]
@@ -149,223 +144,35 @@ extension MirageHostService {
             MirageLogger.host("Unhandled message type: \(message.type)")
             return
         }
-        await handler(message, clientContext)
+        switch handler {
+        case let .messageAndClient(handle):
+            await handle(message, clientContext)
+        case let .message(handle):
+            await handle(message)
+        case let .client(handle):
+            await handle(clientContext)
+        }
     }
 
     nonisolated static func shouldLogReceivedControlMessageType(_ type: ControlMessageType) -> Bool {
         type != .receiverMediaFeedback
     }
 
-    private func handleStartStreamMessage(
-        _ message: ControlMessage,
-        from clientContext: ClientContext
-    ) async {
-        var pendingLightsOutSetup = false
-        do {
-            let request = try message.decode(StartStreamMessage.self)
-            guard !disconnectingClientIDs.contains(clientContext.client.id),
-                  clientsByID[clientContext.client.id] != nil else {
-                MirageLogger.host("Ignoring startStream from disconnected client \(clientContext.client.name)")
-                return
-            }
-            await cancelQualityTest(
-                for: clientContext.client.id,
-                reason: "app stream startup"
-            )
-            MirageLogger.host("Client requested stream for window \(request.windowID)")
-
-            await refreshSessionStateIfNeeded()
-            guard sessionState == .ready else {
-                MirageLogger.host("Rejecting startStream while session is \(sessionState)")
-                await sendSessionState(to: clientContext)
-                return
-            }
-
-            guard let window = availableWindows.first(where: { $0.id == request.windowID }) else {
-                MirageLogger.host("Window not found: \(request.windowID)")
-                sendControlError(
-                    .windowNotFound,
-                    message: "Window \(request.windowID) not found",
-                    to: clientContext
-                )
-                return
-            }
-
-            guard let displayWidth = request.displayWidth,
-                  let displayHeight = request.displayHeight,
-                  displayWidth > 0,
-                  displayHeight > 0 else {
-                MirageLogger.host("Rejecting startStream without display size for window \(request.windowID)")
-                sendControlError(
-                    .invalidMessage,
-                    message: "startStream requires displayWidth/displayHeight",
-                    to: clientContext
-                )
-                return
-            }
-            let clientDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
-            MirageLogger.host("Client display size (points): \(displayWidth)x\(displayHeight)")
-
-            let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
-
-            let keyFrameInterval = request.keyFrameInterval
-            let colorDepth = request.colorDepth
-            let bitrate = request.bitrate
-            let latencyMode = request.latencyMode ?? .lowestLatency
-            let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
-            let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? false
-            let disableResolutionCap = request.disableResolutionCap ?? false
-            let requestedScale = request.streamScale ?? 1.0
-            let audioConfiguration = request.audioConfiguration ?? .default
-            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
-            let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
-                requested: request.mediaMaxPacketSize,
-                pathKind: pathKind
-            )
-            MirageLogger.host("Frame rate: \(targetFrameRate)fps")
-            MirageLogger.host("Latency mode: \(latencyMode.displayName)")
-
-            pendingLightsOutSetup = true
-            await beginPendingAppStreamLightsOutSetup()
-            try await startStream(
-                for: window,
-                to: clientContext.client,
-                expectedSessionID: clientContext.sessionID,
-                clientDisplayResolution: clientDisplayResolution,
-                clientScaleFactor: request.scaleFactor,
-                keyFrameInterval: keyFrameInterval,
-                streamScale: requestedScale,
-                targetFrameRate: targetFrameRate,
-                colorDepth: colorDepth,
-                captureQueueDepth: request.captureQueueDepth,
-                bitrate: bitrate,
-                latencyMode: latencyMode,
-                allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
-                lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
-                disableResolutionCap: disableResolutionCap,
-                audioConfiguration: audioConfiguration,
-                bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
-                encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight,
-                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
-                upscalingMode: request.upscalingMode,
-                codec: request.codec
-            )
-            pendingLightsOutSetup = false
-            await endPendingAppStreamLightsOutSetup()
-        } catch {
-            if pendingLightsOutSetup {
-                pendingLightsOutSetup = false
-                await endPendingAppStreamLightsOutSetup()
-            }
-            MirageLogger.error(.host, error: error, message: "Failed to handle startStream: ")
-            let errorCode: ErrorMessage.ErrorCode = if error is WindowStreamStartError {
-                .virtualDisplayStartFailed
-            } else {
-                .encodingError
-            }
-            sendControlError(
-                errorCode,
-                message: "Failed to start stream: \(error.localizedDescription)",
-                to: clientContext
-            )
-        }
-    }
-
-    private func handleDisplayResolutionChangeMessage(_ message: ControlMessage) async {
-        do {
-            let request = try message.decode(DisplayResolutionChangeMessage.self)
-            MirageLogger
-                .host(
-                    "Client requested display size change for stream \(request.streamID): " +
-                        "\(request.displayWidth)x\(request.displayHeight) pts"
-                )
-            let baseResolution = CGSize(width: request.displayWidth, height: request.displayHeight)
-            await handleDisplayResolutionChange(
-                streamID: request.streamID,
-                newResolution: baseResolution,
-                transitionID: request.transitionID,
-                requestedDisplayScaleFactor: request.requestedDisplayScaleFactor,
-                requestedStreamScale: request.requestedStreamScale,
-                encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight
-            )
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle displayResolutionChange: ")
-        }
-    }
-
-    private func handleStreamScaleChangeMessage(_ message: ControlMessage) async {
-        do {
-            let request = try message.decode(StreamScaleChangeMessage.self)
-            MirageLogger
-                .host("Client requested stream scale change for stream \(request.streamID): \(request.streamScale)")
-            await handleStreamScaleChange(streamID: request.streamID, streamScale: request.streamScale)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle streamScaleChange: ")
-        }
-    }
-
-    private func handleStreamRefreshRateChangeMessage(_ message: ControlMessage) async {
-        do {
-            let request = try message.decode(StreamRefreshRateChangeMessage.self)
-            MirageLogger
-                .host(
-                    "Client requested refresh rate override for stream \(request.streamID): \(request.maxRefreshRate)Hz"
-                )
-            await handleStreamRefreshRateChange(
-                streamID: request.streamID,
-                maxRefreshRate: request.maxRefreshRate,
-                forceDisplayRefresh: request.forceDisplayRefresh ?? false
-            )
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle streamRefreshRateChange: ")
-        }
-    }
-
-    private func handleStreamEncoderSettingsChangeMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
-        do {
-            let request = try message.decode(StreamEncoderSettingsChangeMessage.self)
-            MirageLogger
-                .host(
-                    "Client requested encoder settings change for stream \(request.streamID): " +
-                        "colorDepth=\(request.colorDepth?.displayName ?? "unchanged"), " +
-                        "bitrate=\(request.bitrate.map(String.init) ?? "unchanged"), " +
-                        "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged"), " +
-                        "fps=\(request.targetFrameRate.map(String.init) ?? "unchanged")"
-                )
-            await handleStreamEncoderSettingsChange(request, from: clientContext)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle streamEncoderSettingsChange: ")
-        }
-    }
-
-    private func handleDesktopCursorPresentationChangeMessage(_ message: ControlMessage) async {
-        do {
-            let request = try message.decode(DesktopCursorPresentationChangeMessage.self)
-            MirageLogger.host(
-                "Client requested desktop cursor presentation change for stream \(request.streamID): " +
-                    "source=\(request.cursorPresentation.source.rawValue), " +
-                    "lockClientCursor=\(request.cursorPresentation.lockClientCursorWhenUsingHostCursor)"
-            )
-            await handleDesktopCursorPresentationChange(request)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle desktopCursorPresentationChange: ")
-        }
-    }
-
     private func handleStopStreamMessage(_ message: ControlMessage) async {
-        guard let request = try? message.decode(StopStreamMessage.self) else { return }
+        let request: StopStreamMessage
+        do {
+            request = try message.decode(StopStreamMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle stopStream: ")
+            return
+        }
+
         guard let session = activeSessionByStreamID[request.streamID] else { return }
 
-        let appSession = await appStreamManager.getSessionForWindow(session.window.id)
-        let shouldAttemptHostWindowClose = Self.clientWindowCloseHostWindowCloseDecision(
-            origin: request.origin,
-            closeHostWindowOnClientWindowClose: closeHostWindowOnClientWindowClose,
-            hasAppStreamSession: appSession != nil
-        ) == .attemptHostWindowClose
-
-        if shouldAttemptHostWindowClose, let appSession {
+        let appSession = await appStreamManager.sessionForWindow(session.window.id)
+        if request.origin == .clientWindowClosed,
+           closeHostWindowOnClientWindowClose,
+           let appSession {
             await handleHostWindowCloseAttemptForClientWindowClose(
                 session: session,
                 appSession: appSession
@@ -389,35 +196,20 @@ extension MirageHostService {
     }
 
     private func handleKeyframeRequestMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
-        if let request = try? message.decode(KeyframeRequestMessage.self),
-           let context = streamsByID[request.streamID] {
-            let ack = await context.requestKeyframe()
-            clientContext.sendBestEffort(.keyframeRecoveryAck, content: ack)
-        }
-    }
-
-    private func handleReceiverMediaFeedbackMessage(_ message: ControlMessage) async {
-        guard let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self) else {
-            receiverMediaFeedbackDiagnostics.withLock { $0.droppedCount &+= 1 }
+        let request: KeyframeRequestMessage
+        do {
+            request = try message.decode(KeyframeRequestMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle keyframeRequest: ")
             return
         }
-        await handleReceiverMediaFeedback(feedback)
+
+        guard let context = streamsByID[request.streamID] else { return }
+        let ack = await context.requestKeyframe()
+        clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
     }
 
-    func handleReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
-        guard let context = streamsByID[feedback.streamID] else {
-            receiverMediaFeedbackDiagnostics.withLock { $0.droppedCount &+= 1 }
-            return
-        }
-        await context.recordReceiverMediaFeedback(feedback)
-    }
-
-    private func handlePingMessage(clientContext: ClientContext) {
-        let pong = ControlMessage(type: .pong)
-        clientContext.sendBestEffort(pong)
-    }
-
-    private func handleInputEventMessage(_ message: ControlMessage, from client: MirageConnectedClient) async {
+    private func handleInputEventMessage(_ message: ControlMessage) async {
         do {
             let inputMessage = try InputEventMessage.deserializePayload(message.payload)
             if case let .windowResize(resizeEvent) = inputMessage.event {
@@ -441,9 +233,11 @@ extension MirageHostService {
 
     private func handleDisconnectMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
         let client = clientContext.client
-        if let disconnect = try? message.decode(DisconnectMessage.self) {
+        do {
+            let disconnect = try message.decode(DisconnectMessage.self)
             MirageLogger.host("Client \(client.name) disconnected: \(disconnect.reason.rawValue)")
-        } else {
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to decode disconnect message: ")
             MirageLogger.host("Client \(client.name) disconnected")
         }
         await disconnectClient(
@@ -454,60 +248,5 @@ extension MirageHostService {
         delegate?.didDisconnectClient(client)
     }
 
-    // MARK: - Stream Pause/Resume (Client Backgrounding)
-
-    private func handleStreamPauseAll(_ message: ControlMessage, from clientContext: ClientContext) async {
-        if !message.payload.isEmpty,
-           let lease = try? message.decode(ClientBackgroundLeaseMessage.self) {
-            scheduleBackgroundLease(lease, for: clientContext)
-        }
-
-        let contextCount = streamsByID.count
-        guard contextCount > 0 else { return }
-        MirageLogger.host("Pausing all streams (\(contextCount)) for client background")
-        resetDesktopResizeTransactionState()
-        for (_, context) in streamsByID {
-            await context.pauseForClientBackground()
-        }
-    }
-
-    private func handleStreamResumeAll(from clientContext: ClientContext) async {
-        cancelBackgroundLease(clientID: clientContext.client.id)
-
-        let contextCount = streamsByID.count
-        guard contextCount > 0 else { return }
-        MirageLogger.host("Resuming all streams (\(contextCount)) after client foreground")
-        for (_, context) in streamsByID {
-            await context.resumeAfterClientForeground()
-        }
-    }
-
-    private func handleAppWindowCloseAlertActionRequest(
-        _ message: ControlMessage,
-        from clientContext: ClientContext
-    ) async {
-        do {
-            let request = try message.decode(AppWindowCloseAlertActionRequestMessage.self)
-            let result = await performAppWindowCloseAlertAction(
-                alertToken: request.alertToken,
-                actionID: request.actionID,
-                presentingStreamID: request.presentingStreamID,
-                clientID: clientContext.client.id
-            )
-            if let response = try? ControlMessage(type: .appWindowCloseAlertActionResult, content: result) {
-                clientContext.sendBestEffort(response)
-            }
-        } catch {
-            let fallback = AppWindowCloseAlertActionResultMessage(
-                alertToken: "",
-                actionID: "",
-                success: false,
-                reason: error.localizedDescription
-            )
-            if let response = try? ControlMessage(type: .appWindowCloseAlertActionResult, content: fallback) {
-                clientContext.sendBestEffort(response)
-            }
-        }
-    }
 }
 #endif

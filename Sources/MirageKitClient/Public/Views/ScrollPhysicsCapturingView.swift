@@ -13,6 +13,9 @@ import UIKit
 /// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingView: UIView {
+    /// Large offscreen scrollable area that allows native momentum before recentering.
+    private static let scrollableSize: CGFloat = 100_000
+
     enum InputSource {
         case indirectPointer
         case directTouch
@@ -105,28 +108,20 @@ final class ScrollPhysicsCapturingView: UIView {
     /// Callback when a direct non-stylus touch is detected.
     var onDirectTouchActivity: (() -> Void)?
 
-    var onPencilTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)? {
-        get { directTouchScrollView.onPencilTouchesBegan }
-        set { directTouchScrollView.onPencilTouchesBegan = newValue }
+    /// Installs Pencil touch callbacks on the private direct-touch scroll view.
+    ///
+    /// Only moved touches receive the `UIEvent` because coalesced touch samples are only read during movement.
+    func configurePencilTouchHandlers(
+        began: ((Set<UITouch>) -> Void)?,
+        moved: ((Set<UITouch>, UIEvent?) -> Void)?,
+        ended: ((Set<UITouch>) -> Void)?,
+        cancelled: ((Set<UITouch>) -> Void)?
+    ) {
+        directTouchScrollView.onPencilTouchesBegan = began
+        directTouchScrollView.onPencilTouchesMoved = moved
+        directTouchScrollView.onPencilTouchesEnded = ended
+        directTouchScrollView.onPencilTouchesCancelled = cancelled
     }
-
-    var onPencilTouchesMoved: ((Set<UITouch>, UIEvent?) -> Void)? {
-        get { directTouchScrollView.onPencilTouchesMoved }
-        set { directTouchScrollView.onPencilTouchesMoved = newValue }
-    }
-
-    var onPencilTouchesEnded: ((Set<UITouch>, UIEvent?) -> Void)? {
-        get { directTouchScrollView.onPencilTouchesEnded }
-        set { directTouchScrollView.onPencilTouchesEnded = newValue }
-    }
-
-    var onPencilTouchesCancelled: ((Set<UITouch>, UIEvent?) -> Void)? {
-        get { directTouchScrollView.onPencilTouchesCancelled }
-        set { directTouchScrollView.onPencilTouchesCancelled = newValue }
-    }
-
-    /// Size of scrollable area - large enough for extended scrolling before recenter
-    private let scrollableSize: CGFloat = 100_000
 
     /// Whether we're currently tracking a gesture in the indirect scroll view
     private var isIndirectTracking = false
@@ -252,7 +247,7 @@ final class ScrollPhysicsCapturingView: UIView {
             self?.handleScrollViewDidEndDecelerating(scrollView)
         }
         scrollView.onDidEndScrollingAnimation = { [weak self] scrollView in
-            self?.handleScrollViewDidEndScrollingAnimation(scrollView)
+            self?.recenterIfNeeded(for: scrollView)
         }
     }
 
@@ -272,8 +267,8 @@ final class ScrollPhysicsCapturingView: UIView {
     private func setupScrollContent(_ scrollContent: UIView, in scrollView: UIScrollView) {
         scrollContent.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(scrollContent)
-        scrollContent.frame = CGRect(x: 0, y: 0, width: scrollableSize, height: scrollableSize)
-        scrollView.contentSize = CGSize(width: scrollableSize, height: scrollableSize)
+        scrollContent.frame = CGRect(x: 0, y: 0, width: Self.scrollableSize, height: Self.scrollableSize)
+        scrollView.contentSize = CGSize(width: Self.scrollableSize, height: Self.scrollableSize)
     }
 
     override func layoutSubviews() {
@@ -297,8 +292,8 @@ final class ScrollPhysicsCapturingView: UIView {
     ///   - force: If true, recenter even if currently scrolling.
     private func recenterIfNeeded(for scrollView: UIScrollView, force: Bool = false) {
         let centerOffset = CGPoint(
-            x: (scrollableSize - bounds.width) / 2,
-            y: (scrollableSize - bounds.height) / 2
+            x: (Self.scrollableSize - bounds.width) / 2,
+            y: (Self.scrollableSize - bounds.height) / 2
         )
 
         if force || (!isTracking(scrollView) && !scrollView.isDecelerating) {
@@ -352,10 +347,6 @@ final class ScrollPhysicsCapturingView: UIView {
 
     private func handleScrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         onScroll?(0, 0, .none, .ended, inputSource(for: scrollView))
-        recenterIfNeeded(for: scrollView)
-    }
-
-    private func handleScrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         recenterIfNeeded(for: scrollView)
     }
 
@@ -437,158 +428,4 @@ final class ScrollPhysicsCapturingView: UIView {
     }
 }
 
-private extension UIGestureRecognizer.State {
-    var isActive: Bool {
-        switch self {
-        case .began, .changed:
-            true
-        default:
-            false
-        }
-    }
-}
-
-private final class RotationGestureDelegate: NSObject, UIGestureRecognizerDelegate {
-    weak var indirectPanGestureRecognizer: UIGestureRecognizer?
-    weak var rotationGestureRecognizer: UIGestureRecognizer?
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        guard let indirectPanGestureRecognizer, let rotationGestureRecognizer else {
-            return false
-        }
-        return (gestureRecognizer == indirectPanGestureRecognizer && otherGestureRecognizer == rotationGestureRecognizer) ||
-            (gestureRecognizer == rotationGestureRecognizer && otherGestureRecognizer == indirectPanGestureRecognizer)
-    }
-}
-
-private final class CallbackScrollViewDelegateProxy: NSObject, UIScrollViewDelegate {
-    weak var owner: CallbackScrollView?
-
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        owner?.onWillBeginDragging?(scrollView)
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        owner?.onDidScroll?(scrollView)
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        owner?.onDidEndDragging?(scrollView, decelerate)
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        owner?.onDidEndDecelerating?(scrollView)
-    }
-
-    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-        owner?.onDidEndScrollingAnimation?(scrollView)
-    }
-}
-
-private class CallbackScrollView: UIScrollView {
-    var onWillBeginDragging: ((UIScrollView) -> Void)?
-    var onDidScroll: ((UIScrollView) -> Void)?
-    var onDidEndDragging: ((UIScrollView, Bool) -> Void)?
-    var onDidEndDecelerating: ((UIScrollView) -> Void)?
-    var onDidEndScrollingAnimation: ((UIScrollView) -> Void)?
-    private let delegateProxy = CallbackScrollViewDelegateProxy()
-
-    private func installDelegateBindings() {
-        delegateProxy.owner = self
-        if (super.delegate as AnyObject?) !== delegateProxy {
-            super.delegate = delegateProxy
-        }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        installDelegateBindings()
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        installDelegateBindings()
-    }
-
-}
-
-private func isStylusLikeTouch(_ touch: UITouch) -> Bool {
-    if touch.type == .pencil { return true }
-    guard touch.type == .direct else { return false }
-    if touch.maximumPossibleForce > 1.0 { return true }
-    if touch.force > 1.0 { return true }
-    if touch.estimatedProperties.contains(.force) ||
-        touch.estimatedProperties.contains(.azimuth) ||
-        touch.estimatedProperties.contains(.altitude) {
-        return true
-    }
-    if touch.estimatedPropertiesExpectingUpdates.contains(.force) ||
-        touch.estimatedPropertiesExpectingUpdates.contains(.azimuth) ||
-        touch.estimatedPropertiesExpectingUpdates.contains(.altitude) {
-        return true
-    }
-    return false
-}
-
-private final class DirectTouchScrollView: CallbackScrollView {
-    var onDirectTouchActivity: (() -> Void)?
-    var onPencilTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)?
-    var onPencilTouchesMoved: ((Set<UITouch>, UIEvent?) -> Void)?
-    var onPencilTouchesEnded: ((Set<UITouch>, UIEvent?) -> Void)?
-    var onPencilTouchesCancelled: ((Set<UITouch>, UIEvent?) -> Void)?
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let pencilTouches = touches.filter { isStylusLikeTouch($0) }
-        if !pencilTouches.isEmpty {
-            onPencilTouchesBegan?(Set(pencilTouches), event)
-        }
-
-        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        if !nonPencilTouches.isEmpty {
-            onDirectTouchActivity?()
-        }
-        if !nonPencilTouches.isEmpty {
-            super.touchesBegan(Set(nonPencilTouches), with: event)
-        }
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let pencilTouches = touches.filter { isStylusLikeTouch($0) }
-        if !pencilTouches.isEmpty {
-            onPencilTouchesMoved?(Set(pencilTouches), event)
-        }
-
-        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        if !nonPencilTouches.isEmpty {
-            super.touchesMoved(Set(nonPencilTouches), with: event)
-        }
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let pencilTouches = touches.filter { isStylusLikeTouch($0) }
-        if !pencilTouches.isEmpty {
-            onPencilTouchesEnded?(Set(pencilTouches), event)
-        }
-
-        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        if !nonPencilTouches.isEmpty {
-            super.touchesEnded(Set(nonPencilTouches), with: event)
-        }
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        let pencilTouches = touches.filter { isStylusLikeTouch($0) }
-        if !pencilTouches.isEmpty {
-            onPencilTouchesCancelled?(Set(pencilTouches), event)
-        }
-
-        let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        if !nonPencilTouches.isEmpty {
-            super.touchesCancelled(Set(nonPencilTouches), with: event)
-        }
-    }
-}
 #endif

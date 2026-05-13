@@ -10,8 +10,8 @@
 import Foundation
 import MirageKit
 
-struct RecoveryCoordinator: Sendable, Equatable {
-    enum Decision: Sendable, Equatable {
+struct RecoveryCoordinator: Equatable {
+    enum Decision: Equatable {
         case dispatch(episodeID: UInt64, attempt: Int)
         case wait(deadline: CFAbsoluteTime)
     }
@@ -21,7 +21,6 @@ struct RecoveryCoordinator: Sendable, Equatable {
     private(set) var attemptCount: Int = 0
     private(set) var retryDeadline: CFAbsoluteTime = 0
     private(set) var episodeDeadline: CFAbsoluteTime = 0
-    private(set) var lastHostAck: KeyframeRecoveryAckMessage?
 
     mutating func requestAction(
         now: CFAbsoluteTime,
@@ -43,7 +42,6 @@ struct RecoveryCoordinator: Sendable, Equatable {
     }
 
     mutating func recordHostAck(_ ack: KeyframeRecoveryAckMessage, now: CFAbsoluteTime) {
-        lastHostAck = ack
         guard activeReason != nil else { return }
         let ackDelay = CFAbsoluteTime(ack.deadlineMilliseconds) / 1000.0
         retryDeadline = max(retryDeadline, now + ackDelay)
@@ -54,7 +52,6 @@ struct RecoveryCoordinator: Sendable, Equatable {
         attemptCount = 0
         retryDeadline = 0
         episodeDeadline = 0
-        lastHostAck = nil
     }
 
     mutating func reset() {
@@ -72,14 +69,15 @@ struct RecoveryCoordinator: Sendable, Equatable {
         attemptCount = 0
         retryDeadline = 0
         episodeDeadline = now + Self.episodeDuration(targetFPS: targetFPS)
-        lastHostAck = nil
     }
 
+    /// Maximum duration for one keyframe recovery episode at the current stream cadence.
     static func episodeDuration(targetFPS: Int) -> CFAbsoluteTime {
         let frameInterval = 1.0 / Double(max(1, targetFPS))
         return min(4.0, max(1.5, frameInterval * 120.0))
     }
 
+    /// Retry delay for a one-based recovery request attempt.
     static func defaultRetryDelay(targetFPS: Int, attempt: Int) -> CFAbsoluteTime {
         let frameInterval = 1.0 / Double(max(1, targetFPS))
         switch attempt {

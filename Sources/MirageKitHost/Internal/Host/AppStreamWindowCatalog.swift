@@ -14,13 +14,13 @@ import ApplicationServices
 import Foundation
 import ScreenCaptureKit
 
-enum AppStreamWindowClassification: String, Sendable {
+enum AppStreamWindowClassification: String {
     case primary
     case auxiliary
 }
 
-struct AppStreamWindowCandidate: Sendable {
-    let bundleIdentifier: String
+/// Window candidate with ScreenCaptureKit and Accessibility classification metadata.
+struct AppStreamWindowCandidate {
     let window: MirageWindow
     let classification: AppStreamWindowClassification
     let role: String?
@@ -32,7 +32,6 @@ struct AppStreamWindowCandidate: Sendable {
     let windowListOrder: Int
 
     init(
-        bundleIdentifier: String,
         window: MirageWindow,
         classification: AppStreamWindowClassification,
         role: String?,
@@ -43,7 +42,6 @@ struct AppStreamWindowCandidate: Sendable {
         isModal: Bool = false,
         windowListOrder: Int = Int.max
     ) {
-        self.bundleIdentifier = bundleIdentifier
         self.window = window
         self.classification = classification
         self.role = role
@@ -55,24 +53,21 @@ struct AppStreamWindowCandidate: Sendable {
         self.windowListOrder = windowListOrder
     }
 
+    /// Metadata summary used in startup and retry diagnostics.
     var logMetadata: String {
         "classification=\(classification.rawValue), focused=\(isFocused), main=\(isMain), modal=\(isModal), role=\(role ?? "nil"), subrole=\(subrole ?? "nil"), parent=\(parentWindowID.map(String.init) ?? "nil")"
     }
 }
 
-struct AppStreamCapturedWindowCluster: Sendable, Equatable {
-    let primaryWindowID: WindowID
+/// Ordered set of windows captured together for an app stream.
+struct AppStreamCapturedWindowCluster: Equatable {
     let windowIDs: [WindowID]
-    let sourceRect: CGRect
 }
 
+/// Builds and filters app-stream window candidates from ScreenCaptureKit and Accessibility.
 enum AppStreamWindowCatalog {
-    struct StartupCandidateSelection: Sendable {
-        let candidates: [AppStreamWindowCandidate]
-        let usedFallback: Bool
-    }
-
-    struct AccessibilityClassification: Sendable {
+    /// Accessibility-derived classification attributes for a host window.
+    struct AccessibilityClassification {
         let role: String?
         let subrole: String?
         let parentWindowID: WindowID?
@@ -84,16 +79,17 @@ enum AppStreamWindowCatalog {
     static let minimumAuxiliaryWindowSize = CGSize(width: 24, height: 24)
     static let minimumVisibleAlpha: CGFloat = 0.05
 
+    /// Returns app-stream candidates grouped by normalized bundle identifier.
     static func catalog(
         for bundleIdentifiers: [String],
         minimumWindowSize: CGSize = CGSize(width: 160, height: 120)
     )
-        async throws -> [String: [AppStreamWindowCandidate]] {
+    async throws -> [String: [AppStreamWindowCandidate]] {
         let normalizedBundleIDs = Set(bundleIdentifiers.map { $0.lowercased() })
         guard !normalizedBundleIDs.isEmpty else { return [:] }
 
         let runningPIDsByBundleID = runningProcessIDs(for: normalizedBundleIDs)
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let content = try await SCShareableContent.mirageHostContent()
         let windowMetadata = fetchWindowMetadata()
 
         var candidatesByBundleID: [String: [AppStreamWindowCandidate]] = [:]
@@ -153,7 +149,6 @@ enum AppStreamWindowCatalog {
             ) else { continue }
 
             let candidate = AppStreamWindowCandidate(
-                bundleIdentifier: matchedBundleID,
                 window: normalizedWindow,
                 classification: classification,
                 role: accessibility?.role,
@@ -179,6 +174,7 @@ enum AppStreamWindowCatalog {
         return candidatesByBundleID
     }
 
+    /// Sorts startup candidates by user-visible priority.
     static func preferredOrder(lhs: AppStreamWindowCandidate, rhs: AppStreamWindowCandidate) -> Bool {
         if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
         if lhs.isMain != rhs.isMain { return lhs.isMain }
@@ -194,34 +190,15 @@ enum AppStreamWindowCatalog {
         return lhs.window.id < rhs.window.id
     }
 
+    /// Selects strict primary candidates for initial app-stream startup.
     static func startupCandidateSelection(
         from candidates: [AppStreamWindowCandidate]
-    ) -> StartupCandidateSelection {
+    ) -> [AppStreamWindowCandidate] {
         let sortedCandidates = candidates.sorted(by: preferredOrder(lhs:rhs:))
-        let primaryCandidates = sortedCandidates.filter { $0.classification == .primary }
-        if !primaryCandidates.isEmpty {
-            return StartupCandidateSelection(candidates: primaryCandidates, usedFallback: false)
-        }
-
-        let bestEffortCandidates = sortedCandidates.filter {
-            $0.classification == .primary &&
-                $0.parentWindowID == nil &&
-                ($0.window.isOnScreen || $0.isFocused || $0.isMain)
-        }
-        if !bestEffortCandidates.isEmpty {
-            return StartupCandidateSelection(candidates: bestEffortCandidates, usedFallback: true)
-        }
-
-        let detachedCandidates = sortedCandidates.filter {
-            $0.classification == .primary && $0.parentWindowID == nil
-        }
-        if !detachedCandidates.isEmpty {
-            return StartupCandidateSelection(candidates: detachedCandidates, usedFallback: true)
-        }
-
-        return StartupCandidateSelection(candidates: [], usedFallback: false)
+        return sortedCandidates.filter { $0.classification == .primary }
     }
 
+    /// Returns the parent/child window cluster associated with a primary window.
     static func capturedWindowCluster(
         primaryWindowID: WindowID,
         candidates: [AppStreamWindowCandidate]
@@ -249,21 +226,12 @@ enum AppStreamWindowCatalog {
             if rhs.window.id == primaryWindowID { return false }
             return preferredOrder(lhs: lhs, rhs: rhs)
         }
-        let sourceRect = orderedMembers
-            .map(\.window.frame.standardized)
-            .reduce(CGRect.null) { partialResult, rect in
-                partialResult.isNull ? rect : partialResult.union(rect)
-            }
-            .standardized
-
-        guard !sourceRect.isNull, sourceRect.width > 0, sourceRect.height > 0 else { return nil }
         return AppStreamCapturedWindowCluster(
-            primaryWindowID: primaryWindowID,
-            windowIDs: orderedMembers.map(\.window.id),
-            sourceRect: sourceRect
+            windowIDs: orderedMembers.map(\.window.id)
         )
     }
 
+    /// Classifies a host window as primary or auxiliary from Accessibility metadata.
     static func classifyWindow(
         role: String?,
         subrole: String?,
@@ -298,13 +266,14 @@ enum AppStreamWindowCatalog {
             return .auxiliary
         }
 
-        if (roleLower.contains("unknown") || subroleLower.contains("unknown")) && hasActiveAuxiliaryState {
+        if roleLower.contains("unknown") || subroleLower.contains("unknown"), hasActiveAuxiliaryState {
             return .auxiliary
         }
 
         return .primary
     }
 
+    /// Returns whether a candidate window is eligible for app-stream cataloging.
     static func catalogEligibility(
         classification: AppStreamWindowClassification,
         frame: CGRect,
@@ -334,6 +303,7 @@ enum AppStreamWindowCatalog {
         }
     }
 
+    /// Returns whether a frame is finite and non-empty.
     static func isFiniteNonEmptyFrame(_ frame: CGRect) -> Bool {
         frame.origin.x.isFinite &&
             frame.origin.y.isFinite &&
@@ -343,148 +313,6 @@ enum AppStreamWindowCatalog {
             frame.height > 0
     }
 
-    private static func collapseTabGroups(
-        _ candidates: [AppStreamWindowCandidate],
-        metadata: [CGWindowID: WindowListMetadata]
-    ) -> [AppStreamWindowCandidate] {
-        let candidatesByProcessID = Dictionary(grouping: candidates) { candidate in
-            candidate.window.application?.id ?? 0
-        }
-
-        var collapsedCandidates: [AppStreamWindowCandidate] = []
-        for (_, processCandidates) in candidatesByProcessID {
-            if processCandidates.count == 1 {
-                collapsedCandidates.append(processCandidates[0])
-                continue
-            }
-
-            var processedWindowIDs = Set<WindowID>()
-            for candidate in processCandidates.sorted(by: preferredOrder(lhs:rhs:)) {
-                guard !processedWindowIDs.contains(candidate.window.id) else { continue }
-
-                let tabGroup = processCandidates.filter { other in
-                    guard !processedWindowIDs.contains(other.window.id) else { return false }
-                    return framesAreNearlyIdentical(candidate.window.frame, other.window.frame)
-                }
-                guard !tabGroup.isEmpty else { continue }
-
-                let representative = tabGroup.sorted { lhs, rhs in
-                    let lhsOnScreen = metadata[CGWindowID(lhs.window.id)]?.isOnScreen ?? lhs.window.isOnScreen
-                    let rhsOnScreen = metadata[CGWindowID(rhs.window.id)]?.isOnScreen ?? rhs.window.isOnScreen
-                    if lhsOnScreen != rhsOnScreen { return lhsOnScreen }
-                    if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
-                    if lhs.isMain != rhs.isMain { return lhs.isMain }
-                    return preferredOrder(lhs: lhs, rhs: rhs)
-                }
-                .first ?? candidate
-
-                collapsedCandidates.append(representative)
-                processedWindowIDs.formUnion(tabGroup.map(\.window.id))
-            }
-        }
-
-        let onScreenCandidates = collapsedCandidates.filter { candidate in
-            metadata[CGWindowID(candidate.window.id)]?.isOnScreen ?? candidate.window.isOnScreen
-        }
-        if !onScreenCandidates.isEmpty {
-            return onScreenCandidates
-        }
-        return collapsedCandidates
-    }
-
-    private static func matchedBundleIdentifier(
-        for app: SCRunningApplication,
-        normalizedBundleIDs: Set<String>,
-        runningPIDsByBundleID: [String: Set<pid_t>]
-    ) -> String? {
-        let ownerBundleID = app.bundleIdentifier.lowercased()
-        if normalizedBundleIDs.contains(ownerBundleID) {
-            return ownerBundleID
-        }
-
-        let ownerPID = app.processID
-        return runningPIDsByBundleID.first { _, pids in
-            pids.contains(ownerPID)
-        }?.key
-    }
-
-    private static func runningProcessIDs(for normalizedBundleIDs: Set<String>) -> [String: Set<pid_t>] {
-        var result: [String: Set<pid_t>] = [:]
-        for app in NSWorkspace.shared.runningApplications {
-            guard let bundleIdentifier = app.bundleIdentifier?.lowercased(),
-                  normalizedBundleIDs.contains(bundleIdentifier) else { continue }
-            result[bundleIdentifier, default: []].insert(app.processIdentifier)
-        }
-        return result
-    }
-
-    private static func buildAccessibilityIndex(processID: pid_t) -> [WindowID: AccessibilityClassification]? {
-        let appElement = AXUIElementCreateApplication(processID)
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let windowsRef,
-              CFGetTypeID(windowsRef) == CFArrayGetTypeID(),
-              let windows = windowsRef as? [AXUIElement] else {
-            return nil
-        }
-
-        var index: [WindowID: AccessibilityClassification] = [:]
-        index.reserveCapacity(windows.count)
-        for axWindow in windows {
-            var candidateWindowID: CGWindowID = 0
-            guard _AXUIElementGetWindow(axWindow, &candidateWindowID) == .success else { continue }
-            let windowID = WindowID(candidateWindowID)
-
-            let role = stringAttribute(kAXRoleAttribute as CFString, from: axWindow)
-            let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: axWindow)
-            let isFocused = boolAttribute(kAXFocusedAttribute as CFString, from: axWindow) ?? false
-            let isMain = boolAttribute(kAXMainAttribute as CFString, from: axWindow) ?? false
-            let isModal = boolAttribute("AXModal" as CFString, from: axWindow) ?? false
-
-            var parentWindowID: WindowID?
-            var parentRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axWindow, kAXParentAttribute as CFString, &parentRef) == .success,
-               let parentRef,
-               CFGetTypeID(parentRef) == AXUIElementGetTypeID() {
-                let parentElement = unsafeDowncast(parentRef, to: AXUIElement.self)
-                var parentCGWindowID: CGWindowID = 0
-                if _AXUIElementGetWindow(parentElement, &parentCGWindowID) == .success {
-                    let parent = WindowID(parentCGWindowID)
-                    if parent != windowID {
-                        parentWindowID = parent
-                    }
-                }
-            }
-
-            index[windowID] = AccessibilityClassification(
-                role: role,
-                subrole: subrole,
-                parentWindowID: parentWindowID,
-                isFocused: isFocused,
-                isMain: isMain,
-                isModal: isModal
-            )
-        }
-
-        return index
-    }
-
-    private static func stringAttribute(_ attribute: CFString, from element: AXUIElement) -> String? {
-        var valueRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &valueRef) == .success else { return nil }
-        return valueRef as? String
-    }
-
-    private static func boolAttribute(_ attribute: CFString, from element: AXUIElement) -> Bool? {
-        var valueRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &valueRef) == .success else { return nil }
-        guard let valueRef else { return nil }
-        if let bool = valueRef as? Bool { return bool }
-        if let number = valueRef as? NSNumber {
-            return number.boolValue
-        }
-        return nil
-    }
 }
 
 #endif

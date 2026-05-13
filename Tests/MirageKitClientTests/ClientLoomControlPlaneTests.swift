@@ -19,17 +19,7 @@ struct ClientLoomControlPlaneTests {
     @Test("Loom-backed control channel carries bootstrap and follow-up control traffic")
     func loomBackedControlChannelCarriesPostBootstrapTraffic() async throws {
         let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
+        try await pair.startAuthenticatedSessions()
 
         let serverControlTask = Task {
             try await MirageControlChannel.accept(from: pair.server)
@@ -41,7 +31,6 @@ struct ClientLoomControlPlaneTests {
         do {
             let bootstrapRequest = MirageSessionBootstrapRequest(
                 protocolVersion: Int(MirageKit.protocolVersion),
-                requestedFeatures: mirageSupportedFeatures,
                 clientRequiresMediaEncryption: true
             )
             try await clientControl.send(.sessionBootstrapRequest, content: bootstrapRequest)
@@ -50,14 +39,12 @@ struct ClientLoomControlPlaneTests {
             #expect(receivedBootstrapEnvelope.type == .sessionBootstrapRequest)
             let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageSessionBootstrapRequest.self)
             #expect(receivedBootstrapRequest.protocolVersion == bootstrapRequest.protocolVersion)
-            #expect(receivedBootstrapRequest.requestedFeatures == bootstrapRequest.requestedFeatures)
             #expect(receivedBootstrapRequest.clientRequiresMediaEncryption)
 
             let bootstrapResponse = MirageSessionBootstrapResponse(
                 accepted: true,
                 hostID: UUID(),
                 hostName: "Loopback Host",
-                selectedFeatures: mirageSupportedFeatures,
                 mediaEncryptionEnabled: true,
                 udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
             )
@@ -81,7 +68,7 @@ struct ClientLoomControlPlaneTests {
                 #expect(receivedAppListRequestEnvelope.type == .appListRequest)
                 let receivedAppListRequest = try receivedAppListRequestEnvelope.decode(AppListRequestMessage.self)
                 #expect(receivedAppListRequest.forceRefresh == true)
-                #expect(receivedAppListRequest.priorityBundleIdentifiers == ["com.apple.Safari"])
+                #expect(receivedAppListRequest.priorityBundleIdentifiers == ["com.apple.safari"])
                 return receivedAppListRequest.requestID
             }()
 
@@ -140,131 +127,10 @@ struct ClientLoomControlPlaneTests {
     }
 
     @MainActor
-    @Test("Client control send helpers write onto the Loom control stream")
-    func clientControlSendHelpersUseLoomControlChannel() async throws {
-        let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
-
-        let serverControlTask = Task {
-            try await MirageControlChannel.accept(from: pair.server)
-        }
-        let clientControl = try await MirageControlChannel.open(on: pair.client)
-        let serverControl = try await serverControlTask.value
-        let serverReceiver = ControlMessageReceiver(channel: serverControl)
-        do {
-            let service = MirageClientService(deviceName: "Loopback Client")
-            service.loomSession = pair.client
-            service.controlChannel = clientControl
-            service.connectionState = .connected(host: "Loopback Host")
-
-            let request = AppListRequestMessage(
-                forceRefresh: true,
-                forceIconReset: true,
-                priorityBundleIdentifiers: ["com.apple.Terminal"],
-                requestID: UUID()
-            )
-            try await service.sendControlMessage(.appListRequest, content: request)
-
-            let receivedRequestEnvelope = try await serverReceiver.next()
-            #expect(receivedRequestEnvelope.type == .appListRequest)
-            let receivedRequest = try receivedRequestEnvelope.decode(AppListRequestMessage.self)
-            #expect(receivedRequest.forceRefresh == true)
-            #expect(receivedRequest.forceIconReset == true)
-            #expect(receivedRequest.priorityBundleIdentifiers == ["com.apple.Terminal"])
-
-            service.sendControlMessageBestEffort(ControlMessage(type: .ping))
-            let receivedPing = try await serverReceiver.next()
-            #expect(receivedPing.type == .ping)
-
-            let endpoint = try #require(await service.currentControlRemoteEndpoint())
-            let sessionRemoteEndpoint = await pair.client.remoteEndpoint
-            #expect(endpoint == sessionRemoteEndpoint)
-            let pathSnapshot = try #require(await service.currentControlPathSnapshot())
-            #expect(pathSnapshot.remoteEndpoint == endpoint)
-        } catch {
-            await clientControl.cancel()
-            await serverControl.cancel()
-            await pair.stop()
-            throw error
-        }
-
-        await clientControl.cancel()
-        await serverControl.cancel()
-        await pair.stop()
-    }
-
-    @MainActor
-    @Test("Client disconnect sends user-requested notice before cleanup")
-    func clientDisconnectSendsUserRequestedNoticeBeforeCleanup() async throws {
-        let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
-
-        let serverControlTask = Task {
-            try await MirageControlChannel.accept(from: pair.server)
-        }
-        let clientControl = try await MirageControlChannel.open(on: pair.client)
-        let serverControl = try await serverControlTask.value
-        let serverReceiver = ControlMessageReceiver(channel: serverControl)
-
-        do {
-            let service = MirageClientService(deviceName: "Loopback Client")
-            service.loomSession = pair.client
-            service.controlChannel = clientControl
-            service.connectionState = .connected(host: "Loopback Host")
-
-            await service.disconnect()
-
-            let disconnect = try await nextDisconnectMessage(from: serverReceiver)
-            #expect(disconnect.reason == .userRequested)
-            #expect(service.connectionState == .disconnected)
-            #expect(service.controlChannel == nil)
-        } catch {
-            await clientControl.cancel()
-            await serverControl.cancel()
-            await pair.stop()
-            throw error
-        }
-
-        await clientControl.cancel()
-        await serverControl.cancel()
-        await pair.stop()
-    }
-
-    @MainActor
     @Test("Concurrent control sends remain intact on the Loom control stream")
     func concurrentControlSendsRemainIntact() async throws {
         let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
+        try await pair.startAuthenticatedSessions()
 
         let serverControlTask = Task {
             try await MirageControlChannel.accept(from: pair.server)
@@ -302,8 +168,8 @@ struct ClientLoomControlPlaneTests {
         let receiveTask = Task<[ControlMessage], Error> {
             var messages: [ControlMessage] = []
             messages.reserveCapacity(3)
-            for _ in 0..<3 {
-                messages.append(try await serverReceiver.next())
+            for _ in 0 ..< 3 {
+                try await messages.append(serverReceiver.next())
             }
             return messages
         }
@@ -366,142 +232,9 @@ struct ClientLoomControlPlaneTests {
         await pair.stop()
     }
 
-    @MainActor
-    @Test("Bootstrap rejection is delivered before the control stream closes")
-    func bootstrapRejectionIsDeliveredBeforeControlStreamCloses() async throws {
-        let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
-
-        let serverControlTask = Task {
-            try await MirageControlChannel.accept(from: pair.server)
-        }
-        let clientControl = try await MirageControlChannel.open(on: pair.client)
-        let serverControl = try await serverControlTask.value
-        let service = MirageClientService(deviceName: "Loopback Client")
-
-        do {
-            let rejection = MirageSessionBootstrapResponse(
-                accepted: false,
-                hostID: UUID(),
-                hostName: "Loopback Host",
-                selectedFeatures: [],
-                mediaEncryptionEnabled: false,
-                udpRegistrationToken: Data(),
-                rejectionReason: .hostBusy
-            )
-            try await serverControl.send(.sessionBootstrapResponse, content: rejection)
-            try await serverControl.closeStream()
-
-            let responseEnvelope = try await service.receiveSingleControlMessage(
-                from: clientControl.incomingBytes,
-                timeout: .seconds(1),
-                timeoutMessage: "Timed out waiting for host bootstrap response from Loopback Host"
-            )
-            #expect(responseEnvelope.type == .sessionBootstrapResponse)
-            let response = try responseEnvelope.decode(MirageSessionBootstrapResponse.self)
-            #expect(response.accepted == false)
-            #expect(response.rejectionReason == .hostBusy)
-            #expect(await pair.client.state == .ready)
-            #expect(await pair.server.state == .ready)
-        } catch {
-            await clientControl.cancel()
-            await serverControl.cancel()
-            await pair.stop()
-            throw error
-        }
-
-        await clientControl.cancel()
-        await serverControl.cancel()
-        await pair.stop()
-    }
-
-    @MainActor
-    @Test("TCP fallback sessions keep control traffic and labeled media streams coherent")
-    func tcpFallbackSessionKeepsControlAndMediaTrafficCoherent() async throws {
-        let pair = try await makeLoopbackControlPair()
-
-        async let clientContext = pair.client.start(
-            localHello: pair.clientHello,
-            identityManager: pair.clientIdentityManager
-        )
-        async let serverContext = pair.server.start(
-            localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager,
-            trustProvider: pair.serverTrustProvider
-        )
-        _ = try await (clientContext, serverContext)
-
-        let serverControlTask = Task {
-            try await MirageControlChannel.accept(from: pair.server)
-        }
-        let clientControl = try await MirageControlChannel.open(on: pair.client)
-        let serverControl = try await serverControlTask.value
-        let serverReceiver = ControlMessageReceiver(channel: serverControl)
-        let incomingStreamsTask = Task<[LoomMultiplexedStream], Never> {
-            var streams: [LoomMultiplexedStream] = []
-            let observer = pair.server.makeIncomingStreamObserver()
-            for await stream in observer {
-                guard stream.label == "control/42" || stream.label == "video/42" else { continue }
-                streams.append(stream)
-                if streams.count == 2 {
-                    return streams
-                }
-            }
-            return streams
-        }
-
-        let controlStream = try await pair.client.openStream(label: "control/42")
-        let videoStream = try await pair.client.openStream(label: "video/42")
-        let incomingStreams = await incomingStreamsTask.value
-        #expect(incomingStreams.count == 2)
-        let serverVideoStream = try #require(incomingStreams.first { $0.label == "video/42" })
-
-        let expectedVideoPayloads = (0..<6).map { Data("video-\($0)".utf8) }
-        let receivedVideoTask = Task {
-            await collectPayloads(from: serverVideoStream, count: expectedVideoPayloads.count)
-        }
-        do {
-            for index in expectedVideoPayloads.indices {
-                try await clientControl.send(ControlMessage(type: .ping))
-                let receivedPing = try await serverReceiver.next()
-                #expect(receivedPing.type == .ping)
-
-                try await controlStream.send(Data("control-\(index)".utf8))
-                try await videoStream.sendUnreliable(expectedVideoPayloads[index])
-            }
-
-            try await controlStream.close()
-            try await videoStream.close()
-
-            #expect(await receivedVideoTask.value == expectedVideoPayloads)
-            #expect(await pair.client.state == .ready)
-            #expect(await pair.server.state == .ready)
-        } catch {
-            try? await controlStream.close()
-            try? await videoStream.close()
-            await clientControl.cancel()
-            await serverControl.cancel()
-            await pair.stop()
-            throw error
-        }
-
-        await clientControl.cancel()
-        await serverControl.cancel()
-        await pair.stop()
-    }
 }
 
-private struct LoopbackControlPair {
+struct LoopbackControlPair {
     let listener: NWListener
     let clientIdentityManager: LoomIdentityManager
     let serverIdentityManager: LoomIdentityManager
@@ -511,6 +244,19 @@ private struct LoopbackControlPair {
     let client: LoomAuthenticatedSession
     let server: LoomAuthenticatedSession
 
+    func startAuthenticatedSessions() async throws {
+        async let clientContext = client.start(
+            localHello: clientHello,
+            identityManager: clientIdentityManager
+        )
+        async let serverContext = server.start(
+            localHello: serverHello,
+            identityManager: serverIdentityManager,
+            trustProvider: serverTrustProvider
+        )
+        _ = try await (clientContext, serverContext)
+    }
+
     func stop() async {
         listener.cancel()
         await client.cancel()
@@ -519,7 +265,7 @@ private struct LoopbackControlPair {
 }
 
 @MainActor
-private func makeLoopbackControlPair() async throws -> LoopbackControlPair {
+func makeLoopbackControlPair() async throws -> LoopbackControlPair {
     let clientIdentityManager = LoomIdentityManager(
         service: "com.ethanlipnik.mirage.tests.control-client.\(UUID().uuidString)",
         account: "p256-signing",
@@ -597,7 +343,7 @@ private func makeLoopbackControlPair() async throws -> LoopbackControlPair {
     )
 }
 
-private func collectPayloads(
+func collectPayloads(
     from stream: LoomMultiplexedStream,
     count: Int
 ) async -> [Data] {
@@ -611,11 +357,11 @@ private func collectPayloads(
     return payloads
 }
 
-private func nextDisconnectMessage(
+func nextDisconnectMessage(
     from receiver: ControlMessageReceiver,
     limit: Int = 4
 ) async throws -> DisconnectMessage {
-    for _ in 0..<limit {
+    for _ in 0 ..< limit {
         let message = try await receiver.next()
         guard message.type == .disconnect else { continue }
         return try message.decode(DisconnectMessage.self)
@@ -624,7 +370,7 @@ private func nextDisconnectMessage(
     throw MirageError.protocolError("Disconnect notice was not received")
 }
 
-private final class ControlMessageReceiver: @unchecked Sendable {
+final class ControlMessageReceiver: @unchecked Sendable {
     private let lock = NSLock()
     private var bufferedResults: [Result<ControlMessage, Error>] = []
     private var waitingContinuations: [CheckedContinuation<Result<ControlMessage, Error>, Never>] = []
@@ -726,17 +472,17 @@ private actor AsyncBox<Value: Sendable> {
 }
 
 @MainActor
-private final class AllowAllTrustProvider: LoomTrustProvider {
-    func evaluateTrust(for peer: LoomPeerIdentity) async -> LoomTrustDecision {
+final class AllowAllTrustProvider: LoomTrustProvider {
+    func evaluateTrust(for _: LoomPeerIdentity) async -> LoomTrustDecision {
         .trusted
     }
 
-    func evaluateTrustOutcome(for peer: LoomPeerIdentity) async -> LoomTrustEvaluation {
+    func evaluateTrustOutcome(for _: LoomPeerIdentity) async -> LoomTrustEvaluation {
         LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
     }
 
-    func grantTrust(to peer: LoomPeerIdentity) async throws {}
+    func grantTrust(to _: LoomPeerIdentity) async throws {}
 
-    func revokeTrust(for deviceID: UUID) async throws {}
+    func revokeTrust(for _: UUID) async throws {}
 }
 #endif

@@ -60,7 +60,7 @@ struct HostReceiveLoopTests {
             onInputMessage: { _ in
                 inputCount.withLock { $0 += 1 }
             },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             dispatchControlMessage: { _, completion in
                 controlCount.withLock { $0 += 1 }
                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.25) {
@@ -80,10 +80,7 @@ struct HostReceiveLoopTests {
         #expect(inputCount.read { $0 } == 1)
         #expect(controlCount.read { $0 } == 1)
 
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { terminalReason.read { $0 } != nil }
         #expect(terminalReason.read { $0 } != nil)
         let reason = terminalReason.read { $0 }
         guard case .complete? = reason else {
@@ -115,7 +112,7 @@ struct HostReceiveLoopTests {
             clientName: "cancel-lifecycle-test",
             receiveChunk: { _ in },
             onInputMessage: { _ in },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             onLifecycleSignal: { signal in
                 if case let .cancelStreamSetup(message) = signal {
                     lifecycleTypes.withLock { $0.append(message.type) }
@@ -174,7 +171,7 @@ struct HostReceiveLoopTests {
                 completion(next.data, nil, next.isComplete, next.error)
             },
             onInputMessage: { _ in },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             onLifecycleSignal: { signal in
                 if case .terminal = signal {
                     lifecycleTerminalCount.withLock { $0 += 1 }
@@ -223,7 +220,7 @@ struct HostReceiveLoopTests {
             onInputMessage: { _ in
                 inputCount.withLock { $0 += 1 }
             },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             dispatchControlMessage: { message, completion in
                 dispatchedTypes.withLock { $0.append(message.type) }
                 controlCompletion.withLock { $0 = completion }
@@ -240,10 +237,7 @@ struct HostReceiveLoopTests {
 
         controlCompletion.read { $0 }?()
 
-        let inputDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while inputCount.read({ $0 }) == 0, CFAbsoluteTimeGetCurrent() < inputDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { inputCount.read { $0 } > 0 }
 
         #expect(inputCount.read { $0 } == 1)
         loop.stop()
@@ -281,7 +275,7 @@ struct HostReceiveLoopTests {
             onInputMessage: { _ in
                 inputCount.withLock { $0 += 1 }
             },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             dispatchControlMessage: { message, completion in
                 if message.type == .sharedClipboardUpdate {
                     controlCompletion.withLock { $0 = completion }
@@ -300,10 +294,7 @@ struct HostReceiveLoopTests {
 
         controlCompletion.read { $0 }?()
 
-        let inputDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while inputCount.read({ $0 }) == 0, CFAbsoluteTimeGetCurrent() < inputDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { inputCount.read { $0 } > 0 }
 
         #expect(inputCount.read { $0 } == 1)
         loop.stop()
@@ -331,11 +322,19 @@ struct HostReceiveLoopTests {
         )
         let messageRefresh60 = try ControlMessage(
             type: .streamRefreshRateChange,
-            content: StreamRefreshRateChangeMessage(streamID: streamID, maxRefreshRate: 60)
+            content: StreamRefreshRateChangeMessage(
+                streamID: streamID,
+                maxRefreshRate: 60,
+                forceDisplayRefresh: false
+            )
         )
         let messageRefresh120 = try ControlMessage(
             type: .streamRefreshRateChange,
-            content: StreamRefreshRateChangeMessage(streamID: streamID, maxRefreshRate: 120)
+            content: StreamRefreshRateChangeMessage(
+                streamID: streamID,
+                maxRefreshRate: 120,
+                forceDisplayRefresh: false
+            )
         )
 
         var initialData = Data()
@@ -355,7 +354,7 @@ struct HostReceiveLoopTests {
                 completion(nil, nil, true, nil)
             },
             onInputMessage: { _ in },
-            onPingMessage: { _ in },
+            onPingMessage: { },
             dispatchControlMessage: { message, completion in
                 dispatched.withLock { $0.append(message) }
                 completion()
@@ -368,10 +367,7 @@ struct HostReceiveLoopTests {
 
         loop.start(initialBuffer: initialData)
 
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { terminalReason.read { $0 } != nil }
         #expect(terminalReason.read { $0 } != nil)
 
         let dispatchedMessages = dispatched.read { $0 }
@@ -418,7 +414,7 @@ struct HostReceiveLoopTests {
                 completion(nil, nil, true, nil)
             },
             onInputMessage: { _ in },
-            onPingMessage: { _ in
+            onPingMessage: {
                 pingCount.withLock { $0 += 1 }
             },
             dispatchControlMessage: { message, completion in
@@ -433,10 +429,7 @@ struct HostReceiveLoopTests {
 
         loop.start(initialBuffer: initialData)
 
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil { terminalReason.read { $0 } != nil }
         #expect(terminalReason.read { $0 } != nil)
 
         #expect(pingCount.read { $0 } == 0)
@@ -449,213 +442,16 @@ struct HostReceiveLoopTests {
         }
     }
 
-    @Test("Receiver media feedback bypasses generic control dispatch and coalesces")
-    func receiverMediaFeedbackBypassesGenericControlDispatchAndCoalesces() async throws {
-        let feedbackA = ReceiverMediaFeedbackMessage(
-            streamID: 42,
-            sequence: 1,
-            sentAtUptime: 10,
-            targetFPS: 60,
-            ackRanges: [],
-            lostFrameCount: 0,
-            discardedPacketCount: 0,
-            jitterP95Ms: 1,
-            jitterP99Ms: 2,
-            queueEstimateFrames: 0,
-            reassemblyBacklogFrames: 0,
-            reassemblyBacklogKeyframes: 0,
-            reassemblyBacklogBytes: 0,
-            decodeBacklogFrames: 0,
-            presentationBacklogFrames: 0,
-            decodedFPS: 60,
-            receivedFPS: 60,
-            rendererAcceptedFPS: 60,
-            rendererPresentedFPS: 60,
-            recoveryState: .idle
-        )
-        let feedbackB = ReceiverMediaFeedbackMessage(
-            streamID: 42,
-            sequence: 2,
-            sentAtUptime: 11,
-            targetFPS: 60,
-            ackRanges: [],
-            lostFrameCount: 0,
-            discardedPacketCount: 0,
-            jitterP95Ms: 1,
-            jitterP99Ms: 2,
-            queueEstimateFrames: 0,
-            reassemblyBacklogFrames: 0,
-            reassemblyBacklogKeyframes: 0,
-            reassemblyBacklogBytes: 0,
-            decodeBacklogFrames: 0,
-            presentationBacklogFrames: 0,
-            decodedFPS: 60,
-            receivedFPS: 60,
-            rendererAcceptedFPS: 60,
-            rendererPresentedFPS: 60,
-            recoveryState: .idle
-        )
-        let messageA = try ControlMessage(type: .receiverMediaFeedback, content: feedbackA)
-        let messageB = try ControlMessage(type: .receiverMediaFeedback, content: feedbackB)
-        let keyframe = try ControlMessage(
-            type: .keyframeRequest,
-            content: KeyframeRequestMessage(streamID: 42)
-        )
+}
 
-        var initialData = Data()
-        initialData.append(messageA.serialize())
-        initialData.append(messageB.serialize())
-        initialData.append(keyframe.serialize())
-
-        let dispatchedTypes = Locked<[ControlMessageType]>([])
-        let feedbackMessages = Locked<[ControlMessage]>([])
-        let coalescedCount = Locked<UInt64>(0)
-        let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
-
-        let loop = HostReceiveLoop(
-            clientName: "receiver-feedback-fast-path-test",
-            receiveChunk: { completion in
-                completion(nil, nil, true, nil)
-            },
-            onInputMessage: { _ in },
-            onPingMessage: { _ in },
-            onReceiverMediaFeedbackMessage: { message in
-                feedbackMessages.withLock { $0.append(message) }
-            },
-            onReceiverMediaFeedbackCoalesced: { count in
-                coalescedCount.withLock { $0 &+= count }
-            },
-            dispatchControlMessage: { message, completion in
-                dispatchedTypes.withLock { $0.append(message.type) }
-                completion()
-            },
-            onTerminal: { reason in
-                terminalReason.withLock { $0 = reason }
-            },
-            isFatalError: { _ in false }
-        )
-
-        loop.start(initialBuffer: initialData)
-
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        #expect(dispatchedTypes.read { $0 } == [.keyframeRequest])
-        #expect(coalescedCount.read { $0 } == 1)
-
-        let messages = feedbackMessages.read { $0 }
-        #expect(messages.count == 1)
-        let decoded = try messages[0].decode(ReceiverMediaFeedbackMessage.self)
-        #expect(decoded.sequence == 2)
-    }
-
-    @Test("Invalid frame triggers protocol-violation terminal reason")
-    func invalidFrameTriggersProtocolViolation() async throws {
-        struct ReceiveEvent {
-            var data: Data?
-            var isComplete: Bool
-            var error: NWError?
-        }
-
-        var invalidFrame = Data([0x06])
-        withUnsafeBytes(of: UInt32(0).littleEndian) { invalidFrame.append(contentsOf: $0) }
-
-        let receiveEvents = Locked([
-            ReceiveEvent(data: invalidFrame, isComplete: false, error: nil),
-        ])
-        let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
-
-        let loop = HostReceiveLoop(
-            clientName: "invalid-frame-test",
-            receiveChunk: { completion in
-                let next: ReceiveEvent? = receiveEvents.withLock { events in
-                    if events.isEmpty { return nil }
-                    return events.removeFirst()
-                }
-                guard let next else {
-                    completion(nil, nil, true, nil)
-                    return
-                }
-                completion(next.data, nil, next.isComplete, next.error)
-            },
-            onInputMessage: { _ in },
-            onPingMessage: { _ in },
-            dispatchControlMessage: { _, completion in
-                completion()
-            },
-            onTerminal: { reason in
-                terminalReason.withLock { $0 = reason }
-            },
-            isFatalError: { _ in false }
-        )
-
-        loop.start()
-
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        let reason = terminalReason.read { $0 }
-        guard case .protocolViolation? = reason else {
-            Issue.record("Expected protocolViolation terminal reason, got \(String(describing: reason))")
-            return
-        }
-    }
-
-    @Test("Receive buffer cap triggers overflow terminal reason")
-    func receiveBufferCapTriggersOverflowTerminalReason() async throws {
-        struct ReceiveEvent {
-            var data: Data?
-            var isComplete: Bool
-            var error: NWError?
-        }
-
-        let receiveEvents = Locked([
-            ReceiveEvent(data: Data(repeating: 0x41, count: 9_000), isComplete: false, error: nil),
-        ])
-        let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
-
-        let loop = HostReceiveLoop(
-            clientName: "buffer-overflow-test",
-            maxReceiveBufferBytes: 8 * 1024,
-            receiveChunk: { completion in
-                let next: ReceiveEvent? = receiveEvents.withLock { events in
-                    if events.isEmpty { return nil }
-                    return events.removeFirst()
-                }
-                guard let next else {
-                    completion(nil, nil, true, nil)
-                    return
-                }
-                completion(next.data, nil, next.isComplete, next.error)
-            },
-            onInputMessage: { _ in },
-            onPingMessage: { _ in },
-            dispatchControlMessage: { _, completion in
-                completion()
-            },
-            onTerminal: { reason in
-                terminalReason.withLock { $0 = reason }
-            },
-            isFatalError: { _ in false }
-        )
-
-        loop.start()
-
-        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        let reason = terminalReason.read { $0 }
-        guard case let .receiveBufferOverflow(limit)? = reason else {
-            Issue.record("Expected receiveBufferOverflow terminal reason, got \(String(describing: reason))")
-            return
-        }
-        #expect(limit == 8 * 1024)
+func waitUntil(
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10),
+    _ condition: () -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: pollInterval)
     }
 }
 

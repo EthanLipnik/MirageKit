@@ -6,6 +6,7 @@
 //
 
 import CoreMedia
+import Dispatch
 import Foundation
 import Loom
 import MirageBootstrapShared
@@ -30,8 +31,6 @@ public final class MirageHostService {
 
     /// Connected clients
     public internal(set) var connectedClients: [MirageConnectedClient] = []
-
-    // Get all active app streaming sessions
 
     /// Current host state
     public internal(set) var state: HostState = .idle
@@ -120,8 +119,17 @@ public final class MirageHostService {
         }
     }
 
-    /// Accessibility permission manager for input injection.
-    public let permissionManager = MirageAccessibilityPermissionManager()
+    @ObservationIgnored private var cachedPermissionManager: MirageAccessibilityPermissionManager?
+
+    /// Accessibility permission manager for host UI permission state.
+    public var permissionManager: MirageAccessibilityPermissionManager {
+        if let cachedPermissionManager {
+            return cachedPermissionManager
+        }
+        let manager = MirageAccessibilityPermissionManager()
+        cachedPermissionManager = manager
+        return manager
+    }
 
     /// Whether the most recent capture inventory attempt hit an explicit screen-recording denial.
     public internal(set) var lastScreenRecordingPermissionDenied = false
@@ -173,21 +181,30 @@ public final class MirageHostService {
     /// This allows the app to resize and center the window via Accessibility API.
     public var onResizeWindowForStream: ((MirageWindow, CGSize) -> Void)?
 
+    /// Loom node that owns host discovery, control sessions, and media streams.
     public let loomNode: LoomNode
+    /// Current host advertisement payload before Loom republishes it.
     var advertisedPeerAdvertisement: LoomPeerAdvertisement
+    /// Debounced task that republishes updated host advertisement metadata.
     var advertisementRefreshTask: Task<Void, Never>?
+    /// QUIC/TCP control listener used for direct remote clients.
     var remoteControlListener: NWListener?
-    var remoteRelayPublicationState = MirageRemoteRelayPublicationState()
+    /// Encoder configuration applied to newly created stream contexts.
     let encoderConfig: MirageEncoderConfiguration
+    /// Loom network configuration used for discovery and listener setup.
     let networkConfig: LoomNetworkConfiguration
+    /// User-visible host name advertised to clients.
     let serviceName: String
+    /// Stable host identifier advertised during discovery and bootstrap.
     var hostID: UUID = .init()
+    /// Color-depth modes the host currently advertises to clients.
     public internal(set) var supportedColorDepths: [MirageStreamColorDepth] = [.standard, .pro]
+    /// Whether the host currently advertises ProRes 4444 app/window stream support.
     public internal(set) var supportsProRes4444 = false
-    let handshakeReplayProtector = LoomReplayProtector()
     let localNetworkMonitor = MirageLocalNetworkMonitor(label: "host")
-    // Internal for low-power policy extension.
+    /// Power-state monitor used by the encoder low-power policy extension.
     let encoderPowerStateMonitor = MiragePowerStateMonitor()
+    /// Latest power-state sample used to decide encoder low-power mode.
     var encoderPowerStateSnapshot = MiragePowerStateSnapshot(
         isSystemLowPowerModeEnabled: false,
         isOnBattery: nil
@@ -198,7 +215,7 @@ public final class MirageHostService {
         advertisedPeerAdvertisement
     }
 
-    // Stream management (internal for extension access)
+    /// Active app/window stream routing and connected client state.
     var nextStreamID: StreamID = 1
     var streamsByID: [StreamID: StreamContext] = [:]
     // O(1) lookup maps for active app/window stream routing.
@@ -222,54 +239,78 @@ public final class MirageHostService {
             onConnectionAvailabilityChanged?(allowsNewClientConnections)
         }
     }
+
     nonisolated let transportRegistry = HostTransportRegistry()
+    /// Thread-safe stream routing table used by input and media fast paths.
     nonisolated let streamRegistry = HostStreamRegistry()
+    /// Active receive loops keyed by authenticated client session.
     nonisolated let receiveLoopsBySessionID = Locked<[UUID: HostReceiveLoop]>([:])
-    nonisolated let controlWorkersByClientID = Locked<[UUID: SerialWorker]>([:])
-    nonisolated let transportWorker = SerialWorker(
+    /// Per-client serial queues for ordered control-message dispatch.
+    nonisolated let controlQueuesByClientID = Locked<[UUID: DispatchQueue]>([:])
+    /// Queue for nonisolated transport callbacks and packet send completions.
+    nonisolated let transportQueue = DispatchQueue(
         label: "com.mirage.host.transport",
         qos: .userInteractive
     )
 
-    // Loom multiplexed video streams by stream ID.
+    /// Loom multiplexed video streams by stream ID.
     var loomVideoStreamsByStreamID: [StreamID: LoomMultiplexedStream] = [:]
-    // Per-client media registration authentication context.
+    /// Per-client media registration authentication context.
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
-    // Per-client media payload encryption policy.
+    /// Per-client media payload encryption policy.
     var mediaEncryptionEnabledByClientID: [UUID: Bool] = [:]
-    // Loom multiplexed audio streams by client ID.
+    /// Loom multiplexed audio streams by client ID.
     var loomAudioStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
-    // Active host audio pipelines by client ID.
+    /// Active host audio pipelines by client ID.
     var audioPipelinesByClientID: [UUID: HostAudioPipeline] = [:]
-    // Selected source stream for client audio capture.
+    /// Selected source stream for client audio capture.
     var audioSourceStreamByClientID: [UUID: StreamID] = [:]
-    // Latest requested audio configuration by client.
+    /// Latest requested audio configuration by client.
     var audioConfigurationByClientID: [UUID: MirageAudioConfiguration] = [:]
-    // Last audio streamStarted payload sent to each client.
+    /// Last audio streamStarted payload sent to each client.
     var audioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
-    // Last audio streamStarted payload acknowledged onto the control channel.
+    /// Last audio streamStarted payload acknowledged onto the control channel.
     var sentAudioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
-    // Clients whose current audio transport send failure has already been logged.
+    /// Clients whose current audio transport send failure has already been logged.
     var audioSendErrorReportedByClientID: Set<UUID> = []
-    // First-sample watchdogs for newly activated host audio capture.
+    /// First-sample watchdogs for newly activated host audio capture.
     var audioFirstSampleWatchdogsByClientID: [UUID: Task<Void, Never>] = [:]
+    /// Clients that already retried audio startup after the first-sample watchdog fired.
     var audioFirstSampleRetryAttemptedByClientID: Set<UUID> = []
+    /// Most recent host audio sample time by client.
     var audioLastSampleTimeByClientID: [UUID: CFAbsoluteTime] = [:]
+    /// Minimum window sizes reported by clients and enforced before stream startup.
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
+    /// Base times used for host-side stream startup telemetry.
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
+    /// Streams whose media-registration startup milestone has already been logged.
     var streamStartupRegistrationLogged: Set<StreamID> = []
+    /// Pending startup attempts awaiting media registration or terminal failure.
     var pendingStartupAttemptsByStreamID: [StreamID: PendingStartupAttempt] = [:]
+    /// Timeout tasks for pending startup attempts.
     var startupAttemptTimeoutTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    /// Registered custom-stream source factories keyed by custom stream kind.
     var customStreamSourcesByKind: [String: any MirageCustomStreamSource] = [:]
+    /// Active custom-stream source sessions by stream ID.
     var customStreamSessionsByStreamID: [StreamID: any MirageCustomStreamSession] = [:]
+    /// Custom-stream descriptors advertised for active custom streams.
     var customStreamDescriptorsByStreamID: [StreamID: MirageCustomStreamDescriptor] = [:]
+    /// Owning client session for each custom stream.
     var customStreamClientSessionIDByStreamID: [StreamID: UUID] = [:]
+    /// Startup request IDs for active or starting custom streams.
     var customStreamStartupRequestIDByStreamID: [StreamID: UUID] = [:]
+    /// App-atlas coordinators keyed by connected client ID.
     var appAtlasCoordinatorsByClientID: [UUID: AppAtlasMediaCoordinator] = [:]
+    /// Client IDs currently creating an app-atlas coordinator.
     var appAtlasCoordinatorCreationClientIDs: Set<UUID> = []
+    /// Host window IDs reserved by app-stream startup before activation.
     var appStreamStartupReservedWindowIDs: Set<WindowID> = []
+    /// Maximum time a stream startup attempt may wait for registration.
     let startupAttemptTimeoutSeconds: Duration = .seconds(5)
-    let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    static let awdlExperimentEnabledFromEnvironment = MirageEnvironmentValue.isTruthy(
+        ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"]
+    )
+    let awdlExperimentEnabled = MirageHostService.awdlExperimentEnabledFromEnvironment
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
     let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()
     var sendErrorBursts: UInt64 = 0
@@ -277,106 +318,97 @@ public final class MirageHostService {
     var transportSendErrorReported: Set<StreamID> = []
     var controlChannelSendFailureReported: Set<UUID> = []
 
-    // Quality test tasks
+    // MARK: - Quality Test State
+
+    /// Active quality-test orchestration tasks by client.
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
+    /// Session tokens that invalidate stale quality-test tasks by client.
     var qualityTestSessionTokensByClientID: [UUID: UUID] = [:]
+    /// Active quality-test IDs by client.
     var qualityTestIDsByClientID: [UUID: UUID] = [:]
+    /// Loom media streams opened for active quality tests by client.
     var qualityTestStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
 
+    /// Time after which a client error is treated as stale for reporting.
     let clientErrorTimeoutSeconds: CFAbsoluteTime = 2.0
 
     /// Approval timeout to avoid wedging the single-client slot.
     let connectionApprovalTimeoutSeconds: CFAbsoluteTime = 15.0
 
-    // Host-side client liveness monitoring.
+    // MARK: - Client Liveness
+
+    /// Last control or media activity time by client.
     nonisolated let clientLastActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
+    /// Last media activity time by client.
     nonisolated let clientLastMediaActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
+    /// Last successful control send activity time by client.
     nonisolated let clientLastControlSendActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
+    /// Periodic task that expires inactive clients and background leases.
     var clientLivenessTask: Task<Void, Never>?
+    /// Background lease expiration dates by client.
     var backgroundLeaseExpirationsByClientID: [UUID: Date] = [:]
+    /// Background lease timeout tasks by client.
     var backgroundLeaseTasksByClientID: [UUID: Task<Void, Never>] = [:]
 
-    struct WindowVirtualDisplayState: Sendable {
-        let streamID: StreamID
-        let displayID: CGDirectDisplayID
-        let generation: UInt64
-        let bounds: CGRect
-        let displayVisibleBounds: CGRect
-        let targetContentAspectRatio: CGFloat?
-        let captureSourceRect: CGRect
-        let visiblePixelResolution: CGSize
-        let displayVisiblePixelResolution: CGSize
-        let scaleFactor: CGFloat
-        let pixelResolution: CGSize
-        let clientScaleFactor: CGFloat
-    }
-
-    struct WindowVisibleFrameDriftState: Sendable {
-        let candidateBounds: CGRect
-        let candidateVisiblePixelResolution: CGSize
-        let consecutiveSamples: Int
-    }
-
-    struct DesktopResizeRequestState: Sendable, Equatable {
-        let logicalResolution: CGSize
-        let transitionID: UUID?
-        let requestedDisplayScaleFactor: CGFloat?
-        let requestedStreamScale: CGFloat?
-        let encoderMaxWidth: Int?
-        let encoderMaxHeight: Int?
-    }
-
-    enum DesktopResizeTransactionState: Sendable, Equatable {
-        case idle
-        case applying(DesktopResizeRequestState)
-        case committed(DesktopResizeRequestState)
-        case rolledBack(DesktopResizeRequestState)
-        case failed(DesktopResizeRequestState)
-    }
-
-    // Per-window dedicated virtual display state for app/window streams.
+    /// Per-window dedicated virtual display state for app/window streams.
     var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
-    // Per-stream queued resize targets for dedicated app/window displays.
+    /// Per-stream queued resize targets for dedicated app/window displays.
     var pendingWindowResizeResolutionByStreamID: [StreamID: CGSize] = [:]
-    // Streams currently applying a dedicated app/window resize transaction.
+    /// Streams currently applying a dedicated app/window resize transaction.
     var windowResizeInFlightStreamIDs: Set<StreamID> = []
-    // Monotonic request counters for dedicated app/window resize transactions.
+    /// Monotonic request counters for dedicated app/window resize transactions.
     var windowResizeRequestCounterByStreamID: [StreamID: UInt64] = [:]
-    // Debounced visible-frame drift monitor tasks by stream.
+    /// Debounced visible-frame drift monitor tasks by stream.
     var windowVisibleFrameMonitorTasks: [StreamID: Task<Void, Never>] = [:]
-    // Per-stream drift-stability state for visible-frame monitor hysteresis.
+    /// Per-stream drift-stability state for visible-frame monitor hysteresis.
     var windowVisibleFrameDriftStateByStreamID: [StreamID: WindowVisibleFrameDriftState] = [:]
-    // Cooldown tracking for authoritative placement repairs (window -> last repair time).
+    /// Cooldown tracking for authoritative placement repairs (window -> last repair time).
     var lastWindowPlacementRepairAtByWindowID: [WindowID: CFAbsoluteTime] = [:]
-    // Shared-display generation for desktop/login shared-consumer flows.
+    /// Shared-display generation for desktop/login shared-consumer flows.
     var sharedVirtualDisplayGeneration: UInt64 = 0
-    // Shared-display scale factor for desktop/login shared-consumer flows.
+    /// Shared-display scale factor for desktop/login shared-consumer flows.
     var sharedVirtualDisplayScaleFactor: CGFloat = 2.0
 
-    // Desktop stream (full virtual display mirroring) - internal for extension access
+    /// Active desktop stream and virtual-display mirroring state.
     var desktopStreamContext: StreamContext?
+    /// Active desktop stream ID.
     var desktopStreamID: StreamID?
+    /// Session ID that owns the active desktop stream.
     var desktopSessionID: UUID?
+    /// Connected client context that owns the active desktop stream.
     var desktopStreamClientContext: ClientContext?
+    /// Capture/display bounds for the active desktop stream.
     var desktopDisplayBounds: CGRect?
+    /// Virtual display ID backing the active desktop stream, when applicable.
     var desktopVirtualDisplayID: CGDirectDisplayID?
+    /// Client-requested desktop scale factor for the active stream.
     var desktopRequestedScaleFactor: CGFloat?
+    /// Whether the desktop stream should use host-native resolution.
     var desktopUsesHostResolution: Bool = false
+    /// Capture source selected for the active desktop stream.
     var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
-    var desktopClientFitFallbackActive: Bool = false
-    var desktopClientFitFallbackContainerResolution: CGSize?
+    /// Desktop stream mode selected for the active desktop stream.
     var desktopStreamMode: MirageDesktopStreamMode = .unified
+    /// Resize request currently being applied by the host.
     var activeDesktopResizeRequest: DesktopResizeRequestState?
+    /// Latest desktop resize request queued behind an active resize.
     var queuedDesktopResizeRequest: DesktopResizeRequestState?
+    /// Transaction lifecycle for host-side desktop resize acknowledgements.
     var desktopResizeTransactionState: DesktopResizeTransactionState = .idle
+    /// Nesting depth for shared-display desktop transitions.
     var desktopSharedDisplayTransitionDepth: Int = 0
+    /// Host-authoritative generation for desktop presentation updates.
     var desktopPresentationGeneration: UInt64 = 0
+    /// Debounced task refreshing desktop display topology.
     @ObservationIgnored nonisolated(unsafe) var desktopDisplayTopologyRefreshTask: Task<Void, Never>?
+    /// Deferred cleanup task for virtual displays created during desktop startup.
     @ObservationIgnored nonisolated(unsafe) var deferredDesktopStartupDisplayCleanupTask: Task<Void, Never>?
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []
+    /// Stream setup lifecycle state keyed by startup app-session ID.
     var streamSetupLifecycleBySessionID: [UUID: StreamSetupSessionLifecycle] = [:]
+    /// Whether software update maintenance currently blocks new clients.
     var softwareUpdateMaintenanceModeActive = false
 
     /// Displays mirrored during desktop streaming (for restoration).
@@ -387,12 +419,16 @@ public final class MirageHostService {
     var desktopDisplaySpaceSnapshot: [CGDirectDisplayID: CGSSpaceID] = [:]
     /// Primary physical display information captured before mirroring.
     var desktopPrimaryPhysicalDisplayID: CGDirectDisplayID?
+    /// Bounds of the primary physical display before mirroring.
     var desktopPrimaryPhysicalBounds: CGRect?
+    /// Topology signature used to detect physical display changes during mirroring.
     var desktopPhysicalDisplayTopologySignature: String?
+    /// Virtual display resolution used while mirroring a desktop stream.
     var desktopMirroredVirtualResolution: CGSize?
+    /// Temporary wake/cursor guard active during virtual-display setup.
     var activeVirtualDisplaySetupGuard: VirtualDisplaySetupGuardState?
 
-    /// Cursor monitoring - internal for extension access
+    /// Cursor monitoring counters and cached bounds for desktop streams.
     var cursorMonitor: CursorMonitor?
     var cursorUpdateMessagesSinceLastSample: UInt64 = 0
     var cursorPositionMessagesSinceLastSample: UInt64 = 0
@@ -400,8 +436,11 @@ public final class MirageHostService {
     var droppedCursorPositionMessagesSinceLastSample: UInt64 = 0
     var lastCursorControlSampleTime: CFAbsoluteTime = 0
     let cursorControlSampleInterval: CFAbsoluteTime = 1.0
+    /// Last successfully resolved cursor-monitor bounds for the virtual display.
+    /// Prevents transient resolution failures from dropping the stream.
+    var lastResolvedCursorMonitorBounds: CGRect?
 
-    // Session state monitoring - internal for extension access
+    /// Host session-state monitoring and periodic refresh state.
     var sessionStateMonitor: SessionStateMonitor?
     var currentSessionToken: String = ""
     var sessionRefreshTask: Task<Void, Never>?
@@ -412,37 +451,9 @@ public final class MirageHostService {
     let appStreamRuntimeOrchestrator = AppStreamRuntimeOrchestrator()
     /// Unified stream policy applier with idempotent/cooldown reconfiguration.
     let streamPolicyApplier = StreamPolicyApplier()
-    /// App-stream fixed two-display allocator metadata.
-    let appStreamDisplayAllocator = AppStreamDisplayAllocator()
 
-    /// App-centric streaming manager - internal for extension access
+    /// App-centric streaming manager for launch, inventory, and multi-window state.
     let appStreamManager = AppStreamManager()
-
-    struct PendingAppWindowReplacement: Sendable {
-        let streamID: StreamID
-        let bundleIdentifier: String
-        let clientID: UUID
-        let closedWindowID: WindowID
-        let slotStreamID: StreamID
-        let deadline: Date
-    }
-
-    struct PendingAppWindowCloseAlertAction: Sendable {
-        let id: String
-        let title: String
-        let isDestructive: Bool
-        let index: Int
-    }
-
-    struct PendingAppWindowCloseAlertToken: Sendable {
-        let token: String
-        let clientID: UUID
-        let bundleIdentifier: String
-        let sourceWindowID: WindowID
-        let sourceApp: MirageApplication?
-        let presentingStreamID: StreamID
-        let actions: [PendingAppWindowCloseAlertAction]
-    }
 
     /// Pending 5s replacement cooldown entries keyed by stream ID.
     var pendingAppWindowReplacementsByStreamID: [StreamID: PendingAppWindowReplacement] = [:]
@@ -456,38 +467,43 @@ public final class MirageHostService {
 
     /// Pending app list request to resume once interactive stream workload is idle.
     var pendingAppListRequest: PendingAppListRequest?
+    /// Active app-list request task.
     var appListRequestTask: Task<Void, Never>?
+    /// Token that invalidates stale app-list request completions.
     var appListRequestToken: UUID = .init()
+    /// Whether app-list refresh is deferred until interactive stream workload settles.
     var appListRequestDeferredForInteractiveWorkload: Bool = false
-    struct PendingHostHardwareIconRequest: Sendable {
-        let clientID: UUID
-        var preferredMaxPixelSize: Int
-    }
+
+    /// Pending host hardware-icon request, if any.
     var pendingHostHardwareIconRequest: PendingHostHardwareIconRequest?
+    /// Active host hardware-icon request task.
     var hostHardwareIconRequestTask: Task<Void, Never>?
+    /// Token that invalidates stale hardware-icon request completions.
     var hostHardwareIconRequestToken: UUID = .init()
-    struct PendingHostWallpaperRequest: Sendable {
-        let clientID: UUID
-        let requestID: UUID
-        var preferredMaxPixelWidth: Int
-        var preferredMaxPixelHeight: Int
-    }
+
+    /// Pending host wallpaper request, if any.
     var pendingHostWallpaperRequest: PendingHostWallpaperRequest?
+    /// Active host wallpaper request task.
     var hostWallpaperRequestTask: Task<Void, Never>?
+    /// Token that invalidates stale wallpaper request completions.
     var hostWallpaperRequestToken: UUID = .init()
-    struct PendingHostSoftwareUpdateStatusRequest: Sendable {
-        let clientID: UUID
-        var forceRefresh: Bool
-    }
+
+    /// Pending host software-update status request, if any.
     var pendingHostSoftwareUpdateStatusRequest: PendingHostSoftwareUpdateStatusRequest?
+    /// Active host software-update status request task.
     var hostSoftwareUpdateStatusRequestTask: Task<Void, Never>?
+    /// Token that invalidates stale software-update status completions.
     var hostSoftwareUpdateStatusRequestToken: UUID = .init()
+    /// Disk-backed app icon catalog cache.
     let appIconCatalogStore = HostAppIconCatalogStore()
+    /// Host shared-clipboard bridge for active clients.
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
+    /// Latest shared-clipboard enablement status per client.
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
+    /// Chunk reassembler for incoming shared-clipboard payloads.
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
 
-    /// Menu bar passthrough - internal for extension access
+    /// Menu bar passthrough monitor for forwarding host app menu state.
     let menuBarMonitor = MenuBarMonitor()
 
     /// Window activation (robust multi-method for headless Macs)
@@ -552,51 +568,20 @@ public final class MirageHostService {
 
     /// Thread-safe cache of stream info for fast input routing
     /// Uses a dedicated actor to avoid lock issues in async contexts
-    nonisolated let inputStreamCacheActor = InputStreamCacheActor()
+    nonisolated let inputStreamCache = InputStreamCache()
 
-    /// Fast input handler - called on inputQueue, NOT on MainActor
-    /// Set this to handle input events with minimal latency
-    public var onInputEvent: ((_ event: MirageInputEvent, _ window: MirageWindow, _ client: MirageConnectedClient)
-        -> Void)? {
-        get { onInputEventStorage }
-        set { onInputEventStorage = newValue }
-    }
-
-    @ObservationIgnored nonisolated(unsafe) var onInputEventStorage: ((
+    /// Fast input handler called on `inputQueue`, outside the main actor, for lowest-latency event delivery.
+    @ObservationIgnored public nonisolated(unsafe) var onInputEvent: ((
         _ event: MirageInputEvent,
         _ window: MirageWindow,
         _ client: MirageConnectedClient
     )
         -> Void)?
-    typealias ControlMessageHandler = @MainActor (ControlMessage, ClientContext) async -> Void
+
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
 
-    public enum HostState: Equatable {
-        case idle
-        case starting
-        case advertising(controlPort: UInt16)
-        case error(String)
-    }
-
-    struct PendingAppListRequest: Equatable {
-        let clientID: UUID
-        var requestID: UUID
-        var requestedForceRefresh: Bool
-        var forceIconReset: Bool
-        var priorityBundleIdentifiers: [String]
-        var knownIconBundleIdentifiers: [String]
-    }
-
-    struct ReceiverMediaFeedbackHostDiagnostics: Sendable, Equatable {
-        var fastPathCount: UInt64 = 0
-        var coalescedCount: UInt64 = 0
-        var droppedCount: UInt64 = 0
-        var logSuppressedCount: UInt64 = 0
-    }
-
-    nonisolated let receiverMediaFeedbackDiagnostics = Locked(ReceiverMediaFeedbackHostDiagnostics())
-
+    /// Creates a host service with optional identity and transport configuration overrides.
     public init(
         hostName: String? = nil,
         deviceID: UUID? = nil,
@@ -652,7 +637,6 @@ public final class MirageHostService {
         windowController.hostService = self
         inputController.hostService = self
         inputController.windowController = windowController
-        inputController.permissionManager = permissionManager
 
         onResizeWindowForStream = { [weak windowController] window, size in
             windowController?.resizeAndCenterWindowForStream(window, targetSize: size)
@@ -686,1187 +670,6 @@ public final class MirageHostService {
         Task {
             await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
         }
-    }
-
-    private func registerDiagnosticsContextProvider() {
-        Task { [weak self] in
-            guard let self else { return }
-            diagnosticsContextProviderToken = await LoomDiagnostics.registerContextProvider { [weak self] in
-                guard let self else { return [:] }
-                return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
-            }
-        }
-    }
-
-    private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
-        [
-            "host.state": .string(Self.diagnosticsHostStateName(state)),
-            "host.sessionState": .string(String(describing: sessionState)),
-
-            "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
-            "host.lightsOutEnabled": .bool(lightsOutEnabled),
-            "host.lightsOutDisabledByEnvironment": .bool(lightsOutDisabledByEnvironment),
-            "host.lockHostWhenStreamingStops": .bool(lockHostWhenStreamingStops),
-            "host.connectedClientsCount": .int(connectedClients.count),
-            "host.activeStreamsCount": .int(activeStreams.count),
-            "host.availableWindowsCount": .int(availableWindows.count),
-            "host.desktopStreamActive": .bool(desktopStreamID != nil),
-            "host.receiverMediaFeedbackFastPathCount": .int(
-                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.fastPathCount))
-            ),
-            "host.receiverMediaFeedbackCoalescedCount": .int(
-                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.coalescedCount))
-            ),
-            "host.receiverMediaFeedbackDroppedCount": .int(
-                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.droppedCount))
-            ),
-            "host.receiverMediaFeedbackLogSuppressedCount": .int(
-                Int(clamping: receiverMediaFeedbackDiagnostics.read(\.logSuppressedCount))
-            ),
-
-            "host.desktopResizeInFlight": .bool(activeDesktopResizeRequest != nil),
-            "host.desktopSharedDisplayTransitionInFlight": .bool(desktopSharedDisplayTransitionInFlight),
-            "host.windowVirtualDisplayCount": .int(windowVirtualDisplayStateByWindowID.count)
-        ]
-    }
-
-    private static func diagnosticsHostStateName(_ state: HostState) -> String {
-        switch state {
-        case .idle:
-            return "idle"
-        case .starting:
-            return "starting"
-        case .advertising:
-            return "advertising"
-        case .error:
-            return "error"
-        }
-    }
-
-    nonisolated static func isLightsOutDisabledByEnvironment(
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> Bool {
-        environment[lightsOutDisableEnvironmentKey] == "1"
-    }
-
-    private static func identityKeyID(for manager: LoomIdentityManager?) -> String? {
-        guard let manager else { return nil }
-        return try? manager.currentIdentity().keyID
-    }
-
-    /// Updates the identity key advertised in the Loom discovery payload.
-    public func updateAdvertisedIdentityKeyID(_ keyID: String?) {
-        advertisedPeerAdvertisement = LoomPeerAdvertisement(
-            protocolVersion: advertisedPeerAdvertisement.protocolVersion,
-            deviceID: advertisedPeerAdvertisement.deviceID,
-            identityKeyID: keyID,
-            deviceType: advertisedPeerAdvertisement.deviceType,
-            modelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
-            iconName: advertisedPeerAdvertisement.iconName,
-            machineFamily: advertisedPeerAdvertisement.machineFamily,
-            hostName: advertisedPeerAdvertisement.hostName,
-            directTransports: advertisedPeerAdvertisement.directTransports,
-            metadata: advertisedPeerAdvertisement.metadata
-        )
-        Task { @MainActor [weak self] in
-            await self?.publishCurrentAdvertisement()
-        }
-    }
-
-    private static func hardwareModelIdentifier() -> String? {
-        var size: size_t = 0
-        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 1 else {
-            return nil
-        }
-
-        var buffer = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else {
-            return nil
-        }
-
-        return String.mirageDecodedCString(buffer).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private static func detectSupportedColorDepths() -> [MirageStreamColorDepth] {
-        let ultraProbe = UltraColorDepthProbeCache.result
-        var supported: [MirageStreamColorDepth] = [.standard]
-
-        supported.append(.pro)
-        if ultraProbe.supportsUltra444 {
-            supported.append(.ultra)
-        }
-
-        let chromaText = ultraProbe.encodedChromaSampling?.rawValue ?? "unknown"
-        let hardwareText = ultraProbe.usingHardwareEncoder.map { String($0) } ?? "unknown"
-        MirageLogger.host(
-            "Color depth support: supported=\(supported.map(\.rawValue).joined(separator: ",")) " +
-                "ultraCaptureXF44=\(ultraProbe.captureAcceptsXF44) " +
-                "ultraSessionCreated=\(ultraProbe.encoderSessionCreated) " +
-                "ultraChroma=\(chromaText) " +
-                "ultraHardware=\(hardwareText)"
-        )
-
-        return supported
-    }
-
-    private static func detectProRes4444Support() -> Bool {
-        let supported = ProRes4444SupportProbeCache.supported
-        MirageLogger.host("ProRes 4444 support: \(supported)")
-        return supported
-    }
-
-    private enum UltraColorDepthProbeCache {
-        static let result = VideoEncoder.probeStrictUltra444Support()
-    }
-
-    private enum ProRes4444SupportProbeCache {
-        static let supported = VideoEncoder.probeProRes4444Support()
-    }
-
-    func effectiveVideoCodec(for requested: MirageVideoCodec?) -> MirageVideoCodec? {
-        guard requested == .proRes4444 else { return requested }
-        guard supportsProRes4444 else {
-            MirageLogger.host("ProRes 4444 request ignored because this host does not support ProRes 4444")
-            return nil
-        }
-        return .proRes4444
-    }
-
-    func effectiveColorDepth(
-        for requested: MirageStreamColorDepth?,
-        codec: MirageVideoCodec? = nil
-    ) -> MirageStreamColorDepth? {
-        guard let requested else { return nil }
-        if codec == .proRes4444, requested == .ultra, supportsProRes4444 {
-            return .ultra
-        }
-        if supportedColorDepths.contains(requested) {
-            return requested
-        }
-
-        return supportedColorDepths
-            .filter { $0.sortRank <= requested.sortRank }
-            .max(by: { lhs, rhs in
-                lhs.sortRank < rhs.sortRank
-            })
-            ?? supportedColorDepths.first
-            ?? .standard
-    }
-
-    private struct CoreTypesHostIconEntry {
-        let lowercasedName: String
-        let originalName: String
-        let size: Int
-    }
-
-    private static func hardwareIconName(
-        for modelIdentifier: String?,
-        hardwareColorCode: Int?
-    ) -> String? {
-        guard let normalizedModel = normalizeModelIdentifier(modelIdentifier) else {
-            return nil
-        }
-        guard let coreTypesPath = coreTypesBundlePath() else {
-            return nil
-        }
-
-        var iconEntries: [CoreTypesHostIconEntry] = []
-        var plistPaths: [String] = []
-        let fileManager = FileManager.default
-
-        if let enumerator = fileManager.enumerator(atPath: coreTypesPath) {
-            for case let relativePath as String in enumerator {
-                let lowercasedPath = relativePath.lowercased()
-
-                if lowercasedPath.hasSuffix(".icns") {
-                    let fullPath = coreTypesPath + "/" + relativePath
-                    let attributes = try? fileManager.attributesOfItem(atPath: fullPath)
-                    let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-                    let originalName = (relativePath as NSString).lastPathComponent
-                    iconEntries.append(
-                        CoreTypesHostIconEntry(
-                            lowercasedName: originalName.lowercased(),
-                            originalName: originalName,
-                            size: size
-                        )
-                    )
-                    continue
-                }
-
-                if lowercasedPath.hasSuffix("/info.plist") {
-                    plistPaths.append(coreTypesPath + "/" + relativePath)
-                }
-            }
-        }
-
-        guard !iconEntries.isEmpty else {
-            return nil
-        }
-
-        let metadata = parseCoreTypesMetadata(plistPaths: plistPaths)
-        let preferredModelTag = hardwareColorCode.map { "\(normalizedModel)@ecolor=\($0)" }
-        let preferredTypes = preferredModelTag.flatMap { metadata.modelTagToTypeIdentifiers[$0] } ?? []
-        let mappedTypes = metadata.modelToTypeIdentifiers[normalizedModel] ?? []
-        let preferredColorHints = preferredColorHints(from: preferredTypes)
-        let expandedPreferredTypes = preferredTypes.isEmpty
-            ? Set<String>()
-            : expandTypeIdentifiers(preferredTypes, conformance: metadata.typeConformanceGraph)
-        let expandedMappedTypes = mappedTypes.isEmpty
-            ? Set<String>()
-            : expandTypeIdentifiers(mappedTypes, conformance: metadata.typeConformanceGraph)
-        let machineFamilyHint = hardwareMachineFamily(modelIdentifier: normalizedModel, iconName: nil)
-
-        if preferredTypes.isEmpty, let preferredModelTag {
-            MirageLogger.host(
-                "Host icon color-specific model tag unavailable: \(preferredModelTag), falling back to family/model matching"
-            )
-        }
-
-        var best: (name: String, score: Int, size: Int)?
-
-        for icon in iconEntries {
-            let lowercasedName = icon.lowercasedName
-            var score = 0
-
-            score = max(
-                score,
-                scoreForTypeMatch(
-                    iconName: lowercasedName,
-                    typeIdentifiers: preferredTypes,
-                    exactWeight: 22_000,
-                    prefixWeight: 20_500,
-                    containsWeight: 18_000
-                )
-            )
-            score = max(
-                score,
-                scoreForTypeMatch(
-                    iconName: lowercasedName,
-                    typeIdentifiers: mappedTypes,
-                    exactWeight: 15_000,
-                    prefixWeight: 13_500,
-                    containsWeight: 11_500
-                )
-            )
-            score = max(
-                score,
-                scoreForTypeMatch(
-                    iconName: lowercasedName,
-                    typeIdentifiers: expandedPreferredTypes,
-                    exactWeight: 9_000,
-                    prefixWeight: 7_800,
-                    containsWeight: 6_600
-                )
-            )
-            score = max(
-                score,
-                scoreForTypeMatch(
-                    iconName: lowercasedName,
-                    typeIdentifiers: expandedMappedTypes,
-                    exactWeight: 5_200,
-                    prefixWeight: 4_300,
-                    containsWeight: 3_500
-                )
-            )
-
-            guard score > 0 else {
-                continue
-            }
-
-            score += min(icon.size / 4_096, 900)
-            if isMacHardwareIconName(icon.lowercasedName) {
-                score += 500
-            }
-            if let machineFamilyHint,
-               matchesMachineFamilyHint(machineFamilyHint, iconName: lowercasedName) {
-                score += 1_600
-            }
-            if matchesColorHint(iconName: lowercasedName, colorHints: preferredColorHints) {
-                score += 2_100
-            }
-
-            if let currentBest = best {
-                if score > currentBest.score || (score == currentBest.score && icon.size > currentBest.size) {
-                    best = (name: icon.originalName, score: score, size: icon.size)
-                }
-            } else {
-                best = (name: icon.originalName, score: score, size: icon.size)
-            }
-        }
-
-        if let resolved = best?.name {
-            return resolved
-        }
-
-        if let familyFallback = bestFamilyFallbackIconName(
-            machineFamily: machineFamilyHint,
-            iconEntries: iconEntries,
-            preferredColorHints: preferredColorHints
-        ) {
-            return familyFallback
-        }
-
-        return iconEntries
-            .filter { isMacHardwareIconName($0.lowercasedName) }
-            .max(by: { lhs, rhs in lhs.size < rhs.size })?
-            .originalName
-    }
-
-    private static func hardwareMachineFamily(modelIdentifier: String?, iconName: String?) -> String? {
-        if let modelIdentifier,
-           let family = hardwareMachineFamily(forKnownModelIdentifier: modelIdentifier) {
-            return family
-        }
-
-        if let iconName {
-            let normalizedIconName = iconName.lowercased()
-            if normalizedIconName.contains("macbook") || normalizedIconName.contains("sidebarlaptop") {
-                return "macBook"
-            }
-            if normalizedIconName.contains("imac") || normalizedIconName.contains("sidebarimac") {
-                return "iMac"
-            }
-            if normalizedIconName.contains("macmini") || normalizedIconName.contains("sidebarmacmini") {
-                return "macMini"
-            }
-            if normalizedIconName.contains("macstudio") {
-                return "macStudio"
-            }
-            if normalizedIconName.contains("macpro") || normalizedIconName.contains("sidebarmacpro") {
-                return "macPro"
-            }
-        }
-
-        if let modelIdentifier {
-            let normalizedModel = modelIdentifier.lowercased()
-            if normalizedModel.contains("macbook") {
-                return "macBook"
-            }
-            if normalizedModel.contains("imac") {
-                return "iMac"
-            }
-            if normalizedModel.contains("macmini") {
-                return "macMini"
-            }
-            if normalizedModel.contains("macstudio") {
-                return "macStudio"
-            }
-            if normalizedModel.contains("macpro") {
-                return "macPro"
-            }
-        }
-
-        guard let machineName = hardwareMachineName()?.lowercased() else {
-            return "macGeneric"
-        }
-        if machineName.contains("macbook") {
-            return "macBook"
-        }
-        if machineName.contains("imac") {
-            return "iMac"
-        }
-        if machineName.contains("mini") {
-            return "macMini"
-        }
-        if machineName.contains("studio") {
-            return "macStudio"
-        }
-        if machineName.contains("pro") {
-            return "macPro"
-        }
-        return "macGeneric"
-    }
-
-    private static func hardwareMachineFamily(forKnownModelIdentifier modelIdentifier: String) -> String? {
-        guard let normalizedModel = normalizeModelIdentifier(modelIdentifier) else {
-            return nil
-        }
-
-        switch normalizedModel {
-        case "mac13,1",
-             "mac13,2",
-             "mac14,13",
-             "mac14,14",
-             "mac15,14",
-             "mac16,9":
-            return "macStudio"
-        case "mac14,3",
-             "mac14,12",
-             "mac16,10",
-             "mac16,11":
-            return "macMini"
-        default:
-            return nil
-        }
-    }
-
-    private static func hardwareMachineName() -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
-        process.arguments = ["SPHardwareDataType", "-json"]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        // Drain stdout before waiting for exit so verbose subprocess output
-        // cannot fill the pipe buffer and block startup.
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-
-        guard
-            let jsonObject = try? JSONSerialization.jsonObject(with: outputData),
-            let dictionary = jsonObject as? [String: Any],
-            let hardwareEntries = dictionary["SPHardwareDataType"] as? [[String: Any]],
-            let firstEntry = hardwareEntries.first,
-            let machineName = firstEntry["machine_name"] as? String
-        else {
-            return nil
-        }
-
-        let trimmed = machineName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    private static func coreTypesBundlePath() -> String? {
-        if let bundlePath = Bundle(identifier: "com.apple.CoreTypes")?.bundlePath,
-           FileManager.default.fileExists(atPath: bundlePath) {
-            return bundlePath
-        }
-
-        let fallbacks = [
-            "/System/Library/CoreServices/CoreTypes.bundle",
-            "/System/Library/Templates/Data/System/Library/CoreServices/CoreTypes.bundle",
-        ]
-        return fallbacks.first(where: { FileManager.default.fileExists(atPath: $0) })
-    }
-
-    private static func normalizeModelIdentifier(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let normalized = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return nil }
-        if let markerIndex = normalized.firstIndex(of: "@") {
-            return String(normalized[..<markerIndex])
-        }
-        return normalized
-    }
-
-    private static func normalizeModelTagIdentifier(_ value: String?) -> String? {
-        guard let value else { return nil }
-        var normalized = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if let nulIndex = normalized.firstIndex(of: "\u{0}") {
-            normalized = String(normalized[..<nulIndex])
-        }
-        guard !normalized.isEmpty else { return nil }
-        return normalized
-    }
-
-    private static func parseStringCollection(_ value: Any?) -> [String] {
-        if let string = value as? String {
-            return [string]
-        }
-        if let strings = value as? [String] {
-            return strings
-        }
-        return []
-    }
-
-    private static func parseCoreTypesMetadata(plistPaths: [String]) -> (
-        modelTagToTypeIdentifiers: [String: Set<String>],
-        modelToTypeIdentifiers: [String: Set<String>],
-        typeConformanceGraph: [String: Set<String>]
-    ) {
-        var modelTagToTypeIdentifiers: [String: Set<String>] = [:]
-        var modelToTypeIdentifiers: [String: Set<String>] = [:]
-        var typeConformanceGraph: [String: Set<String>] = [:]
-
-        for plistPath in plistPaths {
-            guard
-                let data = FileManager.default.contents(atPath: plistPath),
-                let plistObject = try? PropertyListSerialization.propertyList(from: data, format: nil),
-                let plist = plistObject as? [String: Any],
-                let declarations = plist["UTExportedTypeDeclarations"] as? [[String: Any]]
-            else {
-                continue
-            }
-
-            for declaration in declarations {
-                guard let typeIdentifier = (declaration["UTTypeIdentifier"] as? String)?
-                    .lowercased(), !typeIdentifier.isEmpty else {
-                    continue
-                }
-
-                let conformsTo = parseStringCollection(declaration["UTTypeConformsTo"])
-                    .map { $0.lowercased() }
-                if !conformsTo.isEmpty {
-                    typeConformanceGraph[typeIdentifier, default: []].formUnion(conformsTo)
-                }
-
-                guard let tagSpecification = declaration["UTTypeTagSpecification"] as? [String: Any] else {
-                    continue
-                }
-
-                let rawModelCodes = parseStringCollection(tagSpecification["com.apple.device-model-code"])
-                    .map { normalizeModelTagIdentifier($0) }
-                    .compactMap { $0 }
-                guard !rawModelCodes.isEmpty else {
-                    continue
-                }
-
-                let relatedTypes = Set([typeIdentifier] + conformsTo)
-                for rawModelCode in rawModelCodes {
-                    modelTagToTypeIdentifiers[rawModelCode, default: []].formUnion(relatedTypes)
-                    if let baseModelCode = normalizeModelIdentifier(rawModelCode) {
-                        modelToTypeIdentifiers[baseModelCode, default: []].formUnion(relatedTypes)
-                    }
-                }
-            }
-        }
-
-        return (modelTagToTypeIdentifiers, modelToTypeIdentifiers, typeConformanceGraph)
-    }
-
-    private static func expandTypeIdentifiers(
-        _ initial: Set<String>,
-        conformance: [String: Set<String>]
-    ) -> Set<String> {
-        var visited = initial
-        var queue = Array(initial)
-
-        while let next = queue.popLast() {
-            for parent in conformance[next, default: []] where !visited.contains(parent) {
-                visited.insert(parent)
-                queue.append(parent)
-            }
-        }
-
-        return visited
-    }
-
-    private static func isMacHardwareIconName(_ lowercasedName: String) -> Bool {
-        lowercasedName.contains("macbook") ||
-            lowercasedName.contains("imac") ||
-            lowercasedName.contains("macmini") ||
-            lowercasedName.contains("macstudio") ||
-            lowercasedName.contains("macpro") ||
-            lowercasedName.contains("sidebarlaptop") ||
-            lowercasedName.contains("sidebarmac")
-    }
-
-    private static func scoreForTypeMatch(
-        iconName: String,
-        typeIdentifiers: Set<String>,
-        exactWeight: Int,
-        prefixWeight: Int,
-        containsWeight: Int
-    ) -> Int {
-        guard !typeIdentifiers.isEmpty else {
-            return 0
-        }
-
-        var bestScore = 0
-        for typeIdentifier in typeIdentifiers {
-            if iconName == "\(typeIdentifier).icns" {
-                bestScore = max(bestScore, exactWeight)
-            } else if iconName.hasPrefix(typeIdentifier + "-") {
-                bestScore = max(bestScore, prefixWeight)
-            } else if iconName.contains(typeIdentifier) {
-                bestScore = max(bestScore, containsWeight)
-            }
-        }
-
-        return bestScore
-    }
-
-    private static func matchesMachineFamilyHint(_ family: String, iconName: String) -> Bool {
-        switch family.lowercased() {
-        case "macbook":
-            return iconName.contains("macbook") || iconName.contains("sidebarlaptop")
-        case "imac":
-            return iconName.contains("imac") || iconName.contains("sidebarimac")
-        case "macmini":
-            return iconName.contains("macmini") || iconName.contains("sidebarmacmini")
-        case "macstudio":
-            return iconName.contains("macstudio")
-        case "macpro":
-            return iconName.contains("macpro") || iconName.contains("sidebarmacpro")
-        default:
-            return isMacHardwareIconName(iconName)
-        }
-    }
-
-    private static func bestFamilyFallbackIconName(
-        machineFamily: String?,
-        iconEntries: [CoreTypesHostIconEntry],
-        preferredColorHints: Set<String>
-    ) -> String? {
-        guard !iconEntries.isEmpty else {
-            return nil
-        }
-
-        let matching = iconEntries.filter { entry in
-            guard isMacHardwareIconName(entry.lowercasedName) else {
-                return false
-            }
-            guard let machineFamily else {
-                return true
-            }
-            return matchesMachineFamilyHint(machineFamily, iconName: entry.lowercasedName)
-        }
-
-        let bestMatching = matching.max { lhs, rhs in
-            let lhsColor = matchesColorHint(iconName: lhs.lowercasedName, colorHints: preferredColorHints) ? 8_000 : 0
-            let rhsColor = matchesColorHint(iconName: rhs.lowercasedName, colorHints: preferredColorHints) ? 8_000 : 0
-            let lhsScore = lhsColor + lhs.size / 8_192
-            let rhsScore = rhsColor + rhs.size / 8_192
-            if lhsScore == rhsScore {
-                return lhs.size < rhs.size
-            }
-            return lhsScore < rhsScore
-        }
-
-        if let bestMatching {
-            return bestMatching.originalName
-        }
-
-        return iconEntries
-            .filter { isMacHardwareIconName($0.lowercasedName) }
-            .max(by: { lhs, rhs in lhs.size < rhs.size })?
-            .originalName
-    }
-
-    private static func preferredColorHints(from typeIdentifiers: Set<String>) -> Set<String> {
-        guard !typeIdentifiers.isEmpty else {
-            return []
-        }
-
-        let knownColorHints = [
-            "space-black",
-            "space-gray",
-            "silver",
-            "midnight",
-            "starlight",
-            "stardust",
-            "sky-blue",
-            "gold",
-            "rose-gold",
-            "blue",
-        ]
-
-        var hints: Set<String> = []
-        for typeIdentifier in typeIdentifiers {
-            for colorHint in knownColorHints where typeIdentifier.contains(colorHint) {
-                hints.insert(colorHint)
-            }
-        }
-        return hints
-    }
-
-    private static func matchesColorHint(iconName: String, colorHints: Set<String>) -> Bool {
-        guard !colorHints.isEmpty else {
-            return false
-        }
-
-        return colorHints.contains { iconName.contains($0) }
-    }
-
-    private static func hardwareColorCode() -> Int? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
-        process.arguments = ["-lw0", "-p", "IODeviceTree", "-n", "chosen", "-r"]
-
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        // Drain stdout before waiting for exit so the child cannot block when
-        // writing large IORegistry payloads.
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            return nil
-        }
-
-        guard let output = String(data: outputData, encoding: .utf8) else {
-            return nil
-        }
-
-        return parseHousingColorCode(from: output)
-    }
-
-    private static func parseHousingColorCode(from output: String) -> Int? {
-        let pattern = #""housing-color"\s*=\s*<([0-9A-Fa-f]+)>"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return nil
-        }
-
-        let nsOutput = output as NSString
-        let range = NSRange(location: 0, length: nsOutput.length)
-        guard let match = regex.firstMatch(in: output, range: range), match.numberOfRanges > 1 else {
-            return nil
-        }
-
-        let hexRange = match.range(at: 1)
-        guard hexRange.location != NSNotFound else {
-            return nil
-        }
-
-        let hexString = nsOutput.substring(with: hexRange)
-        let bytes = hexBytes(from: hexString)
-        guard !bytes.isEmpty else {
-            return nil
-        }
-
-        var values: [UInt32] = []
-        let stride = 4
-        let usableLength = bytes.count - (bytes.count % stride)
-        guard usableLength >= stride else {
-            return nil
-        }
-
-        var index = 0
-        while index + 3 < usableLength {
-            let value = UInt32(bytes[index]) |
-                (UInt32(bytes[index + 1]) << 8) |
-                (UInt32(bytes[index + 2]) << 16) |
-                (UInt32(bytes[index + 3]) << 24)
-            values.append(value)
-            index += stride
-        }
-
-        guard let resolved = values.last(where: { $0 != 0 }) else {
-            return nil
-        }
-        return Int(resolved)
-    }
-
-    private static func hexBytes(from value: String) -> [UInt8] {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count.isMultiple(of: 2) else {
-            return []
-        }
-
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(trimmed.count / 2)
-
-        var index = trimmed.startIndex
-        while index < trimmed.endIndex {
-            let nextIndex = trimmed.index(index, offsetBy: 2)
-            let pair = trimmed[index..<nextIndex]
-            guard let byte = UInt8(pair, radix: 16) else {
-                return []
-            }
-            bytes.append(byte)
-            index = nextIndex
-        }
-
-        return bytes
-    }
-
-    /// Resolve input bounds for desktop streaming based on physical display size.
-    /// When mirroring a virtual display with a different aspect ratio, the mirrored
-    /// content is aspect-fit within the physical display and input should target
-    /// that content rect (not the full physical bounds).
-    func resolvedDesktopInputBounds(
-        physicalBounds: CGRect,
-        virtualResolution: CGSize?
-    )
-    -> CGRect {
-        if desktopStreamMode == .secondary, let bounds = resolveDesktopDisplayBounds() { return bounds }
-        return Self.resolvedMirroredDesktopInputBounds(
-            physicalBounds: physicalBounds,
-            virtualResolution: virtualResolution
-        )
-    }
-
-    nonisolated static func resolvedMirroredDesktopInputBounds(
-        physicalBounds: CGRect,
-        virtualResolution: CGSize?
-    )
-    -> CGRect {
-        guard let virtualResolution,
-              virtualResolution.width > 0,
-              virtualResolution.height > 0 else {
-            return physicalBounds
-        }
-
-        let contentAspect = virtualResolution.width / virtualResolution.height
-        let boundsAspect = physicalBounds.width / physicalBounds.height
-        var fittedSize = physicalBounds.size
-
-        if boundsAspect > contentAspect {
-            fittedSize.height = physicalBounds.height
-            fittedSize.width = fittedSize.height * contentAspect
-        } else {
-            fittedSize.width = physicalBounds.width
-            fittedSize.height = fittedSize.width / contentAspect
-        }
-
-        return CGRect(
-            x: physicalBounds.minX + (physicalBounds.width - fittedSize.width) * 0.5,
-            y: physicalBounds.minY + (physicalBounds.height - fittedSize.height) * 0.5,
-            width: fittedSize.width,
-            height: fittedSize.height
-        )
-    }
-
-    nonisolated static func resolvedDesktopCursorStartPoint(
-        inputBounds: CGRect
-    )
-    -> CGPoint? {
-        guard inputBounds.width > 0, inputBounds.height > 0 else { return nil }
-        return CGPoint(x: inputBounds.midX, y: inputBounds.midY)
-    }
-
-    nonisolated static func cocoaRect(fromCGDisplayRect cgRect: CGRect, primaryHeight: CGFloat) -> CGRect {
-        CGRect(
-            x: cgRect.origin.x,
-            y: primaryHeight - cgRect.origin.y - cgRect.height,
-            width: cgRect.width,
-            height: cgRect.height
-        )
-    }
-
-    nonisolated static func resolvedMirroredDesktopCursorMonitorBounds(
-        physicalBounds: CGRect,
-        virtualResolution: CGSize?,
-        primaryHeight: CGFloat
-    )
-    -> CGRect {
-        cocoaRect(
-            fromCGDisplayRect: resolvedMirroredDesktopInputBounds(
-                physicalBounds: physicalBounds,
-                virtualResolution: virtualResolution
-            ),
-            primaryHeight: primaryHeight
-        )
-    }
-
-    func setRemoteControlPort(_ port: UInt16?) {
-        remoteControlPort = port
-    }
-
-    struct VirtualDisplaySetupGuardState {
-        let token: UUID
-        let periodicTask: Task<Void, Never>
-        /// Cursor point captured before display mirroring mutates display bounds.
-        let cursorAnchorPoint: CGPoint?
-    }
-
-    func resolvedPrimaryPhysicalDisplayVisibleBounds() -> CGRect? {
-        let displayID = desktopPrimaryPhysicalDisplayID ?? resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
-        let fullBounds = CGDisplayBounds(displayID)
-        guard fullBounds.width > 0, fullBounds.height > 0 else { return nil }
-
-        desktopPrimaryPhysicalDisplayID = displayID
-        desktopPrimaryPhysicalBounds = fullBounds
-
-        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
-            displayID,
-            knownBounds: fullBounds
-        )
-        visibleBounds = visibleBounds.intersection(fullBounds)
-        if visibleBounds.isEmpty {
-            visibleBounds = fullBounds
-        }
-        return visibleBounds
-    }
-
-    nonisolated static func resolvedVirtualDisplaySetupCursorPoint(
-        cursorAnchorPoint: CGPoint?,
-        visibleBounds: CGRect?
-    )
-    -> CGPoint? {
-        if let cursorAnchorPoint { return cursorAnchorPoint }
-        guard let visibleBounds,
-              visibleBounds.width > 0,
-              visibleBounds.height > 0 else {
-            return nil
-        }
-        return CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
-    }
-
-    @discardableResult
-    func centerCursorOnPrimaryPhysicalDisplay(
-        reason: String,
-        cursorAnchorPoint: CGPoint? = nil
-    )
-    -> CGPoint? {
-        let visibleBounds = cursorAnchorPoint == nil ? resolvedPrimaryPhysicalDisplayVisibleBounds() : nil
-        guard let point = Self.resolvedVirtualDisplaySetupCursorPoint(
-            cursorAnchorPoint: cursorAnchorPoint,
-            visibleBounds: visibleBounds
-        ) else {
-            return nil
-        }
-        let source = cursorAnchorPoint == nil ? "live" : "anchor"
-        CGWarpMouseCursorPosition(point)
-        MirageLogger.host(
-            "Virtual display setup cursor centered reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded())) source=\(source)"
-        )
-        return point
-    }
-
-    @discardableResult
-    func performVirtualDisplaySetupWakeAndCenter(
-        reason: String,
-        cursorAnchorPoint: CGPoint? = nil
-    )
-    -> CGPoint? {
-        PowerAssertionManager.wakeDisplay()
-        return centerCursorOnPrimaryPhysicalDisplay(
-            reason: reason,
-            cursorAnchorPoint: cursorAnchorPoint
-        )
-    }
-
-    func beginVirtualDisplaySetupGuard(reason: String) async -> UUID {
-        if let existing = activeVirtualDisplaySetupGuard {
-            await cancelVirtualDisplaySetupGuard(existing.token, reason: "superseded:\(reason)")
-        }
-
-        await PowerAssertionManager.shared.enable()
-        let cursorAnchorPoint = performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):begin")
-
-        let token = UUID()
-        let periodicTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .milliseconds(350))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                guard let self else { return }
-                self.performVirtualDisplaySetupWakeAndCenter(
-                    reason: "\(reason):keepalive",
-                    cursorAnchorPoint: self.activeVirtualDisplaySetupGuard?.cursorAnchorPoint
-                )
-            }
-        }
-
-        activeVirtualDisplaySetupGuard = VirtualDisplaySetupGuardState(
-            token: token,
-            periodicTask: periodicTask,
-            cursorAnchorPoint: cursorAnchorPoint
-        )
-        MirageLogger.host("Virtual display setup guard started reason=\(reason) token=\(token.uuidString)")
-        return token
-    }
-
-    func completeVirtualDisplaySetupGuard(
-        _ token: UUID?,
-        reason: String
-    ) async {
-        guard let token,
-              let activeGuard = activeVirtualDisplaySetupGuard,
-              activeGuard.token == token else {
-            return
-        }
-
-        let cursorAnchorPoint = activeGuard.cursorAnchorPoint
-        activeGuard.periodicTask.cancel()
-        activeVirtualDisplaySetupGuard = nil
-        performVirtualDisplaySetupWakeAndCenter(
-            reason: "\(reason):settled",
-            cursorAnchorPoint: cursorAnchorPoint
-        )
-        MirageLogger.host("Virtual display setup guard completed reason=\(reason) token=\(token.uuidString)")
-
-        Task { @MainActor [weak self, cursorAnchorPoint] in
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-            } catch {
-                await PowerAssertionManager.shared.disable()
-                return
-            }
-
-            if self?.activeVirtualDisplaySetupGuard == nil {
-                self?.performVirtualDisplaySetupWakeAndCenter(
-                    reason: "\(reason):delayed",
-                    cursorAnchorPoint: cursorAnchorPoint
-                )
-            }
-            await PowerAssertionManager.shared.disable()
-        }
-    }
-
-    func cancelVirtualDisplaySetupGuard(
-        _ token: UUID?,
-        reason: String
-    ) async {
-        guard let token,
-              let activeGuard = activeVirtualDisplaySetupGuard,
-              activeGuard.token == token else {
-            return
-        }
-
-        activeGuard.periodicTask.cancel()
-        activeVirtualDisplaySetupGuard = nil
-        await PowerAssertionManager.shared.disable()
-        MirageLogger.host("Virtual display setup guard cancelled reason=\(reason) token=\(token.uuidString)")
-    }
-
-    /// Resolve the current virtual display bounds for secondary desktop streaming.
-    /// Uses CoreGraphics coordinates for input injection.
-    func resolveDesktopDisplayBounds() -> CGRect? {
-        guard let displayID = desktopVirtualDisplayID else {
-            return resolvedDesktopDisplayBounds(
-                cachedBounds: desktopDisplayBounds,
-                liveBounds: nil,
-                displayModeSize: nil,
-                displayOrigin: desktopDisplayBounds?.origin ?? .zero
-            )
-        }
-
-        let bounds = CGDisplayBounds(displayID)
-        let displayModeSize = CGDisplayCopyDisplayMode(displayID).map {
-            CGSize(width: CGFloat($0.width), height: CGFloat($0.height))
-        }
-        let resolvedBounds = resolvedDesktopDisplayBounds(
-            cachedBounds: desktopDisplayBounds,
-            liveBounds: bounds,
-            displayModeSize: displayModeSize,
-            displayOrigin: bounds.origin
-        )
-        if let resolvedBounds { desktopDisplayBounds = resolvedBounds }
-        return resolvedBounds
-    }
-
-    /// Last successfully resolved cursor-monitor bounds for the virtual display.
-    /// Prevents transient resolution failures from dropping the stream.
-    private var lastResolvedCursorMonitorBounds: CGRect?
-
-    /// Resolve the current virtual display bounds for cursor monitoring (Cocoa coordinates).
-    func resolveDesktopDisplayBoundsForCursorMonitor() -> CGRect? {
-        if let bounds = resolveDesktopDisplayBoundsForCursorMonitorCore() {
-            lastResolvedCursorMonitorBounds = bounds
-            return bounds
-        }
-        return lastResolvedCursorMonitorBounds
-    }
-
-    private func resolveDesktopDisplayBoundsForCursorMonitorCore() -> CGRect? {
-        // Preferred: NSScreen.frame is already in Cocoa coordinates (bottom-left origin).
-        if let displayID = desktopVirtualDisplayID,
-           let screen = NSScreen.screens.first(where: {
-               ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
-           }) {
-            return screen.frame
-        }
-
-        // Fallback paths use CGDisplayBounds / desktopDisplayBounds which are in CG
-        // coordinates (top-left origin). Convert to Cocoa so the CursorMonitor's
-        // NSEvent.mouseLocation containment check uses a consistent coordinate space.
-        if let displayID = desktopVirtualDisplayID {
-            let cgBounds = CGDisplayBounds(displayID)
-            if let resolved = resolvedDesktopDisplayBounds(
-                cachedBounds: desktopDisplayBounds,
-                liveBounds: cgBounds,
-                displayModeSize: nil,
-                displayOrigin: cgBounds.origin
-            ) {
-                return cocoaRectFromCGDisplayRect(resolved)
-            }
-            return nil
-        }
-        if let resolved = resolvedDesktopDisplayBounds(
-            cachedBounds: desktopDisplayBounds,
-            liveBounds: nil,
-            displayModeSize: nil,
-            displayOrigin: desktopDisplayBounds?.origin ?? .zero
-        ) {
-            return cocoaRectFromCGDisplayRect(resolved)
-        }
-        return nil
-    }
-
-    /// Convert a CG display rect (top-left origin) to Cocoa screen coordinates (bottom-left origin).
-    private func cocoaRectFromCGDisplayRect(_ cgRect: CGRect) -> CGRect {
-        Self.cocoaRect(
-            fromCGDisplayRect: cgRect,
-            primaryHeight: CGDisplayBounds(CGMainDisplayID()).height
-        )
-    }
-
-    nonisolated static func resolvedDesktopPrimaryPhysicalDisplaySnapshot(
-        cachedDisplayID: CGDirectDisplayID?,
-        cachedBounds: CGRect?,
-        resolvedPrimaryDisplayID: CGDirectDisplayID?,
-        mainDisplayID: CGDirectDisplayID,
-        boundsProvider: (CGDirectDisplayID) -> CGRect
-    ) -> (displayID: CGDirectDisplayID, bounds: CGRect?) {
-        var candidateDisplayIDs: [CGDirectDisplayID] = []
-
-        func appendCandidate(_ displayID: CGDirectDisplayID?) {
-            guard let displayID else { return }
-            guard !candidateDisplayIDs.contains(displayID) else { return }
-            candidateDisplayIDs.append(displayID)
-        }
-
-        appendCandidate(cachedDisplayID)
-        appendCandidate(resolvedPrimaryDisplayID)
-        appendCandidate(mainDisplayID)
-
-        for displayID in candidateDisplayIDs {
-            let bounds = boundsProvider(displayID)
-            if bounds.width > 0, bounds.height > 0 {
-                return (displayID, bounds)
-            }
-        }
-
-        let fallbackBounds: CGRect? = if let cachedBounds,
-                                         cachedBounds.width > 0,
-                                         cachedBounds.height > 0 {
-            cachedBounds
-        } else {
-            nil
-        }
-
-        return (candidateDisplayIDs.first ?? mainDisplayID, fallbackBounds)
-    }
-
-    /// Refresh cached physical display bounds after mirroring changes.
-    /// Returns the updated physical bounds.
-    func refreshDesktopPrimaryPhysicalBounds() -> CGRect {
-        let snapshot = Self.resolvedDesktopPrimaryPhysicalDisplaySnapshot(
-            cachedDisplayID: desktopPrimaryPhysicalDisplayID,
-            cachedBounds: desktopPrimaryPhysicalBounds,
-            resolvedPrimaryDisplayID: resolvePrimaryPhysicalDisplayID(),
-            mainDisplayID: CGMainDisplayID(),
-            boundsProvider: { CGDisplayBounds($0) }
-        )
-        desktopPrimaryPhysicalDisplayID = snapshot.displayID
-        if let bounds = snapshot.bounds {
-            desktopPrimaryPhysicalBounds = bounds
-            return bounds
-        }
-        return desktopPrimaryPhysicalBounds ?? .zero
-    }
-
-    // MARK: - Private
-}
-
-extension MirageHostService {
-    func notifyActiveStreamActivityChanged() {
-        delegate?.activeStreamsDidChange()
     }
 }
 

@@ -7,11 +7,11 @@
 //  Host maintenance helpers for virtual display recovery.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
 extension MirageHostService {
+    /// Resets the shared virtual display identity when no host streams are active.
     public func resetVirtualDisplayIdentity() async throws {
         if !activeStreams.isEmpty || desktopStreamContext != nil {
             throw MirageError.protocolError("Stop streaming before resetting the virtual display identity.")

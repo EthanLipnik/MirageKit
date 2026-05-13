@@ -37,14 +37,7 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return false
-            case .residualMirageDisplaysOnline:
-                return false
-            case .noActiveDisplay,
-                 .streamDisplayNotFound,
-                 .spaceNotFound,
-                 .screenCaptureKitVisibilityDelayed,
-                 .scDisplayNotFound,
-                 .scDisplaySizeMismatch:
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return true
             }
         }
@@ -71,29 +64,6 @@ enum AppStreamStartupFailureClassifier {
         return false
     }
 
-    static func shouldHideFailedWindowInInventory(_ error: Error) -> Bool {
-        isNonRetryableVirtualDisplayAllocationError(error)
-    }
-
-    static func isExpectedWindowStartupRaceError(_ error: Error) -> Bool {
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case .streamNotFound, .windowNotFound, .protocolError:
-                return true
-            default:
-                break
-            }
-        }
-
-        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-            if case .windowNotFound = windowSpaceError {
-                return true
-            }
-        }
-
-        return false
-    }
-
     static func isNonRetryableVirtualDisplayAllocationError(_ error: Error) -> Bool {
         if let windowStartError = error as? WindowStreamStartError {
             if case let .virtualDisplayStartFailed(code, _) = windowStartError {
@@ -105,14 +75,7 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return true
-            case .residualMirageDisplaysOnline:
-                return true
-            case .noActiveDisplay,
-                 .streamDisplayNotFound,
-                 .spaceNotFound,
-                 .screenCaptureKitVisibilityDelayed,
-                 .scDisplayNotFound,
-                 .scDisplaySizeMismatch:
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return false
             }
         }

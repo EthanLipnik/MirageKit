@@ -9,6 +9,7 @@
 
 import Foundation
 
+/// Converts requested stream bitrate into encoder quality targets and related bitrate diagnostics.
 public enum MirageBitrateQualityMapper {
     private static let highBitrateBoostStartBps = 400_000_000
     private static let highBitrateBoostFullBps = 700_000_000
@@ -17,7 +18,6 @@ public enum MirageBitrateQualityMapper {
     private static let standardCeiling: Float = 0.80
     private static let highBitrateCeiling: Float = 0.94
 
-    public static let frameQualityCeiling: Float = highBitrateCeiling
     private static let minimumFrameQuality: Double = 0.06
     private static let defaultKeyframeQualityMultiplier: Double = 0.72
     private static let minimumKeyframeQualityMultiplier: Double = 0.58
@@ -44,11 +44,16 @@ public enum MirageBitrateQualityMapper {
         Point(bpp: 0.25, quality: 0.80),
     ]
 
+    /// Returns a usable target bitrate, discarding missing or non-positive values.
     public static func normalizedTargetBitrate(bitrate: Int?) -> Int? {
         guard let bitrate, bitrate > 0 else { return nil }
         return bitrate
     }
 
+    /// Derives frame and keyframe quality values for the requested bitrate and stream geometry.
+    ///
+    /// The mapping uses bits-per-pixel-per-frame as the baseline signal, applies additional
+    /// compression pressure for high refresh rates, and relaxes the ceiling at very high bitrates.
     public static func derivedQualities(
         targetBitrateBps: Int,
         width: Int,
@@ -93,6 +98,10 @@ public enum MirageBitrateQualityMapper {
         return (frameQuality, keyframeQuality)
     }
 
+    /// Finds the lowest bitrate that can produce at least the requested frame quality.
+    ///
+    /// Returns `nil` when the stream geometry is invalid or the requested quality is not reachable
+    /// under `maxBitrateBps`.
     public static func targetBitrateBps(
         forFrameQuality desiredFrameQuality: Float,
         width: Int,
@@ -104,7 +113,7 @@ public enum MirageBitrateQualityMapper {
 
         let clampedTargetQuality = max(
             Float(minimumFrameQuality),
-            min(frameQualityCeiling, desiredFrameQuality)
+            min(highBitrateCeiling, desiredFrameQuality)
         )
         let maximumDerivedQuality = derivedQualities(
             targetBitrateBps: maxBitrateBps,
@@ -137,6 +146,7 @@ public enum MirageBitrateQualityMapper {
         return best
     }
 
+    /// Calculates the bits-per-pixel-per-frame budget for a target bitrate and stream geometry.
     public static func bitsPerPixelPerFrame(
         targetBitrateBps: Int,
         width: Int,
@@ -149,11 +159,13 @@ public enum MirageBitrateQualityMapper {
         return Double(targetBitrateBps) / pixelsPerSecond
     }
 
+    /// Returns the quality scale applied for high-refresh streams at the supplied compression level.
     public static func frameRateScale(frameRate: Int, bpp: Double? = nil) -> Double {
         let pressure = bpp.map { compressionPressure(for: $0) } ?? 1.0
         return frameRateCompressionScale(for: frameRate, compressionPressure: pressure)
     }
 
+    /// Returns normalized compression pressure, where `1` is constrained and `0` is unconstrained.
     public static func compressionPressure(for bpp: Double) -> Double {
         guard bpp > constrainedBPPThreshold else { return 1.0 }
         guard bpp < unconstrainedBPPThreshold else { return 0.0 }
@@ -209,8 +221,8 @@ public enum MirageBitrateQualityMapper {
             let low = points[index]
             let high = points[index + 1]
             if bpp >= low.bpp, bpp <= high.bpp {
-                let t = (bpp - low.bpp) / (high.bpp - low.bpp)
-                return low.quality + (high.quality - low.quality) * t
+                let interpolationProgress = (bpp - low.bpp) / (high.bpp - low.bpp)
+                return low.quality + (high.quality - low.quality) * interpolationProgress
             }
         }
 

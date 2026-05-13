@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,6 +17,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Input Handling
 
+    /// Handles input for a window stream on the accessibility queue.
     func handleInput(
         _ event: MirageInputEvent,
         window: MirageWindow,
@@ -33,8 +33,7 @@ extension MirageHostInputController {
             case let .mouseDown(e):
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
                 clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.leftMouseDown, e, windowFrame, windowID: window.id, app: window.application)
@@ -43,8 +42,7 @@ extension MirageHostInputController {
             case let .rightMouseDown(e):
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
                 clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.rightMouseDown, e, windowFrame, windowID: window.id, app: window.application)
@@ -53,8 +51,7 @@ extension MirageHostInputController {
             case let .otherMouseDown(e):
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
                 clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.otherMouseDown, e, windowFrame, windowID: window.id, app: window.application)
@@ -68,8 +65,7 @@ extension MirageHostInputController {
                 if batch.phase == .began {
                     performWindowActivation(
                         windowID: window.id,
-                        app: window.application,
-                        trigger: .windowFocus
+                        app: window.application
                     )
                     clearUnexpectedSystemModifiers(domain: .session)
                 }
@@ -87,8 +83,7 @@ extension MirageHostInputController {
                 if Self.shouldActivateWindowForScrollEvent(e) {
                     performWindowActivation(
                         windowID: window.id,
-                        app: window.application,
-                        trigger: .windowFocus
+                        app: window.application
                     )
                 }
                 injectScrollEvent(e, windowFrame, windowID: window.id)
@@ -101,15 +96,13 @@ extension MirageHostInputController {
             case let .hostSystemAction(request):
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
                 executeHostSystemAction(request)
             case let .keyDown(e):
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
                 injectKeyEvent(
                     isKeyDown: true,
@@ -131,45 +124,37 @@ extension MirageHostInputController {
             case .windowFocus:
                 performWindowActivation(
                     windowID: window.id,
-                    app: window.application,
-                    trigger: .windowFocus
+                    app: window.application
                 )
             }
         }
     }
 
+    /// Returns whether a scroll event should first activate its target window.
     nonisolated static func shouldActivateWindowForScrollEvent(_ event: MirageScrollEvent) -> Bool {
         if event.phase == .began { return true }
         return event.phase == .none && event.momentumPhase == .none
     }
 
+    /// Activates a window with throttling for repeated same-window requests.
     private func performWindowActivation(
         windowID: WindowID,
-        app: MirageApplication?,
-        trigger: HostInputActivationTrigger
+        app: MirageApplication?
     ) {
         let now = CFAbsoluteTimeGetCurrent()
-        let action = HostInputActivationPolicy.action(
-            for: trigger,
-            lastActivationTime: lastWindowActivationTime,
-            lastActivatedWindowID: lastActivatedWindowID,
-            targetWindowID: windowID,
-            now: now
-        )
-
-        switch action {
-        case .none:
+        if lastActivatedWindowID == windowID,
+           let lastWindowActivationTime,
+           now - lastWindowActivationTime < 0.25 {
             MirageLogger.host("Window focus activation throttled for window \(windowID) (same-window)")
             return
-        case .fullWindowRaise:
-            if lastActivatedWindowID == windowID {
-                MirageLogger.host("Window focus activation allowed for window \(windowID) (same-window)")
-            } else {
-                MirageLogger.host("Window focus activation immediate for window \(windowID) (cross-window)")
-            }
-            activateWindow(windowID: windowID, app: app)
         }
 
+        if lastActivatedWindowID == windowID {
+            MirageLogger.host("Window focus activation allowed for window \(windowID) (same-window)")
+        } else {
+            MirageLogger.host("Window focus activation immediate for window \(windowID) (cross-window)")
+        }
+        activateWindow(windowID: windowID, app: app)
         lastWindowActivationTime = now
         lastActivatedWindowID = windowID
     }

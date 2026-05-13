@@ -15,7 +15,6 @@ import VideoToolbox
 struct MiragePixelBufferCropResult {
     let pixelBuffer: CVPixelBuffer
     let contentRect: CGRect
-    let usedOriginalBuffer: Bool
 }
 
 final class MiragePixelBufferCropper: @unchecked Sendable {
@@ -54,16 +53,14 @@ final class MiragePixelBufferCropper: @unchecked Sendable {
         guard let cropRect = Self.normalizedCropRect(contentRect, in: fullRect) else {
             return MiragePixelBufferCropResult(
                 pixelBuffer: source,
-                contentRect: fullRect,
-                usedOriginalBuffer: true
+                contentRect: fullRect
             )
         }
 
         guard cropRect != fullRect else {
             return MiragePixelBufferCropResult(
                 pixelBuffer: source,
-                contentRect: fullRect,
-                usedOriginalBuffer: true
+                contentRect: fullRect
             )
         }
 
@@ -83,8 +80,7 @@ final class MiragePixelBufferCropper: @unchecked Sendable {
                     y: 0,
                     width: CGFloat(cropWidth),
                     height: CGFloat(cropHeight)
-                ),
-                usedOriginalBuffer: false
+                )
             )
         }
 

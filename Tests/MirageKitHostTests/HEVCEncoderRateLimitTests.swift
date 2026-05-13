@@ -15,7 +15,6 @@ import VideoToolbox
 
 @Suite("HEVC Encoder Rate Limit")
 struct HEVCEncoderRateLimitTests {
-
     @Test("Frame-rate update path refreshes bitrate window selection inputs")
     func frameRateUpdateRefreshesRateLimitInputs() async {
         let encoder = VideoEncoder(
@@ -41,7 +40,8 @@ struct HEVCEncoderRateLimitTests {
     @Test("Smoothest encoder specification keeps baseline hardware requirements")
     func smoothestEncoderSpecificationKeepsBaselineHardwareRequirements() {
         let spec = VideoEncoder.encoderSpecification(
-            latencyMode: .smoothest
+            latencyMode: .smoothest,
+            streamKind: .window
         )
 
         #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
@@ -53,8 +53,6 @@ struct HEVCEncoderRateLimitTests {
     func standardLowestLatencyEncoderSpecification() {
         let spec = VideoEncoder.encoderSpecification(
             latencyMode: .lowestLatency,
-            width: 2_560,
-            height: 1_440,
             streamKind: .desktop
         )
 
@@ -67,8 +65,6 @@ struct HEVCEncoderRateLimitTests {
     func standardLowestLatencyHighResDesktopEnablesRateControl() {
         let spec = VideoEncoder.encoderSpecification(
             latencyMode: .lowestLatency,
-            width: 6_016,
-            height: 3_384,
             streamKind: .desktop
         )
 
@@ -81,8 +77,6 @@ struct HEVCEncoderRateLimitTests {
     func standardLowestLatencyHighResWindowSuppressesRateControl() {
         let spec = VideoEncoder.encoderSpecification(
             latencyMode: .lowestLatency,
-            width: 6_016,
-            height: 3_384,
             streamKind: .window
         )
 
@@ -95,8 +89,6 @@ struct HEVCEncoderRateLimitTests {
     func standardLowestLatencyUltraWindowEnablesRateControl() {
         let spec = VideoEncoder.encoderSpecification(
             latencyMode: .lowestLatency,
-            width: 2_560,
-            height: 1_440,
             streamKind: .window,
             colorDepth: .ultra
         )

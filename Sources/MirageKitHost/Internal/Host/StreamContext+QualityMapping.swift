@@ -26,6 +26,26 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.56
     private static let mapperMinimumQuality: Float = 0.05
 
+    /// Returns the runtime quality floor for the active bitrate policy.
+    func resolvedRuntimeQualityFloor(for qualityCeiling: Float) -> Float {
+        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
+        guard ceiling > 0 else { return 0 }
+        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let floorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
+        let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
+        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+    }
+
+    /// Returns the runtime keyframe quality floor for the active bitrate policy.
+    func resolvedRuntimeKeyframeQualityFloor(for qualityCeiling: Float) -> Float {
+        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
+        guard ceiling > 0 else { return 0 }
+        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let floorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
+        let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
+        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+    }
+
     private func applyLowLatencyHighResolutionCompressionBoost(
         frameQuality: Float,
         keyframeQuality: Float,
@@ -140,7 +160,7 @@ extension StreamContext {
         encoderConfig.frameQuality = cappedFrameQuality
         encoderConfig.keyframeQuality = cappedKeyframeQuality
         steadyQualityCeiling = cappedFrameQuality
-        qualityCeiling = resolvedQualityCeiling()
+        qualityCeiling = resolvedQualityCeiling
         qualityFloor = resolvedRuntimeQualityFloor(for: cappedFrameQuality)
         activeQuality = max(qualityFloor, min(cappedFrameQuality, qualityCeiling))
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: cappedKeyframeQuality)

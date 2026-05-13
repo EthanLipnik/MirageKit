@@ -15,7 +15,7 @@ import Testing
 @MainActor
 @Suite("Desktop Resize Coordinator")
 struct DesktopResizeCoordinatorTests {
-    private func target(
+    func target(
         logicalWidth: CGFloat = 1366,
         logicalHeight: CGFloat = 1024
     )
@@ -29,13 +29,14 @@ struct DesktopResizeCoordinatorTests {
         )
     }
 
-    private func seedDesktopSession(
+    func seedDesktopSession(
         _ service: MirageClientService,
         streamID: StreamID
     ) {
         service.desktopStreamID = streamID
-        service.sessionStore.createSession(
+        service.sessionStore.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: MirageWindow(
                 id: WindowID(streamID),
                 title: "Desktop",
@@ -50,7 +51,7 @@ struct DesktopResizeCoordinatorTests {
         )
     }
 
-    private func eventually(
+    func eventually(
         attempts: Int = 100,
         interval: Duration = .milliseconds(10),
         _ condition: () -> Bool
@@ -155,31 +156,6 @@ struct DesktopResizeCoordinatorTests {
         #expect(coordinator.queuedTarget == queuedTarget)
         #expect(!coordinator.isResizing)
         #expect(!coordinator.maskActive)
-    }
-
-    @Test("Active transition timeout drops stale transition and keeps latest queued target")
-    func activeTransitionTimeoutDropsStaleTransition() {
-        let coordinator = DesktopResizeCoordinator()
-        let transitionID = UUID()
-        let activeTarget = target()
-        let queuedTarget = target(logicalWidth: 1512, logicalHeight: 982)
-        coordinator.beginTransition(
-            streamID: 23,
-            transitionID: transitionID,
-            target: activeTarget
-        )
-        coordinator.queueLatestTarget(queuedTarget)
-
-        let didExpire = coordinator.expireActiveTransition(
-            streamID: 23,
-            transitionID: transitionID
-        )
-
-        #expect(didExpire)
-        #expect(coordinator.activeTransition == nil)
-        #expect(coordinator.queuedTarget == queuedTarget)
-        #expect(coordinator.isResizing)
-        #expect(coordinator.maskActive)
     }
 
     @Test("Clear-all-state drops transition and queued targets")
@@ -291,34 +267,15 @@ struct DesktopResizeCoordinatorTests {
         #expect(!service.desktopResizeCoordinator.maskActive)
     }
 
-    @Test("Desktop resize requests are suppressed while host client-fit fallback is active")
-    func desktopResizeRequestsAreSuppressedWhileHostClientFitFallbackIsActive() {
-        let service = MirageClientService()
-        let streamID: StreamID = 371
-        service.desktopStreamAllowsClientResize = false
-        service.sessionStore.beginPostResizeTransition(for: streamID)
-
-        service.queueDesktopResize(
-            streamID: streamID,
-            target: target(logicalWidth: 1512, logicalHeight: 982),
-            hasPresentedFrame: true,
-            useHostResolution: false
-        )
-
-        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
-        #expect(service.desktopResizeCoordinator.activeTransition == nil)
-        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
-        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
-    }
-
     @Test("No-op desktop resize is suppressed even while client recovery is active")
     func noOpDesktopResizeIsSuppressedDuringClientRecovery() {
         let service = MirageClientService()
         let streamID: StreamID = 38
         let target = target(logicalWidth: 1366, logicalHeight: 1024)
         service.desktopResizeCoordinator.lastSentTarget = target
-        service.sessionStore.createSession(
+        service.sessionStore.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: MirageWindow(
                 id: 9001,
                 title: "Desktop",
@@ -347,22 +304,6 @@ struct DesktopResizeCoordinatorTests {
         #expect(!service.desktopResizeCoordinator.maskActive)
     }
 
-    @Test("Encoder-only stream scale does not affect desktop resize geometry")
-    func encoderOnlyStreamScaleDoesNotAffectDesktopResizeGeometry() {
-        let service = MirageClientService()
-        let streamID: StreamID = 381
-        service.resolutionScale = 1.0
-        service.activeEncoderStreamScaleByStream[streamID] = 0.7
-
-        let resizeTarget = service.desktopResizeTarget(
-            for: CGSize(width: 1600, height: 1200),
-            maxDrawableSize: nil
-        )
-
-        #expect(resizeTarget?.requestedStreamScale == 1.0)
-        #expect(service.activeEncoderStreamScale(for: streamID) == 0.7)
-    }
-
     @Test("No-op startup resize is suppressed when encoder cap matches uncapped output")
     func noOpStartupResizeIsSuppressedWhenEncoderCapMatchesUncappedOutput() {
         let service = MirageClientService()
@@ -382,8 +323,9 @@ struct DesktopResizeCoordinatorTests {
             encoderMaxHeight: 2064
         )
         service.desktopResizeCoordinator.lastSentTarget = uncappedStartupTarget
-        service.sessionStore.createSession(
+        service.sessionStore.registerSession(
             streamID: streamID,
+            mediaStreamID: streamID,
             window: MirageWindow(
                 id: 9002,
                 title: "Desktop",
@@ -510,81 +452,5 @@ struct DesktopResizeCoordinatorTests {
         service.clearDesktopResizeState(streamID: streamID)
     }
 
-    @Test("Post-resize wait clears on presentation instead of decode")
-    func postResizeWaitClearsOnPresentationInsteadOfDecode() {
-        let service = MirageClientService()
-        let streamID: StreamID = 43
-
-        service.beginPostResizeTransition(streamID: streamID, scheduleTimeout: false)
-        service.handlePostResizeFrameDecoded(streamID: streamID)
-
-        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
-
-        service.handleStreamFirstFramePresented(streamID: streamID)
-
-        #expect(!service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
-    }
-
-    @Test("Post-resize wait timeout clears missing presentation signal")
-    func postResizeWaitTimeoutClearsMissingPresentationSignal() async throws {
-        let service = MirageClientService()
-        let streamID: StreamID = 44
-        service.desktopPostResizeTransitionTimeout = .milliseconds(30)
-
-        service.beginPostResizeTransition(streamID: streamID)
-
-        let timeoutClearedPostResizeWait = await eventually {
-            !service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID)
-                && service.postResizeTransitionTimeoutTasks[streamID] == nil
-        }
-        #expect(timeoutClearedPostResizeWait)
-    }
-
-    @Test("Desktop resize mask timeout clears local blur state")
-    func desktopResizeMaskTimeoutClearsLocalBlurState() async throws {
-        let service = MirageClientService()
-        let streamID: StreamID = 46
-        seedDesktopSession(service, streamID: streamID)
-        service.desktopResizeWindowSettlingDelay = .seconds(1)
-        service.desktopPostResizeTransitionTimeout = .milliseconds(30)
-
-        service.queueDesktopResize(
-            streamID: streamID,
-            target: target(logicalWidth: 1408, logicalHeight: 898),
-            hasPresentedFrame: true,
-            useHostResolution: false
-        )
-
-        #expect(service.desktopResizeCoordinator.maskActive)
-
-        let timeoutClearedLocalMask = await eventually {
-            !service.desktopResizeCoordinator.isResizing
-                && !service.desktopResizeCoordinator.maskActive
-        }
-        #expect(timeoutClearedLocalMask)
-        service.clearDesktopResizeState(streamID: streamID)
-    }
-
-    @Test("Automatic workload resize bypasses window settle policy")
-    func automaticWorkloadResizeBypassesWindowSettlePolicy() {
-        let service = MirageClientService()
-        let streamID: StreamID = 47
-        seedDesktopSession(service, streamID: streamID)
-        service.desktopResizeWindowSettlingDelay = .seconds(60)
-        let resizeTarget = target(logicalWidth: 1280, logicalHeight: 720)
-
-        service.queueDesktopResize(
-            streamID: streamID,
-            target: resizeTarget,
-            hasPresentedFrame: true,
-            useHostResolution: false,
-            dispatchPolicy: .immediate
-        )
-
-        #expect(service.desktopResizeCoordinator.queuedTarget == resizeTarget)
-        #expect(service.desktopResizeCoordinator.queuedDispatchPolicy == .immediate)
-        #expect(service.desktopResizeCoordinator.displayResolutionTask != nil)
-        service.clearDesktopResizeState(streamID: streamID)
-    }
 }
 #endif

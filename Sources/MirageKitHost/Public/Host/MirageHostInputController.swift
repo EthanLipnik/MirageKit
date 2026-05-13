@@ -15,9 +15,9 @@ import Foundation
 
 /// Private but stable API to get CGWindowID from AXUIElement.
 @_silgen_name("_AXUIElementGetWindow")
-func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+func _AXUIElementGetWindow(_ _: AXUIElement, _ _: UnsafeMutablePointer<CGWindowID>) -> AXError
 
-enum HostKeyboardInjectionDomain: CaseIterable, Sendable {
+enum HostKeyboardInjectionDomain: CaseIterable {
     case session
     case hid
 }
@@ -32,31 +32,32 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// Reference to host service for frame updates and virtual display queries.
     public weak var hostService: MirageHostService?
 
-    /// Optional permission manager for accessibility checks.
-    public var permissionManager: MirageAccessibilityPermissionManager?
-
     // MARK: - Queue
 
     /// Serial queue for blocking Accessibility API operations.
     let accessibilityQueue = DispatchQueue(label: "com.mirage.accessibility", qos: .userInteractive)
 
+    /// Cached mapping from stream frame to current OS-reported window frame.
     struct CachedInputWindowFrame {
         var streamFrame: CGRect
         var resolvedFrame: CGRect
         var sampledAt: CFAbsoluteTime
     }
 
+    /// Cached traffic-light protection geometry for a sampled window frame.
     struct CachedTrafficLightClusterGeometry {
         var dynamicClusterSize: CGSize?
         var sampledWindowFrame: CGRect
         var sampledAt: CFAbsoluteTime
     }
 
+    /// Recorded AXHidden values for traffic-light buttons hidden during direct streaming.
     struct HostTrafficLightVisibilitySnapshot {
         let closeHidden: Bool?
         let minimizeHidden: Bool?
         let zoomHidden: Bool?
 
+        /// Whether at least one traffic-light button visibility value was recorded.
         var hasRecordedState: Bool {
             closeHidden != nil || minimizeHidden != nil || zoomHidden != nil
         }
@@ -136,6 +137,7 @@ public final class MirageHostInputController: @unchecked Sendable {
         (.maskAlphaShift, .capsLock),
     ]
 
+    /// Returns the system event state source used for a keyboard injection domain.
     static func systemStateSource(for domain: HostKeyboardInjectionDomain) -> CGEventSourceStateID {
         switch domain {
         case .session:
@@ -145,19 +147,15 @@ public final class MirageHostInputController: @unchecked Sendable {
         }
     }
 
-    static func recoveryKeyCodes(for flag: MirageModifierFlags) -> [CGKeyCode] {
-        modifierRecoveryKeyCodes.first(where: { $0.flag == flag })?.keyCodes ?? []
-    }
+    static let allModifierRecoveryKeyCodes = Set(modifierRecoveryKeyCodes.flatMap(\.keyCodes))
 
-    static var allModifierRecoveryKeyCodes: Set<CGKeyCode> {
-        Set(modifierRecoveryKeyCodes.flatMap(\.keyCodes))
-    }
-
+    /// Modifier key-code changes needed to move between two modifier states.
     struct ModifierTransitionPlan: Equatable {
         let pressed: [CGKeyCode]
         let released: [CGKeyCode]
     }
 
+    /// Computes modifier key presses and releases for a requested modifier transition.
     static func modifierTransitionPlan(
         from previousModifiers: MirageModifierFlags,
         to nextModifiers: MirageModifierFlags
@@ -184,25 +182,21 @@ public final class MirageHostInputController: @unchecked Sendable {
     var directScrollRemainderX: CGFloat = 0
     var directScrollRemainderY: CGFloat = 0
 
-
     /// Creates an input controller for host-side injection.
     /// - Parameters:
     ///   - windowController: Window controller for AX lookups and resizing.
     ///   - hostService: Host service for capture and stream updates.
-    ///   - permissionManager: Optional accessibility permission manager.
     public init(
         windowController: MirageHostWindowController? = nil,
-        hostService: MirageHostService? = nil,
-        permissionManager: MirageAccessibilityPermissionManager? = nil
+        hostService: MirageHostService? = nil
     ) {
         self.windowController = windowController
         self.hostService = hostService
-        self.permissionManager = permissionManager
     }
 
     // MARK: - Main Entry Point
 
-    /// Handle input events from the host's input queue.
+    /// Handles input events from the host's input queue.
     /// - Parameters:
     ///   - event: The input event received from the client.
     ///   - window: The target window for the input event.
@@ -210,6 +204,7 @@ public final class MirageHostInputController: @unchecked Sendable {
         handleInputEvent(event, window: window, deferredInjectionValidator: nil)
     }
 
+    /// Handles an input event with an optional validator for deferred injection.
     func handleInputEvent(
         _ event: MirageInputEvent,
         window: MirageWindow,
@@ -242,6 +237,7 @@ public final class MirageHostInputController: @unchecked Sendable {
         }
     }
 
+    /// Returns whether a deferred input event should still be injected.
     func shouldProcessDeferredInput(
         _ deferredInjectionValidator: (@Sendable () -> Bool)?
     )

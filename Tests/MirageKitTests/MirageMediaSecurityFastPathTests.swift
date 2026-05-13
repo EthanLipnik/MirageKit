@@ -12,10 +12,10 @@ import Testing
 
 @Suite("Mirage Media Security Fast Path")
 struct MirageMediaSecurityFastPathTests {
-    @Test("Video raw-buffer encryption matches Data API output")
-    func videoRawBufferEncryptionMatchesDataAPI() throws {
+    @Test("Video raw-buffer encryption round trips")
+    func videoRawBufferEncryptionRoundTrips() throws {
         let context = makeSecurityContext()
-        let key = MirageMediaSecurity.makePacketKey(context: context)
+        let key = MirageMediaPacketKey(context: context)
         let payload = makePayload(byteCount: 1200)
         let header = FrameHeader(
             flags: [.keyframe, .encryptedPayload],
@@ -33,13 +33,7 @@ struct MirageMediaSecurityFastPathTests {
             epoch: 9
         )
 
-        let dataPath = try MirageMediaSecurity.encryptVideoPayload(
-            payload,
-            header: header,
-            context: context,
-            direction: .hostToClient
-        )
-        let rawPath = try payload.withUnsafeBytes { payloadBytes in
+        let encrypted = try payload.withUnsafeBytes { payloadBytes in
             try MirageMediaSecurity.encryptVideoPayload(
                 payloadBytes,
                 header: header,
@@ -48,11 +42,10 @@ struct MirageMediaSecurityFastPathTests {
             )
         }
 
-        #expect(rawPath == dataPath)
-        #expect(rawPath.count == payload.count + MirageMediaSecurity.authTagLength)
+        #expect(encrypted.count == payload.count + MirageMediaSecurity.authTagLength)
 
         let decrypted = try MirageMediaSecurity.decryptVideoPayload(
-            rawPath,
+            encrypted,
             header: header,
             key: key,
             direction: .hostToClient
@@ -60,10 +53,10 @@ struct MirageMediaSecurityFastPathTests {
         #expect(decrypted == payload)
     }
 
-    @Test("Audio raw-buffer encryption matches Data API output")
-    func audioRawBufferEncryptionMatchesDataAPI() throws {
+    @Test("Audio raw-buffer encryption round trips")
+    func audioRawBufferEncryptionRoundTrips() throws {
         let context = makeSecurityContext()
-        let key = MirageMediaSecurity.makePacketKey(context: context)
+        let key = MirageMediaPacketKey(context: context)
         let payload = makePayload(byteCount: 900)
         let header = AudioPacketHeader(
             codec: .aacLC,
@@ -82,13 +75,7 @@ struct MirageMediaSecurityFastPathTests {
             checksum: 0
         )
 
-        let dataPath = try MirageMediaSecurity.encryptAudioPayload(
-            payload,
-            header: header,
-            context: context,
-            direction: .hostToClient
-        )
-        let rawPath = try payload.withUnsafeBytes { payloadBytes in
+        let encrypted = try payload.withUnsafeBytes { payloadBytes in
             try MirageMediaSecurity.encryptAudioPayload(
                 payloadBytes,
                 header: header,
@@ -97,11 +84,10 @@ struct MirageMediaSecurityFastPathTests {
             )
         }
 
-        #expect(rawPath == dataPath)
-        #expect(rawPath.count == payload.count + MirageMediaSecurity.authTagLength)
+        #expect(encrypted.count == payload.count + MirageMediaSecurity.authTagLength)
 
         let decrypted = try MirageMediaSecurity.decryptAudioPayload(
-            rawPath,
+            encrypted,
             header: header,
             key: key,
             direction: .hostToClient
@@ -126,8 +112,7 @@ struct MirageMediaSecurityFastPathTests {
 
     private func makeSecurityContext() -> MirageMediaSecurityContext {
         MirageMediaSecurityContext(
-            sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) }),
-            udpRegistrationToken: Data(repeating: 0x5C, count: MirageMediaSecurity.registrationTokenLength)
+            sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) })
         )
     }
 }

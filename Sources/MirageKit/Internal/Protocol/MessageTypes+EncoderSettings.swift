@@ -10,58 +10,32 @@
 import CoreGraphics
 import Foundation
 
+/// Requests runtime encoder setting changes for an active stream.
+///
+/// `nil` fields leave the existing stream setting unchanged.
 package struct StreamEncoderSettingsChangeMessage: Codable {
-    package let requestID: UUID
+    /// The stream whose encoder settings should be updated.
     package let streamID: StreamID
+    /// Optional color-depth override.
     package let colorDepth: MirageStreamColorDepth?
+    /// Optional bitrate override in bits per second.
     package let bitrate: Int?
+    /// Optional stream scale override applied after capture.
     package let streamScale: CGFloat?
+    /// Optional target frame rate override in frames per second.
     package let targetFrameRate: Int?
 
     package init(
-        requestID: UUID,
         streamID: StreamID,
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         streamScale: CGFloat? = nil,
         targetFrameRate: Int? = nil
     ) {
-        self.requestID = requestID
         self.streamID = streamID
         self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.streamScale = streamScale
         self.targetFrameRate = targetFrameRate
-    }
-}
-
-package struct StreamEncoderSettingsChangeAckMessage: Codable, Sendable, Equatable {
-    package let requestID: UUID
-    package let streamID: StreamID
-    package let encodedWidth: Int
-    package let encodedHeight: Int
-    package let frameRate: Int
-    package let colorDepth: MirageStreamColorDepth
-    package let dimensionToken: UInt16
-    package let requiresReset: Bool
-
-    package init(
-        requestID: UUID,
-        streamID: StreamID,
-        encodedWidth: Int,
-        encodedHeight: Int,
-        frameRate: Int,
-        colorDepth: MirageStreamColorDepth,
-        dimensionToken: UInt16,
-        requiresReset: Bool
-    ) {
-        self.requestID = requestID
-        self.streamID = streamID
-        self.encodedWidth = encodedWidth
-        self.encodedHeight = encodedHeight
-        self.frameRate = frameRate
-        self.colorDepth = colorDepth
-        self.dimensionToken = dimensionToken
-        self.requiresReset = requiresReset
     }
 }

@@ -16,16 +16,16 @@ import Testing
 struct ClientConnectionEndpointPlanningTests {
     @MainActor
     @Test("Client control sessions prefer UDP before falling back to reliable transports")
-    func controlSessionAttemptsPreferUdpThenTcp() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_001))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_002))
+    func controlSessionAttemptsPreferUDPThenTCP() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61001))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61002))
         let host = LoomPeer(
             id: UUID(),
             name: "Altair",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: UUID(),
                 hostName: "altair.local",
                 directTransports: [
@@ -37,35 +37,35 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
-        let expectedUdpEndpoint: NWEndpoint = .hostPort(
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
             host: NWEndpoint.Host("altair.local"),
             port: udpPort
         )
-        let expectedTcpEndpoint: NWEndpoint = .hostPort(
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
             host: NWEndpoint.Host("altair.local"),
             port: tcpPort
         )
 
         #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTcpEndpoint.debugDescription)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
     }
 
     @MainActor
     @Test("Overlay control sessions prefer UDP before reliable transports")
     func overlayControlSessionAttemptsPreferOverlayTransports() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_011))
-        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_012))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_013))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61011))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61012))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61013))
         let host = LoomPeer(
             id: UUID(),
             name: "Altair",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.tail0000.ts.net"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: UUID(),
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
@@ -89,15 +89,15 @@ struct ClientConnectionEndpointPlanningTests {
     @MainActor
     @Test("Client derives Bonjour UDP host from peer name when advertisement hostName is missing")
     func controlSessionAttemptsDeriveBonjourHostFromPeerName() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_006))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_007))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61006))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61007))
         let host = LoomPeer(
             id: UUID(),
             name: "Altair",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: UUID(),
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
@@ -107,14 +107,14 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
-        let expectedUdpEndpoint: NWEndpoint = .hostPort(
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
             host: NWEndpoint.Host("Altair.local"),
             port: udpPort
         )
 
         #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUdpEndpoint.debugDescription)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[1].transportKind == .tcp)
     }
 
@@ -122,15 +122,15 @@ struct ClientConnectionEndpointPlanningTests {
     @Test("Client reuses remembered direct endpoint hosts when Bonjour is no longer resolvable")
     func controlSessionAttemptsPreferRememberedDirectEndpointHost() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_008))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_009))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61008))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61009))
         let host = LoomPeer(
             id: deviceID,
             name: "Altair",
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "Altair.local",
                 directTransports: [
@@ -162,15 +162,15 @@ struct ClientConnectionEndpointPlanningTests {
     @MainActor
     @Test("Overlay peers use overlay endpoint hosts and advertised transport ports")
     func controlSessionAttemptsPreferOverlayEndpointHostAndPorts() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 65_139))
-        let quicPort = try #require(NWEndpoint.Port(rawValue: 57_210))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 65139))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 57210))
         let host = LoomPeer(
             id: UUID(),
             name: "Vega",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("100.65.199.51"), port: udpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: UUID(),
                 hostName: "Vega",
                 directTransports: [
@@ -211,216 +211,30 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client control session failures classify retryable transport errors")
-    func controlSessionFailureClassificationRecognizesRetryableTransportErrors() throws {
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.ENETUNREACH))
-            ) == .transportLoss
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.ECONNREFUSED))
-            ) == .connectionRefused
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(NWError.posix(.EADDRNOTAVAIL))
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(
-                    NWError.dns(-65_554)
-                )
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.connectionFailed(
-                    LoomConnectionFailure(
-                        reason: .timedOut,
-                        detail: "Reliable UDP transport timed out awaiting acknowledgement."
-                    )
-                )
-            ) == .timeout
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(MirageError.timeout) == .timeout
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                LoomError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError(
-                    "Pre-bootstrap udp control session failed for zephir-m3 endpoint=zephir-m3.local:51024 interface=wifi classification=other error=Protocol error: Failed to resolve zephir-m3.local: nodename nor servname provided, or not known"
-                )
-            ) == .addressUnavailable
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Timed out waiting for host bootstrap response from Altair")
-            ) == .timeout
-        )
-        #expect(
-            MirageClientService.classifyControlSessionFailure(
-                MirageError.protocolError("Control stream closed before receiving bootstrap response")
-            ) == .transportLoss
-        )
-    }
-
-    @MainActor
-    @Test("Client retries later direct transports for retryable failures")
-    func retryPolicyContinuesThroughLaterAdvertisedTransports() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_010))
-        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_011))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_012))
-        let attempts = [
-            MirageClientService.ControlSessionAttempt(
-                hostName: "Altair",
-                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: udpPort),
-                transportKind: .udp,
-                candidateKind: .local,
-                requiredInterfaceType: nil
-            ),
-            MirageClientService.ControlSessionAttempt(
-                hostName: "Altair",
-                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: quicPort),
-                transportKind: .quic,
-                candidateKind: .local,
-                requiredInterfaceType: nil
-            ),
-            MirageClientService.ControlSessionAttempt(
-                hostName: "Altair",
-                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
-                transportKind: .tcp,
-                candidateKind: .local,
-                requiredInterfaceType: nil
-            ),
-        ]
-
-        #expect(
-            MirageClientService.shouldRetryLaterControlSessionAttempt(
-                classification: .addressUnavailable,
-                attempts: attempts,
-                currentAttemptIndex: 0
-            )
-        )
-        #expect(
-            MirageClientService.shouldRetryLaterControlSessionAttempt(
-                classification: .timeout,
-                attempts: attempts,
-                currentAttemptIndex: 1
-            )
-        )
-        #expect(
-            !MirageClientService.shouldRetryLaterControlSessionAttempt(
-                classification: .addressUnavailable,
-                attempts: attempts,
-                currentAttemptIndex: 2
-            )
-        )
-        #expect(
-            !MirageClientService.shouldRetryLaterControlSessionAttempt(
-                classification: .other,
-                attempts: attempts,
-                currentAttemptIndex: 0
-            )
-        )
-    }
-
-    @MainActor
-    @Test("Client retries unexpected bootstrap cancellations as transport loss")
-    func bootstrappedControlSessionFailureClassificationRetriesUnexpectedCancellation() {
-        #expect(
-            MirageClientService.classifyBootstrappedControlSessionFailure(
-                CancellationError(),
-                isCurrentAttempt: true,
-                taskIsCancelled: false
-            ) == .transportLoss
-        )
-        #expect(
-            MirageClientService.classifyBootstrappedControlSessionFailure(
-                CancellationError(),
-                isCurrentAttempt: false,
-                taskIsCancelled: false
-            ) == nil
-        )
-        #expect(
-            MirageClientService.classifyBootstrappedControlSessionFailure(
-                CancellationError(),
-                isCurrentAttempt: true,
-                taskIsCancelled: true
-            ) == nil
-        )
-    }
-
-    @MainActor
-    @Test("Client retries the current transport once after bootstrap transport loss")
-    func bootstrappedControlSessionRetryPolicyRetriesCurrentTransportOnce() {
-        #expect(
-            MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
-                classification: .transportLoss,
-                controlChannelOpened: true,
-                hasRetriedCurrentAttempt: false
-            )
-        )
-        #expect(
-            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
-                classification: .transportLoss,
-                controlChannelOpened: true,
-                hasRetriedCurrentAttempt: true
-            )
-        )
-        #expect(
-            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
-                classification: .transportLoss,
-                controlChannelOpened: false,
-                hasRetriedCurrentAttempt: false
-            )
-        )
-        #expect(
-            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
-                classification: .timeout,
-                controlChannelOpened: true,
-                hasRetriedCurrentAttempt: false
-            )
-        )
-    }
-
-    @MainActor
     @Test("Client uses Bonjour-resolved IP addresses instead of hostname")
     func controlSessionAttemptsPreferResolvedAddresses() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
-        let host = LoomPeer(
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61020))
+        let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
                 ]
             ),
-            resolvedAddresses: [.ipv4(IPv4Address("192.168.1.50")!)]
+            resolvedAddresses: [.ipv4(#require(IPv4Address("192.168.1.50")))]
         )
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
-        let expectedEndpoint: NWEndpoint = .hostPort(
-            host: .ipv4(IPv4Address("192.168.1.50")!),
+        let expectedEndpoint: NWEndpoint = try .hostPort(
+            host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
 
@@ -434,8 +248,8 @@ struct ClientConnectionEndpointPlanningTests {
     @Test("Client does not prefer scope-less link-local IPv6 endpoints for direct control sessions")
     func controlSessionAttemptsAvoidScopeLessLinkLocalIPv6Endpoints() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_023))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_024))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61023))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61024))
         let linkLocalAddress = try #require(IPv6Address("fe80::1866:72ff:fe1a:1bf0"))
         let host = LoomPeer(
             id: deviceID,
@@ -443,7 +257,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: .ipv6(linkLocalAddress), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -476,14 +290,14 @@ struct ClientConnectionEndpointPlanningTests {
     @Test("Client prefers local addresses over overlay addresses from Bonjour resolution")
     func controlSessionAttemptsPreferLocalOverOverlayResolvedAddresses() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_021))
-        let host = LoomPeer(
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61021))
+        let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -491,16 +305,16 @@ struct ClientConnectionEndpointPlanningTests {
                 ]
             ),
             resolvedAddresses: [
-                .ipv4(IPv4Address("192.168.1.50")!),
-                .ipv4(IPv4Address("100.65.199.51")!),
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv4(#require(IPv4Address("100.65.199.51"))),
             ]
         )
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
         let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
-        let expectedEndpoint: NWEndpoint = .hostPort(
-            host: .ipv4(IPv4Address("192.168.1.50")!),
+        let expectedEndpoint: NWEndpoint = try .hostPort(
+            host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
 
@@ -513,9 +327,9 @@ struct ClientConnectionEndpointPlanningTests {
     @Test("Client uses local resolved addresses for TCP and QUIC before overlay endpoint")
     func controlSessionAttemptsPreferLocalResolvedAddressesForReliableTransports() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_022))
-        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_023))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_024))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61022))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61023))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61024))
         let localAddress = try #require(IPv4Address("192.168.50.164"))
         let overlayAddress = try #require(IPv4Address("100.65.199.51"))
         let host = LoomPeer(
@@ -524,7 +338,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .hostPort(host: .ipv4(overlayAddress), port: tcpPort),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -562,7 +376,7 @@ struct ClientConnectionEndpointPlanningTests {
     @Test("Client treats local resolved addresses as local even when remote access is advertised")
     func controlSessionAttemptsClassifyLocalResolvedAddressesAsLocalWhenRemoteAccessIsAdvertised() throws {
         let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_021))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61021))
         let localAddress = try #require(IPv4Address("192.168.50.164"))
         let host = LoomPeer(
             id: deviceID,
@@ -570,7 +384,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceType: .mac,
             endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
             advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
+                protocolVersion: Int(MirageKit.protocolVersion),
                 deviceID: deviceID,
                 hostName: "altair.local",
                 directTransports: [
@@ -594,354 +408,4 @@ struct ClientConnectionEndpointPlanningTests {
         #expect(udpAttempt.requiredInterfaceType == .wifi)
     }
 
-    @MainActor
-    @Test("Client classifies remote-access single-label hosts as overlay")
-    func controlSessionAttemptsClassifyRemoteAccessSingleLabelHostsAsOverlay() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_031))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_032))
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Vega",
-            deviceType: .mac,
-            endpoint: .hostPort(host: NWEndpoint.Host("Vega"), port: tcpPort),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                hostName: "Vega",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.vpn-access": "1",
-                ]
-            )
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        service.preferredNetworkType = .wifi
-        let attempts = service.controlSessionAttempts(for: host)
-
-        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
-        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
-        #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
-    }
-
-    @MainActor
-    @Test("Client classifies remote-access ULA hosts as overlay")
-    func controlSessionAttemptsClassifyRemoteAccessULAHostsAsOverlay() throws {
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_033))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_034))
-        let ulaAddress = try #require(IPv6Address("fd12:3456:789a::50"))
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Vega",
-            deviceType: .mac,
-            endpoint: .hostPort(host: .ipv6(ulaAddress), port: tcpPort),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                hostName: "Vega",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.vpn-access": "1",
-                ]
-            )
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        service.preferredNetworkType = .wifi
-        let attempts = service.controlSessionAttempts(for: host)
-
-        #expect(attempts.map(\.transportKind) == [.udp, .tcp])
-        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
-        #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
-    }
-
-    @MainActor
-    @Test("Client does not reuse remembered overlay address ahead of Bonjour hostname")
-    func controlSessionAttemptsDoNotReuseRememberedOverlayAheadOfBonjourHostname() throws {
-        let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
-        let overlayAddress = try #require(IPv4Address("100.65.199.51"))
-        let host = LoomPeer(
-            id: deviceID,
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: deviceID,
-                hostName: "altair.local",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.vpn-access": "1",
-                ]
-            )
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        service.rememberedDirectEndpointHostByDeviceID[deviceID] = .ipv4(overlayAddress)
-        let attempts = service.controlSessionAttempts(for: host)
-        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
-        let expectedUDPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
-            port: udpPort
-        )
-
-        #expect(udpAttempt.endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(udpAttempt.candidateKind == .local)
-    }
-
-    @MainActor
-    @Test("Client keeps same-subnet Bonjour resolved addresses when peer-to-peer is enabled")
-    func controlSessionAttemptsPreferResolvedAddressOnSameSubnet() throws {
-        let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_025))
-        let host = LoomPeer(
-            id: deviceID,
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: deviceID,
-                hostName: "altair.local",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.net.wifi": "24:sharedwifi",
-                ]
-            ),
-            resolvedAddresses: [
-                .ipv4(IPv4Address("192.168.1.50")!),
-            ]
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        let attempts = service.controlSessionAttempts(
-            for: host,
-            localNetwork: .init(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:sharedwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-        let expectedEndpoint: NWEndpoint = .hostPort(
-            host: .ipv4(IPv4Address("192.168.1.50")!),
-            port: udpPort
-        )
-
-        #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-    }
-
-    @MainActor
-    @Test("Client prefers Bonjour hostname over off-subnet resolved addresses for peer-to-peer")
-    func controlSessionAttemptsPreferBonjourHostnameForPeerToPeerAcrossSubnets() throws {
-        let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_026))
-        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_027))
-        let host = LoomPeer(
-            id: deviceID,
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: deviceID,
-                hostName: "altair.local",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.net.wifi": "24:hostwifi",
-                ]
-            ),
-            resolvedAddresses: [
-                .ipv4(IPv4Address("192.168.1.50")!),
-            ]
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        let attempts = service.controlSessionAttempts(
-            for: host,
-            localNetwork: .init(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:clientwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-        let expectedUDPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
-            port: udpPort
-        )
-        let expectedTCPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
-            port: tcpPort
-        )
-
-        #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-    }
-
-    @MainActor
-    @Test("Client keeps off-subnet resolved addresses when peer-to-peer is disabled")
-    func controlSessionAttemptsKeepResolvedAddressAcrossSubnetsWhenPeerToPeerDisabled() throws {
-        let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_028))
-        let host = LoomPeer(
-            id: deviceID,
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: deviceID,
-                hostName: "altair.local",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                ],
-                metadata: [
-                    "mirage.net.wifi": "24:hostwifi",
-                ]
-            ),
-            resolvedAddresses: [
-                .ipv4(IPv4Address("192.168.1.50")!),
-            ]
-        )
-
-        let service = MirageClientService(
-            deviceName: "Test Device",
-            loomConfiguration: LoomNetworkConfiguration(enablePeerToPeer: false)
-        )
-        let attempts = service.controlSessionAttempts(
-            for: host,
-            localNetwork: .init(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:clientwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-        let expectedEndpoint: NWEndpoint = .hostPort(
-            host: .ipv4(IPv4Address("192.168.1.50")!),
-            port: udpPort
-        )
-
-        #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
-    }
-
-    @MainActor
-    @Test("Client falls back to overlay resolved address when no local addresses exist")
-    func controlSessionAttemptsFallBackToOverlayResolvedAddress() throws {
-        let deviceID = UUID()
-        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_022))
-        let host = LoomPeer(
-            id: deviceID,
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: deviceID,
-                hostName: "altair.local",
-                directTransports: [
-                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
-                ]
-            ),
-            resolvedAddresses: [
-                .ipv4(IPv4Address("100.65.199.51")!),
-            ]
-        )
-
-        let service = MirageClientService(deviceName: "Test Device")
-        let attempts = service.controlSessionAttempts(for: host)
-        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
-        let expectedEndpoint: NWEndpoint = .hostPort(
-            host: .ipv4(IPv4Address("100.65.199.51")!),
-            port: udpPort
-        )
-
-        #expect(attempts.count == 2)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
-    }
-
-    @MainActor
-    @Test("Client skips local network mismatch diagnosis on AWDL")
-    func localNetworkMismatchReasonSkipsAwdl() {
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .hostPort(host: "altair.local", port: 6100),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                metadata: [
-                    "mirage.net.wifi": "24:hostwifi",
-                ]
-            )
-        )
-
-        let reason = MirageClientService.localNetworkMismatchReason(
-            for: host,
-            classification: .timeout,
-            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
-                currentPathKind: .awdl,
-                wifiSubnetSignatures: ["24:clientwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-
-        #expect(reason == nil)
-    }
-
-    @MainActor
-    @Test("Local network mismatch reason uses Proximity Connect wording")
-    func localNetworkMismatchReasonUsesProximityConnectWording() throws {
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Altair",
-            deviceType: .mac,
-            endpoint: .hostPort(host: "altair.local", port: 6100),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                metadata: [
-                    "mirage.net.wifi": "24:hostwifi",
-                ]
-            )
-        )
-
-        let reason = MirageClientService.localNetworkMismatchReason(
-            for: host,
-            classification: .timeout,
-            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
-                currentPathKind: .wifi,
-                wifiSubnetSignatures: ["24:clientwifi"],
-                wiredSubnetSignatures: []
-            )
-        )
-        let message = try #require(reason)
-
-        #expect(message.contains("Proximity Connect"))
-        #expect(message.contains("Network settings"))
-        #expect(!message.lowercased().contains("peer-to-peer"))
-    }
 }

@@ -9,12 +9,12 @@
 
 import MirageKit
 #if os(macOS)
-import CoreServices
 import Foundation
 
 // MARK: - Filtering Logic
 
 extension ApplicationScanner {
+    /// Returns whether a URL is an app bundle worth inspecting for streamable app metadata.
     func shouldConsiderApp(at url: URL, allowBundleContents: Bool) -> Bool {
         guard url.pathExtension.lowercased() == "app" else { return false }
 
@@ -38,6 +38,7 @@ extension ApplicationScanner {
         return !isSimulatorRuntime
     }
 
+    /// Returns whether nested scanning should skip a directory by name.
     func shouldIgnoreNestedDirectory(named name: String) -> Bool {
         let lowercased = name.lowercased()
 
@@ -50,6 +51,7 @@ extension ApplicationScanner {
         return false
     }
 
+    /// Returns whether recursive scanning may pass through a non-app container directory.
     func shouldDescendThroughTransitDirectory(named name: String) -> Bool {
         if name.hasSuffix(".platform") { return true }
 
@@ -67,6 +69,7 @@ extension ApplicationScanner {
         }
     }
 
+    /// Returns whether an app bundle is allowed to expose nested app bundles for scanning.
     func allowsScanningBundleContents(at url: URL) -> Bool {
         guard url.pathExtension.lowercased() == "app" else { return false }
 

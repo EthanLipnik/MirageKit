@@ -15,10 +15,7 @@ struct StreamContextEncoderSettingsUpdateTests {
     @Test("Capture configuration follows encoder pixel-format fallback")
     func captureConfigurationFollowsEncoderPixelFormatFallback() {
         let requested = MirageEncoderConfiguration.highQuality.withOverrides(colorDepth: .ultra)
-        let resolved = StreamContext.captureConfigurationAfterEncoderResolution(
-            requested: requested,
-            resolvedPixelFormat: .p010
-        )
+        let resolved = requested.withInternalOverrides(pixelFormat: .p010)
 
         #expect(requested.pixelFormat == .xf44)
         #expect(resolved.pixelFormat == .p010)

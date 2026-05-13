@@ -13,13 +13,11 @@ import Testing
 
 @Suite("Host Traffic Light Mask Geometry Resolver")
 struct HostTrafficLightMaskGeometryResolverTests {
-
     @Test("Hidden buttons state still applies clone-stamp for sharing indicator")
     func hiddenButtonsStateStillAppliesCloneStamp() {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 900, height: 600),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 96, height: 44),
-            buttonsHiddenState: .init(close: true, minimize: true, zoom: true),
             source: .ax
         )
 
@@ -34,6 +32,5 @@ struct HostTrafficLightMaskGeometryResolverTests {
             return
         }
     }
-
 }
 #endif

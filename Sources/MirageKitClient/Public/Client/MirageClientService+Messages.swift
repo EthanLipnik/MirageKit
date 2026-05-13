@@ -14,57 +14,62 @@ import MirageKit
 extension MirageClientService {
     func registerControlMessageHandlers() {
         controlMessageHandlers = [
-            .windowList: { [weak self] in self?.handleWindowList($0) },
-            .windowUpdate: { [weak self] in self?.handleWindowUpdate($0) },
-            .streamStarted: { [weak self] in await self?.handleStreamStarted($0) },
-            .streamStopped: { [weak self] in self?.handleStreamStopped($0) },
-            .streamEncoderSettingsChangeAck: { [weak self] in await self?.handleStreamEncoderSettingsChangeAck($0) },
-            .streamMetricsUpdate: { [weak self] in self?.handleStreamMetricsUpdate($0) },
-            .keyframeRecoveryAck: { [weak self] in self?.handleKeyframeRecoveryAck($0) },
-            .error: { [weak self] in self?.handleErrorMessage($0) },
-            .disconnect: { [weak self] in await self?.handleDisconnectMessage($0) },
-            .cursorUpdate: { [weak self] in self?.handleCursorUpdate($0) },
-            .cursorPositionUpdate: { [weak self] in self?.handleCursorPositionUpdate($0) },
-            .sessionStateUpdate: { [weak self] in self?.handleSessionStateUpdate($0) },
-            .desktopStreamStarted: { [weak self] in await self?.handleDesktopStreamStarted($0) },
-            .desktopStreamStopped: { [weak self] in self?.handleDesktopStreamStopped($0) },
-            .desktopStreamFailed: { [weak self] in self?.handleDesktopStreamFailed($0) },
-            .appListProgress: { [weak self] in await self?.handleAppListProgress($0) },
-            .appListComplete: { [weak self] in self?.handleAppListComplete($0) },
-            .appStreamStarted: { [weak self] in self?.handleAppStreamStarted($0) },
-            .appAtlasMediaUpdate: { [weak self] in await self?.handleAppAtlasMediaUpdate($0) },
-            .appWindowInventory: { [weak self] in self?.handleAppWindowInventory($0) },
-            .appWindowCloseBlockedAlert: { [weak self] in self?.handleAppWindowCloseBlockedAlert($0) },
-            .appWindowCloseAlertActionResult: { [weak self] in self?.handleAppWindowCloseAlertActionResult($0) },
-            .windowAddedToStream: { [weak self] in self?.handleWindowAddedToStream($0) },
-            .windowRemovedFromStream: { [weak self] in self?.handleWindowRemovedFromStream($0) },
-            .appWindowSwapResult: { [weak self] in self?.handleAppWindowSwapResult($0) },
-            .windowStreamFailed: { [weak self] in self?.handleWindowStreamFailed($0) },
-            .appTerminated: { [weak self] in self?.handleAppTerminated($0) },
-            .streamPolicyUpdate: { [weak self] in self?.handleStreamPolicyUpdate($0) },
-            .menuBarUpdate: { [weak self] in self?.handleMenuBarUpdate($0) },
-            .menuActionResult: { [weak self] in self?.handleMenuActionResult($0) },
-            .remoteClientStreamOptionsCommand: { [weak self] in
+            .windowList: .message { [weak self] in self?.handleWindowList($0) },
+            .windowUpdate: .message { [weak self] in self?.handleWindowUpdate($0) },
+            .streamStarted: .message { [weak self] in await self?.handleStreamStarted($0) },
+            .streamMetricsUpdate: .message { [weak self] in self?.handleStreamMetricsUpdate($0) },
+            .keyframeRecoveryAck: .message { [weak self] in self?.handleKeyframeRecoveryAck($0) },
+            .error: .message { [weak self] in self?.handleErrorMessage($0) },
+            .disconnect: .message { [weak self] in await self?.handleDisconnectMessage($0) },
+            .cursorUpdate: .message { [weak self] in self?.handleCursorUpdate($0) },
+            .cursorPositionUpdate: .message { [weak self] in self?.handleCursorPositionUpdate($0) },
+            .sessionStateUpdate: .message { [weak self] in self?.handleSessionStateUpdate($0) },
+            .desktopStreamStarted: .message { [weak self] in await self?.handleDesktopStreamStarted($0) },
+            .desktopStreamStopped: .message { [weak self] in self?.handleDesktopStreamStopped($0) },
+            .desktopStreamFailed: .message { [weak self] in self?.handleDesktopStreamFailed($0) },
+            .appListProgress: .message { [weak self] in await self?.handleAppListProgress($0) },
+            .appListComplete: .message { [weak self] in self?.handleAppListComplete($0) },
+            .appStreamStarted: .message { [weak self] in self?.handleAppStreamStarted($0) },
+            .appAtlasMediaUpdate: .message { [weak self] in await self?.handleAppAtlasMediaUpdate($0) },
+            .appWindowInventory: .message { [weak self] in self?.handleAppWindowInventory($0) },
+            .appWindowCloseBlockedAlert: .message { [weak self] in self?.handleAppWindowCloseBlockedAlert($0) },
+            .appWindowCloseAlertActionResult: .message { [weak self] in self?.handleAppWindowCloseAlertActionResult($0) },
+            .windowAddedToStream: .message { [weak self] in self?.handleWindowAddedToStream($0) },
+            .windowRemovedFromStream: .message { [weak self] in self?.handleWindowRemovedFromStream($0) },
+            .appWindowSwapResult: .message { [weak self] in self?.handleAppWindowSwapResult($0) },
+            .windowStreamFailed: .message { [weak self] in self?.handleWindowStreamFailed($0) },
+            .appTerminated: .message { [weak self] in self?.handleAppTerminated($0) },
+            .streamPolicyUpdate: .message { [weak self] in self?.handleStreamPolicyUpdate($0) },
+            .menuBarUpdate: .message { [weak self] in self?.handleMenuBarUpdate($0) },
+            .remoteClientStreamOptionsCommand: .message { [weak self] in
                 self?.handleRemoteClientStreamOptionsCommand($0)
             },
-            .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },
-            .hostWallpaper: { [weak self] in self?.handleHostWallpaper($0) },
-            .hostSupportLogArchive: { [weak self] in self?.handleHostSupportLogArchive($0) },
-            .ping: { [weak self] _ in self?.handlePing() },
-            .pong: { [weak self] _ in self?.handlePong() },
-            .qualityTestResult: { [weak self] in self?.handleQualityTestBenchmark($0) },
-            .qualityTestStageComplete: { [weak self] in self?.handleQualityTestStageCompletion($0) },
-            .audioStreamStarted: { [weak self] in self?.handleAudioStreamStarted($0) },
-            .audioStreamStopped: { [weak self] in self?.handleAudioStreamStopped($0) },
-            .hostSoftwareUpdateStatus: { [weak self] in self?.handleHostSoftwareUpdateStatus($0) },
-            .hostSoftwareUpdateInstallResult: { [weak self] in self?.handleHostSoftwareUpdateInstallResult($0) },
-            .hostApplicationRestartResult: { [weak self] in self?.handleHostApplicationRestartResult($0) },
-            .transportRefreshRequest: { [weak self] in self?.handleTransportRefreshRequest($0) },
-            .sharedClipboardStatus: { [weak self] in self?.handleSharedClipboardStatus($0) },
-            .sharedClipboardUpdate: { [weak self] in self?.handleSharedClipboardUpdate($0) },
-            .customStreamStarted: { [weak self] in await self?.handleCustomStreamStarted($0) },
-            .customStreamStopped: { [weak self] in await self?.handleCustomStreamStopped($0) },
-            .customStreamFailed: { [weak self] in self?.handleCustomStreamFailed($0) }
+            .hostHardwareIcon: .message { [weak self] in self?.handleHostHardwareIcon($0) },
+            .hostWallpaper: .message { [weak self] in self?.handleHostWallpaper($0) },
+            .hostSupportLogArchive: .message { [weak self] in self?.handleHostSupportLogArchive($0) },
+            .ping: .empty { [weak self] in
+                self?.queueControlMessageBestEffort(ControlMessage(type: .pong))
+            },
+            .pong: .empty { [weak self] in
+                guard let self else { return }
+                completePingRequest(
+                    expectedRequestID: pingRequestID,
+                    result: .success(())
+                )
+            },
+            .qualityTestResult: .message { [weak self] in self?.handleQualityTestBenchmark($0) },
+            .qualityTestStageComplete: .message { [weak self] in self?.handleQualityTestStageCompletion($0) },
+            .audioStreamStarted: .message { [weak self] in self?.handleAudioStreamStarted($0) },
+            .audioStreamStopped: .message { [weak self] in self?.handleAudioStreamStopped($0) },
+            .hostSoftwareUpdateStatus: .message { [weak self] in self?.handleHostSoftwareUpdateStatus($0) },
+            .hostSoftwareUpdateInstallResult: .message { [weak self] in self?.handleHostSoftwareUpdateInstallResult($0) },
+            .hostApplicationRestartResult: .message { [weak self] in self?.handleHostApplicationRestartResult($0) },
+            .transportRefreshRequest: .message { [weak self] in self?.handleTransportRefreshRequest($0) },
+            .sharedClipboardStatus: .message { [weak self] in self?.handleSharedClipboardStatus($0) },
+            .sharedClipboardUpdate: .message { [weak self] in self?.handleSharedClipboardUpdate($0) },
+            .customStreamStarted: .message { [weak self] in await self?.handleCustomStreamStarted($0) },
+            .customStreamStopped: .message { [weak self] in await self?.handleCustomStreamStopped($0) },
+            .customStreamFailed: .message { [weak self] in self?.handleCustomStreamFailed($0) },
         ]
     }
 
@@ -73,6 +78,11 @@ extension MirageClientService {
             MirageLogger.client("Unhandled control message: \(message.type)")
             return
         }
-        await handler(message)
+        switch handler {
+        case let .message(handle):
+            await handle(message)
+        case let .empty(handle):
+            await handle()
+        }
     }
 }

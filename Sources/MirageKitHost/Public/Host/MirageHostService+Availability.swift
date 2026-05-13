@@ -7,7 +7,6 @@
 //  Host connection availability surfaced through discovery metadata.
 //
 
-import Foundation
 import Loom
 import MirageKit
 
@@ -16,6 +15,7 @@ import MirageKit
 extension MirageHostService {
     private static let advertisementRefreshInterval: Duration = .seconds(2)
 
+    /// Refreshes the advertised availability reason when connection capacity changes.
     func updateAdvertisedConnectionAvailability() {
         expireStaleSingleClientReservationIfNeeded()
 
@@ -31,6 +31,7 @@ extension MirageHostService {
         }
     }
 
+    /// Updates whether the advertised host metadata includes reusable VPN access.
     public func updateAdvertisedVPNAccessEnabled(_ enabled: Bool) {
         let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingVPNAccessEnabled(
             enabled,
@@ -44,6 +45,7 @@ extension MirageHostService {
         }
     }
 
+    /// Publishes the current host advertisement when discovery is actively advertising.
     func publishCurrentAdvertisement() async {
         guard case .advertising = state else { return }
 
@@ -53,7 +55,7 @@ extension MirageHostService {
             advertisedConnectionAvailabilityReason,
             in: advertisedPeerAdvertisement
         )
-        let localNetworkSnapshot = localNetworkMonitor.snapshot()
+        let localNetworkSnapshot = localNetworkMonitor.snapshot
         updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
             localNetworkSnapshot,
             in: updatedAdvertisement
@@ -65,6 +67,7 @@ extension MirageHostService {
         await loomNode.updateAdvertisement(updatedAdvertisement)
     }
 
+    /// Updates host maintenance availability while a software update is active.
     public func updateAdvertisedSoftwareUpdateMaintenance(_ active: Bool) async {
         guard softwareUpdateMaintenanceModeActive != active else { return }
         softwareUpdateMaintenanceModeActive = active
@@ -72,6 +75,7 @@ extension MirageHostService {
         onConnectionAvailabilityChanged?(allowsNewClientConnections)
     }
 
+    /// Starts periodic advertisement refreshes so local-network and availability metadata stay current.
     func startAdvertisementRefreshLoop() {
         stopAdvertisementRefreshLoop()
         advertisementRefreshTask = Task { @MainActor [weak self] in
@@ -87,6 +91,7 @@ extension MirageHostService {
         }
     }
 
+    /// Stops the periodic advertisement refresh task.
     func stopAdvertisementRefreshLoop() {
         advertisementRefreshTask?.cancel()
         advertisementRefreshTask = nil

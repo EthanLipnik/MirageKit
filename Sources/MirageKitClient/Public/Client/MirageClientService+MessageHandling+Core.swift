@@ -7,13 +7,13 @@
 //  Core control message handling.
 //
 
-import CoreGraphics
 import Foundation
 import MirageKit
 import Network
 
 @MainActor
 extension MirageClientService {
+    /// Commits an accepted bootstrap response into connected-host identity and connection state.
     func finalizeAcceptedBootstrap(
         _ response: MirageSessionBootstrapResponse,
         hostIdentityKeyID: String
@@ -39,27 +39,35 @@ extension MirageClientService {
         return acceptedHost
     }
 
+    /// Builds the canonical connected host from accepted identity and provisional transport metadata.
     func canonicalConnectedHost(
         hostID: UUID,
         hostName: String,
         hostIdentityKeyID: String
     ) async -> LoomPeer {
         let provisionalHost = connectedHost
-        let resolvedHostName = hostName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty ? provisionalHost?.name ?? "Host" : hostName
-        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
-        let hostEndpoint: NWEndpoint = provisionalHost?.endpoint
-            ?? controlRemoteEndpoint
-            ?? .service(
-                name: resolvedHostName,
-                type: MirageKit.serviceType,
-                domain: "",
-                interface: nil
-            )
-        let deviceType = provisionalHost?.deviceType
-            ?? provisionalHost?.advertisement.deviceType
-            ?? .unknown
+        let resolvedHostName =
+            hostName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty ? provisionalHost?.name ?? "Host" : hostName
+        let controlRemoteEndpoint = if let loomSession {
+            await loomSession.remoteEndpoint
+        } else {
+            connectedHost?.endpoint
+        }
+        let hostEndpoint: NWEndpoint =
+            provisionalHost?.endpoint
+                ?? controlRemoteEndpoint
+                ?? .service(
+                    name: resolvedHostName,
+                    type: MirageKit.serviceType,
+                    domain: "",
+                    interface: nil
+                )
+        let deviceType =
+            provisionalHost?.deviceType
+                ?? provisionalHost?.advertisement.deviceType
+                ?? .unknown
         let sourceAdvertisement = provisionalHost?.advertisement ?? LoomPeerAdvertisement()
         let canonicalAdvertisement = LoomPeerAdvertisement(
             protocolVersion: sourceAdvertisement.protocolVersion,
@@ -90,6 +98,7 @@ extension MirageClientService {
         )
     }
 
+    /// Returns whether the accepted session satisfies the client's media-encryption policy.
     nonisolated static func shouldAcceptSessionMediaEncryption(
         mediaEncryptionEnabled: Bool,
         requireEncryptedMediaOnLocalNetwork: Bool
@@ -97,48 +106,29 @@ extension MirageClientService {
         mediaEncryptionEnabled || !requireEncryptedMediaOnLocalNetwork
     }
 
-    func protocolMismatchInfo(from response: MirageSessionBootstrapResponse) -> ProtocolMismatchInfo? {
+    /// Extracts protocol mismatch metadata from a rejected bootstrap response.
+    func protocolMismatchInfo(from response: MirageSessionBootstrapResponse)
+    -> ProtocolMismatchInfo? {
         guard response.rejectionReason == .protocolVersionMismatch else {
             return nil
         }
         return ProtocolMismatchInfo(
-            reason: mapProtocolMismatchReason(response.rejectionReason),
+            reason: ProtocolMismatchInfo.Reason(
+                bootstrapRejectionReason: response.rejectionReason
+            ),
             hostProtocolVersion: response.protocolMismatchHostVersion,
-            clientProtocolVersion: response.protocolMismatchClientVersion,
-            hostUpdateTriggerAccepted: response.protocolMismatchUpdateTriggerAccepted,
-            hostUpdateTriggerMessage: response.protocolMismatchUpdateTriggerMessage
+            clientProtocolVersion: response.protocolMismatchClientVersion
         )
     }
 
-    func mapProtocolMismatchReason(_ reason: MirageSessionBootstrapRejectionReason?) -> ProtocolMismatchInfo.Reason {
-        switch reason {
-        case .protocolVersionMismatch:
-            return .protocolVersionMismatch
-        case .protocolFeaturesMismatch:
-            return .protocolFeaturesMismatch
-        case .hostBusy:
-            return .hostBusy
-        case .hostUpdateInProgress:
-            return .hostUpdateInProgress
-        case .rejected:
-            return .rejected
-        case .unauthorized:
-            return .unauthorized
-        case .takeoverRequiresTrustedRequester:
-            return .unauthorized
-        case .none:
-            return .unknown
-        }
-    }
-
-    func connectionRejection(from response: MirageSessionBootstrapResponse) -> MirageConnectionRejection {
+    /// Converts a rejected bootstrap response into the client-facing connection rejection model.
+    func connectionRejection(from response: MirageSessionBootstrapResponse)
+    -> MirageConnectionRejection {
         MirageConnectionRejection(
-            reason: Self.mapConnectionRejectionReason(response.rejectionReason),
+            reason: MirageConnectionRejection.Reason(bootstrapRejectionReason: response.rejectionReason),
             hostName: response.hostName,
             hostProtocolVersion: response.protocolMismatchHostVersion,
             clientProtocolVersion: response.protocolMismatchClientVersion,
-            hostUpdateTriggerAccepted: response.protocolMismatchUpdateTriggerAccepted,
-            hostUpdateTriggerMessage: response.protocolMismatchUpdateTriggerMessage,
             recoveryHint: bootstrapRejectionDescription(
                 for: response,
                 mismatchInfo: protocolMismatchInfo(from: response)
@@ -146,29 +136,7 @@ extension MirageClientService {
         )
     }
 
-    nonisolated static func mapConnectionRejectionReason(
-        _ reason: MirageSessionBootstrapRejectionReason?
-    ) -> MirageConnectionRejection.Reason {
-        switch reason {
-        case .protocolVersionMismatch:
-            return .protocolVersionMismatch
-        case .protocolFeaturesMismatch:
-            return .protocolFeaturesMismatch
-        case .hostBusy:
-            return .hostBusy
-        case .hostUpdateInProgress:
-            return .hostUpdateInProgress
-        case .rejected:
-            return .rejected
-        case .unauthorized:
-            return .unauthorized
-        case .takeoverRequiresTrustedRequester:
-            return .takeoverRequiresTrustedRequester
-        case .none:
-            return .unknown
-        }
-    }
-
+    /// Produces the user-facing bootstrap rejection recovery hint.
     func bootstrapRejectionDescription(
         for response: MirageSessionBootstrapResponse,
         mismatchInfo: ProtocolMismatchInfo?
@@ -180,8 +148,6 @@ extension MirageClientService {
         }
 
         switch response.rejectionReason {
-        case .protocolFeaturesMismatch:
-            return "Protocol feature mismatch."
         case .hostBusy:
             return "Host is already connected to another client."
         case .hostUpdateInProgress:
@@ -199,6 +165,7 @@ extension MirageClientService {
         }
     }
 
+    /// Applies an accepted bootstrap response or throws the mapped rejection error.
     func handleBootstrapResponse(
         _ response: MirageSessionBootstrapResponse,
         provisionalHost: LoomPeer,
@@ -210,18 +177,24 @@ extension MirageClientService {
 
         let peerIdentity = context.peerIdentity
         guard let hostIdentityKeyID = peerIdentity.identityKeyID else {
-            throw MirageError.protocolError("Authenticated Loom session is missing host identity key")
+            throw MirageError.protocolError(
+                "Authenticated Loom session is missing host identity key"
+            )
         }
         if let expectedHostIdentityKeyID, expectedHostIdentityKeyID != hostIdentityKeyID {
             throw MirageError.protocolError("Host identity mismatch")
         }
 
         if response.accepted {
-            guard Self.shouldAcceptSessionMediaEncryption(
-                mediaEncryptionEnabled: response.mediaEncryptionEnabled,
-                requireEncryptedMediaOnLocalNetwork: networkConfig.requireEncryptedMediaOnLocalNetwork
-            ) else {
-                throw MirageError.protocolError("Host media encryption disabled (client policy blocks unencrypted media)")
+            guard
+                Self.shouldAcceptSessionMediaEncryption(
+                    mediaEncryptionEnabled: response.mediaEncryptionEnabled,
+                    requireEncryptedMediaOnLocalNetwork: networkConfig
+                        .requireEncryptedMediaOnLocalNetwork
+                ) else {
+                throw MirageError.protocolError(
+                    "Host media encryption disabled (client policy blocks unencrypted media)"
+                )
             }
             guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
                 throw MirageError.protocolError("Invalid UDP registration token")
@@ -239,29 +212,22 @@ extension MirageClientService {
                 udpRegistrationToken: response.udpRegistrationToken
             )
 
-            let requiredFeatures: MirageFeatureSet = [
-                .udpRegistrationAuthV1,
-                .encryptedMediaV1,
-            ]
-            guard response.selectedFeatures.contains(requiredFeatures) else {
-                throw MirageError.protocolError("Protocol features mismatch")
-            }
-
             setMediaSecurityContext(mediaContext)
             mediaPayloadEncryptionEnabled = response.mediaEncryptionEnabled
-            negotiatedFeatures = response.selectedFeatures
             connectedHostAllowsRemoteAccess = response.remoteAccessAllowed
             let acceptedHost = await finalizeAcceptedBootstrap(
                 response,
                 hostIdentityKeyID: hostIdentityKeyID
             )
 
-            if response.autoTrustGranted == true {
+            if response.autoTrustGranted {
                 let hostComponent = response.hostID.uuidString.lowercased()
                 let noticeKey = "com.mirage.autotrust.client.\(hostComponent)"
                 if !UserDefaults.standard.bool(forKey: noticeKey) {
                     UserDefaults.standard.set(true, forKey: noticeKey)
-                    let hostDisplayName = response.hostName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let hostDisplayName = response.hostName.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    )
                     if hostDisplayName.isEmpty {
                         onAutoTrustNotice?("Auto-approved trusted device for this host.")
                     } else {
@@ -282,11 +248,16 @@ extension MirageClientService {
             }
             let rejection = connectionRejection(from: response)
             MirageLogger.client("Connection rejected by host: \(rejection.userFacingMessage)")
-            MirageInstrumentation.record(.clientHelloRejected(helloRejectionReason(response.rejectionReason)))
+            MirageInstrumentation.record(
+                .clientHelloRejected(
+                    MirageHelloRejectionStepReason(bootstrapRejectionReason: response.rejectionReason)
+                )
+            )
             throw MirageError.connectionRejected(rejection)
         }
     }
 
+    /// Stores a full host window snapshot unless control updates are currently suppressed.
     func handleWindowList(_ message: ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsWindowListRefresh = true
@@ -296,530 +267,106 @@ extension MirageClientService {
             let windowList = try message.decode(WindowListMessage.self)
             MirageLogger.client("Received window list with \(windowList.windows.count) windows")
             for window in windowList.windows {
-                MirageLogger.client("  - \(window.application?.name ?? "Unknown"): \(window.title ?? "Untitled")")
+                MirageLogger.client(
+                    "  - \(window.application?.name ?? "Unknown"): \(window.title ?? "Untitled")"
+                )
             }
             hasReceivedWindowList = true
             availableWindows = windowList.windows
-            delegate?.didUpdateWindowList(windowList.windows)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window list: ")
         }
     }
 
+    /// Applies incremental host window additions, removals, and metadata updates.
     func handleWindowUpdate(_ message: ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsWindowListRefresh = true
             return
         }
-        if let update = try? message.decode(WindowUpdateMessage.self) {
-            for window in update.added where !availableWindows.contains(where: { $0.id == window.id }) {
-                availableWindows.append(window)
-            }
-            for id in update.removed {
-                availableWindows.removeAll { $0.id == id }
-            }
-            for window in update.updated {
-                if let index = availableWindows.firstIndex(where: { $0.id == window.id }) { availableWindows[index] = window }
-            }
-        }
-    }
-
-    func handleStreamStarted(_ message: ControlMessage) async {
-        if let started = try? message.decode(StreamStartedMessage.self) {
-            let streamID = started.streamID
-            let startupAttemptID = started.startupAttemptID
-            guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
-                MirageLogger.client(
-                    "Ignoring stale streamStarted for stream \(streamID) startupAttemptID=\(startupAttemptID?.uuidString ?? "nil")"
-                )
-                return
-            }
-            MirageLogger.client("Stream started: \(streamID) for window \(started.windowID)")
-            let resolvedWindow = resolveWindowForStartedStream(
-                streamID: streamID,
-                started: started
-            )
-            upsertActiveStreamSession(
-                streamID: streamID,
-                window: resolvedWindow
-            )
-
-            refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(started.frameRate)
-            await applyStreamCadenceTarget(
-                started.frameRate,
-                for: streamID,
-                reason: "window stream started"
-            )
-
-            let dimensionToken = started.dimensionToken
-            let hasController = controllersByStream[streamID] != nil
-            let isExistingStream = activeStreams.contains(where: { $0.id == streamID }) ||
-                sessionStore.sessionByStreamID(streamID) != nil
-            let previousDimensionToken = appDimensionTokenByStream[streamID]
-            let resetDecision = appStreamStartResetDecision(
-                isExistingStream: isExistingStream,
-                hasController: hasController,
-                requestStartPending: streamStartedContinuation != nil,
-                previousDimensionToken: previousDimensionToken,
-                receivedDimensionToken: dimensionToken
-            )
-            let shouldResetController = resetDecision == .resetController
-            let shouldSetupController = shouldResetController || !hasController
-            let wasRegistered = registeredStreamIDs.contains(streamID)
-            let registrationDecision = appStreamRegistrationRefreshDecision(
-                hasController: hasController,
-                shouldResetController: shouldResetController,
-                wasRegistered: wasRegistered
-            )
-            let shouldRegisterVideo = registrationDecision == .refreshRegistration
-            let didAdvanceDimensionToken = if let previousDimensionToken, let dimensionToken {
-                previousDimensionToken != dimensionToken
-            } else {
-                false
-            }
-            let shouldBeginPostResizeTransition = didAdvanceDimensionToken &&
-                isExistingStream &&
-                hasController
-            if didAdvanceDimensionToken,
-               let previousDimensionToken,
-               let dimensionToken {
-                MirageLogger
-                    .client(
-                        "App stream token advanced \(previousDimensionToken) -> \(dimensionToken); reset=\(shouldResetController)"
-                    )
-                beginStreamStartupCriticalSection(streamID: streamID)
-                beginPostResizeTransition(streamID: streamID)
-            }
-            if let dimensionToken {
-                appDimensionTokenByStream[streamID] = dimensionToken
-            }
-            appStreamStartAcknowledgementByStreamID[streamID] = StreamStartAcknowledgement(
-                width: started.width,
-                height: started.height,
-                dimensionToken: dimensionToken
-            )
-
-            if let minW = started.minWidth, let minH = started.minHeight {
-                streamMinSizes[streamID] = (minWidth: minW, minHeight: minH)
-                MirageLogger.client("Minimum window size: \(minW)x\(minH) pts")
-                let minSize = CGSize(width: minW, height: minH)
-                sessionStore.updateMinimumSize(for: streamID, minSize: minSize)
-                onStreamMinimumSizeUpdate?(streamID, minSize)
-            }
-
-            let isAppCentricStream = streamStartedContinuation == nil
-            streamStartedContinuation?.resume(returning: streamID)
-            streamStartedContinuation = nil
-            let shouldMarkStartupPending = isAppCentricStream && shouldRegisterVideo
-
-            if shouldMarkStartupPending {
-                streamStartupBaseTimes[streamID] = CFAbsoluteTimeGetCurrent()
-                streamStartupFirstRegistrationSent.remove(streamID)
-                streamStartupFirstPacketReceived.remove(streamID)
-                markStartupPacketPending(streamID)
-            }
-            registerStartupAttempt(startupAttemptID, for: streamID)
-            activeStreamCodecs[streamID] = started.codec
-
-            if shouldSetupController {
-                await self.setupControllerForStream(
-                    streamID,
-                    beginPostResizeTransition: shouldBeginPostResizeTransition,
-                    codec: started.codec,
-                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
-                    dimensionToken: dimensionToken,
-                    targetFrameRate: started.frameRate
-                )
-            }
-            self.addActiveStreamID(streamID)
-            if isAppCentricStream, shouldSetupController {
-                MirageLogger.client("Controller set up for app-centric stream \(streamID)")
-            }
-
-            if let startupAttemptID {
-                await self.sendStreamReadyAck(
-                    streamID: streamID,
-                    startupAttemptID: startupAttemptID,
-                    kind: .window
-                )
-            }
-
-            if shouldRegisterVideo {
-                self.registeredStreamIDs.insert(streamID)
-                let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                try? await self.sendStreamRefreshRateChange(
-                    streamID: streamID,
-                    maxRefreshRate: refreshRate
-                )
-                MirageLogger.client(
-                    "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                )
-                if shouldMarkStartupPending {
-                    self.startStartupRegistrationRetry(streamID: streamID)
-                }
-            }
-        }
-    }
-
-    func handleStreamStopped(_ message: ControlMessage) {
-        if let stopped = try? message.decode(StreamStoppedMessage.self) {
-            let streamID = stopped.streamID
-            activeStreams.removeAll { $0.id == streamID }
-            recordRetiredStreamDiagnosticsSummary(streamID: streamID, reason: "streamStopped")
-            MirageRenderStreamStore.shared.clear(for: streamID)
-            metricsStore.clear(streamID: streamID)
-            cursorStore.clear(streamID: streamID)
-            cursorPositionStore.clear(streamID: streamID)
-            sessionStore.clearPostResizeTransition(for: streamID)
-
-            removeActiveStreamID(streamID)
-            stopVideoStreamReceive(for: streamID)
-            registeredStreamIDs.remove(streamID)
-            clearStreamRefreshRateOverride(streamID: streamID)
-            inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
-            clearDecoderColorDepthState(for: streamID)
-            mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
-            clearStartupAttempt(for: streamID)
-            appDimensionTokenByStream.removeValue(forKey: streamID)
-            appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
-            appAtlasLayoutsByMediaStreamID.removeValue(forKey: streamID)
-            streamStartupBaseTimes.removeValue(forKey: streamID)
-            streamStartupFirstRegistrationSent.remove(streamID)
-            streamStartupFirstPacketReceived.remove(streamID)
-            clearStartupPacketPending(streamID)
-            cancelStartupRegistrationRetry(streamID: streamID)
-            cancelRecoveryKeyframeRetry(for: streamID)
-            pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
-            activeJitterHoldMs = 0
-            let controller = controllersByStream.removeValue(forKey: streamID)
-
-            Task { [weak self] in
-                guard let self else { return }
-                if let controller {
-                    await controller.stop()
-                }
-                await updateReassemblerSnapshot()
-                await refreshSharedClipboardBridgeState()
-            }
-        }
-    }
-
-    func handleStreamMetricsUpdate(_ message: ControlMessage) {
-        if let metrics = try? message.decode(StreamMetricsMessage.self) {
-            updateObservedFrameRate(metrics.targetFrameRate, for: metrics.streamID)
-            if let controller = controllersByStream[metrics.streamID] {
-                let latencyMode = renderLatencyModeByStream[metrics.streamID]
-                let displayFPS = resolvedDisplayCadenceFrameRate(
-                    for: metrics.streamID,
-                    fallback: metrics.targetFrameRate
-                )
-                Task {
-                    await controller.updateHostMetrics(metrics)
-                    await controller.updateCadenceTarget(
-                        sourceFPS: metrics.targetFrameRate,
-                        displayFPS: displayFPS,
-                        latencyMode: latencyMode,
-                        reason: "host metrics"
-                    )
-                }
-            }
-            metricsStore.updateHostMetrics(
-                streamID: metrics.streamID,
-                encodedFPS: metrics.encodedFPS,
-                idleEncodedFPS: metrics.idleEncodedFPS,
-                droppedFrames: metrics.droppedFrames,
-                activeQuality: Double(metrics.activeQuality),
-                targetFrameRate: metrics.targetFrameRate,
-                enteredBitrate: metrics.enteredBitrate,
-                currentBitrate: metrics.currentBitrate,
-                requestedTargetBitrate: metrics.requestedTargetBitrate,
-                bitrateAdaptationCeiling: metrics.bitrateAdaptationCeiling,
-                startupBitrate: metrics.startupBitrate,
-                captureAdmissionDrops: metrics.captureAdmissionDrops,
-                frameBudgetMs: metrics.frameBudgetMs,
-                averageEncodeMs: metrics.averageEncodeMs,
-                captureIngressFPS: metrics.captureIngressFPS,
-                captureFPS: metrics.captureFPS,
-                encodeAttemptFPS: metrics.encodeAttemptFPS,
-                usingHardwareEncoder: metrics.usingHardwareEncoder,
-                encoderGPURegistryID: metrics.encoderGPURegistryID,
-                encodedWidth: metrics.encodedWidth,
-                encodedHeight: metrics.encodedHeight,
-                capturePixelFormat: metrics.capturePixelFormat,
-                captureColorPrimaries: metrics.captureColorPrimaries,
-                encoderPixelFormat: metrics.encoderPixelFormat,
-                encoderChromaSampling: metrics.encoderChromaSampling,
-                encoderProfile: metrics.encoderProfile,
-                encoderColorPrimaries: metrics.encoderColorPrimaries,
-                encoderTransferFunction: metrics.encoderTransferFunction,
-                encoderYCbCrMatrix: metrics.encoderYCbCrMatrix,
-                displayP3CoverageStatus: metrics.displayP3CoverageStatus,
-                tenBitDisplayP3Validated: metrics.tenBitDisplayP3Validated,
-                ultra444Validated: metrics.ultra444Validated
-            )
-            metricsStore.updateHostPipelineMetrics(
-                streamID: metrics.streamID,
-                captureIngressAverageMs: metrics.captureIngressAverageMs,
-                captureIngressMaxMs: metrics.captureIngressMaxMs,
-                preEncodeWaitAverageMs: metrics.preEncodeWaitAverageMs,
-                preEncodeWaitMaxMs: metrics.preEncodeWaitMaxMs,
-                captureCallbackAverageMs: metrics.captureCallbackAverageMs,
-                captureCallbackMaxMs: metrics.captureCallbackMaxMs,
-                captureCadence: metrics.captureCadence,
-                sendQueueBytes: metrics.sendQueueBytes,
-                sendStartDelayAverageMs: metrics.sendStartDelayAverageMs,
-                sendStartDelayMaxMs: metrics.sendStartDelayMaxMs,
-                sendCompletionAverageMs: metrics.sendCompletionAverageMs,
-                sendCompletionMaxMs: metrics.sendCompletionMaxMs,
-                nonKeyframeSendStartDelayAverageMs: metrics.nonKeyframeSendStartDelayAverageMs,
-                nonKeyframeSendStartDelayMaxMs: metrics.nonKeyframeSendStartDelayMaxMs,
-                nonKeyframeSendCompletionAverageMs: metrics.nonKeyframeSendCompletionAverageMs,
-                nonKeyframeSendCompletionMaxMs: metrics.nonKeyframeSendCompletionMaxMs,
-                packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs,
-                packetPacerTotalSleepMs: metrics.packetPacerTotalSleepMs,
-                packetPacerMaxSleepMs: metrics.packetPacerMaxSleepMs,
-                packetPacerFrameMaxSleepMs: metrics.packetPacerFrameMaxSleepMs,
-                stalePacketDrops: metrics.stalePacketDrops,
-                senderLocalDeadlineDrops: metrics.senderLocalDeadlineDrops,
-                generationAbortDrops: metrics.generationAbortDrops,
-                nonKeyframeHoldDrops: metrics.nonKeyframeHoldDrops
-            )
-            if let requested = refreshRateOverridesByStream[metrics.streamID] {
-                guard metrics.streamID == desktopStreamID else {
-                    refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
-                    refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
-                    return
-                }
-                if requested != metrics.targetFrameRate {
-                    let updatedCount = (refreshRateMismatchCounts[metrics.streamID] ?? 0) + 1
-                    refreshRateMismatchCounts[metrics.streamID] = updatedCount
-                    if updatedCount == 2 {
-                        MirageLogger.client(
-                            "Refresh override pending for stream \(metrics.streamID): requested \(requested)Hz, host \(metrics.targetFrameRate)Hz"
-                        )
-                    }
-                    let fallbackThreshold = 4
-                    if updatedCount >= fallbackThreshold {
-                        let lastFallback = refreshRateFallbackTargets[metrics.streamID]
-                        if lastFallback != requested {
-                            refreshRateFallbackTargets[metrics.streamID] = requested
-                            Task { [weak self] in
-                                try? await self?.sendStreamRefreshRateChange(
-                                    streamID: metrics.streamID,
-                                    maxRefreshRate: requested,
-                                    forceDisplayRefresh: true
-                                )
-                            }
-                            MirageLogger.client(
-                                "Refresh override fallback requested for stream \(metrics.streamID): \(requested)Hz"
-                            )
-                        }
-                    }
-
-                } else {
-                    refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
-                    refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
-                }
-            }
-        }
-    }
-
-    func handleTransportRefreshRequest(_ message: ControlMessage) {
+        let update: WindowUpdateMessage
         do {
-            let request = try message.decode(TransportRefreshRequestMessage.self)
-            transportRefreshRequests &+= 1
-            MirageLogger.client(
-                "Host transport refresh request received: reason=\(request.reason), stream=\(request.streamID.map(String.init) ?? "all"), count=\(transportRefreshRequests)"
-            )
-            let activeIDs = activeStreamIDsForFiltering
-            let targetIDs: [StreamID] = if let filterID = request.streamID {
-                activeIDs.contains(filterID) ? [filterID] : []
-            } else {
-                activeIDs.sorted()
-            }
-            for streamID in targetIDs {
-                sendKeyframeRequest(for: streamID)
-            }
+            update = try message.decode(WindowUpdateMessage.self)
         } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode transport refresh request: ")
-        }
-    }
-
-    func handleErrorMessage(_ message: ControlMessage) {
-        if let errorMessage = try? message.decode(ErrorMessage.self) {
-            if (desktopStreamMode != nil || desktopStreamRequestStartTime > 0) && desktopStreamID == nil {
-                clearPendingDesktopStreamStartState()
-            }
-            if errorMessage.code == .appStreamStartupFailed {
-                pendingAppRequestedColorDepth = nil
-                pendingAppRequestedLatencyMode = nil
-                clearPendingStreamSetup(kind: .app)
-                onAppStreamStartupFailed?(
-                    AppStreamStartupFailure(
-                        bundleIdentifier: errorMessage.bundleIdentifier,
-                        message: errorMessage.message
-                    )
-                )
-                return
-            }
-            if let runtimeCondition = errorMessage.code.runtimeConditionError {
-                delegate?.didEncounterError(runtimeCondition)
-            } else {
-                delegate?.didEncounterError(MirageError.protocolError(errorMessage.message))
-            }
-        }
-    }
-
-    func handleDisconnectMessage(_ message: ControlMessage) async {
-        if let disconnect = try? message.decode(DisconnectMessage.self) {
-            await handleDisconnect(
-                reason: disconnect.reason.rawValue,
-                state: .disconnected,
-                notifyDelegate: true
-            )
-        }
-    }
-
-    func handleCursorUpdate(_ message: ControlMessage) {
-        if let update = try? message.decode(CursorUpdateMessage.self) {
-            recordCursorControlReceiveSample(updateReceived: true, positionReceived: false)
-            let didChange = cursorStore.updateCursor(
-                streamID: update.streamID,
-                cursorType: update.cursorType,
-                isVisible: update.isVisible
-            )
-            if didChange { MirageCursorUpdateRouter.shared.notify(streamID: update.streamID) }
-            onCursorUpdate?(update.streamID, update.cursorType, update.isVisible)
-        }
-    }
-
-    func handleCursorPositionUpdate(_ message: ControlMessage) {
-        if let update = try? message.decode(CursorPositionUpdateMessage.self) {
-            recordCursorControlReceiveSample(updateReceived: false, positionReceived: true)
-            let position = CGPoint(x: CGFloat(update.normalizedX), y: CGFloat(update.normalizedY))
-            let didChange = cursorPositionStore.updatePosition(
-                streamID: update.streamID,
-                position: position,
-                isVisible: update.isVisible
-            )
-            if didChange { MirageCursorUpdateRouter.shared.notify(streamID: update.streamID) }
-        }
-    }
-
-    private func recordCursorControlReceiveSample(updateReceived: Bool, positionReceived: Bool) {
-        guard MirageSteadyStateDiagnostics.isEnabled else { return }
-        if updateReceived { cursorUpdateMessagesSinceLastSample &+= 1 }
-        if positionReceived { cursorPositionMessagesSinceLastSample &+= 1 }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        if lastCursorControlSampleTime == 0 {
-            lastCursorControlSampleTime = now
+            MirageLogger.error(.client, error: error, message: "Failed to decode window update: ")
             return
         }
-        guard now - lastCursorControlSampleTime >= cursorControlSampleInterval else { return }
+        for window in update.added where !availableWindows.contains(where: { $0.id == window.id }) {
+            availableWindows.append(window)
+        }
+        for id in update.removed {
+            availableWindows.removeAll { $0.id == id }
+        }
+        for window in update.updated {
+            if let index = availableWindows.firstIndex(where: { $0.id == window.id }) {
+                availableWindows[index] = window
+            }
+        }
+    }
 
-        let updateCount = cursorUpdateMessagesSinceLastSample
-        let positionCount = cursorPositionMessagesSinceLastSample
-        cursorUpdateMessagesSinceLastSample = 0
-        cursorPositionMessagesSinceLastSample = 0
-        lastCursorControlSampleTime = now
-        guard updateCount > 0 || positionCount > 0 else { return }
+    /// Maps a host error message into pending-startup cleanup or delegate error delivery.
+    func handleErrorMessage(_ message: ControlMessage) {
+        let errorMessage: ErrorMessage
+        do {
+            errorMessage = try message.decode(ErrorMessage.self)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode error message: ")
+            return
+        }
+        if desktopStreamMode != nil || desktopStreamRequestStartTime > 0, desktopStreamID == nil {
+            clearPendingDesktopStreamStartState()
+        }
+        if errorMessage.code == .appStreamStartupFailed {
+            pendingAppRequestedColorDepth = nil
+            pendingAppRequestedLatencyMode = nil
+            clearPendingStreamSetup(kind: .app)
+            onAppStreamStartupFailed?(
+                AppStreamStartupFailure(
+                    bundleIdentifier: errorMessage.bundleIdentifier,
+                    message: errorMessage.message
+                )
+            )
+            return
+        }
+        if let runtimeCondition = errorMessage.code.runtimeConditionError {
+            delegate?.didEncounterError(runtimeCondition)
+        } else {
+            delegate?.didEncounterError(MirageError.protocolError(errorMessage.message))
+        }
+    }
 
-        MirageLogger.network(
-            "Cursor control sample (1s): cursorUpdates=\(updateCount), cursorPositions=\(positionCount)"
+    /// Applies a host disconnect notice through the normal client disconnect path.
+    func handleDisconnectMessage(_ message: ControlMessage) async {
+        let disconnect: DisconnectMessage
+        do {
+            disconnect = try message.decode(DisconnectMessage.self)
+        } catch {
+            MirageLogger.error(
+                .client, error: error, message: "Failed to decode disconnect message: "
+            )
+            return
+        }
+        await handleDisconnect(
+            reason: disconnect.reason.rawValue,
+            state: .disconnected,
+            notifyDelegate: true
         )
     }
 
+    /// Updates host login-session state and notifies the client delegate.
     func handleSessionStateUpdate(_ message: ControlMessage) {
         do {
             let update = try message.decode(SessionStateUpdateMessage.self)
-            MirageLogger.client("Host session state: \(update.state), requires username: \(update.requiresUserIdentifier)")
+            MirageLogger.client(
+                "Host session state: \(update.state), requires username: \(update.requiresUserIdentifier)"
+            )
             hostSessionState = update.state
             currentSessionToken = update.sessionToken
-            delegate?.hostSessionStateChanged(
-                update.state,
-                requiresUserIdentifier: update.requiresUserIdentifier
-            )
+            delegate?.hostSessionStateChanged(update.state)
         } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode session state update: ")
-        }
-    }
-
-    private func resolveWindowForStartedStream(
-        streamID: StreamID,
-        started: StreamStartedMessage
-    ) -> MirageWindow {
-        let fallbackFrame = CGRect(
-            x: 0,
-            y: 0,
-            width: CGFloat(max(1, started.width)),
-            height: CGFloat(max(1, started.height))
-        )
-        let windowTemplate = activeStreams.first(where: { $0.id == streamID })?.window ??
-            sessionStore.sessionByStreamID(streamID)?.window ??
-            availableWindows.first(where: { $0.id == started.windowID })
-
-        guard let template = windowTemplate else {
-            return MirageWindow(
-                id: started.windowID,
-                title: nil,
-                application: nil,
-                frame: fallbackFrame,
-                isOnScreen: true,
-                windowLayer: 0
+            MirageLogger.error(
+                .client, error: error, message: "Failed to decode session state update: "
             )
-        }
-
-        let templateFrame = template.frame
-        let mergedFrame = CGRect(
-            x: templateFrame.origin.x,
-            y: templateFrame.origin.y,
-            width: CGFloat(max(1, started.width)),
-            height: CGFloat(max(1, started.height))
-        )
-
-        return MirageWindow(
-            id: started.windowID,
-            title: template.title,
-            application: template.application,
-            frame: mergedFrame,
-            isOnScreen: template.isOnScreen,
-            windowLayer: template.windowLayer
-        )
-    }
-
-    func upsertActiveStreamSession(
-        streamID: StreamID,
-        window: MirageWindow,
-        kind: MirageStreamKind = .app
-    ) {
-        let session = ClientStreamSession(id: streamID, window: window, kind: kind)
-        if let index = activeStreams.firstIndex(where: { $0.id == streamID }) {
-            activeStreams[index] = session
-        } else {
-            activeStreams.append(session)
-        }
-        Task { await refreshSharedClipboardBridgeState() }
-    }
-
-    private func helloRejectionReason(_ reason: MirageSessionBootstrapRejectionReason?) -> MirageHelloRejectionStepReason {
-        switch reason {
-        case .protocolVersionMismatch:
-            return .protocolVersionMismatch
-        case .protocolFeaturesMismatch:
-            return .protocolFeaturesMismatch
-        case .hostBusy:
-            return .hostBusy
-        case .hostUpdateInProgress:
-            return .hostUpdateInProgress
-        case .rejected:
-            return .rejected
-        case .unauthorized:
-            return .unauthorized
-        case .takeoverRequiresTrustedRequester:
-            return .unauthorized
-        case .none:
-            return .unknown
         }
     }
 }

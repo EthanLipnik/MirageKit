@@ -67,10 +67,9 @@ extension InputCapturingView {
         guard force || snapshot.sequence != cursorSequence else { return }
         cursorSequence = snapshot.sequence
         updateCursor(type: snapshot.cursorType, isVisible: snapshot.isVisible, force: force)
-        refreshLockedCursorIfNeeded(force: force)
+        _ = refreshLockedCursorIfNeeded(force: force)
     }
 
-    @discardableResult
     func refreshLockedCursorIfNeeded(force: Bool = false) -> Bool {
         guard cursorLockEnabled, let cursorPositionStore, let streamID else { return false }
         let now = CACurrentMediaTime()
@@ -87,7 +86,7 @@ extension InputCapturingView {
 // MARK: - UIPointerInteractionDelegate
 
 extension InputCapturingView: UIPointerInteractionDelegate {
-    public func pointerInteraction(_: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+    public func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
         // Return appropriate pointer style based on host cursor state
         if hideSystemCursor || cursorLockEnabled || cursorHiddenForTyping {
             return .hidden()
@@ -101,7 +100,7 @@ extension InputCapturingView: UIPointerInteractionDelegate {
         if currentCursorType == .arrow {
             return nil
         }
-        return currentCursorType.pointerStyle(for: region)
+        return currentCursorType.pointerStyle()
     }
 }
 

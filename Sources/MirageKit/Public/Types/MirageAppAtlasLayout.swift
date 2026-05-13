@@ -6,15 +6,14 @@
 //
 
 import CoreGraphics
-import Foundation
 
 /// Describes the region of a logical app window inside a physical app-atlas media stream.
 public struct MirageAppAtlasRegion: Codable, Sendable, Equatable {
     /// Logical host window identity represented by this atlas region.
     public let windowID: WindowID
-    /// Horizontal origin in the physical media stream's pixel coordinate space.
+    /// Region origin in the physical media stream's pixel coordinate space.
     public let x: Int
-    /// Vertical origin in the physical media stream's pixel coordinate space.
+    /// Region origin in the physical media stream's pixel coordinate space.
     public let y: Int
     /// Region width in physical media-stream pixels.
     public let width: Int
@@ -27,6 +26,7 @@ public struct MirageAppAtlasRegion: Codable, Sendable, Equatable {
     /// Whether this region should be rendered by clients.
     public let isVisible: Bool
 
+    /// Creates a logical app-window region inside an app-atlas media stream.
     public init(
         windowID: WindowID,
         x: Int,
@@ -47,10 +47,12 @@ public struct MirageAppAtlasRegion: Codable, Sendable, Equatable {
         self.isVisible = isVisible
     }
 
+    /// Region rectangle in physical media-stream pixel coordinates.
     public var pixelRect: CGRect {
         CGRect(x: x, y: y, width: width, height: height)
     }
 
+    /// Region rectangle normalized to the atlas canvas.
     public func normalizedRect(in layout: MirageAppAtlasLayout) -> CGRect {
         guard layout.width > 0, layout.height > 0 else { return .zero }
         return CGRect(
@@ -75,6 +77,7 @@ public struct MirageAppAtlasLayout: Codable, Sendable, Equatable {
     /// Logical app-window regions inside this physical media stream.
     public let regions: [MirageAppAtlasRegion]
 
+    /// Creates an app-atlas layout for one physical media stream.
     public init(
         mediaStreamID: StreamID,
         layoutEpoch: UInt64 = 0,
@@ -89,14 +92,17 @@ public struct MirageAppAtlasLayout: Codable, Sendable, Equatable {
         self.regions = regions
     }
 
+    /// Atlas canvas size in physical media-stream pixels.
     public var canvasSize: CGSize {
         CGSize(width: width, height: height)
     }
 
+    /// Whether the atlas currently has no logical window regions.
     public var isEmpty: Bool {
         regions.isEmpty
     }
 
+    /// Returns the atlas region for a logical host window, if present.
     public func region(for windowID: WindowID) -> MirageAppAtlasRegion? {
         regions.first { $0.windowID == windowID }
     }

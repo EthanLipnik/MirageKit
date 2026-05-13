@@ -103,6 +103,5 @@ struct HostCadencePressureDiagnosticTests {
 
         #expect(diagnostic?.kind == .captureAdmissionPressure)
     }
-
 }
 #endif

@@ -7,18 +7,12 @@
 //  Client host-application control requests.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor
 public extension MirageClientService {
     /// Requests that the connected host relaunch the Mirage Host app.
     func requestHostApplicationRestart() async throws {
-        guard case .connected = connectionState else {
-            throw MirageError.protocolError("Not connected")
-        }
-
-        let request = HostApplicationRestartRequestMessage()
-        try await sendControlMessage(.hostApplicationRestartRequest, content: request)
+        try await sendControlMessage(ControlMessage(type: .hostApplicationRestartRequest))
     }
 }

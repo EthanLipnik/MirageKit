@@ -8,12 +8,13 @@
 //
 
 import Foundation
-#if os(iOS)
-import UIKit
-#endif
+import MirageKit
 
 /// Determines how screen touches are translated into host input.
 public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable {
+    /// UserDefaults key for the selected direct-touch mode.
+    public static let defaultsKey = "directTouchInputMode"
+
     /// Direct touches scroll natively; taps click; stationary long press right-clicks;
     /// long-press drag and two-finger drag perform left drag.
     case normal
@@ -21,6 +22,7 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
     /// Simulated trackpad-style cursor movement.
     case dragCursor
 
+    /// User-visible mode name for settings and menus.
     public var displayName: String {
         switch self {
         case .normal: "Direct"
@@ -29,18 +31,17 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
     }
 
     /// Default touch translation mode for the current client device.
-    public static var defaultForCurrentDevice: MirageDirectTouchInputMode {
+    public static let defaultForCurrentDevice: MirageDirectTouchInputMode = {
         #if os(iOS)
-        UIDevice.current.userInterfaceIdiom == .phone ? .dragCursor : .normal
+        MirageSupportInfo.hardwareModel.hasPrefix("iPhone") ? .dragCursor : .normal
         #else
         .normal
         #endif
-    }
+    }()
 
-    /// Resolves persisted mode values.
+    /// Resolves persisted mode values, falling back when storage contains an unknown raw value.
     public static func fromPersistedRawValue(
         _ rawValue: String,
-        enableVirtualTrackpad: Bool,
         defaultMode: MirageDirectTouchInputMode = .defaultForCurrentDevice
     ) -> MirageDirectTouchInputMode {
         if let mode = MirageDirectTouchInputMode(rawValue: rawValue) {

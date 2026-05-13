@@ -24,11 +24,6 @@ actor PowerAssertionManager {
     /// The active power assertion ID (0 = no assertion)
     private var assertionID: IOPMAssertionID = 0
 
-    /// Whether an assertion is currently active
-    private var isAssertionActive: Bool {
-        assertionID != 0
-    }
-
     /// Reference count for nested enable/disable calls
     private var referenceCount: Int = 0
 
@@ -42,7 +37,11 @@ actor PowerAssertionManager {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
         process.arguments = ["-u", "-t", "3"]
-        try? process.run()
+        do {
+            try process.run()
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to wake display with caffeinate: ")
+        }
     }
 
     // MARK: - Public API
@@ -90,7 +89,7 @@ actor PowerAssertionManager {
     // MARK: - Private Implementation
 
     private func createAssertion() {
-        guard !isAssertionActive else {
+        guard assertionID == 0 else {
             MirageLogger.log(.host, "PowerAssertion: already active")
             return
         }
@@ -115,7 +114,7 @@ actor PowerAssertionManager {
     }
 
     private func releaseAssertion() {
-        guard isAssertionActive else {
+        guard assertionID != 0 else {
             MirageLogger.log(.host, "PowerAssertion: no active assertion to release")
             return
         }

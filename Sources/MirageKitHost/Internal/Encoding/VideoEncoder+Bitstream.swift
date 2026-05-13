@@ -15,18 +15,30 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+/// Validation result for an HEVC AVCC payload that stores NAL units with length prefixes.
 enum HEVCLengthPrefixedValidationResult: Equatable, Sendable {
+    /// Payload contains one or more complete NAL units and no trailing bytes.
     case valid
+
+    /// Payload is empty.
     case emptyPayload
+
+    /// A NAL unit declared a zero-byte body at the given byte offset.
     case zeroLengthNAL(offset: Int)
+
+    /// A NAL unit declared more bytes than remain in the payload.
     case truncatedNAL(offset: Int, declaredLength: Int, availableBytes: Int)
+
+    /// Extra bytes remained after walking the declared NAL units.
     case trailingBytes(offset: Int)
 
+    /// Whether the payload can be sent to the decoder.
     var isValid: Bool {
         if case .valid = self { return true }
         return false
     }
 
+    /// Short diagnostic text for frame-drop logging.
     var logSummary: String {
         switch self {
         case .valid:

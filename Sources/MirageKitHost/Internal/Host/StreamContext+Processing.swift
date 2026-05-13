@@ -14,57 +14,6 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
-    struct TransportSendErrorTracker: Sendable {
-        var timestamps: [CFAbsoluteTime] = []
-        var lastRecoveryTime: CFAbsoluteTime = 0
-        var threshold: Int = 6
-        var window: CFAbsoluteTime = 1.0
-        var cooldown: CFAbsoluteTime = 2.0
-
-        mutating func record(now: CFAbsoluteTime) -> Bool {
-            timestamps.append(now)
-            timestamps.removeAll { now - $0 > window }
-            guard timestamps.count >= max(1, threshold) else { return false }
-            if lastRecoveryTime > 0, now - lastRecoveryTime < cooldown {
-                return false
-            }
-            lastRecoveryTime = now
-            timestamps.removeAll(keepingCapacity: true)
-            return true
-        }
-    }
-
-    func handleTransportSendError(_ error: Error) async -> Bool {
-        var tracker = TransportSendErrorTracker(
-            timestamps: transportSendErrorTimestamps,
-            lastRecoveryTime: lastTransportSendErrorRecoveryTime,
-            threshold: transportSendErrorThreshold,
-            window: transportSendErrorWindow,
-            cooldown: transportSendErrorRecoveryCooldown
-        )
-        let now = CFAbsoluteTimeGetCurrent()
-        let shouldRecover = tracker.record(now: now)
-        transportSendErrorTimestamps = tracker.timestamps
-        lastTransportSendErrorRecoveryTime = tracker.lastRecoveryTime
-        guard shouldRecover else { return false }
-
-        transportSendErrorBursts &+= 1
-        noteLossEvent(reason: "transport send error burst", enablePFrameFEC: true)
-        await packetSender?.resetQueue(reason: "transport send error burst")
-        clearBackpressureState(log: false)
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
-        queueKeyframe(
-            reason: "Transport send error recovery keyframe",
-            checkInFlight: false,
-            urgent: true
-        )
-        MirageLogger.stream(
-            "Transport send-error burst recovery for stream \(streamID): error=\(error), bursts=\(transportSendErrorBursts)"
-        )
-        return true
-    }
-
     func applySenderFrameBudgetRecoveryIfNeeded(
         packetTelemetry: StreamPacketSender.TelemetrySnapshot,
         frameBudgetMs: Double
@@ -92,14 +41,16 @@ extension StreamContext {
 
         guard senderFrameBudgetDelayOverrunCount >= senderFrameBudgetDelayOverrunThreshold else { return }
         senderFrameBudgetDelayOverrunCount = 0
-        let reason = "non-keyframe sender delay exceeded frame budget"
-        if latencyMode == .smoothest {
-            await applySmoothestSenderPressureRelief(reason: reason)
+        if usesSoftSenderDelaySmoothing {
+            enterSoftFreshnessDrainIfNeeded(
+                frameBudgetMs: frameBudgetMs,
+                reason: "non-keyframe sender delay exceeded frame budget"
+            )
             return
         }
         _ = await enterFreshnessBurstIfNeeded(
             queueBytes: queueBytes,
-            reason: reason
+            reason: "non-keyframe sender delay exceeded frame budget"
         )
     }
 
@@ -120,23 +71,14 @@ extension StreamContext {
 
     func handleCapturedFrameWhileStartupGated(_ frame: CapturedFrame) {
         recordCaptureIngress(frame)
-        if encodingSuspendedForResize {
-            cachedDesktopResizeFrame = frame
-            return
-        }
         guard startupFrameCachingEnabled else { return }
         cachedStartupFrame = frame
     }
 
     func recordCaptureIngress(_ frame: CapturedFrame) {
         captureIngressIntervalCount += 1
-        let ingressDelayMs = max(0, (CFAbsoluteTimeGetCurrent() - frame.captureTime) * 1000)
-        captureIngressDelayTotalMs += ingressDelayMs
-        captureIngressDelayMaxMs = max(captureIngressDelayMaxMs, ingressDelayMs)
-        captureIngressDelayCount &+= 1
         lastCapturedFrameTime = CFAbsoluteTimeGetCurrent()
         lastCapturedFrame = frame
-        lastCapturedDuration = frame.duration
         if frame.info.isIdleFrame { idleSkippedCount += 1 }
         if startupBaseTime > 0, !startupFirstCaptureLogged {
             startupFirstCaptureLogged = true
@@ -145,13 +87,12 @@ extension StreamContext {
     }
 
     func scheduleProcessingIfNeeded() {
-        guard frameInbox.hasPending() else { return }
+        guard frameInbox.hasPending else { return }
         if frameInbox.scheduleIfNeeded() {
             Task(priority: .userInitiated) { await processPendingFrames() }
         }
     }
 
-    @discardableResult
     func resetStalledInFlightIfNeeded(label: String) -> Bool {
         guard inFlightCount > 0, lastEncodeActivityTime > 0 else { return false }
         let now = CFAbsoluteTimeGetCurrent()
@@ -165,58 +106,19 @@ extension StreamContext {
         return true
     }
 
-    func resetPipelineStateForReconfiguration(reason: String) {
-        if inFlightCount > 0 || isKeyframeEncoding || lastEncodeActivityTime > 0 { MirageLogger.stream("Resetting pipeline state for \(reason) (inFlight=\(inFlightCount))") }
-        inFlightCount = 0
-        lastEncodeActivityTime = 0
-        isKeyframeEncoding = false
-        needsEncoderReset = false
-        encoderResetRetryTask?.cancel()
-        encoderResetRetryTask = nil
-        pendingKeyframeReason = nil
-        pendingKeyframeDeadline = 0
-        pendingKeyframeRequiresFlush = false
-        pendingKeyframeUrgent = false
-        pendingKeyframeRequiresReset = false
-        suppressEncodedNonKeyframesUntilKeyframe = false
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
-        lastCaptureStarvationRestartTime = 0
-        backpressureActive = false
-        backpressureActiveSnapshot = false
-        backpressureActivatedAt = 0
-        lastCapturedFrame = nil
-        cachedStartupFrame = nil
-        cachedDesktopResizeFrame = nil
-        lastCapturedFrameTime = 0
-        lastCapturedDuration = .invalid
-        lastEncodedPresentationTime = .invalid
-        lastSyntheticFrameTime = 0
-        lastSyntheticLogTime = 0
-        freshnessBurstActive = false
-        if latencyBurstCaptureQueueDepthOverride != nil {
-            encoderConfig.captureQueueDepth = preLatencyBurstCaptureQueueDepthOverride
-        }
-        startupFrameCachingEnabled = false
-        latencyBurstActive = false
-        latencyBurstDrainsNewestFrames = false
-        latencyBurstCaptureQueueDepthOverride = nil
-        preLatencyBurstCaptureQueueDepthOverride = nil
-        captureCadenceRecoveryPolicy.reset()
-        maxInFlightFrames = min(minInFlightFrames, maxInFlightFramesCap)
-        qualityCeiling = resolvedQualityCeiling()
-        if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
-        frameInbox.clear()
-    }
-
     func clearBackpressureState(queueBytes: Int? = nil, log: Bool = true) {
         let hadBackpressure = backpressureActive || backpressureActiveSnapshot || backpressureActivatedAt > 0
         backpressureActive = false
         backpressureActiveSnapshot = false
         backpressureActivatedAt = 0
         guard hadBackpressure, log, let queueBytes else { return }
-        let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
+        let queuedKB = Self.roundedKilobytes(queueBytes)
         MirageLogger.stream("Backpressure cleared (queue \(queuedKB)KB)")
+    }
+
+    /// Converts byte counts into rounded KiB values for compact diagnostics.
+    nonisolated static func roundedKilobytes(_ bytes: Int) -> Int {
+        Int((Double(max(0, bytes)) / 1024.0).rounded())
     }
 
     private func scheduleEncoderResetRetry(after delaySeconds: Double, reason: String) {
@@ -234,7 +136,7 @@ extension StreamContext {
             } catch {
                 return
             }
-            await self.retryEncoderResetIfStillNeeded(reason: reason)
+            await retryEncoderResetIfStillNeeded(reason: reason)
         }
     }
 
@@ -252,7 +154,7 @@ extension StreamContext {
             schedulePipelineStatsLog()
         }
         if isResizing || !shouldEncodeFrames {
-            frameInbox.clear()
+            frameInbox.discardAll()
             return
         }
 
@@ -270,7 +172,7 @@ extension StreamContext {
         // Capture admission drops can keep this loop alive without enqueued frames.
         // Re-check sender queue state so backpressure can clear even when we are not
         // currently processing a frame.
-        let queueBytesSnapshot = packetSender?.queuedBytesSnapshot() ?? 0
+        let queueBytesSnapshot = packetSender?.queuedByteCount ?? 0
         if freshnessBurstActive {
             _ = await exitFreshnessBurstIfNeeded(
                 queueBytes: queueBytesSnapshot,
@@ -279,8 +181,10 @@ extension StreamContext {
         } else if backpressureActive {
             if queueBytesSnapshot <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytesSnapshot) }
         }
+        expireSoftFreshnessDrainIfNeeded()
+
         while inFlightCount < maxInFlightFrames {
-            let queueBytesBeforeDrain = packetSender?.queuedBytesSnapshot() ?? 0
+            let queueBytesBeforeDrain = packetSender?.queuedByteCount ?? 0
             let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
                 .newest
             } else if queueBytesBeforeDrain > queuePressureBytes {
@@ -323,7 +227,7 @@ extension StreamContext {
                 if now - lastEncoderResetTime > encoderResetCooldown {
                     do {
                         MirageLogger.stream("Resetting stuck encoder before next frame")
-                        advanceEpoch(reason: "encoder reset")
+                        markDiscontinuity(reason: "encoder reset", advanceEpoch: true)
                         await packetSender?.resetQueue(reason: "encoder reset")
                         try await encoder?.reset()
                         didResetEncoder = true
@@ -349,7 +253,7 @@ extension StreamContext {
                 }
             }
 
-            let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
+            let queueBytes = packetSender?.queuedByteCount ?? 0
             let backpressureTriggerBytes = maxQueuedBytes
 
             var forceKeyframe = didResetEncoder
@@ -400,7 +304,9 @@ extension StreamContext {
                 continue
             }
 
-            if shouldQueueScheduledKeyframe(queueBytes: queueBytes) { queueKeyframe(reason: "Scheduled keyframe", checkInFlight: true) }
+            if shouldQueueScheduledKeyframe(queueBytes: queueBytes) {
+                queueKeyframeIfPossible(reason: "Scheduled keyframe", checkInFlight: true)
+            }
 
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
@@ -417,10 +323,6 @@ extension StreamContext {
                 guard let encoder else { continue }
                 encodeAttemptIntervalCount += 1
                 let encodeStartTime = CFAbsoluteTimeGetCurrent()
-                let preEncodeWaitMs = max(0, (encodeStartTime - frame.captureTime) * 1000)
-                preEncodeWaitTotalMs += preEncodeWaitMs
-                preEncodeWaitMaxMs = max(preEncodeWaitMaxMs, preEncodeWaitMs)
-                preEncodeWaitCount &+= 1
                 if startupBaseTime > 0, !startupFirstEncodeLogged {
                     startupFirstEncodeLogged = true
                     logStartupEvent("first encode attempt")
@@ -436,7 +338,7 @@ extension StreamContext {
                         }
                         await encoder.flush()
                     }
-                    await encoder.prepareForKeyframe(quality: keyframeQuality(for: queueBytes))
+                    await encoder.prepareForKeyframe(quality: keyframeQuality)
                 }
                 // Pre-increment inFlightCount before the await suspension point.
                 // The VT completion callback can fire during the await and schedule
@@ -451,7 +353,6 @@ extension StreamContext {
                 case .accepted:
                     encodeAcceptedIntervalCount += 1
                     encodedFrameCount += 1
-                    lastEncodedPresentationTime = frame.presentationTime
                     if isIdleFrame { idleEncodedCount += 1 }
                 case let .skipped(reason):
                     inFlightCount -= 1
@@ -493,790 +394,7 @@ extension StreamContext {
             await encoder?.restoreBaseQualityIfNeeded()
         }
 
-        if frameInbox.hasPending(), inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
-    }
-
-    func applyTrafficLightCloneStampIfNeeded(frame: CapturedFrame) async {
-        guard isAppStream,
-              useVirtualDisplay,
-              captureMode == .display,
-              windowID != 0 else {
-            return
-        }
-
-        let windowFramePoints = resolvedWindowFramePointsForTrafficLightMask(frame: frame)
-        guard windowFramePoints.width > 0, windowFramePoints.height > 0 else { return }
-        let contentRect = resolvedContentRectForTrafficLightMask(frame: frame)
-        guard contentRect.width > 0, contentRect.height > 0 else { return }
-
-        let geometry = resolveTrafficLightMaskGeometry(windowFramePoints: windowFramePoints)
-        let compositor = trafficLightCloneStampCompositor
-        let pixelBuffer = frame.pixelBuffer
-        let result = await Task.detached(priority: .userInitiated) {
-            compositor.apply(
-                to: pixelBuffer,
-                contentRect: contentRect,
-                geometry: geometry
-            )
-        }.value
-        logTrafficLightCloneStampResultIfNeeded(result, geometry: geometry)
-    }
-
-    func resolvedWindowFramePointsForTrafficLightMask(frame: CapturedFrame) -> CGRect {
-        if !lastWindowFrame.isEmpty, lastWindowFrame.width > 0, lastWindowFrame.height > 0 {
-            return lastWindowFrame
-        }
-
-        let contentRect = frame.info.contentRect
-        guard contentRect.width > 0, contentRect.height > 0 else {
-            return .zero
-        }
-
-        return CGRect(
-            x: 0,
-            y: 0,
-            width: contentRect.width,
-            height: contentRect.height
-        )
-    }
-
-    func resolvedContentRectForTrafficLightMask(frame: CapturedFrame) -> CGRect {
-        let fullFrameRect = CGRect(
-            x: 0,
-            y: 0,
-            width: CVPixelBufferGetWidth(frame.pixelBuffer),
-            height: CVPixelBufferGetHeight(frame.pixelBuffer)
-        )
-
-        if useVirtualDisplay, isAppStream, captureMode == .display {
-            return Self.sharedDisplayAppTrafficLightMaskContentRect(
-                primaryRect: lastWindowFrame,
-                presentationRect: virtualDisplayCapturePresentationRect,
-                contentRect: resolvedOutgoingContentRect(for: frame),
-                fullFrameRect: fullFrameRect
-            )
-        }
-
-        let contentRect = frame.info.contentRect
-        if contentRect.width > 0, contentRect.height > 0 {
-            return contentRect
-        }
-
-        return fullFrameRect
-    }
-
-    nonisolated static func sharedDisplayAppTrafficLightMaskContentRect(
-        primaryRect: CGRect,
-        presentationRect: CGRect,
-        contentRect: CGRect,
-        fullFrameRect: CGRect
-    ) -> CGRect {
-        let resolvedFullFrameRect = fullFrameRect.standardized
-        let resolvedContentRect = contentRect
-            .intersection(resolvedFullFrameRect)
-            .standardized
-        guard resolvedContentRect.width > 0,
-              resolvedContentRect.height > 0 else {
-            return resolvedFullFrameRect
-        }
-
-        let resolvedPresentationRect = presentationRect.standardized
-        guard resolvedPresentationRect.width > 0,
-              resolvedPresentationRect.height > 0 else {
-            return resolvedContentRect
-        }
-
-        let resolvedPrimaryRect = primaryRect
-            .standardized
-            .intersection(resolvedPresentationRect)
-            .standardized
-        guard resolvedPrimaryRect.width > 0,
-              resolvedPrimaryRect.height > 0 else {
-            return resolvedContentRect
-        }
-
-        let scaleX = resolvedContentRect.width / resolvedPresentationRect.width
-        let scaleY = resolvedContentRect.height / resolvedPresentationRect.height
-        let mappedRect = CGRect(
-            x: resolvedContentRect.minX + (resolvedPrimaryRect.minX - resolvedPresentationRect.minX) * scaleX,
-            y: resolvedContentRect.minY + (resolvedPrimaryRect.minY - resolvedPresentationRect.minY) * scaleY,
-            width: resolvedPrimaryRect.width * scaleX,
-            height: resolvedPrimaryRect.height * scaleY
-        )
-        let sanitizedRect = mappedRect
-            .intersection(resolvedContentRect)
-            .standardized
-        guard sanitizedRect.width > 0,
-              sanitizedRect.height > 0 else {
-            return resolvedContentRect
-        }
-        return sanitizedRect
-    }
-
-    func resolvedOutgoingContentRect(for frame: CapturedFrame) -> CGRect {
-        let fullFrameRect = CGRect(
-            x: 0,
-            y: 0,
-            width: CVPixelBufferGetWidth(frame.pixelBuffer),
-            height: CVPixelBufferGetHeight(frame.pixelBuffer)
-        )
-        guard fullFrameRect.width > 0, fullFrameRect.height > 0 else { return .zero }
-
-        if useVirtualDisplay, isAppStream {
-            if captureMode == .window {
-                return fullFrameRect
-            }
-            let fixedCanvasContentRect = currentContentRect.intersection(fullFrameRect)
-            if captureMode == .display,
-               fixedCanvasContentRect.width > 0,
-               fixedCanvasContentRect.height > 0 {
-                return fixedCanvasContentRect
-            }
-        }
-
-        let candidate = frame.info.contentRect
-        guard candidate.width > 0, candidate.height > 0 else { return fullFrameRect }
-        let sanitized = candidate.intersection(fullFrameRect)
-        guard sanitized.width > 0, sanitized.height > 0 else { return fullFrameRect }
-        return sanitized
-    }
-
-    func resolveTrafficLightMaskGeometry(windowFramePoints: CGRect) -> HostTrafficLightMaskGeometryResolver.ResolvedGeometry {
-        let now = CFAbsoluteTimeGetCurrent()
-        if let cache = trafficLightMaskGeometryCache,
-           HostTrafficLightMaskGeometryResolver.shouldUseCached(
-               cache,
-               now: now,
-               windowFramePoints: windowFramePoints,
-               ttl: trafficLightMaskGeometryCacheTTL,
-               frameTolerance: trafficLightMaskGeometryFrameTolerance
-           ) {
-            return cache.geometry
-        }
-
-        let geometry = HostTrafficLightMaskGeometryResolver.resolve(
-            windowID: windowID,
-            windowFramePoints: windowFramePoints,
-            appProcessID: applicationProcessID > 0 ? applicationProcessID : nil
-        )
-        trafficLightMaskGeometryCache = HostTrafficLightMaskGeometryResolver.CacheEntry(
-            geometry: geometry,
-            sampledAt: now,
-            sampledWindowFrame: windowFramePoints
-        )
-        return geometry
-    }
-
-    func logTrafficLightCloneStampResultIfNeeded(
-        _ result: HostTrafficLightCloneStampCompositor.ApplyResult,
-        geometry: HostTrafficLightMaskGeometryResolver.ResolvedGeometry
-    ) {
-        guard case let .skipped(reason) = result else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        if now - lastTrafficLightMaskLogTime < trafficLightMaskLogInterval {
-            return
-        }
-        lastTrafficLightMaskLogTime = now
-        MirageLogger.debug(
-            .stream,
-            "Traffic-light clone-stamp skipped for stream \(streamID) window \(windowID): reason=\(reason.rawValue), source=\(geometry.source.rawValue)"
-        )
-    }
-
-    func logStreamStatsIfNeeded() async {
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - lastStreamStatsLogTime
-        guard lastStreamStatsLogTime == 0 || elapsed > 2.0 else { return }
-        let inFlight = inFlightCount
-        if MirageSteadyStateDiagnostics.isEnabled, MirageLogger.isEnabled(.metrics) {
-            MirageLogger.metrics(
-                "Encode stats: encoded=\(encodedFrameCount), idleEncoded=\(idleEncodedCount), synthetic=\(syntheticFrameCount), idleSkipped=\(idleSkippedCount), inFlight=\(inFlight)"
-            )
-        }
-        if let metricsUpdateHandler, lastStreamStatsLogTime > 0 {
-            let encodedFPS = Double(encodedFrameCount) / elapsed
-            let idleEncodedFPS = Double(idleEncodedCount) / elapsed
-            let averageEncodeMs = await encoder?.getAverageEncodeTimeMs()
-            let resolvedAverageEncodeMs: Double? = if let averageEncodeMs, averageEncodeMs > 0 {
-                averageEncodeMs
-            } else {
-                nil
-            }
-            let captureValidation = captureValidationSnapshot()
-            let encoderValidation = await encoder?.runtimeValidationSnapshot()
-            let captureTelemetry = await captureEngine?.consumeCaptureTelemetrySnapshot()
-            let capturePolicy = await captureEngine?.capturePolicySnapshot()
-            let packetTelemetry = await packetSender?.consumeTelemetrySnapshot()
-            let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
-                capture: captureValidation,
-                encoder: encoderValidation
-            )
-            await applyUltraValidationDowngradeIfNeeded(encoderValidation)
-            let currentBitrate = encoderConfig.bitrate
-            let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-            if let packetTelemetry {
-                await applySenderFrameBudgetRecoveryIfNeeded(
-                    packetTelemetry: packetTelemetry,
-                    frameBudgetMs: frameBudgetMs
-                )
-            }
-            let encodedWidth = Int(currentEncodedSize.width)
-            let encodedHeight = Int(currentEncodedSize.height)
-            let captureIngressAverageMs: Double? = captureIngressDelayCount > 0
-                ? captureIngressDelayTotalMs / Double(captureIngressDelayCount)
-                : nil
-            let preEncodeWaitAverageMs: Double? = preEncodeWaitCount > 0
-                ? preEncodeWaitTotalMs / Double(preEncodeWaitCount)
-                : nil
-            let captureCallbackAverageMs: Double? = if let captureTelemetry,
-                captureTelemetry.callbackSampleCount > 0 {
-                captureTelemetry.callbackDurationTotalMs / Double(captureTelemetry.callbackSampleCount)
-            } else {
-                nil
-            }
-            let captureCallbackMaxMs: Double? = if let captureTelemetry,
-                captureTelemetry.callbackSampleCount > 0 {
-                captureTelemetry.callbackDurationMaxMs
-            } else {
-                nil
-            }
-            let captureCadenceMetrics = streamCaptureCadenceMetrics(
-                telemetry: captureTelemetry,
-                policy: capturePolicy
-            )
-            await applyCaptureCadenceRecoveryIfNeeded(
-                captureCadence: captureCadenceMetrics,
-                packetTelemetry: packetTelemetry,
-                averageEncodeMs: resolvedAverageEncodeMs,
-                frameBudgetMs: frameBudgetMs,
-                now: now
-            )
-            let message = StreamMetricsMessage(
-                streamID: streamID,
-                encodedFPS: encodedFPS,
-                idleEncodedFPS: idleEncodedFPS,
-                droppedFrames: droppedFrameCount,
-                activeQuality: activeQuality,
-                targetFrameRate: currentFrameRate,
-                enteredBitrate: enteredTargetBitrate,
-                currentBitrate: currentBitrate,
-                requestedTargetBitrate: requestedTargetBitrate,
-                bitrateAdaptationCeiling: bitrateAdaptationCeiling,
-                startupBitrate: startupBitrate,
-                captureAdmissionDrops: captureDroppedIntervalCount,
-                frameBudgetMs: frameBudgetMs,
-                averageEncodeMs: resolvedAverageEncodeMs,
-                captureIngressFPS: lastCaptureIngressFPS,
-                captureFPS: lastCaptureFPS,
-                encodeAttemptFPS: lastEncodeAttemptFPS,
-                captureIngressAverageMs: captureIngressAverageMs,
-                captureIngressMaxMs: captureIngressDelayCount > 0 ? captureIngressDelayMaxMs : nil,
-                preEncodeWaitAverageMs: preEncodeWaitAverageMs,
-                preEncodeWaitMaxMs: preEncodeWaitCount > 0 ? preEncodeWaitMaxMs : nil,
-                captureCallbackAverageMs: captureCallbackAverageMs,
-                captureCallbackMaxMs: captureCallbackMaxMs,
-                captureCadence: captureCadenceMetrics,
-                sendQueueBytes: packetTelemetry?.queuedBytes,
-                sendStartDelayAverageMs: packetTelemetry?.sendStartDelayAverageMs,
-                sendStartDelayMaxMs: packetTelemetry?.sendStartDelayMaxMs,
-                sendCompletionAverageMs: packetTelemetry?.sendCompletionAverageMs,
-                sendCompletionMaxMs: packetTelemetry?.sendCompletionMaxMs,
-                nonKeyframeSendStartDelayAverageMs: packetTelemetry?.nonKeyframeSendStartDelayAverageMs,
-                nonKeyframeSendStartDelayMaxMs: packetTelemetry?.nonKeyframeSendStartDelayMaxMs,
-                nonKeyframeSendCompletionAverageMs: packetTelemetry?.nonKeyframeSendCompletionAverageMs,
-                nonKeyframeSendCompletionMaxMs: packetTelemetry?.nonKeyframeSendCompletionMaxMs,
-                packetPacerAverageSleepMs: packetTelemetry?.packetPacerSleepAverageMs,
-                packetPacerTotalSleepMs: packetTelemetry?.packetPacerSleepTotalMs,
-                packetPacerMaxSleepMs: packetTelemetry?.packetPacerSleepMaxMs,
-                packetPacerFrameMaxSleepMs: packetTelemetry?.packetPacerFrameMaxSleepMs,
-                stalePacketDrops: packetTelemetry?.stalePacketDrops,
-                senderLocalDeadlineDrops: packetTelemetry?.senderLocalDeadlineDrops,
-                generationAbortDrops: packetTelemetry?.generationAbortDrops,
-                nonKeyframeHoldDrops: packetTelemetry?.nonKeyframeHoldDrops,
-                usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
-                encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
-                encodedWidth: encodedWidth > 0 ? encodedWidth : nil,
-                encodedHeight: encodedHeight > 0 ? encodedHeight : nil,
-                capturePixelFormat: captureValidation?.pixelFormat,
-                captureColorPrimaries: captureValidation?.colorPrimaries,
-                encoderPixelFormat: encoderValidation?.pixelFormat.displayName,
-                encoderChromaSampling: encoderValidation?.encodedChromaSampling?.rawValue,
-                encoderProfile: encoderValidation?.profileName,
-                encoderColorPrimaries: encoderValidation?.colorPrimaries,
-                encoderTransferFunction: encoderValidation?.transferFunction,
-                encoderYCbCrMatrix: encoderValidation?.yCbCrMatrix,
-                displayP3CoverageStatus: displayP3CoverageStatus,
-                tenBitDisplayP3Validated: tenBitDisplayP3Validation(
-                    capture: captureValidation,
-                    encoder: encoderValidation,
-                    coverageStatus: displayP3CoverageStatus
-                ),
-                ultra444Validated: encoderValidation?.ultra444Validated
-            )
-            metricsUpdateHandler(message)
-        }
-        encodedFrameCount = 0
-        idleEncodedCount = 0
-        syntheticFrameCount = 0
-        idleSkippedCount = 0
-        lastStreamStatsLogTime = now
-    }
-
-    func resetStreamingStatsBaseline(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
-        encodedFrameCount = 0
-        idleEncodedCount = 0
-        syntheticFrameCount = 0
-        idleSkippedCount = 0
-        lastStreamStatsLogTime = now
-
-        captureIngressIntervalCount = 0
-        captureIntervalCount = 0
-        captureDroppedIntervalCount = 0
-        encodeAttemptIntervalCount = 0
-        encodeAcceptedIntervalCount = 0
-        encodeRejectedIntervalCount = 0
-        encodeErrorIntervalCount = 0
-        backpressureDropIntervalCount = 0
-        encodeSkipQueueFullIntervalCount = 0
-        encodeSkipDimensionIntervalCount = 0
-        encodeSkipInactiveIntervalCount = 0
-        encodeSkipNoSessionIntervalCount = 0
-        syntheticIntervalCount = 0
-        lastPipelineStatsLogTime = now
-    }
-
-    func seedStreamingStatsForTesting(
-        encodedFrames: UInt64,
-        captureIngressFrames: UInt64,
-        lastStreamStatsLogTime: CFAbsoluteTime,
-        lastPipelineStatsLogTime: CFAbsoluteTime,
-        shouldEncodeFrames: Bool = true
-    ) {
-        encodedFrameCount = encodedFrames
-        captureIngressIntervalCount = captureIngressFrames
-        self.lastStreamStatsLogTime = lastStreamStatsLogTime
-        self.lastPipelineStatsLogTime = lastPipelineStatsLogTime
-        self.shouldEncodeFrames = shouldEncodeFrames
-    }
-
-    func setShouldEncodeFramesForTesting(_ shouldEncodeFrames: Bool) {
-        self.shouldEncodeFrames = shouldEncodeFrames
-    }
-
-    func streamingStatsBaselineForTesting() -> (
-        encodedFrames: UInt64,
-        captureIngressFrames: UInt64,
-        lastStreamStatsLogTime: CFAbsoluteTime,
-        lastPipelineStatsLogTime: CFAbsoluteTime
-    ) {
-        (
-            encodedFrameCount,
-            captureIngressIntervalCount,
-            lastStreamStatsLogTime,
-            lastPipelineStatsLogTime
-        )
-    }
-
-    private struct CaptureValidationSnapshot: Sendable {
-        let pixelFormat: String
-        let colorPrimaries: String?
-        let transferFunction: String?
-        let yCbCrMatrix: String?
-        let isTenBitP010: Bool
-        let isDisplayP3: Bool?
-    }
-
-    private func captureValidationSnapshot() -> CaptureValidationSnapshot? {
-        guard let pixelBuffer = lastCapturedFrame?.pixelBuffer else { return nil }
-        let pixelFormatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        let pixelFormat = VideoEncoder.fourCCString(pixelFormatType)
-        let isTenBitP010 = pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange ||
-            pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-        let colorPrimaries = bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey)
-        let transferFunction = bufferAttachmentString(pixelBuffer, key: kCVImageBufferTransferFunctionKey)
-        let yCbCrMatrix = bufferAttachmentString(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey)
-        let isDisplayP3: Bool? = {
-            guard let colorPrimaries,
-                  let transferFunction,
-                  let yCbCrMatrix else { return nil }
-            return colorPrimaries == (kCVImageBufferColorPrimaries_P3_D65 as String) &&
-                transferFunction == (kCVImageBufferTransferFunction_sRGB as String) &&
-                yCbCrMatrix == (kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String)
-        }()
-        return CaptureValidationSnapshot(
-            pixelFormat: pixelFormat,
-            colorPrimaries: colorPrimaries,
-            transferFunction: transferFunction,
-            yCbCrMatrix: yCbCrMatrix,
-            isTenBitP010: isTenBitP010,
-            isDisplayP3: isDisplayP3
-        )
-    }
-
-    private func applyUltraValidationDowngradeIfNeeded(
-        _ encoderValidation: VideoEncoder.RuntimeValidationSnapshot?
-    )
-    async {
-        guard encoderConfig.colorDepth == .ultra else {
-            ultraValidationFailureHandled = false
-            ultraValidationSuccessLogged = false
-            return
-        }
-        guard let encoderValidation else { return }
-
-        if encoderValidation.ultra444Validated {
-            if !ultraValidationSuccessLogged {
-                let chromaText = encoderValidation.encodedChromaSampling?.rawValue ?? "unknown"
-                MirageLogger.stream(
-                    "Ultra color depth validation passed for stream \(streamID): " +
-                        "pixelFormat=\(encoderValidation.pixelFormat.displayName), chroma=\(chromaText), " +
-                        "profile=\(encoderValidation.profileName ?? "automatic")"
-                )
-                ultraValidationSuccessLogged = true
-            }
-            ultraValidationFailureHandled = false
-            return
-        }
-
-        guard encoderValidation.encodedChromaSampling != nil else { return }
-        guard !ultraValidationFailureHandled else { return }
-        ultraValidationFailureHandled = true
-
-        let chromaText = encoderValidation.encodedChromaSampling?.rawValue ?? "unknown"
-        MirageLogger.error(
-            .stream,
-            "Ultra color depth validation failed for stream \(streamID): " +
-                "pixelFormat=\(encoderValidation.pixelFormat.displayName), chroma=\(chromaText), " +
-                "profile=\(encoderValidation.profileName ?? "automatic"); downgrading to Pro"
-        )
-
-        do {
-            try await updateEncoderSettings(
-                colorDepth: .pro,
-                bitrate: encoderConfig.bitrate
-            )
-        } catch {
-            MirageLogger.error(
-                .stream,
-                error: error,
-                message: "Ultra color depth downgrade failed: "
-            )
-        }
-    }
-
-    private func tenBitDisplayP3Validation(
-        capture: CaptureValidationSnapshot?,
-        encoder: VideoEncoder.RuntimeValidationSnapshot?,
-        coverageStatus: MirageDisplayP3CoverageStatus?
-    ) -> Bool? {
-        Self.measuredTenBitDisplayP3Validation(
-            coverageStatus: coverageStatus,
-            captureIsTenBitP010: capture?.isTenBitP010,
-            captureIsDisplayP3: capture?.isDisplayP3,
-            encoderTenBitDisplayP3Validated: encoder?.tenBitDisplayP3Validated
-        )
-    }
-
-    static func measuredTenBitDisplayP3Validation(
-        coverageStatus: MirageDisplayP3CoverageStatus?,
-        captureIsTenBitP010: Bool?,
-        captureIsDisplayP3: Bool?,
-        encoderTenBitDisplayP3Validated: Bool?
-    ) -> Bool? {
-        guard let coverageStatus else { return nil }
-        let measuredCoveragePass = coverageStatus == .strictCanonical || coverageStatus == .wideGamutEquivalent
-        guard measuredCoveragePass else { return false }
-        guard let captureIsTenBitP010,
-              let captureIsDisplayP3,
-              let encoderTenBitDisplayP3Validated else { return nil }
-        return captureIsTenBitP010 && captureIsDisplayP3 && encoderTenBitDisplayP3Validated
-    }
-
-    private func resolvedDisplayP3CoverageStatus(
-        capture: CaptureValidationSnapshot?,
-        encoder: VideoEncoder.RuntimeValidationSnapshot?
-    ) -> MirageDisplayP3CoverageStatus? {
-        if let override = displayP3CoverageStatusOverride {
-            return override
-        }
-        if let virtualDisplayContext {
-            return virtualDisplayContext.displayP3CoverageStatus
-        }
-        if encoderConfig.colorSpace == .sRGB {
-            return .sRGBFallback
-        }
-        guard encoderConfig.colorSpace == .displayP3 else { return nil }
-        guard let capture else { return .unresolved }
-        guard let captureIsDisplayP3 = capture.isDisplayP3 else { return .unresolved }
-        if captureIsDisplayP3, encoder?.tenBitDisplayP3Validated == true {
-            return .strictCanonical
-        }
-        if captureIsDisplayP3 {
-            return .wideGamutEquivalent
-        }
-        return .sRGBFallback
-    }
-
-    private func bufferAttachmentString(_ buffer: CVBuffer, key: CFString) -> String? {
-        CVBufferCopyAttachment(buffer, key, nil) as? String
-    }
-
-    func logPipelineStatsIfNeeded() async {
-        let now = CFAbsoluteTimeGetCurrent()
-        guard lastPipelineStatsLogTime > 0 else {
-            lastPipelineStatsLogTime = now
-            return
-        }
-        let elapsed = now - lastPipelineStatsLogTime
-        guard elapsed >= pipelineStatsInterval else { return }
-
-        let metricsEnabled = MirageSteadyStateDiagnostics.isEnabled && MirageLogger.isEnabled(.metrics)
-        let captureIngressFPS = Double(captureIngressIntervalCount) / elapsed
-        let captureFPS = Double(captureIntervalCount) / elapsed
-        let encodeAttemptFPS = Double(encodeAttemptIntervalCount) / elapsed
-        let encodeFPS = Double(encodeAcceptedIntervalCount) / elapsed
-        lastCaptureIngressFPS = captureIngressFPS
-        lastCaptureFPS = captureFPS
-        lastEncodeAttemptFPS = encodeAttemptFPS
-        let encodeAvgMs = await encoder?.getAverageEncodeTimeMs() ?? 0
-        let pendingCount = frameInbox.pendingCount()
-        if metricsEnabled {
-            let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
-            let captureGapMs = lastCapturedFrameTime > 0
-                ? (now - lastCapturedFrameTime) * 1000
-                : 0
-            let syntheticFPS = Double(syntheticIntervalCount) / elapsed
-            let ingressText = captureIngressFPS.formatted(.number.precision(.fractionLength(1)))
-            let captureText = captureFPS.formatted(.number.precision(.fractionLength(1)))
-            let attemptText = encodeAttemptFPS.formatted(.number.precision(.fractionLength(1)))
-            let encodeText = encodeFPS.formatted(.number.precision(.fractionLength(1)))
-            let encodeAvgText = encodeAvgMs.formatted(.number.precision(.fractionLength(1)))
-            let queueKB = Int((Double(queueBytes) / 1024.0).rounded())
-            let captureGapText = captureGapMs.formatted(.number.precision(.fractionLength(1)))
-            let syntheticText = syntheticFPS.formatted(.number.precision(.fractionLength(1)))
-
-            let callbackFailures = encoder?.getAndResetCallbackFailureCount() ?? 0
-
-            MirageLogger.metrics(
-                "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
-                    "bp=\(backpressureDropIntervalCount) encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
-                    "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
-                    "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
-                    "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
-                    "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
-            )
-        }
-
-        await updateInFlightLimitIfNeeded(
-            averageEncodeMs: encodeAvgMs,
-            pendingCount: pendingCount,
-            at: now
-        )
-        captureIngressIntervalCount = 0
-        captureIntervalCount = 0
-        captureDroppedIntervalCount = 0
-        encodeAttemptIntervalCount = 0
-        encodeAcceptedIntervalCount = 0
-        encodeRejectedIntervalCount = 0
-        encodeErrorIntervalCount = 0
-        backpressureDropIntervalCount = 0
-        encodeSkipQueueFullIntervalCount = 0
-        encodeSkipDimensionIntervalCount = 0
-        encodeSkipInactiveIntervalCount = 0
-        encodeSkipNoSessionIntervalCount = 0
-        syntheticIntervalCount = 0
-        lastPipelineStatsLogTime = now
-    }
-
-    func streamCaptureCadenceMetrics(
-        telemetry: CaptureStreamOutput.TelemetrySnapshot?,
-        policy: WindowCaptureEngine.CapturePolicySnapshot?
-    ) -> StreamCaptureCadenceMetrics? {
-        guard let telemetry else { return nil }
-        let cadence = telemetry.cadenceMetrics
-        let virtualDisplay = virtualDisplayContext
-        let metrics = StreamCaptureCadenceMetrics(
-            wallClockGapWorstMs: cadence.wallClockGapWorstMs,
-            wallClockGapP95Ms: cadence.wallClockGapP95Ms,
-            wallClockGapP99Ms: cadence.wallClockGapP99Ms,
-            presentationGapWorstMs: cadence.presentationGapWorstMs,
-            presentationGapP95Ms: cadence.presentationGapP95Ms,
-            presentationGapP99Ms: cadence.presentationGapP99Ms,
-            displayTimeGapWorstMs: cadence.displayTimeGapWorstMs,
-            displayTimeGapP95Ms: cadence.displayTimeGapP95Ms,
-            displayTimeGapP99Ms: cadence.displayTimeGapP99Ms,
-            deliveredFrameGapWorstMs: cadence.deliveredFrameGapWorstMs,
-            deliveredFrameGapP95Ms: cadence.deliveredFrameGapP95Ms,
-            deliveredFrameGapP99Ms: cadence.deliveredFrameGapP99Ms,
-            callbackDurationP95Ms: cadence.callbackDurationP95Ms,
-            callbackDurationP99Ms: cadence.callbackDurationP99Ms,
-            longFrameGapCount: cadence.longFrameGapCount,
-            displayTimeDriftCount: cadence.displayTimeDriftCount,
-            completeFrameStatusCount: cadence.statusCounts.complete,
-            idleFrameStatusCount: cadence.statusCounts.idle,
-            blankFrameStatusCount: cadence.statusCounts.blank,
-            suspendedFrameStatusCount: cadence.statusCounts.suspended,
-            startedFrameStatusCount: cadence.statusCounts.started,
-            stoppedFrameStatusCount: cadence.statusCounts.stopped,
-            unknownFrameStatusCount: cadence.statusCounts.unknown,
-            cadenceDropCount: cadence.cadenceDropCount,
-            admissionDropCount: cadence.admissionDropCount,
-            sampleOverwriteCount: cadence.sampleOverwriteCount,
-            usesDisplayRefreshCadence: policy?.usesDisplayRefreshCadence,
-            usesNativeRefreshMinimumFrameInterval: policy?.usesNativeRefreshMinimumFrameInterval,
-            minimumFrameIntervalRate: policy?.minimumFrameIntervalRate,
-            displayRefreshRate: policy?.displayRefreshRate,
-            virtualDisplayID: virtualDisplay.map { UInt32($0.displayID) },
-            virtualDisplayRefreshRate: virtualDisplay?.refreshRate,
-            virtualDisplayScaleFactor: virtualDisplay.map { Double($0.scaleFactor) },
-            virtualDisplayGeneration: virtualDisplay?.generation,
-            virtualDisplayTimingSuspect: cadence.virtualDisplayTimingSuspect
-        )
-        lastCaptureCadenceMetrics = metrics
-        return metrics
-    }
-
-    func applyCaptureCadenceRecoveryIfNeeded(
-        captureCadence: StreamCaptureCadenceMetrics?,
-        packetTelemetry: StreamPacketSender.TelemetrySnapshot?,
-        averageEncodeMs: Double?,
-        frameBudgetMs: Double,
-        now: CFAbsoluteTime
-    ) async {
-        let sample = HostCaptureCadenceRecoveryPolicy.Sample(
-            now: now,
-            isDesktopDisplayStream: captureMode == .display && !isAppStream && virtualDisplayContext != nil,
-            startupSettled: startupBaseTime == 0 || (startupRegistrationLogged && now - startupBaseTime >= 5.0),
-            receiverHasPresentedFrame: receiverHasPresentedFrame,
-            isResizing: isResizing,
-            isEncodingSuspendedForResize: encodingSuspendedForResize,
-            targetFrameRate: currentFrameRate,
-            captureFPS: lastCaptureFPS,
-            captureIngressFPS: lastCaptureIngressFPS,
-            encodeAttemptFPS: lastEncodeAttemptFPS,
-            averageEncodeMs: averageEncodeMs,
-            frameBudgetMs: frameBudgetMs,
-            sendQueueBytes: packetTelemetry?.queuedBytes,
-            queuePressureBytes: queuePressureBytes,
-            sendStartDelayMaxMs: packetTelemetry?.sendStartDelayMaxMs,
-            sendCompletionMaxMs: packetTelemetry?.sendCompletionMaxMs,
-            packetPacerFrameMaxSleepMs: packetTelemetry?.packetPacerFrameMaxSleepMs,
-            captureCadence: captureCadence
-        )
-        let action = captureCadenceRecoveryPolicy.evaluate(sample)
-        guard action != .none else { return }
-        await performCaptureCadenceRecovery(action, captureCadence: captureCadence)
-    }
-
-    func performCaptureCadenceRecovery(
-        _ action: HostCaptureCadenceRecoveryPolicy.Action,
-        captureCadence: StreamCaptureCadenceMetrics?
-    ) async {
-        let p99Text = if let captureCadence {
-            captureCadence.deliveredFrameGapP99Ms.formatted(.number.precision(.fractionLength(1)))
-        } else {
-            "--"
-        }
-        let worstText = if let captureCadence {
-            captureCadence.deliveredFrameGapWorstMs.formatted(.number.precision(.fractionLength(1)))
-        } else {
-            "--"
-        }
-        func fpsText(_ value: Double?) -> String {
-            value.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "--"
-        }
-        func intText(_ value: Int?) -> String {
-            value.map(String.init) ?? "--"
-        }
-        let virtualRefreshText = if let captureCadence,
-                                    let virtualDisplayRefreshRate = captureCadence.virtualDisplayRefreshRate {
-            virtualDisplayRefreshRate.formatted(.number.precision(.fractionLength(1)))
-        } else {
-            "--"
-        }
-        let nativeRefreshText = if let captureCadence,
-                                   let usesNativeRefresh = captureCadence.usesNativeRefreshMinimumFrameInterval {
-            usesNativeRefresh ? "true" : "false"
-        } else {
-            "--"
-        }
-        let cadenceText = "target=\(currentFrameRate)fps " +
-            "capture=\(fpsText(lastCaptureFPS))fps " +
-            "ingress=\(fpsText(lastCaptureIngressFPS))fps " +
-            "encodeAttempt=\(fpsText(lastEncodeAttemptFPS))fps " +
-            "policyRate=\(intText(captureCadence?.minimumFrameIntervalRate))fps " +
-            "displayRate=\(intText(captureCadence?.displayRefreshRate))Hz " +
-            "virtualRate=\(virtualRefreshText)Hz " +
-            "nativeInterval=\(nativeRefreshText)"
-
-        switch action {
-        case .none:
-            return
-        case .restartVirtualDisplayCadenceDriver:
-            MirageLogger.capture(
-                "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
-            )
-            if let snapshot = await SharedVirtualDisplayManager.shared.restartCadenceDriver(for: .desktopStream) {
-                virtualDisplayContext = snapshot
-                updateWindowCaptureVirtualDisplayState(snapshot)
-            } else if let snapshot = virtualDisplayContext {
-                await MainActor.run {
-                    VirtualDisplayKeepaliveController.shared.restart(
-                        displayID: snapshot.displayID,
-                        spaceID: snapshot.spaceID,
-                        refreshRate: snapshot.refreshRate
-                    )
-                }
-            } else {
-                MirageLogger.capture(
-                    "event=capture_cadence_recovery action=restart_virtual_display_cadence_driver result=skipped_no_display"
-                )
-            }
-        case .restartCapture:
-            MirageLogger.capture(
-                "event=capture_cadence_recovery action=restart_capture stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
-            )
-            await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recovery")
-        case .reassertVirtualDisplayMode:
-            MirageLogger.capture(
-                "event=capture_cadence_recovery action=reassert_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
-            )
-            if let snapshot = await SharedVirtualDisplayManager.shared.reassertDisplayMode(for: .desktopStream) {
-                virtualDisplayContext = snapshot
-                updateWindowCaptureVirtualDisplayState(snapshot)
-            } else {
-                MirageLogger.capture("event=capture_cadence_recovery action=reassert_virtual_display result=failed")
-            }
-            await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence virtual-display reassert")
-        case .recreateVirtualDisplay:
-            MirageLogger.capture(
-                "event=capture_cadence_recovery action=recreate_virtual_display stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
-            )
-            do {
-                let result = try await SharedVirtualDisplayManager.shared.recreateDisplayForCadenceRecovery(for: .desktopStream)
-                guard result.generationChanged,
-                      let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() else {
-                    await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recreate no-generation-change")
-                    return
-                }
-                let captureDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(
-                    displayID: snapshot.displayID,
-                    maxAttempts: 6,
-                    expectedPixelResolution: snapshot.resolution
-                )
-                virtualDisplayContext = snapshot
-                updateWindowCaptureVirtualDisplayState(snapshot)
-                try await updateCaptureDisplay(captureDisplay, resolution: snapshot.resolution)
-                await scheduleCoalescedRecoveryKeyframe(
-                    reason: "Capture cadence virtual-display recreate",
-                    ignoreExistingInFlight: true
-                )
-            } catch {
-                MirageLogger.error(.capture, error: error, message: "Capture cadence virtual-display recreate failed: ")
-                await restartDisplayCaptureForCadenceRecovery(reason: "capture cadence recreate fallback")
-            }
-        }
+        if frameInbox.hasPending, inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
     }
 
     func recordEncoderSkip(_ reason: EncodeSkipReason) {
@@ -1290,171 +408,6 @@ extension StreamContext {
         case .noSession:
             encodeSkipNoSessionIntervalCount += 1
         }
-    }
-
-    func updateInFlightLimitIfNeeded(
-        averageEncodeMs: Double,
-        pendingCount: Int,
-        at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-    )
-    async {
-        guard maxInFlightFramesCap > 1 else { return }
-        if useLowLatencyPipeline {
-            let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit()
-            let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
-            if maxInFlightFrames != lowLatencyLimit {
-                maxInFlightFrames = lowLatencyLimit
-                await encoder?.updateInFlightLimit(lowLatencyLimit)
-                MirageLogger.metrics(
-                    "In-flight depth forced to \(lowLatencyLimit) (low latency pipeline)"
-                )
-            }
-            return
-        }
-
-        if lastInFlightAdjustmentTime > 0, now - lastInFlightAdjustmentTime < inFlightAdjustmentCooldown { return }
-
-        let cadenceTarget = MirageStreamCadenceTarget(
-            sourceFPS: currentFrameRate,
-            displayFPS: currentFrameRate,
-            latencyMode: latencyMode,
-            encodedPixelSize: currentEncodedSize
-        )
-        let frameBudgetMs = cadenceTarget.sourceFrameBudgetMs
-        var desired = maxInFlightFrames
-
-        let smoothnessFirstMode = latencyMode == .smoothest
-        let increaseThreshold = smoothnessFirstMode ? 1.02 : 1.10
-        let decreaseThreshold = smoothnessFirstMode ? 0.90 : 0.80
-        if smoothnessFirstMode, averageEncodeMs > frameBudgetMs * increaseThreshold {
-            desired = minInFlightFrames
-        } else if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
-            desired = min(maxInFlightFrames + 1, maxInFlightFramesCap)
-        } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
-            desired = max(maxInFlightFrames - 1, minInFlightFrames)
-        }
-
-        if desired < minInFlightFrames { desired = minInFlightFrames }
-
-        guard desired != maxInFlightFrames else { return }
-        maxInFlightFrames = desired
-        lastInFlightAdjustmentTime = now
-        await encoder?.updateInFlightLimit(desired)
-        let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
-        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
-    }
-
-    func adjustQualityForQueue(queueBytes: Int) async {
-        guard let encoder else { return }
-        guard runtimeQualityAdjustmentEnabled else { return }
-        qualityCeiling = resolvedQualityCeiling()
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-            await encoder.updateQuality(activeQuality)
-        }
-        let now = CFAbsoluteTimeGetCurrent()
-        if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
-
-        let averageEncodeMs = await encoder.getAverageEncodeTimeMs()
-        if averageEncodeMs <= 0 { return }
-
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
-        let sourceCadenceDeficient = virtualDisplaySourceCadenceIsDeficient(queueBytes: queueBytes)
-        let allowsRaise = now >= qualityRaiseSuppressionUntil
-        let allowEncodeDrivenQualityRelief = true
-        let baseDropThreshold = qualityDropThreshold
-        let baseDropStep = qualityDropStep
-
-        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
-            state: MirageRuntimeQualityAdjustmentState(
-                activeQuality: activeQuality,
-                qualityOverBudgetCount: qualityOverBudgetCount,
-                qualityUnderBudgetCount: qualityUnderBudgetCount
-            ),
-            qualityFloor: qualityFloor,
-            qualityCeiling: qualityCeiling,
-            encodeOverBudget: encodeOverBudget,
-            sourceCadenceDeficient: sourceCadenceDeficient,
-            allowsRaise: allowsRaise,
-            allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
-            qualityDropThreshold: baseDropThreshold,
-            qualityRaiseThreshold: qualityRaiseThreshold,
-            qualityDropStep: baseDropStep,
-            qualityRaiseStep: qualityRaiseStep
-        )
-
-        let previousQuality = activeQuality
-        activeQuality = decision.state.activeQuality
-        qualityOverBudgetCount = decision.state.qualityOverBudgetCount
-        qualityUnderBudgetCount = decision.state.qualityUnderBudgetCount
-
-        switch decision.action {
-        case .hold:
-            return
-
-        case .drop(let reason):
-            guard activeQuality < previousQuality else { return }
-            qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.metrics(
-                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, reason=\(reason))"
-            )
-
-        case .raise:
-            guard activeQuality > previousQuality else { return }
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.metrics(
-                "Quality up to \(qualityText) (encode \(avgText)ms)"
-            )
-        }
-    }
-
-    func virtualDisplaySourceCadenceIsDeficient(queueBytes: Int) -> Bool {
-        guard captureMode == .display,
-              !isAppStream,
-              virtualDisplayContext != nil,
-              currentFrameRate >= 90 else {
-            return false
-        }
-        guard queueBytes <= max(64 * 1024, queuePressureBytes / 2) else { return false }
-
-        let targetFPS = Double(max(1, currentFrameRate))
-        let cadenceFloor = targetFPS * 0.85
-        let lowCaptureCadence = [
-            lastCaptureIngressFPS,
-            lastCaptureFPS,
-            lastEncodeAttemptFPS,
-        ].contains { value in
-            guard let value, value > 0 else { return false }
-            return value < cadenceFloor
-        }
-        let cadence = lastCaptureCadenceMetrics
-        let frameBudgetMs = 1_000.0 / targetFPS
-        let p99Gap = max(
-            cadence?.wallClockGapP99Ms ?? 0,
-            cadence?.displayTimeGapP99Ms ?? 0,
-            cadence?.deliveredFrameGapP99Ms ?? 0
-        )
-        let worstGap = max(
-            cadence?.wallClockGapWorstMs ?? 0,
-            cadence?.displayTimeGapWorstMs ?? 0,
-            cadence?.deliveredFrameGapWorstMs ?? 0
-        )
-        let unevenSourceCadence =
-            p99Gap >= max(35.0, frameBudgetMs * 2.0) ||
-            worstGap >= max(70.0, frameBudgetMs * 4.0) ||
-            (cadence?.longFrameGapCount ?? 0) > 0 ||
-            cadence?.virtualDisplayTimingSuspect == true
-
-        return lowCaptureCadence || unevenSourceCadence
     }
 }
 #endif

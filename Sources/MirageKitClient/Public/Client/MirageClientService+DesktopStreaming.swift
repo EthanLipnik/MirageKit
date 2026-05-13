@@ -38,15 +38,15 @@ public extension MirageClientService {
             notifyHost: true
         )
 
-        let baseResolution = displayResolution ?? getMainDisplayResolution()
+        let baseResolution = displayResolution ?? mainDisplayResolution
         guard baseResolution.width > 0, baseResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable")
         }
-        let effectiveDisplayResolution = scaledDisplayResolution(baseResolution)
+        let effectiveDisplayResolution = MirageStreamGeometry.normalizedLogicalSize(baseResolution)
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Invalid display resolution")
         }
-        let targetFrameRate = getScreenMaxRefreshRate()
+        let targetFrameRate = screenMaxRefreshRate
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
 
@@ -77,7 +77,7 @@ public extension MirageClientService {
             audioConfiguration: resolvedAudioConfiguration,
             dataPort: nil,
             useHostResolution: useHostResolution ? true : nil,
-            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
+            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
@@ -86,7 +86,7 @@ public extension MirageClientService {
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,
-            requestedStreamScale: clampedStreamScale(),
+            requestedStreamScale: MirageStreamGeometry.clampStreamScale(resolutionScale),
             encoderMaxWidth: encoderRequest.encoderMaxWidth,
             encoderMaxHeight: encoderRequest.encoderMaxHeight,
             disableResolutionCap: encoderRequest.disableResolutionCap == true
@@ -139,9 +139,9 @@ public extension MirageClientService {
         desktopStreamRestartAttempts = 0
         lastDesktopStreamStartRequest = request
 
-        let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
-        let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
-        let ceilingText = request.bitrateAdaptationCeiling.map(Self.formatBitrateForLogging) ?? "none"
+        let enteredBitrateText = request.enteredBitrate.map(mirageFormattedMegabitRate) ?? "n/a"
+        let requestedBitrateText = request.bitrate.map(mirageFormattedMegabitRate) ?? "auto"
+        let ceilingText = request.bitrateAdaptationCeiling.map(mirageFormattedMegabitRate) ?? "none"
         MirageLogger.client(
             "Desktop bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText) " +
                 "scale=\(String(format: "%.3f", bitrateSemantics.geometryScaleFactor)) display=\(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height))"
@@ -167,10 +167,7 @@ public extension MirageClientService {
             )
     }
 
-    private static func formatBitrateForLogging(_ bitrate: Int) -> String {
-        (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))) + "Mbps"
-    }
-
+    /// Sends the client's preferred desktop cursor presentation mode for a stream.
     func sendDesktopCursorPresentationChange(
         streamID: StreamID,
         cursorPresentation: MirageDesktopCursorPresentation
@@ -244,125 +241,36 @@ public extension MirageClientService {
             "Requested stop desktop stream: stream=\(streamID), session=\(desktopSessionID.uuidString)"
         )
     }
+}
 
-    package func makeDesktopStreamRestartRequest(
-        from request: StartDesktopStreamMessage,
-        startupRequestID: UUID = UUID()
-    ) -> StartDesktopStreamMessage {
-        var restarted = StartDesktopStreamMessage(
-            startupRequestID: startupRequestID,
-            scaleFactor: request.scaleFactor,
-            displayWidth: request.displayWidth,
-            displayHeight: request.displayHeight,
-            targetFrameRate: request.targetFrameRate,
-            streamScale: request.streamScale,
-            audioConfiguration: request.audioConfiguration,
-            dataPort: request.dataPort,
-            useHostResolution: request.useHostResolution,
-            mediaMaxPacketSize: request.mediaMaxPacketSize
-        )
-        restarted.keyFrameInterval = request.keyFrameInterval
-        restarted.captureQueueDepth = request.captureQueueDepth
-        restarted.colorDepth = request.colorDepth
-        restarted.mode = request.mode
-        restarted.cursorPresentation = request.cursorPresentation
-        restarted.enteredBitrate = request.enteredBitrate
-        restarted.bitrate = request.bitrate
-        restarted.latencyMode = request.latencyMode
-        restarted.allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
-        restarted.lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost
-        restarted.disableResolutionCap = request.disableResolutionCap
-        restarted.bitrateAdaptationCeiling = request.bitrateAdaptationCeiling
-        restarted.encoderMaxWidth = request.encoderMaxWidth
-        restarted.encoderMaxHeight = request.encoderMaxHeight
-        restarted.upscalingMode = request.upscalingMode
-        restarted.codec = request.codec
-        return restarted
+extension MirageClientService {
+    func hasDesktopStreamRestartBudget(streamID: StreamID) -> Bool {
+        desktopStreamID == streamID &&
+            lastDesktopStreamStartRequest != nil &&
+            desktopStreamRestartAttempts < desktopStreamRestartLimit
     }
 
-    internal func restartDesktopStreamAfterTerminalStartupFailure(
+    func restartDesktopStreamAfterTerminalStartupFailure(
         _ failure: StreamController.TerminalStartupFailure,
         failedStreamID: StreamID
     ) async -> Bool {
-        await restartDesktopStreamAfterLiveFailure(
-            failedStreamID: failedStreamID,
-            reasonLabel: failure.reason.logLabel,
-            logContext: "terminal startup failure"
-        ) != nil
-    }
-
-    internal func restartDesktopStreamAfterTerminalLiveRecoveryFailure(
-        _ failure: StreamController.TerminalLiveRecoveryFailure,
-        failedStreamID: StreamID
-    ) async -> Bool {
-        await restartDesktopStreamAfterLiveFailure(
-            failedStreamID: failedStreamID,
-            reasonLabel: failure.reason.logLabel,
-            logContext: "terminal live recovery failure"
-        ) != nil
-    }
-
-    func restartDesktopStreamAfterForegroundRecoveryFailure(
-        streamID failedStreamID: StreamID,
-        reason: String
-    ) async -> Bool {
-        await requestDesktopStreamRestartAfterForegroundRecoveryFailure(
-            streamID: failedStreamID,
-            reason: reason
-        ) != nil
-    }
-
-    func requestDesktopStreamRestartAfterForegroundRecoveryFailure(
-        streamID failedStreamID: StreamID,
-        reason: String
-    ) async -> DesktopStreamRestartRequest? {
-        await restartDesktopStreamAfterLiveFailure(
-            failedStreamID: failedStreamID,
-            reasonLabel: reason,
-            logContext: "foreground recovery probe failure",
-            enforcesRestartLimit: false
-        )
-    }
-
-    private func restartDesktopStreamAfterLiveFailure(
-        failedStreamID: StreamID,
-        reasonLabel: String,
-        logContext: String,
-        enforcesRestartLimit: Bool = true
-    ) async -> DesktopStreamRestartRequest? {
         guard case .connected = connectionState,
               controlChannel != nil,
+              hasDesktopStreamRestartBudget(streamID: failedStreamID),
               let previousRequest = lastDesktopStreamStartRequest else {
-            return nil
-        }
-        let hasFailedStreamActive = desktopStreamID == failedStreamID
-        guard hasFailedStreamActive || (!enforcesRestartLimit && desktopStreamID == nil) else {
-            return nil
-        }
-        if hasFailedStreamActive,
-           sessionStore.sessionByStreamID(failedStreamID)?.hasPresentedFrame == true {
-            let denialCount = metricsStore.recordTopologyMutationDenied(streamID: failedStreamID)
-            MirageLogger.client(
-                "Suppressing automatic desktop topology restart after \(logContext): " +
-                    "stream \(failedStreamID) has already presented a frame; " +
-                    "reason=\(reasonLabel), denials=\(denialCount)"
-            )
-            return nil
-        }
-        guard !enforcesRestartLimit || desktopStreamRestartAttempts < desktopStreamRestartLimit else {
-            return nil
+            return false
         }
 
-        let failedDesktopSessionID = hasFailedStreamActive ? desktopSessionID : nil
-        var restartRequest = makeDesktopStreamRestartRequest(from: previousRequest)
+        let failedDesktopSessionID = desktopSessionID
+        var restartRequest = StartDesktopStreamMessage(copying: previousRequest, startupRequestID: UUID())
         if controlPathSnapshot?.kind == .vpn {
             restartRequest = remoteStartupRecoveryRestartRequest(from: restartRequest)
         }
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
-            "Restarting desktop stream in-session after \(logContext): " +
-                "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts), " +
-                "reason=\(reasonLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
+            "Restarting desktop stream in-session after terminal startup failure: " +
+                "failedStream=\(failedStreamID), attempt=\(desktopStreamRestartAttempts)/\(desktopStreamRestartLimit), " +
+                "reason=\(failure.reason.logLabel), startupRequest=\(restartRequest.startupRequestID.uuidString), " +
                 "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue)"
         )
 
@@ -371,7 +279,7 @@ public extension MirageClientService {
                 streamID: failedStreamID,
                 desktopSessionID: failedDesktopSessionID
             )
-            sendControlMessageBestEffort(.stopDesktopStream, content: stopRequest)
+            queueControlMessageBestEffort(.stopDesktopStream, content: stopRequest)
         }
 
         await forceStopDesktopStreamLocally(
@@ -380,7 +288,7 @@ public extension MirageClientService {
             notifyStopReason: nil
         )
 
-        guard case .connected = connectionState else { return nil }
+        guard case .connected = connectionState else { return false }
 
         lastDesktopStreamStartRequest = restartRequest
         pendingStreamSetupRequestID = restartRequest.startupRequestID
@@ -398,50 +306,29 @@ public extension MirageClientService {
             heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
             scheduleDesktopStreamStartTimeout()
             MirageLogger.client(
-                "Desktop restart: request sent after \(logContext) for stream \(failedStreamID)"
+                "Desktop restart: request sent after terminal startup failure for stream \(failedStreamID)"
             )
-            return DesktopStreamRestartRequest(
-                failedStreamID: failedStreamID,
-                startupRequestID: restartRequest.startupRequestID,
-                attempt: desktopStreamRestartAttempts
-            )
+            return true
         } catch {
-            MirageLogger.error(.client, error: error, message: "Desktop restart failed after \(logContext): ")
+            MirageLogger.error(.client, error: error, message: "Desktop restart failed after terminal startup failure: ")
             clearPendingDesktopStreamStartState()
-            return nil
+            return false
         }
     }
+}
 
+public extension MirageClientService {
     package func remoteStartupRecoveryRestartRequest(
         from request: StartDesktopStreamMessage
     ) -> StartDesktopStreamMessage {
         var lowered = StartDesktopStreamMessage(
+            copying: request,
             startupRequestID: request.startupRequestID,
-            scaleFactor: request.scaleFactor,
-            displayWidth: request.displayWidth,
-            displayHeight: request.displayHeight,
-            targetFrameRate: min(max(1, request.targetFrameRate), 60),
-            streamScale: request.streamScale,
-            audioConfiguration: request.audioConfiguration,
-            dataPort: request.dataPort,
-            useHostResolution: request.useHostResolution,
-            mediaMaxPacketSize: request.mediaMaxPacketSize
+            targetFrameRate: min(max(1, request.targetFrameRate), 60)
         )
-        lowered.keyFrameInterval = request.keyFrameInterval
-        lowered.captureQueueDepth = request.captureQueueDepth
-        lowered.colorDepth = request.colorDepth
-        lowered.mode = request.mode
-        lowered.cursorPresentation = request.cursorPresentation
-        lowered.enteredBitrate = request.enteredBitrate
-        lowered.bitrate = request.bitrate
-        lowered.latencyMode = request.latencyMode
-        lowered.allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
-        lowered.lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost
         lowered.disableResolutionCap = false
-        lowered.upscalingMode = request.upscalingMode
-        lowered.codec = request.codec
-        lowered.encoderMaxWidth = min(request.encoderMaxWidth ?? 1_920, 1_920)
-        lowered.encoderMaxHeight = min(request.encoderMaxHeight ?? 1_080, 1_080)
+        lowered.encoderMaxWidth = min(request.encoderMaxWidth ?? 1920, 1920)
+        lowered.encoderMaxHeight = min(request.encoderMaxHeight ?? 1080, 1080)
         if let bitrate = request.bitrate {
             lowered.bitrate = min(bitrate, 24_000_000)
         }
@@ -464,7 +351,7 @@ public extension MirageClientService {
     /// Used when the user cancels during loading before a stream ID is established.
     func cancelStreamSetup() {
         guard case .connected = connectionState else { return }
-        sendControlMessageBestEffort(
+        queueControlMessageBestEffort(
             .cancelStreamSetup,
             content: CancelStreamSetupMessage(
                 startupRequestID: pendingStreamSetupRequestID,

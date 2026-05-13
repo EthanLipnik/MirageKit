@@ -7,8 +7,6 @@
 //  Shared bitrate-allocation modes for multi-window app streaming.
 //
 
-import Foundation
-
 /// Describes how a shared app-stream bitrate budget should be distributed
 /// across concurrently visible app windows.
 public enum MirageAppStreamBitrateAllocationPolicy: String, Codable, Sendable, CaseIterable {
@@ -16,4 +14,14 @@ public enum MirageAppStreamBitrateAllocationPolicy: String, Codable, Sendable, C
     case splitEvenly
     /// Prioritize the currently active window and keep floor bandwidth for others.
     case prioritizeActiveWindow
+
+    /// User-facing label for settings and diagnostics.
+    public var displayName: String {
+        switch self {
+        case .splitEvenly:
+            "Split Evenly"
+        case .prioritizeActiveWindow:
+            "Prioritize Active Window"
+        }
+    }
 }

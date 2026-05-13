@@ -16,7 +16,6 @@ import ScreenCaptureKit
 
 extension StreamContext {
     func startMirroredAppWindowCapture(
-        windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
         mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
@@ -27,7 +26,6 @@ extension StreamContext {
     )
     async throws {
         try await startSharedDisplayWindowCapture(
-            windowWrapper: windowWrapper,
             applicationWrapper: applicationWrapper,
             displayWrapper: displayWrapper,
             mirroredDisplaySnapshot: mirroredDisplaySnapshot,

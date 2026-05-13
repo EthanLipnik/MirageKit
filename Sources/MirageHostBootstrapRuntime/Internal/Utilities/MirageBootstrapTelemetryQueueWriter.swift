@@ -24,12 +24,18 @@ actor MirageBootstrapTelemetryQueueWriter {
     }
 
     func append(_ event: LoomBootstrapTelemetryEventEnvelope) async {
-        guard let queueURL = queueFileURL() else { return }
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) else {
+            return
+        }
+        let queueURL = containerURL.appendingPathComponent(LoomBootstrapTelemetryQueueConstants.fileName)
 
         let newLine: Data
         do {
             newLine = try encoder.encode(event)
         } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to encode daemon telemetry queue event: ")
             return
         }
 
@@ -39,23 +45,17 @@ actor MirageBootstrapTelemetryQueueWriter {
         enforceRetention(on: &lines)
 
         var output = Data()
-        output.reserveCapacity(lines.reduce(0) { $0 + $1.count + 1 })
+        output.reserveCapacity(queueSizeBytes(lines))
         for line in lines {
             output.append(line)
             output.append(0x0A)
         }
 
-        try? output.write(to: queueURL, options: .atomic)
-    }
-
-    private func queueFileURL() -> URL? {
-        guard let containerURL = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
-            return nil
+        do {
+            try output.write(to: queueURL, options: .atomic)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to write daemon telemetry queue: ")
         }
-
-        return containerURL.appendingPathComponent(LoomBootstrapTelemetryQueueConstants.fileName)
     }
 
     private func loadLines(from queueURL: URL) -> [Data] {

@@ -11,7 +11,6 @@ import Testing
 
 @Suite("Frame Integrity Diagnostics")
 struct MirageFrameIntegrityDiagnosticsTests {
-
     @Test("Explicit frame-integrity flag enables bounded CRC samples")
     func explicitIntegrityDiagnosticsCollectBoundedSamples() async throws {
         let lines = CapturedIntegrityLines()
@@ -53,12 +52,8 @@ struct MirageFrameIntegrityDiagnosticsTests {
             now: 3
         )
 
-        try await waitForIntegrityProcessing(diagnostics)
+        try await waitForIntegrityLines(lines, count: 2)
 
-        let snapshot = diagnostics.snapshot()
-        #expect(snapshot.acceptedSamples == 2)
-        #expect(snapshot.processedSamples == 2)
-        #expect(snapshot.droppedSamples == 1)
         #expect(lines.snapshot().count == 2)
         #expect(lines.snapshot().allSatisfy { $0.contains("CRC=") })
     }
@@ -80,17 +75,12 @@ struct MirageFrameIntegrityDiagnosticsTests {
             frameBytes: Data([0, 1, 2, 3])
         )
 
-        let snapshot = diagnostics.snapshot()
-        #expect(snapshot.acceptedSamples == 0)
-        #expect(snapshot.processedSamples == 0)
-        #expect(snapshot.droppedSamples == 0)
         #expect(lines.snapshot().isEmpty)
     }
 
-    private func waitForIntegrityProcessing(_ diagnostics: MirageFrameIntegrityDiagnostics) async throws {
+    private func waitForIntegrityLines(_ lines: CapturedIntegrityLines, count: Int) async throws {
         for _ in 0 ..< 20 {
-            let snapshot = diagnostics.snapshot()
-            if snapshot.processedSamples == snapshot.acceptedSamples, snapshot.pendingSamples == 0 {
+            if lines.snapshot().count >= count {
                 return
             }
             try await Task.sleep(for: .milliseconds(25))

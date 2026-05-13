@@ -22,7 +22,6 @@ extension StreamController {
     }
 
     func setPreferredDecoderColorDepth(_ colorDepth: MirageStreamColorDepth) async {
-        preferredDecoderColorDepth = colorDepth
         await decoder.setPreferredOutputColorDepth(colorDepth)
     }
 
@@ -31,7 +30,7 @@ extension StreamController {
         streamDimensions: (width: Int, height: Int)? = nil
     )
     async {
-        clearQueuedFramesForRecovery()
+        discardQueuedFramesForRecovery()
         if let dimensionToken {
             reassembler.updateExpectedDimensionToken(dimensionToken)
         }
@@ -46,28 +45,6 @@ extension StreamController {
         )
     }
 
-    func primeForEncoderReconfiguration(
-        dimensionToken: UInt16,
-        streamDimensions: (width: Int, height: Int),
-        colorDepth: MirageStreamColorDepth
-    )
-    async {
-        clearQueuedFramesForRecovery()
-        reassembler.updateExpectedDimensionToken(dimensionToken)
-        reassembler.enterKeyframeOnlyMode()
-        preferredDecoderColorDepth = colorDepth
-        await decoder.setPreferredOutputColorDepth(colorDepth)
-        await decoder.prepareForDimensionChange(
-            expectedWidth: streamDimensions.width,
-            expectedHeight: streamDimensions.height
-        )
-        MirageLogger.client(
-            "Primed encoder reconfiguration admission fence for stream \(streamID) " +
-                "(\(streamDimensions.width)x\(streamDimensions.height), " +
-                "dimensionToken=\(dimensionToken), colorDepth=\(colorDepth.displayName))"
-        )
-    }
-
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
@@ -75,7 +52,7 @@ extension StreamController {
         cancelMemoryBudgetRecoveryTask()
         stopFirstPresentedFrameMonitor()
         MirageRenderStreamStore.shared.clear(for: streamID)
-        MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()
@@ -84,8 +61,7 @@ extension StreamController {
         hasDecodedFirstFrame = false
         hasPresentedFirstFrame = false
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
-        startupHardRecoveryCount = 0
-        hasTriggeredTerminalStartupFailure = false
+        resetTerminalStartupFailureTracking()
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         latestHostMetricsMessage = nil
@@ -95,8 +71,7 @@ extension StreamController {
         latestRenderTelemetrySnapshot = nil
         lastStreamingAnomalyDiagnosticSignature = nil
         lastStreamingAnomalyDiagnosticTime = 0
-        lastDecodedFrameTime = 0
-        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
@@ -123,12 +98,10 @@ extension StreamController {
         await decoder.resetForNewSession()
         reassembler.reset()
         streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
-        clearQueuedFramesForRecovery()
-        MirageRenderStreamStore.shared.bumpGeneration(for: streamID, reason: "desktop resize")
+        discardQueuedFramesForRecovery()
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
-        lastDecodedFrameTime = 0
         lastPresentedProgressTime = 0
-        lastPresentedCursorObserved = MirageRenderStreamStore.shared.baselineCursor(for: streamID)
+        lastPresentedSequenceObserved = 0
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
@@ -137,15 +110,10 @@ extension StreamController {
     /// Enter post-resize recovery, re-arming keyframe-only decode admission for each resize episode.
     func beginPostResizeTransition() async {
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
-        clearQueuedFramesForRecovery()
+        discardQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
         await armPostResizeRecoveryWindow(reason: "post-resize")
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
-    }
-
-    /// Get the reassembler for packet routing
-    func getReassembler() -> FrameReassembler {
-        reassembler
     }
 
     func updateCadenceTarget(
@@ -171,32 +139,21 @@ extension StreamController {
         )
         let resolvedBaseline = presentationTier == .passiveSnapshot
             ? 1
-            : VideoDecoder.baselineDecodeSubmissionLimit(
-                targetFrameRate: target.sourceFPS,
-                latencyMode: target.latencyMode
-            )
-        let resolvedMaximum = presentationTier == .passiveSnapshot
-            ? 1
-            : VideoDecoder.maximumDecodeSubmissionLimit(
-                targetFrameRate: target.sourceFPS,
-                latencyMode: target.latencyMode
-            )
+            : VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: target.sourceFPS)
         let targetUnchanged = target == streamCadenceTarget
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
 
         streamCadenceTarget = target
         streamCadenceClock.updateTargetFPS(target.sourceFPS)
         decodeSchedulerTargetFPS = target.sourceFPS
-        realtimeMediaSession.updateTargetFrameRate(target.sourceFPS)
         reassembler.setTargetFrameRate(target.sourceFPS)
         MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
 
         if targetUnchanged, baselineUnchanged {
-            currentDecodeSubmissionLimit = min(
-                resolvedMaximum,
-                max(decodeSubmissionBaselineLimit, currentDecodeSubmissionLimit)
-            )
-            if await decoder.currentDecodeSubmissionLimit() != currentDecodeSubmissionLimit {
+            if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
+                currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+            }
+            if await decoder.decodeSubmissionLimit != currentDecodeSubmissionLimit {
                 await decoder.setDecodeSubmissionLimit(
                     limit: currentDecodeSubmissionLimit,
                     reason: reason
@@ -210,26 +167,14 @@ extension StreamController {
         decodeSubmissionHealthyStreak = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
         lastSourceBoundDiagnosticSignature = nil
-        currentDecodeSubmissionLimit = max(1, min(resolvedMaximum, decodeSubmissionBaselineLimit))
+        currentDecodeSubmissionLimit = max(1, min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit))
         await decoder.setDecodeSubmissionLimit(
             limit: currentDecodeSubmissionLimit,
             reason: reason
         )
     }
 
-    func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
-        await updateCadenceTarget(
-            sourceFPS: targetFrameRate,
-            displayFPS: targetFrameRate,
-            reason: "target refresh update"
-        )
-    }
-
-    func updatePresentationTier(
-        _ tier: StreamPresentationTier,
-        targetFPS: Int? = nil,
-        displayFPS: Int? = nil
-    ) async {
+    func updatePresentationTier(_ tier: StreamPresentationTier, targetFPS: Int? = nil) async {
         let previousTier = presentationTier
         presentationTier = tier
         await GlobalDecodeBudgetController.shared.updateTier(streamID: streamID, tier: tier)
@@ -243,7 +188,7 @@ extension StreamController {
         }
         await updateCadenceTarget(
             sourceFPS: resolvedTargetFPS,
-            displayFPS: displayFPS ?? streamCadenceTarget.displayFPS,
+            displayFPS: resolvedTargetFPS,
             latencyMode: streamCadenceTarget.latencyMode,
             reason: "presentation tier update"
         )
@@ -268,49 +213,37 @@ extension StreamController {
     }
 
     private func handlePassiveToActivePromotion() async {
-        let decision = streamTierPromotionRecoveryDecision(
-            hasPresentedFirstFrame: hasPresentedFirstFrame,
-            isAwaitingKeyframe: reassembler.isAwaitingKeyframe(),
-            hasKeyframeAnchor: reassembler.hasKeyframeAnchor()
-        )
+        let forcedKeyframeReason: String? = if !hasPresentedFirstFrame {
+            "noPresentedFrame"
+        } else if reassembler.isAwaitingKeyframe {
+            "awaitingKeyframe"
+        } else if !reassembler.hasKeyframeAnchor {
+            "noKeyframeAnchor"
+        } else {
+            nil
+        }
 
-        switch decision {
-        case let .forceImmediateKeyframe(reason):
+        if let forcedKeyframeReason {
             await stopTierPromotionProbe()
             reassembler.enterKeyframeOnlyMode()
             await setClientRecoveryStatus(.keyframeRecovery)
-            armRecoveryStabilizationTracking(
-                baseline: MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
-            )
             await startKeyframeRecoveryLoopIfNeeded()
             MirageLogger.client(
-                "Tier promotion forcing keyframe for stream \(streamID) (reason: \(tierPromotionReasonText(reason)))"
+                "Tier promotion forcing keyframe for stream \(streamID) (reason: \(forcedKeyframeReason))"
             )
-            await requestKeyframeRecovery(reason: .manualRecovery)
-        case .pFrameFirst:
+            await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
+        } else {
             MirageLogger.client("Tier promotion using P-frame-first for stream \(streamID)")
             await startTierPromotionProbe()
         }
     }
 
-    private func tierPromotionReasonText(_ reason: StreamTierPromotionRecoveryReason) -> String {
-        switch reason {
-        case .noPresentedFrame:
-            "noPresentedFrame"
-        case .awaitingKeyframe:
-            "awaitingKeyframe"
-        case .noKeyframeAnchor:
-            "noKeyframeAnchor"
-        }
-    }
-
     private func startTierPromotionProbe() async {
         await stopTierPromotionProbe()
-        let baselineCursor = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).visibleCursor
+        let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
         await setClientRecoveryStatus(.tierPromotionProbe)
-        armRecoveryStabilizationTracking(baseline: baselineCursor)
         tierPromotionProbeTask = Task { [weak self] in
-            await self?.runTierPromotionProbe(baselineCursor: baselineCursor)
+            await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
         }
     }
 
@@ -322,7 +255,7 @@ extension StreamController {
         }
     }
 
-    private func runTierPromotionProbe(baselineCursor: MirageRenderCursor) async {
+    private func runTierPromotionProbe(baselineSequence: UInt64) async {
         defer { tierPromotionProbeTask = nil }
 
         do {
@@ -334,17 +267,15 @@ extension StreamController {
         guard presentationTier == .activeLive else { return }
 
         let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
-        if snapshot.visibleCursor.isAfter(baselineCursor) {
+        if snapshot.sequence > baselineSequence {
             MirageLogger.client(
-                "Tier promotion probe progressed for stream \(streamID) " +
-                    "(baseline=\(baselineCursor.generation):\(baselineCursor.sequence), " +
-                    "latest=\(snapshot.visibleCursor.generation):\(snapshot.visibleCursor.sequence))"
+                "Tier promotion probe progressed for stream \(streamID) (baseline=\(baselineSequence), latest=\(snapshot.sequence))"
             )
             await setClientRecoveryStatus(.idle)
             return
         }
 
-        let keyframeStarved = reassembler.isAwaitingKeyframe() || !reassembler.hasKeyframeAnchor()
+        let keyframeStarved = reassembler.isAwaitingKeyframe || !reassembler.hasKeyframeAnchor
         if keyframeStarved {
             MirageLogger.client(
                 "Tier promotion probe requesting keyframe-only recovery for stream \(streamID) (no progress)"
@@ -352,7 +283,7 @@ extension StreamController {
             reassembler.enterKeyframeOnlyMode()
             await setClientRecoveryStatus(.keyframeRecovery)
             await startKeyframeRecoveryLoopIfNeeded()
-            await requestKeyframeRecovery(reason: .manualRecovery)
+            await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
             return
         }
 
@@ -360,16 +291,6 @@ extension StreamController {
             "Tier promotion probe requesting single recovery keyframe for stream \(streamID) (no progress)"
         )
         await setClientRecoveryStatus(.keyframeRecovery)
-        await requestKeyframeRecovery(reason: .manualRecovery)
-    }
-
-    func applyHostRuntimePolicy(_ policy: MirageStreamPolicy, targetFPS: Int? = nil) async {
-        let tier: StreamPresentationTier = switch policy.tier {
-        case .activeLive:
-            .activeLive
-        case .passiveSnapshot:
-            .passiveSnapshot
-        }
-        await updatePresentationTier(tier, targetFPS: targetFPS ?? policy.targetFPS)
+        await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
     }
 }

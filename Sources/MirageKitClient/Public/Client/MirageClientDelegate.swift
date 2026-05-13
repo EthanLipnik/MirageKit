@@ -7,30 +7,17 @@
 
 import MirageKit
 
-/// Receives connection, host state, and runtime events from `MirageClientService`.
+/// Receives connection, stream, and host-state events from `MirageClientService`.
 public protocol MirageClientDelegate: AnyObject, Sendable {
-    /// Provides the latest host window inventory.
+    /// Called when the client disconnects from the host.
     @MainActor
-    func didUpdateWindowList(_ windows: [MirageWindow])
+    func didDisconnectFromHost(_ reason: String)
 
-    /// Reports that the active host connection ended.
-    @MainActor
-    func didDisconnectFromHost(reason: String)
-
-    /// Reports a client-side runtime or protocol error.
+    /// Called when the client service reports an error.
     @MainActor
     func didEncounterError(_ error: Error)
 
-    /// Reports the host's login, lock, sleep, or unlock availability state.
+    /// Called when host session availability changes.
     @MainActor
-    func hostSessionStateChanged(_ state: LoomSessionAvailability, requiresUserIdentifier: Bool)
-
-}
-
-/// Optional delegate hooks.
-public extension MirageClientDelegate {
-    func didUpdateWindowList(_: [MirageWindow]) {}
-    func didDisconnectFromHost(reason _: String) {}
-    func didEncounterError(_: Error) {}
-    func hostSessionStateChanged(_: LoomSessionAvailability, requiresUserIdentifier _: Bool) {}
+    func hostSessionStateChanged(_ state: LoomSessionAvailability)
 }

@@ -13,6 +13,7 @@ import MirageKit
 
 /// Thread-safe registry for host media transport over Loom multiplexed streams.
 final class HostTransportRegistry: @unchecked Sendable {
+    /// Registered media streams keyed by the identifier that owns their lifecycle.
     private struct State {
         var videoByStream: [StreamID: LoomMultiplexedStream] = [:]
         var audioByClientID: [UUID: LoomMultiplexedStream] = [:]
@@ -20,36 +21,42 @@ final class HostTransportRegistry: @unchecked Sendable {
 
     private let state = Locked(State())
 
+    /// Registers a stream-scoped video transport.
     func registerVideoStream(_ stream: LoomMultiplexedStream, streamID: StreamID) {
         state.withLock { state in
             state.videoByStream[streamID] = stream
         }
     }
 
+    /// Removes a stream-scoped video transport.
     func unregisterVideoStream(streamID: StreamID) {
         state.withLock { state in
-            state.videoByStream.removeValue(forKey: streamID)
+            state.videoByStream[streamID] = nil
         }
     }
 
+    /// Registers a client-scoped audio transport.
     func registerAudioStream(_ stream: LoomMultiplexedStream, clientID: UUID) {
         state.withLock { $0.audioByClientID[clientID] = stream }
     }
 
+    /// Removes a client-scoped audio transport.
     func unregisterAudioStream(clientID: UUID) {
-        state.withLock { $0.audioByClientID.removeValue(forKey: clientID) }
+        state.withLock { $0.audioByClientID[clientID] = nil }
     }
 
+    /// Removes client-scoped transports; stream-scoped video transports are removed by stream teardown.
     func unregisterAllStreams(clientID: UUID) {
         state.withLock { state in
-            state.audioByClientID.removeValue(forKey: clientID)
+            state.audioByClientID[clientID] = nil
         }
     }
 
+    /// Sends audio if a client-scoped audio stream is registered; missing streams complete successfully.
     func sendAudio(
         clientID: UUID,
         data: Data,
-        onComplete: @escaping @Sendable (Error?) -> Void = { _ in }
+        onComplete: @escaping @Sendable (Error?) -> Void
     ) {
         let stream: LoomMultiplexedStream? = state.read { $0.audioByClientID[clientID] }
         guard let stream else {
@@ -59,10 +66,12 @@ final class HostTransportRegistry: @unchecked Sendable {
         stream.sendUnreliableQueued(data, profile: .interactiveMedia, onComplete: onComplete)
     }
 
+    /// Returns whether a video transport is registered for the stream.
     func hasVideoConnection(streamID: StreamID) -> Bool {
         state.read { $0.videoByStream[streamID] != nil }
     }
 
+    /// Returns whether an audio transport is registered for the client.
     func hasAudioConnection(clientID: UUID) -> Bool {
         state.read { $0.audioByClientID[clientID] != nil }
     }

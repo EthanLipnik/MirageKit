@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,6 +17,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Resize Handling
 
+    /// Applies an absolute host-window resize from a client resize event.
     @MainActor
     func handleWindowResize(_ window: MirageWindow, resizeEvent: MirageResizeEvent) {
         guard let windowController else { return }
@@ -27,10 +27,10 @@ extension MirageHostInputController {
             )
             return
         }
-        guard let axWindow = windowController.getOrCacheAXWindow(for: window) else { return }
+        guard let axWindow = windowController.cachedAXWindow(for: window) else { return }
 
         let settable = windowController.isWindowSizeSettable(axWindow)
-        let minSize = windowController.getMinimumSize(for: window.id)
+        let minSize = windowController.minimumSize(for: window.id)
 
         var newSize = resizeEvent.newSize
         if let minSize {
@@ -69,6 +69,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Applies a relative resize request while preserving the client-requested aspect ratio.
     @MainActor
     func handleRelativeResize(_ window: MirageWindow, event: MirageRelativeResizeEvent) {
         guard let windowController else { return }
@@ -78,7 +79,7 @@ extension MirageHostInputController {
             )
             return
         }
-        guard let axWindow = windowController.getOrCacheAXWindow(for: window),
+        guard let axWindow = windowController.cachedAXWindow(for: window),
               let visibleFrame = windowController.maxWindowSizeRect(for: window) else {
             return
         }
@@ -94,7 +95,7 @@ extension MirageHostInputController {
             )
             initialTargetSize = windowController.constrainSizeToFrame(rawSize, frame: visibleFrame)
         } else {
-            let minSize = windowController.getMinimumSize(for: window.id) ?? CGSize(width: 400, height: 300)
+            let minSize = windowController.minimumSize(for: window.id) ?? CGSize(width: 400, height: 300)
             initialTargetSize = windowController.calculateHostWindowSize(
                 aspectRatio: clientAspectRatio,
                 relativeScale: event.relativeScale,
@@ -126,12 +127,13 @@ extension MirageHostInputController {
                 windowController.scheduleResizeUpdate(windowID: windowID, width: captureWidth, height: captureHeight)
             }
 
-            windowController.centerWindowOnScreen(axWindow, newSize: size, windowID: windowID)
+            _ = windowController.centerWindowOnScreen(axWindow, newSize: size, windowID: windowID)
             windowController.requestFrameEnforcement(for: window, targetSize: size)
         }
         activeRelativeResizeTaskByWindowID[windowID] = task
     }
 
+    /// Applies a pixel-size resize request to a directly captured host window.
     @MainActor
     func handlePixelResize(_ window: MirageWindow, event: MiragePixelResizeEvent) {
         guard let windowController else { return }
@@ -141,7 +143,7 @@ extension MirageHostInputController {
             )
             return
         }
-        guard let axWindow = windowController.getOrCacheAXWindow(for: window) else { return }
+        guard let axWindow = windowController.cachedAXWindow(for: window) else { return }
 
         let hostScale = windowController.screenScaleFactor(for: window)
         let targetSize = CGSize(
@@ -155,7 +157,7 @@ extension MirageHostInputController {
         let result = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
 
         if result == .success {
-            windowController.centerWindowOnScreen(axWindow, newSize: targetSize, windowID: window.id)
+            _ = windowController.centerWindowOnScreen(axWindow, newSize: targetSize, windowID: window.id)
             windowController.requestFrameEnforcement(for: window, targetSize: targetSize)
 
             Task { [weak self] in
@@ -168,6 +170,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Notifies the host service after an accessibility resize changes a streamed window frame.
     @MainActor
     private func notifyWindowResized(_ window: MirageWindow, with updatedFrame: CGRect) {
         let updatedWindow = MirageWindow(

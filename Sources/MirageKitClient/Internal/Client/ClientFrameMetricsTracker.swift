@@ -11,22 +11,10 @@ import Foundation
 import MirageKit
 
 final class ClientFrameMetricsTracker: @unchecked Sendable {
-    struct DecodedFrameRecord: Sendable, Equatable {
-        let isFirstFrame: Bool
-        let gapMs: Double
-    }
-
-    struct ReceivedFrameRecord: Sendable, Equatable {
-        let gapMs: Double
-    }
-
-    struct Snapshot: Sendable, Equatable {
+    struct Snapshot: Equatable {
         let decodedFPS: Double
         let receivedFPS: Double
         let queueDroppedFrames: UInt64
-        let decodedWorstGapMs: Double
-        let decodedFrameIntervalP95Ms: Double
-        let decodedFrameIntervalP99Ms: Double
         let receivedWorstGapMs: Double
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
@@ -35,50 +23,46 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
     private let lock = NSLock()
     private var decodedSampler = FrameRateSampler()
     private var receivedSampler = FrameRateSampler()
-    private var decodedCadenceSampler = FrameIntervalSampler()
     private var receivedCadenceSampler = FrameIntervalSampler()
     private var queueDroppedFrames: UInt64 = 0
     private var sentFirstFrame = false
 
-    func recordDecodedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> DecodedFrameRecord {
+    /// Records a decoded frame and returns whether it was the stream's first decoded frame.
+    func recordDecodedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
         lock.lock()
+        defer { lock.unlock() }
         decodedSampler.record(now: now)
-        let gapMs = decodedCadenceSampler.record(now: now)
         let isFirstFrame = !sentFirstFrame
         if isFirstFrame { sentFirstFrame = true }
-        lock.unlock()
-        return DecodedFrameRecord(isFirstFrame: isFirstFrame, gapMs: gapMs)
+        return isFirstFrame
     }
 
-    func recordReceivedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> ReceivedFrameRecord {
+    /// Records receipt of a media frame for FPS and cadence diagnostics.
+    func recordReceivedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
         lock.lock()
+        defer { lock.unlock() }
         receivedSampler.record(now: now)
-        let gapMs = receivedCadenceSampler.record(now: now)
-        lock.unlock()
-        return ReceivedFrameRecord(gapMs: gapMs)
+        receivedCadenceSampler.record(now: now)
     }
 
     func recordQueueDrop(count: UInt64 = 1) {
         lock.lock()
+        defer { lock.unlock() }
         queueDroppedFrames &+= count
-        lock.unlock()
     }
 
+    /// Returns the current rolling frame-rate and received-cadence metrics.
     func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Snapshot {
         lock.lock()
+        defer { lock.unlock() }
         let decodedFPS = decodedSampler.snapshot(now: now)
         let receivedFPS = receivedSampler.snapshot(now: now)
-        let decodedCadence = decodedCadenceSampler.snapshot(now: now)
         let receivedCadence = receivedCadenceSampler.snapshot(now: now)
         let dropped = queueDroppedFrames
-        lock.unlock()
         return Snapshot(
             decodedFPS: decodedFPS,
             receivedFPS: receivedFPS,
             queueDroppedFrames: dropped,
-            decodedWorstGapMs: decodedCadence.worstGapMs,
-            decodedFrameIntervalP95Ms: decodedCadence.p95Ms,
-            decodedFrameIntervalP99Ms: decodedCadence.p99Ms,
             receivedWorstGapMs: receivedCadence.worstGapMs,
             receivedFrameIntervalP95Ms: receivedCadence.p95Ms,
             receivedFrameIntervalP99Ms: receivedCadence.p99Ms
@@ -87,23 +71,25 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
 
     func reset() {
         lock.lock()
+        defer { lock.unlock() }
         decodedSampler.reset()
         receivedSampler.reset()
-        decodedCadenceSampler.reset()
         receivedCadenceSampler.reset()
         queueDroppedFrames = 0
         sentFirstFrame = false
-        lock.unlock()
     }
 }
 
 private struct FrameIntervalSampler {
+    /// Rolling window for frame interval percentile and worst-gap samples.
+    private static let windowSeconds: CFAbsoluteTime = 2.0
+
     private struct IntervalSample {
         let timestamp: CFAbsoluteTime
         let intervalMs: Double
     }
 
-    struct Snapshot: Sendable, Equatable {
+    struct Snapshot: Equatable {
         let worstGapMs: Double
         let p95Ms: Double
         let p99Ms: Double
@@ -112,18 +98,16 @@ private struct FrameIntervalSampler {
     private var lastSampleTime: CFAbsoluteTime = 0
     private var samples: [IntervalSample] = []
     private var startIndex: Int = 0
-    private let windowSeconds: CFAbsoluteTime = 2.0
 
-    mutating func record(now: CFAbsoluteTime) -> Double {
+    mutating func record(now: CFAbsoluteTime) {
         trim(now: now)
         guard lastSampleTime > 0 else {
             lastSampleTime = now
-            return 0
+            return
         }
         let intervalMs = max(0, (now - lastSampleTime) * 1000)
         lastSampleTime = now
         samples.append(IntervalSample(timestamp: now, intervalMs: intervalMs))
-        return intervalMs
     }
 
     mutating func snapshot(now: CFAbsoluteTime) -> Snapshot {
@@ -152,7 +136,7 @@ private struct FrameIntervalSampler {
 
     private mutating func trim(now: CFAbsoluteTime) {
         guard lastSampleTime > 0 else { return }
-        let cutoff = now - windowSeconds
+        let cutoff = now - Self.windowSeconds
         while startIndex < samples.count, samples[startIndex].timestamp < cutoff {
             startIndex += 1
         }
@@ -171,15 +155,15 @@ private struct FrameIntervalSampler {
 }
 
 private struct FrameRateSampler {
+    /// Rolling window for decoded/received frame-rate samples.
+    private static let windowSeconds: CFAbsoluteTime = 1.0
+
     private var samples: [CFAbsoluteTime] = []
     private var startIndex: Int = 0
-    private let windowSeconds: CFAbsoluteTime = 1.0
 
-    @discardableResult
-    mutating func record(now: CFAbsoluteTime) -> Double {
+    mutating func record(now: CFAbsoluteTime) {
         samples.append(now)
         trim(now: now)
-        return Double(samples.count - startIndex)
     }
 
     mutating func snapshot(now: CFAbsoluteTime) -> Double {
@@ -193,7 +177,7 @@ private struct FrameRateSampler {
     }
 
     private mutating func trim(now: CFAbsoluteTime) {
-        let cutoff = now - windowSeconds
+        let cutoff = now - Self.windowSeconds
         while startIndex < samples.count, samples[startIndex] < cutoff {
             startIndex += 1
         }

@@ -24,11 +24,12 @@ struct DesktopVirtualDisplayResizeTargetTests {
         defer { clearDesktopVirtualDisplayResizeTarget(for: request) }
 
         recordDesktopVirtualDisplayResizeTargetSuccess(
-            pixelResolution: CGSize(width: 3200, height: 2400),
-            scaleFactor: 2.0,
-            refreshRate: 60,
-            colorSpace: .sRGB,
-            targetTier: .preferred,
+            snapshot: makeSnapshot(
+                resolution: CGSize(width: 3200, height: 2400),
+                scaleFactor: 2.0,
+                refreshRate: 60,
+                colorSpace: .sRGB
+            ),
             for: request
         )
 
@@ -53,11 +54,12 @@ struct DesktopVirtualDisplayResizeTargetTests {
         defer { clearDesktopVirtualDisplayResizeTarget(for: request) }
 
         recordDesktopVirtualDisplayResizeTargetSuccess(
-            pixelResolution: CGSize(width: 1984, height: 2192),
-            scaleFactor: 1.0,
-            refreshRate: 60,
-            colorSpace: .sRGB,
-            targetTier: .degraded,
+            snapshot: makeSnapshot(
+                resolution: CGSize(width: 1984, height: 2192),
+                scaleFactor: 1.0,
+                refreshRate: 60,
+                colorSpace: .sRGB
+            ),
             for: request
         )
 
@@ -74,17 +76,37 @@ struct DesktopVirtualDisplayResizeTargetTests {
         )
         clearDesktopVirtualDisplayResizeTarget(for: request)
         recordDesktopVirtualDisplayResizeTargetSuccess(
-            pixelResolution: CGSize(width: 1984, height: 2192),
-            scaleFactor: 2.0,
-            refreshRate: 60,
-            colorSpace: .sRGB,
-            targetTier: .preferred,
+            snapshot: makeSnapshot(
+                resolution: CGSize(width: 1984, height: 2192),
+                scaleFactor: 2.0,
+                refreshRate: 60,
+                colorSpace: .sRGB
+            ),
             for: request
         )
 
         clearDesktopVirtualDisplayResizeTarget(for: request)
 
         #expect(cachedDesktopVirtualDisplayResizeTarget(for: request) == nil)
+    }
+
+    private func makeSnapshot(
+        resolution: CGSize,
+        scaleFactor: CGFloat,
+        refreshRate: Double,
+        colorSpace: MirageColorSpace
+    ) -> SharedVirtualDisplayManager.DisplaySnapshot {
+        SharedVirtualDisplayManager.DisplaySnapshot(
+            displayID: 1,
+            spaceID: 1,
+            resolution: resolution,
+            scaleFactor: scaleFactor,
+            refreshRate: refreshRate,
+            colorSpace: colorSpace,
+            displayP3CoverageStatus: .unresolved,
+            generation: 1,
+            createdAt: Date()
+        )
     }
 }
 #endif

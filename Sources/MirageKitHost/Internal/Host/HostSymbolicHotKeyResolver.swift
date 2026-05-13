@@ -9,12 +9,19 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Result of resolving a macOS symbolic hot key for a host system action.
 enum HostSymbolicHotKeyResolution: Equatable {
+    /// The action has an enabled shortcut that can be forwarded to the host.
     case shortcut(MirageKeyEvent)
+
+    /// The symbolic hot key exists but is disabled in System Settings.
     case disabled
+
+    /// The symbolic hot key cannot be read or does not contain usable key parameters.
     case unavailable
 }
 
+/// Reads macOS symbolic hot-key preferences and maps supported system actions to Mirage key events.
 enum HostSymbolicHotKeyResolver {
     private static let symbolicHotKeyPlistRelativePath = "Library/Preferences/com.apple.symbolichotkeys.plist"
     private static let shiftModifierMask: UInt = 1 << 17
@@ -65,8 +72,10 @@ enum HostSymbolicHotKeyResolver {
         guard let valueDictionary = hotKeyEntry["value"] as? [AnyHashable: Any],
               let parameters = valueDictionary["parameters"] as? [Any],
               parameters.count >= 3,
-              let keyCode = integerValue(parameters[1]),
-              let modifierFlagsRaw = unsignedIntegerValue(parameters[2]),
+              let keyCodeParameter = parameters.dropFirst().first,
+              let modifierFlagsParameter = parameters.dropFirst(2).first,
+              let keyCode = integerValue(keyCodeParameter),
+              let modifierFlagsRaw = unsignedIntegerValue(modifierFlagsParameter),
               let resolvedKeyCode = UInt16(exactly: keyCode) else {
             return .unavailable
         }
@@ -111,6 +120,7 @@ enum HostSymbolicHotKeyResolver {
 }
 
 private extension MirageHostSystemAction {
+    /// AppleSymbolicHotKeys preference identifier for this host system action.
     var symbolicHotKeyID: Int {
         switch self {
         case .spaceLeft:

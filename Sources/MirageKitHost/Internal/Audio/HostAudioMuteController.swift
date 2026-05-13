@@ -208,7 +208,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         return muteValue != 0
     }
 
-    @discardableResult
     func writeMuteState(_ muted: Bool, for deviceID: AudioDeviceID) -> Bool {
         var address = Self.outputMuteAddress
         guard isPropertyWritable(deviceID: deviceID, address: &address) else { return false }
@@ -268,7 +267,6 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         return volume
     }
 
-    @discardableResult
     func writeVolumeScalar(
         _ volume: Float,
         for deviceID: AudioDeviceID,
@@ -380,21 +378,17 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         }
     }
 
-    private static var defaultOutputDeviceAddress: AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-    }
+    private static let defaultOutputDeviceAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
 
-    private static var outputMuteAddress: AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-    }
+    private static let outputMuteAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
 
     private static func outputVolumeAddress(element: AudioObjectPropertyElement) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(
@@ -404,13 +398,11 @@ final class CoreAudioHostAudioDeviceDriver: HostAudioDeviceDriving {
         )
     }
 
-    private static var outputStreamConfigurationAddress: AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-    }
+    private static let outputStreamConfigurationAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyStreamConfiguration,
+        mScope: kAudioDevicePropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
 }
 
 #endif

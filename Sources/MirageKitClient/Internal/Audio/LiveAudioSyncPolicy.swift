@@ -10,19 +10,38 @@
 import Foundation
 import MirageKit
 
-struct LiveAudioSyncPolicy {
-    enum VideoState: Equatable, Sendable {
+/// Decides when decoded audio is close enough to live video to play immediately.
+enum LiveAudioSyncPolicy {
+    /// Video timing state available when audio frames are ready for playback.
+    enum VideoState: Equatable {
+        /// A recent submitted video presentation timestamp is available.
         case fresh(timestampNs: UInt64)
+
+        /// The stream exists but has not presented its first video frame yet.
         case waitingForFirstFrame
+
+        /// Video presented before, but the latest timestamp is too old for precise alignment.
         case staleAfterPresentation
+
+        /// No active video stream can be matched to the audio stream.
         case unavailable
     }
 
-    struct Decision: Sendable {
+    /// Playback action for a batch of decoded audio frames.
+    struct Decision {
+        /// Frames to enqueue or retain after dropping stale backlog.
         let frames: [DecodedPCMFrame]
+
+        /// Number of frames removed from the front of the batch.
         let droppedCount: Int
+
+        /// Whether playback should stay gated until usable video timing arrives.
         let shouldGatePlayback: Bool
+
+        /// Extra playback delay to apply when audio is ahead of fresh video.
         let runtimeExtraDelaySeconds: Double
+
+        /// Diagnostic reason for drops or gating.
         let reason: String?
     }
 
@@ -48,7 +67,7 @@ struct LiveAudioSyncPolicy {
         }
 
         switch videoState {
-        case .fresh(let videoTimestampNs):
+        case let .fresh(videoTimestampNs):
             let liveFrames = filterFramesBehindVideo(
                 frames,
                 videoTimestampNs: videoTimestampNs,

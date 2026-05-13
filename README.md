@@ -46,14 +46,6 @@ final class HostController: MirageHostDelegate {
     func start() async throws {
         try await host.start()
     }
-
-    func hostService(
-        _ service: MirageHostService,
-        shouldAllowClient client: MirageConnectedClient,
-        toStreamWindow window: MirageWindow
-    ) -> Bool {
-        true
-    }
 }
 ```
 

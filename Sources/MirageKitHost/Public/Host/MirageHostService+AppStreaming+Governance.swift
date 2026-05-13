@@ -15,18 +15,21 @@ import AppKit
 
 @MainActor
 extension MirageHostService {
+    /// Maximum number of app-window streams that can remain visible for one app session.
     nonisolated static let appStreamMaxVisibleSlots = 8
+
+    /// Lower bound used when normalizing an app session's shared bitrate budget.
     nonisolated static let minimumSharedBitrateBudgetBps = 1_000_000
+
+    /// Per-stream cap applied when multiple visible app streams share the session budget.
     nonisolated static let appStreamMultiWindowBitrateCapBps = 120_000_000
 
-    func resolvedMaxVisibleAppWindowSlots(_ requestedSlots: Int) -> Int {
-        max(1, min(Self.appStreamMaxVisibleSlots, requestedSlots))
-    }
-
+    /// Returns the maximum bitrate a single visible stream may use for a session size.
     nonisolated static func appStreamPerStreamBitrateCap(visibleStreamCount: Int) -> Int {
         visibleStreamCount > 1 ? appStreamMultiWindowBitrateCapBps : Int.max
     }
 
+    /// Resolves the shared app-session bitrate budget from a request or host default.
     func resolvedAppSessionBitrateBudget(requestedBitrate: Int?) -> Int? {
         let sourceBitrate = requestedBitrate ??
             encoderConfig.bitrate ??
@@ -36,6 +39,7 @@ extension MirageHostService {
         return max(Self.minimumSharedBitrateBudgetBps, normalized)
     }
 
+    /// Sends the latest app-window inventory to a connected client.
     func sendAppWindowInventoryUpdate(bundleIdentifier: String, clientID: UUID) async {
         guard let inventory = await appStreamManager.inventoryMessage(bundleIdentifier: bundleIdentifier) else { return }
         guard let clientContext = findClientContext(clientID: clientID) else { return }
@@ -72,38 +76,21 @@ extension MirageHostService {
         }
     }
 
-    func sendAppWindowInventoryUpdate(bundleIdentifier: String) async {
-        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return }
-        await sendAppWindowInventoryUpdate(bundleIdentifier: bundleIdentifier, clientID: session.clientID)
-    }
-
-    func startAppStreamGovernorsIfNeeded() async {
-        await refreshAppStreamGovernors(reason: "event")
-    }
-
     func stopAppStreamGovernorsIfIdle() async {
-        let hasStreamingSessions = await appStreamManager.getAllSessions().contains { $0.state == .streaming }
+        let hasStreamingSessions = await appStreamManager.allSessions().contains { $0.state == .streaming }
         guard !hasStreamingSessions else { return }
-        cancelAllScheduledAppStreamPolicyTransitions()
+        for task in appStreamPolicyTransitionTasksByBundleID.values {
+            task.cancel()
+        }
+        appStreamPolicyTransitionTasksByBundleID.removeAll()
     }
 
     func refreshAppStreamGovernors(reason: String) async {
-        let sessions = await appStreamManager.getAllSessions().filter { $0.state == .streaming }
+        let sessions = await appStreamManager.allSessions().filter { $0.state == .streaming }
         for session in sessions {
             await recomputeAppSessionBitrateBudget(
                 bundleIdentifier: session.bundleIdentifier,
                 reason: reason
-            )
-        }
-    }
-
-    nonisolated func noteAppStreamInputSignal(streamID: StreamID) {
-        dispatchMainWork { [weak self] in
-            guard let self else { return }
-            await self.markAppStreamInteraction(
-                streamID: streamID,
-                reason: "input-fast-path",
-                forceOwnershipSwitch: false
             )
         }
     }
@@ -148,7 +135,7 @@ extension MirageHostService {
         reason: String,
         forceOwnershipSwitch: Bool = true
     ) async {
-        guard let session = await appStreamManager.getSessionForStreamID(streamID) else { return }
+        guard let session = await appStreamManager.sessionForStreamID(streamID) else { return }
 
         if forceOwnershipSwitch {
             await appStreamRuntimeOrchestrator.forceOwnership(streamID: streamID)
@@ -160,15 +147,6 @@ extension MirageHostService {
         )
     }
 
-    func setAppStreamFrontmostSignal(streamID: StreamID, isActive: Bool, reason: String) async {
-        guard isActive else { return }
-        await markAppStreamInteraction(
-            streamID: streamID,
-            reason: "frontmost:\(reason)",
-            forceOwnershipSwitch: true
-        )
-    }
-
     func clearAppStreamGovernorState(streamID: StreamID) {
         stopWindowVisibleFrameMonitor(streamID: streamID)
         pendingWindowResizeResolutionByStreamID.removeValue(forKey: streamID)
@@ -176,21 +154,12 @@ extension MirageHostService {
         windowResizeInFlightStreamIDs.remove(streamID)
         Task {
             await appStreamRuntimeOrchestrator.unregisterStream(streamID: streamID)
-            await appStreamDisplayAllocator.unbind(streamID: streamID)
             await streamPolicyApplier.clear(streamID: streamID)
         }
     }
 
-    func refreshAppStreamActivity(streamID: StreamID, reason: String) async {
-        await markAppStreamInteraction(
-            streamID: streamID,
-            reason: reason,
-            forceOwnershipSwitch: false
-        )
-    }
-
     func recomputeAppSessionBitrateBudget(bundleIdentifier: String, reason: String) async {
-        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else {
+        guard let session = await appStreamManager.session(bundleIdentifier: bundleIdentifier) else {
             cancelScheduledAppStreamPolicyTransition(bundleIdentifier: bundleIdentifier)
             return
         }
@@ -253,7 +222,6 @@ extension MirageHostService {
                 } else {
                     stopWindowVisibleFrameMonitor(streamID: policy.streamID)
                 }
-                await appStreamDisplayAllocator.bindLive(streamID: policy.streamID)
             } else {
                 if usesDedicatedDisplay {
                     ensureWindowVisibleFrameMonitor(streamID: policy.streamID)
@@ -262,7 +230,6 @@ extension MirageHostService {
                 }
                 pendingWindowResizeResolutionByStreamID.removeValue(forKey: policy.streamID)
                 windowResizeRequestCounterByStreamID.removeValue(forKey: policy.streamID)
-                await appStreamDisplayAllocator.bindSnapshot(streamID: policy.streamID)
             }
 
             await streamPolicyApplier.apply(
@@ -277,7 +244,11 @@ extension MirageHostService {
             targets: appliedTargets
         )
         let policyUpdate = StreamPolicyUpdateMessage(epoch: snapshot.epoch, policies: snapshot.policies)
-        try? await clientContext.send(.streamPolicyUpdate, content: policyUpdate)
+        do {
+            try await clientContext.send(.streamPolicyUpdate, content: policyUpdate)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to send streamPolicyUpdate: ")
+        }
 
         if snapshot.activeChanged,
            let activeStreamID = snapshot.activeStreamID,
@@ -301,13 +272,6 @@ extension MirageHostService {
         appStreamPolicyTransitionTasksByBundleID.removeValue(forKey: key)?.cancel()
     }
 
-    private func cancelAllScheduledAppStreamPolicyTransitions() {
-        for task in appStreamPolicyTransitionTasksByBundleID.values {
-            task.cancel()
-        }
-        appStreamPolicyTransitionTasksByBundleID.removeAll()
-    }
-
     private func scheduleAppStreamPolicyTransition(
         bundleIdentifier: String,
         nextTransitionAt: CFAbsoluteTime?
@@ -329,7 +293,7 @@ extension MirageHostService {
             return
         }
 
-        let delayMilliseconds = max(1, Int((remainingSeconds * 1_000).rounded(.up)))
+        let delayMilliseconds = max(1, Int((remainingSeconds * 1000).rounded(.up)))
         appStreamPolicyTransitionTasksByBundleID[key] = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(delayMilliseconds))
@@ -337,8 +301,8 @@ extension MirageHostService {
                 return
             }
             guard let self else { return }
-            self.appStreamPolicyTransitionTasksByBundleID.removeValue(forKey: key)
-            await self.recomputeAppSessionBitrateBudget(
+            appStreamPolicyTransitionTasksByBundleID.removeValue(forKey: key)
+            await recomputeAppSessionBitrateBudget(
                 bundleIdentifier: key,
                 reason: "demotion grace expired"
             )
@@ -348,7 +312,7 @@ extension MirageHostService {
     private func resolvedActiveTargetFPS(for streamIDs: [StreamID]) async -> Int {
         for streamID in streamIDs {
             guard let context = streamsByID[streamID] else { continue }
-            let streamFPS = await context.getTargetFrameRate()
+            let streamFPS = await context.encoderConfig.targetFrameRate
             if streamFPS >= AppStreamRuntimeOrchestrator.highRefreshActiveTargetFPS {
                 return AppStreamRuntimeOrchestrator.highRefreshActiveTargetFPS
             }

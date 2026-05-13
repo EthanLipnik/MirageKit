@@ -7,20 +7,22 @@
 //  Host Lights Out emergency shortcut defaults and validation.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Default shortcut and validation helpers for the host Lights Out emergency control.
 public enum MirageHostLightsOutShortcut {
+    /// Default emergency shortcut: Control-Option-Escape.
     public static let defaultEmergencyShortcut = MirageClientShortcutBinding(
         keyCode: 0x35,
         modifiers: [.control, .option]
     )
 
+    /// Returns a validation error when the shortcut cannot safely trigger Lights Out.
     public static func validationError(
         for shortcut: MirageClientShortcutBinding
     ) -> MirageHostLightsOutShortcutValidationError? {
-        let normalizedModifiers = MirageClientShortcutBinding.normalizedModifiers(shortcut.modifiers)
+        let normalizedModifiers = shortcut.modifiers.normalizedForShortcutMatching
         if normalizedModifiers.isEmpty {
             return .modifierRequired
         }
@@ -32,12 +34,13 @@ public enum MirageHostLightsOutShortcut {
         return nil
     }
 
+    /// Normalizes shortcut modifiers before storage or comparison.
     public static func normalized(
         _ shortcut: MirageClientShortcutBinding
     ) -> MirageClientShortcutBinding {
         MirageClientShortcutBinding(
             keyCode: shortcut.keyCode,
-            modifiers: MirageClientShortcutBinding.normalizedModifiers(shortcut.modifiers)
+            modifiers: shortcut.modifiers.normalizedForShortcutMatching
         )
     }
 
@@ -46,10 +49,14 @@ public enum MirageHostLightsOutShortcut {
     ]
 }
 
+/// Validation errors for the host Lights Out emergency shortcut.
 public enum MirageHostLightsOutShortcutValidationError: LocalizedError, Equatable, Sendable {
+    /// The shortcut must include at least one modifier key.
     case modifierRequired
+    /// The shortcut must include a non-modifier key.
     case nonModifierKeyRequired
 
+    /// User-facing validation message.
     public var errorDescription: String? {
         switch self {
         case .modifierRequired:

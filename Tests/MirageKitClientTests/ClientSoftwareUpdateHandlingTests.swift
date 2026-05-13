@@ -21,22 +21,17 @@ struct ClientSoftwareUpdateHandlingTests {
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            selectedFeatures: [],
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
-            protocolMismatchClientVersion: 2,
-            protocolMismatchUpdateTriggerAccepted: false,
-            protocolMismatchUpdateTriggerMessage: "Denied"
+            protocolMismatchClientVersion: 2
         )
 
         let info = service.protocolMismatchInfo(from: response)
         #expect(info?.reason == .protocolVersionMismatch)
         #expect(info?.hostProtocolVersion == 1)
         #expect(info?.clientProtocolVersion == 2)
-        #expect(info?.hostUpdateTriggerAccepted == false)
-        #expect(info?.hostUpdateTriggerMessage == "Denied")
     }
 
     @MainActor
@@ -47,14 +42,11 @@ struct ClientSoftwareUpdateHandlingTests {
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            selectedFeatures: [],
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 3,
-            protocolMismatchClientVersion: 4,
-            protocolMismatchUpdateTriggerAccepted: true,
-            protocolMismatchUpdateTriggerMessage: "Update signal sent."
+            protocolMismatchClientVersion: 4
         )
 
         let rejection = service.connectionRejection(from: response)
@@ -63,8 +55,6 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(rejection.isTerminal)
         #expect(rejection.hostProtocolVersion == 3)
         #expect(rejection.clientProtocolVersion == 4)
-        #expect(rejection.hostUpdateTriggerAccepted == true)
-        #expect(rejection.hostUpdateTriggerMessage == "Update signal sent.")
         #expect(rejection.userFacingMessage == "Protocol mismatch (host 3, client 4).")
     }
 
@@ -101,13 +91,12 @@ struct ClientSoftwareUpdateHandlingTests {
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            selectedFeatures: [],
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .hostUpdateInProgress
         )
 
-        #expect(service.mapProtocolMismatchReason(response.rejectionReason) == .hostUpdateInProgress)
+        #expect(service.connectionRejection(from: response).reason == .hostUpdateInProgress)
         #expect(
             service.bootstrapRejectionDescription(for: response, mismatchInfo: nil) ==
                 "Host update is in progress."
@@ -133,8 +122,8 @@ struct ClientSoftwareUpdateHandlingTests {
             lastBlockReason: nil,
             lastInstallResultCode: .noUpdateAvailable,
             canCancelUpdate: true,
-            downloadExpectedBytes: 2_000,
-            downloadReceivedBytes: 1_000,
+            downloadExpectedBytes: 2000,
+            downloadReceivedBytes: 1000,
             extractionProgress: 0.5,
             lastErrorSummary: "Previous check failed.",
             lastErrorDetails: "Network timeout.",
@@ -157,8 +146,8 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedStatus?.automationMode == .metadataOnly)
         #expect(receivedStatus?.installDisposition == .updateAvailable)
         #expect(receivedStatus?.canCancelUpdate == true)
-        #expect(receivedStatus?.downloadExpectedBytes == 2_000)
-        #expect(receivedStatus?.downloadReceivedBytes == 1_000)
+        #expect(receivedStatus?.downloadExpectedBytes == 2000)
+        #expect(receivedStatus?.downloadReceivedBytes == 1000)
         #expect(receivedStatus?.extractionProgress == 0.5)
         #expect(receivedStatus?.lastErrorSummary == "Previous check failed.")
         #expect(receivedStatus?.lastErrorDetails == "Network timeout.")
@@ -186,8 +175,8 @@ struct ClientSoftwareUpdateHandlingTests {
             lastBlockReason: nil,
             lastInstallResultCode: .started,
             canCancelUpdate: false,
-            downloadExpectedBytes: 4_096,
-            downloadReceivedBytes: 4_096,
+            downloadExpectedBytes: 4096,
+            downloadReceivedBytes: 4096,
             extractionProgress: nil,
             lastErrorSummary: nil,
             lastErrorDetails: nil,
@@ -200,7 +189,6 @@ struct ClientSoftwareUpdateHandlingTests {
             lastCheckedAtMs: 1_700_000_000_000
         )
         let resultMessage = HostSoftwareUpdateInstallResultMessage(
-            accepted: true,
             message: "Install started.",
             resultCode: .started,
             blockReason: nil,
@@ -214,10 +202,10 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedResult?.accepted == true)
         #expect(receivedResult?.message == "Install started.")
         #expect(receivedResult?.resultCode == .started)
-        #expect(receivedResult?.status?.isInstallInProgress == true)
-        #expect(receivedResult?.status?.channel == .release)
-        #expect(receivedResult?.status?.installDisposition == .installing)
-        #expect(receivedResult?.status?.downloadReceivedBytes == 4_096)
+        #expect(receivedResult?.status.isInstallInProgress == true)
+        #expect(receivedResult?.status.channel == .release)
+        #expect(receivedResult?.status.installDisposition == .installing)
+        #expect(receivedResult?.status.downloadReceivedBytes == 4096)
     }
 
     @MainActor

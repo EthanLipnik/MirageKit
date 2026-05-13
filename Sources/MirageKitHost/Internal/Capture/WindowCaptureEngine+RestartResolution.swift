@@ -15,11 +15,6 @@ import CoreGraphics
 import ScreenCaptureKit
 
 extension WindowCaptureEngine {
-    private func ownerPID(for windowID: WindowID) -> pid_t? {
-        let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[CFString: Any]]
-        return windowList?.first?[kCGWindowOwnerPID] as? pid_t
-    }
-
     func resolveCaptureTargetsForRestart(
         config: CaptureSessionConfiguration,
         mode: CaptureMode,
@@ -32,14 +27,14 @@ extension WindowCaptureEngine {
 
         for attempt in 1 ... attempts {
             do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+                let content = try await SCShareableContent.mirageHostContent()
 
                 let resolvedDisplay = content.displays.first(where: { $0.displayID == config.displayID })
                 let resolvedWindow = config.windowID.flatMap { windowID in
                     content.windows.first(where: { $0.windowID == windowID })
                 }
                 let windowOwnerPID: pid_t? = config.windowID.flatMap { windowID in
-                    ownerPID(for: windowID)
+                    HostAccessibilityWindowLookup.ownerProcessID(for: windowID)
                 }
                 var applicationPIDCandidates: [pid_t] = []
                 if let configuredPID = config.applicationPID, configuredPID > 0 { applicationPIDCandidates.append(configuredPID) }
@@ -97,7 +92,11 @@ extension WindowCaptureEngine {
                         .capture(
                             "Capture restart targets missing (\(missingLabel)) on attempt \(attempt)/\(attempts); retrying in \(delayMs)ms"
                         )
-                    try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                    do {
+                        try await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                    } catch {
+                        return config
+                    }
                     delayMs = min(1000, Int(Double(delayMs) * 1.6))
                 }
             } catch {
@@ -112,7 +111,11 @@ extension WindowCaptureEngine {
                     .capture,
                     "Capture restart resolution error (attempt \(attempt)/\(attempts)): \(error)"
                 )
-                try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                do {
+                    try await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                } catch {
+                    return config
+                }
                 delayMs = min(1000, Int(Double(delayMs) * 1.6))
             }
         }

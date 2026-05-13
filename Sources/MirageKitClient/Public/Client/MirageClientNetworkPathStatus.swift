@@ -10,21 +10,36 @@ import MirageKit
 
 /// Public snapshot of the current control-channel network path.
 public struct MirageClientNetworkPathStatus: Sendable, Equatable {
+    /// High-level path kind inferred from Network.framework state and interface hints.
     public let kind: MirageNetworkPathKind
+    /// Raw path status label.
     public let status: String
+    /// Interface names observed on the active path.
     public let interfaceNames: [String]
+    /// Whether the path is marked expensive by the system.
     public let isExpensive: Bool
+    /// Whether the path is marked constrained by the system.
     public let isConstrained: Bool
+    /// Whether the path supports IPv4.
     public let supportsIPv4: Bool
+    /// Whether the path supports IPv6.
     public let supportsIPv6: Bool
+    /// Whether the path uses Wi-Fi.
     public let usesWiFi: Bool
+    /// Whether the path uses a wired interface.
     public let usesWired: Bool
+    /// Whether the path uses cellular.
     public let usesCellular: Bool
+    /// Whether the path uses loopback.
     public let usesLoopback: Bool
+    /// Whether the path uses another interface type.
     public let usesOther: Bool
+    /// Local control-channel endpoint description, when known.
     public let localEndpointDescription: String?
+    /// Remote control-channel endpoint description, when known.
     public let remoteEndpointDescription: String?
 
+    /// Creates a public control-channel path snapshot.
     public init(
         kind: MirageNetworkPathKind,
         status: String,
@@ -57,15 +72,10 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         self.remoteEndpointDescription = remoteEndpointDescription
     }
 
+    /// User-facing path type label.
     public var displayName: String {
-        if interfaceNames.contains(where: Self.isAWDLInterface(_:)) {
-            return "AWDL"
-        }
-        if interfaceNames.contains(where: Self.isThunderboltBridgeInterface(_:)) {
-            return "Thunderbolt Bridge"
-        }
-        if interfaceNames.contains(where: Self.isOverlayInterface(_:)) {
-            return "VPN / Overlay"
+        if let interfaceKind = interfaceOverrideKind {
+            return interfaceKind.displayName
         }
         return switch kind {
         case .wifi:
@@ -87,6 +97,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         }
     }
 
+    /// Comma-separated interface-name summary.
     public var interfaceSummary: String {
         if interfaceNames.isEmpty {
             return "unknown"
@@ -94,10 +105,12 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         return interfaceNames.joined(separator: ", ")
     }
 
+    /// First observed interface name, if any.
     public var primaryInterfaceName: String? {
         interfaceNames.first
     }
 
+    /// Summary of IP protocol support on the active path.
     public var protocolSummary: String {
         switch (supportsIPv4, supportsIPv6) {
         case (true, true):
@@ -111,6 +124,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         }
     }
 
+    /// Summary of interface categories used by the active path.
     public var interfaceTypeSummary: String {
         var flags: [String] = []
 
@@ -133,15 +147,10 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         return flags.isEmpty ? "None" : flags.joined(separator: " + ")
     }
 
+    /// Extra explanation for path classifications that are easy to misread.
     public var transportDiagnosticNote: String? {
-        if interfaceNames.contains(where: Self.isAWDLInterface(_:)) {
-            return "The active control path is using Proximity Connect over Apple's AWDL transport."
-        }
-        if interfaceNames.contains(where: Self.isThunderboltBridgeInterface(_:)) {
-            return "The active control path is using a Thunderbolt Bridge-style interface."
-        }
-        if interfaceNames.contains(where: Self.isOverlayInterface(_:)) {
-            return "The active control path is using a tunnel or overlay interface."
+        if let interfaceKind = interfaceOverrideKind {
+            return interfaceKind.diagnosticNote
         }
         if kind == .wired, usesWired {
             return "The active control path is using a generic wired path classification."
@@ -168,34 +177,68 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         )
     }
 
-    private static func isAWDLInterface(_ name: String) -> Bool {
-        normalizedInterfaceName(name).hasPrefix("awdl")
+    /// Interface names can be more specific than `NWPath` interface categories.
+    private var interfaceOverrideKind: InterfaceOverrideKind? {
+        for interfaceName in interfaceNames {
+            let normalized = interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.hasPrefix("awdl") {
+                return .awdl
+            }
+            if normalized.contains("thunderbolt") || normalized.contains("bridge") {
+                return .thunderboltBridge
+            }
+            if normalized.hasPrefix("utun") {
+                return .overlay
+            }
+        }
+        return nil
     }
 
-    private static func isThunderboltBridgeInterface(_ name: String) -> Bool {
-        let normalized = normalizedInterfaceName(name)
-        return normalized.contains("thunderbolt") || normalized.contains("bridge")
+    private enum InterfaceOverrideKind {
+        case awdl
+        case thunderboltBridge
+        case overlay
+
+        var displayName: String {
+            switch self {
+            case .awdl:
+                "AWDL"
+            case .thunderboltBridge:
+                "Thunderbolt Bridge"
+            case .overlay:
+                "VPN / Overlay"
+            }
+        }
+
+        var diagnosticNote: String {
+            switch self {
+            case .awdl:
+                "The active control path is using Proximity Connect over Apple's AWDL transport."
+            case .thunderboltBridge:
+                "The active control path is using a Thunderbolt Bridge-style interface."
+            case .overlay:
+                "The active control path is using a tunnel or overlay interface."
+            }
+        }
     }
 
-    private static func isOverlayInterface(_ name: String) -> Bool {
-        normalizedInterfaceName(name).hasPrefix("utun")
-    }
-
-    private static func normalizedInterfaceName(_ name: String) -> String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
 }
 
+/// One observed control-channel path snapshot in client path history.
 public struct MirageClientNetworkPathHistoryEntry: Sendable, Equatable, Identifiable {
+    /// Time this path snapshot was observed.
     public let observedAt: Date
+    /// Path status captured at `observedAt`.
     public let status: MirageClientNetworkPathStatus
 
+    /// Stable identity derived from timestamp and path signature.
     public var id: String {
         let timestamp = Int(observedAt.timeIntervalSince1970 * 1000)
         let interfaceText = status.interfaceNames.joined(separator: ",")
         return "\(timestamp)|\(status.kind.rawValue)|\(status.status)|\(interfaceText)"
     }
 
+    /// Creates one observed control-path history entry.
     public init(
         observedAt: Date,
         status: MirageClientNetworkPathStatus

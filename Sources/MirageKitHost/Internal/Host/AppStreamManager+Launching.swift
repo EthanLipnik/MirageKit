@@ -12,22 +12,30 @@ import MirageKit
 import AppKit
 import Foundation
 
-enum AppStreamLaunchOutcome: Equatable, Sendable {
+enum AppStreamLaunchOutcome: Equatable {
+    /// The app was not running and launched successfully.
     case launched
+    /// The app was already running and was activated.
     case alreadyRunning
+    /// The app could not be resolved or launched.
     case failed
 }
 
-enum AppStreamReopenAction: Equatable, Sendable {
+enum AppStreamReopenAction: Equatable {
+    /// Bring the existing app process to the foreground.
     case activateRunningApplication
+    /// Send the native reopen Apple Event to request a window from the running app.
     case sendReopenAppleEvent
+    /// Ask `NSWorkspace` to open the application bundle.
     case openApplication
+    /// Fall back to opening the resolved app URL directly.
     case openURLFallback
 }
 
 extension AppStreamManager {
     // MARK: - App Launching
 
+    /// Returns the ordered reopen strategy for the available app process and bundle URL state.
     nonisolated static func reopenActions(
         hasRunningApplication: Bool,
         hasApplicationURL: Bool
@@ -42,6 +50,7 @@ extension AppStreamManager {
         return [.openApplication, .openURLFallback]
     }
 
+    /// Resolves an application bundle URL from a provided path or Launch Services lookup.
     private func resolvedApplicationURL(
         bundleIdentifier: String,
         path: String?
@@ -53,12 +62,11 @@ extension AppStreamManager {
         return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
     }
 
-    /// Launch an app if not running
-    /// - Parameter bundleIdentifier: The app to launch
-    /// - Returns: Whether the app was newly launched, already running, or failed to launch.
+    /// Launches an app when it is not already running.
     func launchAppIfNeeded(_ bundleIdentifier: String, path: String) async -> AppStreamLaunchOutcome {
+        let key = appSessionKey(for: bundleIdentifier)
         if let runningApp = NSWorkspace.shared.runningApplications.first(where: { app in
-            app.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
+            app.bundleIdentifier?.lowercased() == key
         }) {
             runningApp.activate()
             logger.debug("App \(bundleIdentifier) already running")
@@ -94,10 +102,11 @@ extension AppStreamManager {
         }
     }
 
-    /// Request a new window from an app (for apps that are running but have no windows)
+    /// Requests a new window from an app that is running without a visible primary window.
     func requestNewWindow(bundleIdentifier: String, path: String? = nil) async {
+        let key = appSessionKey(for: bundleIdentifier)
         let runningApp = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
+            $0.bundleIdentifier?.lowercased() == key
         })
         let appURL = runningApp?.bundleURL ?? resolvedApplicationURL(
             bundleIdentifier: bundleIdentifier,
@@ -159,7 +168,7 @@ extension AppStreamManager {
         }
     }
 
-    @discardableResult
+    /// Sends the app-level reopen Apple Event used by native apps to create or reveal a window.
     nonisolated private static func sendReopenAppleEvent(to runningApp: NSRunningApplication) -> Bool {
         let target = NSAppleEventDescriptor(processIdentifier: runningApp.processIdentifier)
         let event = NSAppleEventDescriptor(

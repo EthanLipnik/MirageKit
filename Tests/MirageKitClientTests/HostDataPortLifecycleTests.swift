@@ -16,8 +16,7 @@ struct HostDataPortLifecycleTests {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectionState = .connected(host: "Altair")
 
-        service.requestApplicationActivationRecovery(for: 99)
-        try await Task.sleep(for: .milliseconds(50))
+        service.requestStreamRecovery(for: 99, trigger: .applicationActivation)
 
         #expect(service.controllersByStream.isEmpty)
         #expect(service.pendingApplicationActivationRecoveryStreamIDs.isEmpty)
@@ -32,7 +31,7 @@ struct HostDataPortLifecycleTests {
         service.desktopStreamID = streamID
         service.desktopSessionID = UUID()
 
-        service.requestApplicationActivationRecovery(for: streamID)
+        service.requestStreamRecovery(for: streamID, trigger: .applicationActivation)
 
         #expect(service.pendingApplicationActivationRecoveryStreamIDs == Set([streamID]))
         #expect(service.controllersByStream.isEmpty)

@@ -9,8 +9,10 @@ import Foundation
 
 /// Stores all configured actions (built-in + custom) and persists them to UserDefaults.
 public struct MirageActionPreferences: Codable, Sendable, Equatable {
+    /// Ordered action catalog presented by shortcut settings and runtime matching.
     public var actions: [MirageAction]
 
+    /// Creates preferences with a supplied action catalog, defaulting to built-in actions.
     public init(actions: [MirageAction] = MirageAction.allBuiltIn) {
         self.actions = actions
     }
@@ -28,6 +30,16 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
         actions.first { $0.id == id }
     }
 
+    /// Custom remote-host key bindings shown in client settings.
+    public var customHostKeyActions: [MirageAction] {
+        actions.filter(\.isCustomHostKeyBinding)
+    }
+
+    /// Built-in host-key shortcuts shown in client settings.
+    public var builtInHostKeyShortcutActions: [MirageAction] {
+        actions.filter(\.isBuiltInHostKeyShortcut)
+    }
+
     /// Update an existing action in place.
     public mutating func updateAction(_ action: MirageAction) {
         if let index = actions.firstIndex(where: { $0.id == action.id }) {
@@ -41,13 +53,11 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
     }
 
     /// Remove a custom action. Built-in actions cannot be removed.
-    @discardableResult
-    public mutating func removeAction(withID id: String) -> Bool {
+    public mutating func removeAction(withID id: String) {
         guard let index = actions.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) else {
-            return false
+            return
         }
         actions.remove(at: index)
-        return true
     }
 
     /// Check for shortcut conflicts, excluding the action being edited.
@@ -70,20 +80,32 @@ public struct MirageActionPreferences: Codable, Sendable, Equatable {
 public extension MirageActionPreferences {
     private static let userDefaultsKey = "MirageActionPreferences"
 
+    /// Loads saved action preferences and merges them with current built-in actions.
     static func load() -> MirageActionPreferences {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
-              let prefs = try? JSONDecoder().decode(MirageActionPreferences.self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey) else {
+            return MirageActionPreferences()
+        }
+        let prefs: MirageActionPreferences
+        do {
+            prefs = try JSONDecoder().decode(MirageActionPreferences.self, from: data)
+        } catch {
+            MirageLogger.error(.appState, error: error, message: "Failed to decode action preferences: ")
             return MirageActionPreferences()
         }
         return MirageActionPreferences(actions: normalizedLoadedActions(prefs.actions))
     }
 
+    /// Saves the action preferences to the standard user defaults store.
     func save() {
-        if let data = try? JSONEncoder().encode(self) {
+        do {
+            let data = try JSONEncoder().encode(self)
             UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
+        } catch {
+            MirageLogger.error(.appState, error: error, message: "Failed to encode action preferences: ")
         }
     }
 
+    /// Merges persisted actions with the current built-in action catalog.
     static func normalizedLoadedActions(_ actions: [MirageAction]) -> [MirageAction] {
         let builtInIDs = Set(MirageAction.allBuiltIn.map(\.id))
         let storedActionsByID = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
@@ -92,7 +114,12 @@ public extension MirageActionPreferences {
             guard let storedAction = storedActionsByID[canonicalAction.id] else {
                 return canonicalAction
             }
-            return mergedBuiltInAction(canonicalAction: canonicalAction, storedAction: storedAction)
+            var mergedAction = canonicalAction
+            mergedAction.displayName = storedAction.displayName
+            mergedAction.shortcut = storedAction.shortcut
+            mergedAction.isEnabled = storedAction.isEnabled
+            mergedAction.sfSymbolName = storedAction.sfSymbolName
+            return mergedAction
         }
 
         let customActions = actions.filter { action in
@@ -101,17 +128,4 @@ public extension MirageActionPreferences {
 
         return normalizedBuiltIns + customActions
     }
-
-    private static func mergedBuiltInAction(
-        canonicalAction: MirageAction,
-        storedAction: MirageAction
-    ) -> MirageAction {
-        var mergedAction = canonicalAction
-        mergedAction.displayName = storedAction.displayName
-        mergedAction.shortcut = storedAction.shortcut
-        mergedAction.isEnabled = storedAction.isEnabled
-        mergedAction.sfSymbolName = storedAction.sfSymbolName
-        return mergedAction
-    }
-
 }

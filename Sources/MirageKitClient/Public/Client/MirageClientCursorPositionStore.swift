@@ -11,11 +11,16 @@ import CoreGraphics
 import Foundation
 import MirageKit
 
+/// Latest normalized cursor position and visibility received for a streamed display.
 public struct MirageCursorPositionSnapshot: Sendable, Equatable {
+    /// Cursor position in stream-local normalized coordinates.
     public let position: CGPoint
+    /// Whether the host cursor should be visible in the stream view.
     public let isVisible: Bool
+    /// Monotonic generation that increments whenever the snapshot changes.
     public let sequence: UInt64
 
+    /// Creates a cursor position snapshot.
     public init(position: CGPoint, isVisible: Bool, sequence: UInt64) {
         self.position = position
         self.isVisible = isVisible
@@ -23,26 +28,28 @@ public struct MirageCursorPositionSnapshot: Sendable, Equatable {
     }
 }
 
+/// Thread-safe cursor position store for streamed sessions.
 public final class MirageClientCursorPositionStore: @unchecked Sendable {
     private let lock = NSLock()
     private var positions: [StreamID: MirageCursorPositionSnapshot] = [:]
 
+    /// Creates an empty cursor position store.
     public init() {}
 
-    /// Update cursor position for a stream.
-    /// - Returns: True when the cursor state changed.
-    @discardableResult
+    /// Updates cursor position for a stream.
+    /// - Returns: `true` when the cursor position or visibility changed and the sequence advanced.
     public func updatePosition(streamID: StreamID, position: CGPoint, isVisible: Bool) -> Bool {
         lock.lock()
         defer { lock.unlock() }
 
-        if let existing = positions[streamID],
+        let existing = positions[streamID]
+        if let existing,
            existing.position == position,
            existing.isVisible == isVisible {
             return false
         }
 
-        let nextSequence = (positions[streamID]?.sequence ?? 0) &+ 1
+        let nextSequence = (existing?.sequence ?? 0) &+ 1
         positions[streamID] = MirageCursorPositionSnapshot(
             position: position,
             isVisible: isVisible,
@@ -51,25 +58,24 @@ public final class MirageClientCursorPositionStore: @unchecked Sendable {
         return true
     }
 
-    /// Snapshot the latest cursor position for a stream.
+    /// Returns the latest cursor position for a stream.
     public func snapshot(for streamID: StreamID) -> MirageCursorPositionSnapshot? {
         lock.lock()
-        let result = positions[streamID]
-        lock.unlock()
-        return result
+        defer { lock.unlock() }
+        return positions[streamID]
     }
 
-    /// Clear cursor position for a stream.
+    /// Clears cursor position for a stream.
     public func clear(streamID: StreamID) {
         lock.lock()
+        defer { lock.unlock() }
         positions.removeValue(forKey: streamID)
-        lock.unlock()
     }
 
-    /// Clear all cursor positions.
+    /// Clears all cursor positions.
     public func clearAll() {
         lock.lock()
+        defer { lock.unlock() }
         positions.removeAll()
-        lock.unlock()
     }
 }

@@ -27,9 +27,7 @@ extension MirageClientService {
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate
-            let mbps = Double(bitrate) / 1_000_000.0
-            MirageLogger
-                .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+            MirageLogger.client("Requesting bitrate: \(mirageFormattedMegabitRate(bitrate))")
         }
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
@@ -55,9 +53,8 @@ extension MirageClientService {
         }
         if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
             request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
-            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
             MirageLogger
-                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+                .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
@@ -86,9 +83,7 @@ extension MirageClientService {
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate
-            let mbps = Double(bitrate) / 1_000_000.0
-            MirageLogger
-                .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+            MirageLogger.client("Requesting bitrate: \(mirageFormattedMegabitRate(bitrate))")
         }
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
@@ -114,9 +109,8 @@ extension MirageClientService {
         }
         if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
             request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
-            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
             MirageLogger
-                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+                .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
@@ -173,9 +167,8 @@ extension MirageClientService {
         }
         if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
             request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
-            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
             MirageLogger
-                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+                .client("Requesting bitrate adaptation ceiling: \(mirageFormattedMegabitRate(bitrateAdaptationCeiling))")
         }
         if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
             request.encoderMaxWidth = encoderMaxWidth
@@ -192,9 +185,6 @@ extension MirageClientService {
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartCustomStreamMessage) {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
-        }
-        if let colorDepth = overrides.colorDepth {
-            request.colorDepth = colorDepth
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate

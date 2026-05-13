@@ -17,18 +17,14 @@ import ApplicationServices
 enum WindowManager {
     private static let fullScreenAttribute = "AXFullScreen"
 
-    /// Minimizes a window by its WindowID
-    /// - Parameter windowID: The WindowID of the window to minimize
-    /// - Returns: true if the window was successfully minimized, false otherwise
-    @discardableResult
-    static func minimizeWindow(_ windowID: WindowID) -> Bool {
-        setWindowMinimized(windowID, minimized: true)
+    /// Attempts to minimize a window when failure should only be logged by the accessibility layer.
+    static func minimizeWindowIfPossible(_ windowID: WindowID) {
+        _ = setWindowMinimized(windowID, minimized: true)
     }
 
     /// Restores a minimized window by its WindowID.
     /// - Parameter windowID: The WindowID of the window to restore
     /// - Returns: true if the window was successfully restored, false otherwise
-    @discardableResult
     static func restoreWindow(_ windowID: WindowID) -> Bool {
         setWindowMinimized(windowID, minimized: false)
     }
@@ -36,13 +32,12 @@ enum WindowManager {
     /// Returns whether a window is currently in macOS full-screen mode.
     static func isWindowFullScreen(_ windowID: WindowID) -> Bool {
         guard let axWindow = resolveAXWindow(windowID) else { return false }
-        return axBooleanAttributeValue(axWindow, attribute: fullScreenAttribute as CFString) ?? false
+        return HostAccessibilityWindowLookup.boolAttribute(fullScreenAttribute as CFString, from: axWindow) ?? false
     }
 
     /// Exits macOS full-screen mode for a window when supported.
     /// - Parameter windowID: The WindowID of the window to exit full-screen mode.
     /// - Returns: true if a full-screen window was toggled out of that state.
-    @discardableResult
     static func exitFullScreen(_ windowID: WindowID) -> Bool {
         setWindowFullScreen(windowID, fullScreen: false)
     }
@@ -77,9 +72,9 @@ enum WindowManager {
             return false
         }
 
-        guard let currentValue = axBooleanAttributeValue(
-            axWindow,
-            attribute: fullScreenAttribute as CFString
+        guard let currentValue = HostAccessibilityWindowLookup.boolAttribute(
+            fullScreenAttribute as CFString,
+            from: axWindow
         ) else {
             MirageLogger.host("WindowManager: Full-screen state unavailable for window \(windowID)")
             return false
@@ -101,24 +96,6 @@ enum WindowManager {
 
         MirageLogger.host("WindowManager: Failed to \(action) for window \(windowID): AXError \(result.rawValue)")
         return false
-    }
-
-    private static func axBooleanAttributeValue(_ element: AXUIElement, attribute: CFString) -> Bool? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value else {
-            return nil
-        }
-
-        if let boolValue = value as? Bool {
-            return boolValue
-        }
-
-        if let numberValue = value as? NSNumber {
-            return numberValue.boolValue
-        }
-
-        return nil
     }
 
     private static func resolveAXWindow(_ windowID: WindowID) -> AXUIElement? {
@@ -149,46 +126,32 @@ enum WindowManager {
         let windowX = windowBounds["X"] as? CGFloat
         let windowY = windowBounds["Y"] as? CGFloat
 
-        // Create AX element for the app
         let appElement = AXUIElementCreateApplication(ownerPID)
+        let axWindows = HostAccessibilityWindowLookup.windows(in: appElement)
 
-        var windowsRef: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-
-        guard result == .success, let axWindows = windowsRef as? [AXUIElement] else {
-            MirageLogger.host("WindowManager: Could not get AX windows for PID \(ownerPID): AXError \(result.rawValue)")
+        guard !axWindows.isEmpty else {
+            MirageLogger.host("WindowManager: Could not get AX windows for PID \(ownerPID)")
             return nil
         }
 
-        // Find the matching window
         var targetWindow: AXUIElement?
-
-        if axWindows.count == 1 {
-            // Only one window, use it directly
-            targetWindow = axWindows[0]
+        if let exactWindow = HostAccessibilityWindowLookup.window(matching: windowID, in: axWindows) {
+            targetWindow = exactWindow
+        } else if axWindows.count == 1 {
+            targetWindow = axWindows.first
         } else if let windowX, let windowY {
-            // Match by position
             for axWindow in axWindows {
-                var positionRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef)
-
-                if let positionValue = positionRef {
-                    var position = CGPoint.zero
-                    AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
-
-                    // Allow small tolerance for floating point comparison
-                    if abs(position.x - windowX) < 1.0, abs(position.y - windowY) < 1.0 {
-                        targetWindow = axWindow
-                        break
-                    }
+                guard let position = HostAccessibilityWindowLookup.position(of: axWindow) else { continue }
+                if abs(position.x - windowX) < 1.0, abs(position.y - windowY) < 1.0 {
+                    targetWindow = axWindow
+                    break
                 }
             }
         }
 
-        // Fall back to first window if no match found
-        if targetWindow == nil, !axWindows.isEmpty {
+        if targetWindow == nil, let firstWindow = axWindows.first {
             MirageLogger.host("WindowManager: Could not match window by position, using first window")
-            targetWindow = axWindows[0]
+            targetWindow = firstWindow
         }
 
         guard let axWindow = targetWindow else {

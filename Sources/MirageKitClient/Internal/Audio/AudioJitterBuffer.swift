@@ -10,8 +10,8 @@
 import Foundation
 import MirageKit
 
-struct AudioEncodedFrame: Sendable {
-    let streamID: StreamID
+/// Fully assembled encoded audio frame ready for decode or playback scheduling.
+struct AudioEncodedFrame {
     let frameNumber: UInt32
     let timestampNs: UInt64
     let codec: MirageAudioCodec
@@ -21,9 +21,13 @@ struct AudioEncodedFrame: Sendable {
     let payload: Data
 }
 
+/// Reassembles fragmented audio packets and releases frames once startup buffering is satisfied.
 actor AudioJitterBuffer {
+    /// Maximum age for incomplete fragmented audio frames before they are discarded.
+    private static let pendingTimeoutSeconds: CFAbsoluteTime = 1.0
+
+    /// Partial encoded frame waiting for all advertised fragments.
     private struct PendingFrame {
-        let streamID: StreamID
         let frameNumber: UInt32
         let timestampNs: UInt64
         let codec: MirageAudioCodec
@@ -37,7 +41,6 @@ actor AudioJitterBuffer {
     }
 
     private let startupBufferSeconds: Double
-    private let pendingTimeoutSeconds: CFAbsoluteTime = 1.0
     private var pendingFrames: [UInt32: PendingFrame] = [:]
     private var readyFrames: [AudioEncodedFrame] = []
     private var hasStartedPlayback = false
@@ -58,7 +61,6 @@ actor AudioJitterBuffer {
         lastEmittedFrameNumber = nil
     }
 
-    @discardableResult
     func ingest(header: AudioPacketHeader, payload: Data) -> [AudioEncodedFrame] {
         if header.flags.contains(.discontinuity) { clearQueuedFramesForDiscontinuity() }
 
@@ -69,7 +71,6 @@ actor AudioJitterBuffer {
         let now = CFAbsoluteTimeGetCurrent()
 
         var pending = pendingFrames[header.frameNumber] ?? PendingFrame(
-            streamID: header.streamID,
             frameNumber: header.frameNumber,
             timestampNs: header.timestamp,
             codec: header.codec,
@@ -106,7 +107,6 @@ actor AudioJitterBuffer {
             }
 
             let frame = AudioEncodedFrame(
-                streamID: pending.streamID,
                 frameNumber: pending.frameNumber,
                 timestampNs: pending.timestampNs,
                 codec: pending.codec,
@@ -116,7 +116,8 @@ actor AudioJitterBuffer {
                 payload: encodedPayload
             )
             if hasStartedPlayback, isLateFrame(frame) {
-                noteLateDrop()
+                lateDropCount &+= 1
+                logLateDropsIfNeeded()
             } else {
                 readyFrames.append(frame)
                 readyFrames.sort { lhs, rhs in
@@ -142,7 +143,8 @@ actor AudioJitterBuffer {
         guard !readyFrames.isEmpty else { return [] }
         if !hasStartedPlayback {
             let bufferedSeconds = readyFrames.reduce(0.0) { partial, frame in
-                partial + durationSeconds(samples: frame.samplesPerFrame, sampleRate: frame.sampleRate)
+                guard frame.sampleRate > 0 else { return partial }
+                return partial + Double(max(0, frame.samplesPerFrame)) / Double(frame.sampleRate)
             }
             guard bufferedSeconds >= startupBufferSeconds else { return [] }
             hasStartedPlayback = true
@@ -156,42 +158,25 @@ actor AudioJitterBuffer {
         }
         readyFrames.removeAll(keepingCapacity: true)
         for frame in frames {
-            markEmitted(frame)
+            lastEmittedTimestampNs = frame.timestampNs
+            lastEmittedFrameNumber = frame.frameNumber
         }
         return frames
     }
 
     private func cleanupStalePendingFrames(now: CFAbsoluteTime) {
         let staleFrameNumbers = pendingFrames.compactMap { frameNumber, frame in
-            now - frame.createdAt > pendingTimeoutSeconds ? frameNumber : nil
+            now - frame.createdAt > Self.pendingTimeoutSeconds ? frameNumber : nil
         }
         for frameNumber in staleFrameNumbers {
             pendingFrames.removeValue(forKey: frameNumber)
         }
     }
 
-    private func durationSeconds(samples: Int, sampleRate: Int) -> Double {
-        guard sampleRate > 0 else { return 0 }
-        return Double(max(0, samples)) / Double(sampleRate)
-    }
-
     private func isLateFrame(_ frame: AudioEncodedFrame) -> Bool {
         guard let lastEmittedTimestampNs, let lastEmittedFrameNumber else { return false }
-        if frame.timestampNs < lastEmittedTimestampNs { return true }
-        if frame.timestampNs == lastEmittedTimestampNs, frame.frameNumber <= lastEmittedFrameNumber {
-            return true
-        }
-        return false
-    }
-
-    private func markEmitted(_ frame: AudioEncodedFrame) {
-        lastEmittedTimestampNs = frame.timestampNs
-        lastEmittedFrameNumber = frame.frameNumber
-    }
-
-    private func noteLateDrop() {
-        lateDropCount &+= 1
-        logLateDropsIfNeeded()
+        return frame.timestampNs < lastEmittedTimestampNs ||
+            (frame.timestampNs == lastEmittedTimestampNs && frame.frameNumber <= lastEmittedFrameNumber)
     }
 
     private func logLateDropsIfNeeded() {

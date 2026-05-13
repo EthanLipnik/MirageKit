@@ -83,6 +83,5 @@ struct QualityTestQueueBudgetTests {
             )
         )
     }
-
 }
 #endif

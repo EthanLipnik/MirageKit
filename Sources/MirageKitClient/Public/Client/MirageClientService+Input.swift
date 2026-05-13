@@ -7,7 +7,6 @@
 //  Client input event dispatch.
 //
 
-import Foundation
 import MirageKit
 
 public extension MirageClientService {

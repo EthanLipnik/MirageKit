@@ -14,30 +14,6 @@ import MirageKit
 
 @MainActor
 extension MirageHostService {
-    enum ClientWindowCloseHostWindowCloseDecision: Equatable, Sendable {
-        case attemptHostWindowClose
-        case skipOriginNotClientWindowClosed
-        case skipSettingDisabled
-        case skipNoAppStreamSession
-    }
-
-    nonisolated static func clientWindowCloseHostWindowCloseDecision(
-        origin: StopStreamMessage.Origin?,
-        closeHostWindowOnClientWindowClose: Bool,
-        hasAppStreamSession: Bool
-    ) -> ClientWindowCloseHostWindowCloseDecision {
-        guard origin == .clientWindowClosed else {
-            return .skipOriginNotClientWindowClosed
-        }
-        guard closeHostWindowOnClientWindowClose else {
-            return .skipSettingDisabled
-        }
-        guard hasAppStreamSession else {
-            return .skipNoAppStreamSession
-        }
-        return .attemptHostWindowClose
-    }
-
     nonisolated static func appWindowCloseAlertPresentingStreamID(
         activeStreams: [MirageStreamSession],
         clientID: UUID,
@@ -49,14 +25,13 @@ extension MirageHostService {
                     stream.id != excludingStreamID &&
                     stream.window.id != 0
             }
-            .sorted { lhs, rhs in
+            .min { lhs, rhs in
                 if lhs.id != rhs.id {
                     return lhs.id < rhs.id
                 }
                 return lhs.window.id < rhs.window.id
             }
-            .first?
-            .id
+            .map(\.id)
     }
 
     func handleHostWindowCloseAttemptForClientWindowClose(
@@ -160,7 +135,7 @@ extension MirageHostService {
             )
         }
 
-        clearPendingAppWindowCloseAlertToken(token)
+        pendingAppWindowCloseAlertTokensByToken.removeValue(forKey: token)
         return AppWindowCloseAlertActionResultMessage(
             alertToken: alertToken,
             actionID: actionID,
@@ -169,13 +144,9 @@ extension MirageHostService {
         )
     }
 
-    func clearPendingAppWindowCloseAlertToken(_ token: String) {
-        pendingAppWindowCloseAlertTokensByToken.removeValue(forKey: token)
-    }
-
     func clearPendingAppWindowCloseAlertTokens(forClientID clientID: UUID) {
-        pendingAppWindowCloseAlertTokensByToken = pendingAppWindowCloseAlertTokensByToken.filter { _, value in
-            value.clientID != clientID
+        pendingAppWindowCloseAlertTokensByToken = pendingAppWindowCloseAlertTokensByToken.filter { entry in
+            entry.value.clientID != clientID
         }
     }
 
@@ -187,8 +158,8 @@ extension MirageHostService {
         forClientID clientID: UUID,
         sourceWindowID: WindowID
     ) {
-        pendingAppWindowCloseAlertTokensByToken = pendingAppWindowCloseAlertTokensByToken.filter { _, value in
-            !(value.clientID == clientID && value.sourceWindowID == sourceWindowID)
+        pendingAppWindowCloseAlertTokensByToken = pendingAppWindowCloseAlertTokensByToken.filter { entry in
+            !(entry.value.clientID == clientID && entry.value.sourceWindowID == sourceWindowID)
         }
     }
 
@@ -223,9 +194,7 @@ extension MirageHostService {
         let token = UUID().uuidString.lowercased()
         clearPendingAppWindowCloseAlertTokens(forClientID: session.client.id, sourceWindowID: session.window.id)
         pendingAppWindowCloseAlertTokensByToken[token] = PendingAppWindowCloseAlertToken(
-            token: token,
             clientID: session.client.id,
-            bundleIdentifier: appSession.bundleIdentifier,
             sourceWindowID: session.window.id,
             sourceApp: session.window.application,
             presentingStreamID: presentingStreamID,
@@ -247,7 +216,12 @@ extension MirageHostService {
                 )
             }
         )
-        try? await clientContext.send(.appWindowCloseBlockedAlert, content: message)
+        do {
+            try await clientContext.send(.appWindowCloseBlockedAlert, content: message)
+        } catch {
+            pendingAppWindowCloseAlertTokensByToken.removeValue(forKey: token)
+            MirageLogger.error(.host, error: error, message: "Failed to send app-window close blocked alert: ")
+        }
     }
 }
 

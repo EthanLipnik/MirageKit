@@ -147,7 +147,6 @@ struct MultiWindowAppStreamingStabilizationTests {
     @Test("Initial startup handoff keeps detached fallback windows eligible across refresh")
     func initialStartupHandoffKeepsDetachedFallbackWindowsEligibleAcrossRefresh() {
         let detachedFallbackCandidate = AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(
                 id: 9113,
                 title: "Inspector",
@@ -183,7 +182,6 @@ struct MultiWindowAppStreamingStabilizationTests {
     @Test("Initial startup handoff rejects auxiliary and claimed window candidates")
     func initialStartupHandoffRejectsAuxiliaryAndClaimedWindowCandidates() {
         let auxiliaryCandidate = AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(
                 id: 9121,
                 title: "Inspector",
@@ -226,16 +224,10 @@ struct MultiWindowAppStreamingStabilizationTests {
     @Test("Restore owner validation blocks stale teardown from another stream")
     func restoreOwnerValidationBlocksStaleTeardown() {
         let expectedOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 2,
-            windowID: 301,
-            displayID: 10,
-            generation: 4
+            streamID: 2
         )
         let activeOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 9,
-            windowID: 301,
-            displayID: 11,
-            generation: 8
+            streamID: 9
         )
 
         let mismatchResult = WindowSpaceManager.validateRestoreOwner(
@@ -255,58 +247,21 @@ struct MultiWindowAppStreamingStabilizationTests {
         )
     }
 
-    @Test("Stale owner recovery decision selects reclaim for inactive owner stream")
-    func staleOwnerRecoveryDecisionSelectsReclaimForInactiveOwnerStream() {
-        let staleOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 9,
-            windowID: 301,
-            displayID: 10,
-            generation: 4
-        )
-        let decision = WindowSpaceManager.staleOwnerRecoveryDecision(
-            savedOwner: staleOwner,
-            activeStreamIDs: [1, 2, 3]
-        )
-        #expect(decision == .recover(streamID: staleOwner.streamID))
-    }
-
-    @Test("Stale owner recovery decision rejects active owner conflict")
-    func staleOwnerRecoveryDecisionRejectsActiveOwnerConflict() {
-        let activeOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 9,
-            windowID: 301,
-            displayID: 10,
-            generation: 4
-        )
-        let decision = WindowSpaceManager.staleOwnerRecoveryDecision(
-            savedOwner: activeOwner,
-            activeStreamIDs: [8, 9]
-        )
-        #expect(decision == .activeOwnerConflict(streamID: activeOwner.streamID))
-    }
-
     @Test("Active owner claims are filtered from app-window remap candidates")
     func activeOwnerClaimsAreFilteredFromAppWindowRemapCandidates() {
         let activeClaimWindowID = WindowID(7001)
         let inactiveClaimWindowID = WindowID(7002)
         let activeOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 44,
-            windowID: activeClaimWindowID,
-            displayID: 1,
-            generation: 2
+            streamID: 44
         )
         let inactiveOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: 55,
-            windowID: inactiveClaimWindowID,
-            displayID: 1,
-            generation: 2
+            streamID: 55
         )
         let savedStates: [WindowID: WindowSpaceManager.SavedWindowState] = [
             activeClaimWindowID: WindowSpaceManager.SavedWindowState(
                 windowID: activeClaimWindowID,
                 originalFrame: .zero,
                 originalSpaceIDs: [],
-                trafficLightVisibilitySnapshot: nil,
                 owner: activeOwner,
                 savedAt: Date()
             ),
@@ -314,7 +269,6 @@ struct MultiWindowAppStreamingStabilizationTests {
                 windowID: inactiveClaimWindowID,
                 originalFrame: .zero,
                 originalSpaceIDs: [],
-                trafficLightVisibilitySnapshot: nil,
                 owner: inactiveOwner,
                 savedAt: Date()
             ),
@@ -357,12 +311,8 @@ struct MultiWindowAppStreamingStabilizationTests {
                 windowID: firstOwnedWindowID,
                 originalFrame: .zero,
                 originalSpaceIDs: [],
-                trafficLightVisibilitySnapshot: nil,
                 owner: WindowSpaceManager.WindowBindingOwner(
-                    streamID: stoppedStreamID,
-                    windowID: firstOwnedWindowID,
-                    displayID: 1,
-                    generation: 1
+                    streamID: stoppedStreamID
                 ),
                 savedAt: Date()
             ),
@@ -370,12 +320,8 @@ struct MultiWindowAppStreamingStabilizationTests {
                 windowID: secondOwnedWindowID,
                 originalFrame: .zero,
                 originalSpaceIDs: [],
-                trafficLightVisibilitySnapshot: nil,
                 owner: WindowSpaceManager.WindowBindingOwner(
-                    streamID: stoppedStreamID,
-                    windowID: secondOwnedWindowID,
-                    displayID: 1,
-                    generation: 2
+                    streamID: stoppedStreamID
                 ),
                 savedAt: Date()
             ),
@@ -383,12 +329,8 @@ struct MultiWindowAppStreamingStabilizationTests {
                 windowID: otherStreamWindowID,
                 originalFrame: .zero,
                 originalSpaceIDs: [],
-                trafficLightVisibilitySnapshot: nil,
                 owner: WindowSpaceManager.WindowBindingOwner(
-                    streamID: otherStreamID,
-                    windowID: otherStreamWindowID,
-                    displayID: 1,
-                    generation: 1
+                    streamID: otherStreamID
                 ),
                 savedAt: Date()
             ),
@@ -404,15 +346,11 @@ struct MultiWindowAppStreamingStabilizationTests {
 
     @Test("Partial startup policy keeps session alive and failed windows retry")
     func partialStartupPolicyKeepsSessionAndRetriesFailures() async {
-        #expect(MirageHostService.initialAppWindowStartupDecision(startedWindowCount: 1) == .continueStreaming)
-        #expect(MirageHostService.initialAppWindowStartupDecision(startedWindowCount: 0) == .abortSession)
-
         let manager = AppStreamManager()
         let disposition = await manager.noteWindowStartupFailed(
             bundleID: "com.example.app",
             windowID: 404,
-            retryable: true,
-            reason: "window already bound"
+            retryable: true
         )
 
         guard case let .retryScheduled(attempt, _) = disposition else {
@@ -425,7 +363,6 @@ struct MultiWindowAppStreamingStabilizationTests {
     @Test("Lifecycle startup eligibility rejects parented and claimed candidates")
     func lifecycleStartupEligibilityRejectsParentedAndClaimedCandidates() {
         let parentedAuxiliary = AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(id: 9131, title: "Sheet", origin: CGPoint(x: 20, y: 20)),
             classification: .auxiliary,
             role: "AXSheet",
@@ -440,7 +377,6 @@ struct MultiWindowAppStreamingStabilizationTests {
             origin: CGPoint(x: 40, y: 40)
         )
         let detachedAuxiliary = AppStreamWindowCandidate(
-            bundleIdentifier: "com.example.app",
             window: makeWindow(id: 9133, title: "Detached Inspector", origin: CGPoint(x: 60, y: 60)),
             classification: .auxiliary,
             role: "AXWindow",
@@ -459,127 +395,7 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(eligible.map(\.window.id) == [detachedAuxiliary.window.id])
     }
 
-    @MainActor
-    @Test("Active stream maps remain consistent across register/update/remove")
-    func activeStreamMapsRemainConsistent() async {
-        let host = MirageHostService(hostName: "MapConsistencyHost")
-        let client = MirageConnectedClient(
-            id: UUID(),
-            name: "Client",
-            deviceType: .mac,
-            connectedAt: Date()
-        )
-
-        let initialWindow = makeWindow(id: 7001, title: "Initial", origin: CGPoint(x: 20, y: 20))
-        host.registerActiveStreamSession(
-            MirageStreamSession(id: 55, window: initialWindow, client: client)
-        )
-
-        #expect(host.activeSessionByStreamID[55]?.window.id == 7001)
-        #expect(host.activeStreamIDByWindowID[7001] == 55)
-        #expect(host.activeWindowIDByStreamID[55] == 7001)
-
-        let remappedWindow = makeWindow(id: 7002, title: "Remapped", origin: CGPoint(x: 30, y: 30))
-        host.registerActiveStreamSession(
-            MirageStreamSession(id: 55, window: remappedWindow, client: client)
-        )
-
-        #expect(host.activeSessionByStreamID[55]?.window.id == 7002)
-        #expect(host.activeStreamIDByWindowID[7001] == nil)
-        #expect(host.activeStreamIDByWindowID[7002] == 55)
-        #expect(host.activeWindowIDByStreamID[55] == 7002)
-
-        host.removeActiveStreamSession(streamID: 55)
-
-        #expect(host.activeSessionByStreamID[55] == nil)
-        #expect(host.activeStreamIDByWindowID[7002] == nil)
-        #expect(host.activeWindowIDByStreamID[55] == nil)
-    }
-
-    @MainActor
-    @Test("New primary window stays hidden when an existing streamed window is healthy")
-    func newPrimaryWindowStaysHiddenWhenExistingStreamedWindowIsHealthy() async {
-        let host = MirageHostService(hostName: "LifecycleHost")
-        let clientID = UUID()
-        let bundleID = "com.example.app"
-        let streamedWindowID = WindowID(9131)
-        let newWindowID = WindowID(9132)
-
-        _ = await host.appStreamManager.startAppSession(
-            bundleIdentifier: bundleID,
-            appName: "Example App",
-            appPath: "/Applications/Example.app",
-            clientID: clientID,
-            clientName: "Client",
-            requestedDisplayResolution: CGSize(width: 1280, height: 720),
-            requestedClientScaleFactor: nil,
-            maxVisibleSlots: 1,
-            bitrateBudgetBps: nil
-        )
-        await host.appStreamManager.markSessionStreaming(bundleID)
-        _ = await host.appStreamManager.addWindowToSession(
-            bundleIdentifier: bundleID,
-            windowID: streamedWindowID,
-            streamID: 77,
-            title: "Current Project",
-            width: 1280,
-            height: 720,
-            isResizable: true,
-            slotIndex: 0
-        )
-
-        let newCandidate = makeCandidate(
-            windowID: newWindowID,
-            title: "Second Project",
-            origin: CGPoint(x: 120, y: 120)
-        )
-        await host.handleNewWindowFromStreamedApp(bundleID: bundleID, candidate: newCandidate)
-
-        let session = await host.appStreamManager.getSession(bundleIdentifier: bundleID)
-        let visibleWindowIDs = session.map { Array($0.windowStreams.keys).sorted(by: <) } ?? []
-        #expect(visibleWindowIDs == [streamedWindowID])
-        #expect(session?.hiddenWindows[newWindowID] != nil)
-    }
-
-    @MainActor
-    @Test("Existing app session slot cap can rise after entitlement restore")
-    func existingAppSessionSlotCapCanRiseAfterEntitlementRestore() async {
-        let host = MirageHostService(hostName: "LifecycleHost")
-        let clientID = UUID()
-        let bundleID = "com.example.app"
-
-        _ = await host.appStreamManager.startAppSession(
-            bundleIdentifier: bundleID,
-            appName: "Example App",
-            appPath: "/Applications/Example.app",
-            clientID: clientID,
-            clientName: "Client",
-            requestedDisplayResolution: CGSize(width: 1280, height: 720),
-            requestedClientScaleFactor: nil,
-            maxVisibleSlots: 1,
-            bitrateBudgetBps: nil
-        )
-        _ = await host.appStreamManager.addWindowToSession(
-            bundleIdentifier: bundleID,
-            windowID: 7001,
-            streamID: 77,
-            title: "Current Project",
-            width: 1280,
-            height: 720,
-            isResizable: true,
-            slotIndex: 0
-        )
-
-        #expect(!(await host.appStreamManager.hasVisibleSlotCapacity(bundleIdentifier: bundleID)))
-
-        await host.appStreamManager.raiseMaxVisibleSlots(bundleIdentifier: bundleID, to: 8)
-
-        #expect(await host.appStreamManager.hasVisibleSlotCapacity(bundleIdentifier: bundleID))
-        #expect(await host.appStreamManager.maxVisibleSlots(bundleIdentifier: bundleID) == 8)
-        #expect(await host.appStreamManager.inventoryMessage(bundleIdentifier: bundleID)?.maxVisibleSlots == 8)
-    }
-
-    private func makeCandidate(
+    func makeCandidate(
         windowID: WindowID,
         title: String,
         origin: CGPoint,
@@ -588,7 +404,6 @@ struct MultiWindowAppStreamingStabilizationTests {
         bundleID: String = "com.example.app"
     ) -> AppStreamWindowCandidate {
         AppStreamWindowCandidate(
-            bundleIdentifier: bundleID,
             window: makeWindow(
                 id: windowID,
                 title: title,
@@ -604,7 +419,7 @@ struct MultiWindowAppStreamingStabilizationTests {
         )
     }
 
-    private func makeWindow(
+    func makeWindow(
         id: WindowID,
         title: String,
         origin: CGPoint,

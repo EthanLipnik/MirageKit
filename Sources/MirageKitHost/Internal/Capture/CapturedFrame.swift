@@ -61,8 +61,6 @@ struct CapturedAudioBuffer: Sendable {
     let channelCount: Int
     /// Number of PCM frames (per channel) in `data`.
     let frameCount: Int
-    /// Bytes per PCM frame.
-    let bytesPerFrame: Int
     /// Bits per PCM channel.
     let bitsPerChannel: Int
     /// Whether source samples are floating point.

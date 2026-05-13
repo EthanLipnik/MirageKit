@@ -18,10 +18,14 @@ import ScreenCaptureKit
 
 @MainActor
 public extension MirageHostService {
-    func getActiveStreamingSessions() async -> [MirageAppStreamSession] {
-        await appStreamManager.getAllSessions()
+    /// Current app-stream sessions, including active and recently reserved sessions.
+    var activeStreamingSessions: [MirageAppStreamSession] {
+        get async {
+            await appStreamManager.allSessions()
+        }
     }
 
+    /// Starts host discovery, listeners, window discovery, and runtime monitors.
     func start() async throws {
         guard state == .idle else {
             MirageLogger.host("Already started, state: \(state)")
@@ -33,7 +37,7 @@ public extension MirageHostService {
         MirageLogger.host("Starting...")
 
         let maxRetries = 3
-        for attempt in 0..<maxRetries {
+        for attempt in 0 ..< maxRetries {
             do {
                 try await startListeners()
                 break
@@ -65,10 +69,8 @@ public extension MirageHostService {
 
         ensureScreenParametersObserver()
 
-        // Start cursor monitoring for active streams
         startCursorMonitoring()
 
-        // Start session state monitoring (for headless Mac unlock support)
         await startSessionStateMonitoring()
     }
 
@@ -107,7 +109,7 @@ public extension MirageHostService {
             }
             let controlPort = ports[.udp] ?? 0
             let directQUICPort = ports[.quic]
-            setRemoteControlPort(directQUICPort)
+            remoteControlPort = directQUICPort
             remoteControlListenerReady = directQUICPort != nil
             MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) quic=\(directQUICPort ?? 0)")
 
@@ -138,6 +140,7 @@ public extension MirageHostService {
         }
     }
 
+    /// Stops host discovery, streams, clients, and runtime monitors.
     func stop() async {
         stopAdvertisementRefreshLoop()
         sessionRefreshTask?.cancel()
@@ -147,14 +150,12 @@ public extension MirageHostService {
         await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
         removeScreenParametersObserver()
 
-        // Stop cursor monitoring
         await cursorMonitor?.stop()
         cursorMonitor = nil
 
         // Clear any stuck modifiers before stopping
         inputController.clearAllModifiers()
 
-        // Stop all streams
         for stream in activeStreams {
             await stopStream(stream)
         }
@@ -181,14 +182,12 @@ public extension MirageHostService {
 
         state = .idle
         remoteControlListenerReady = false
-        setRemoteControlPort(nil)
+        remoteControlPort = nil
     }
 
+    /// Refreshes the host window catalog from ScreenCaptureKit and window metadata.
     func refreshWindows() async throws {
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: false // Include minimized/off-screen windows
-        )
+        let content = try await SCShareableContent.mirageHostContent()
 
         // Fetch extended metadata for alpha and visibility filtering.
         // Run off the main actor — CGWindowListCopyWindowInfo enumerates every
@@ -237,6 +236,5 @@ public extension MirageHostService {
 
         availableWindows = filteredWindows.sorted { ($0.application?.name ?? "") < ($1.application?.name ?? "") }
     }
-
 }
 #endif

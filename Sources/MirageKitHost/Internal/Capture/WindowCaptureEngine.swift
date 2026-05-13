@@ -17,65 +17,6 @@ import CoreGraphics
 import ScreenCaptureKit
 
 actor WindowCaptureEngine {
-    enum CapturePressureProfile: String, Sendable, Equatable {
-        case baseline
-        case tuned
-
-        nonisolated static func parse(_ rawValue: String?) -> Self? {
-            guard let normalized = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-                return nil
-            }
-            switch normalized {
-            case "baseline":
-                return .baseline
-            case "tuned":
-                return .tuned
-            default:
-                return nil
-            }
-        }
-    }
-
-    struct CaptureStallPolicy: Sendable, Equatable {
-        let softStallThreshold: CFAbsoluteTime
-        let hardRestartThreshold: CFAbsoluteTime
-        let restartDebounce: CFAbsoluteTime
-        let cancellationGrace: CFAbsoluteTime
-    }
-
-    struct CapturePolicySnapshot: Sendable, Equatable {
-        let effectiveCaptureRate: Int
-        let minimumFrameIntervalRate: Int
-        let usesNativeRefreshMinimumFrameInterval: Bool
-        let sckQueueDepth: Int
-        let usesDisplayRefreshCadence: Bool
-        let displayRefreshRate: Int?
-
-        var benchmarkPolicy: MirageHostCaptureBenchmarkCapturePolicy {
-            MirageHostCaptureBenchmarkCapturePolicy(
-                effectiveCaptureRate: effectiveCaptureRate,
-                minimumFrameIntervalRate: minimumFrameIntervalRate,
-                usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
-                sckQueueDepth: sckQueueDepth,
-                usesDisplayRefreshCadence: usesDisplayRefreshCadence
-            )
-        }
-    }
-
-    enum CaptureKeyframeRequestReason: Sendable, Equatable {
-        case fallbackResume
-        case captureRestart(restartStreak: Int, shouldEscalateRecovery: Bool)
-
-        var requiresEpochReset: Bool {
-            switch self {
-            case .fallbackResume:
-                false
-            case let .captureRestart(_, shouldEscalateRecovery):
-                shouldEscalateRecovery
-            }
-        }
-    }
-
     var stream: SCStream?
     var streamOutput: CaptureStreamOutput?
     var configuration: MirageEncoderConfiguration
@@ -92,7 +33,6 @@ actor WindowCaptureEngine {
     var capturedFrameHandler: (@Sendable (CapturedFrame) -> Void)?
     var capturedAudioHandler: (@Sendable (CapturedAudioBuffer) -> Void)?
     var isAudioCaptureConfigured = false
-    var dimensionChangeHandler: (@Sendable (Int, Int) -> Void)?
     var captureMode: CaptureMode?
     var captureSessionConfig: CaptureSessionConfiguration?
 
@@ -104,7 +44,6 @@ actor WindowCaptureEngine {
     /// Display capture with an explicit resolution override (HiDPI virtual displays)
     /// skips `.best` and sets width/height directly.
     var displayUsesExplicitResolution: Bool = false
-    var contentFilter: SCContentFilter?
     var excludedWindows: [SCWindow] = []
     var lastRestartAttemptTime: CFAbsoluteTime = 0
     var restartStreak: Int = 0
@@ -167,60 +106,6 @@ actor WindowCaptureEngine {
         self.usesDisplayRefreshCadence = usesDisplayRefreshCadence
     }
 
-    enum CaptureMode {
-        case window
-        case display
-    }
-
-    struct CaptureSessionConfiguration {
-        let windowID: WindowID?
-        let applicationPID: pid_t?
-        let displayID: CGDirectDisplayID
-        let window: SCWindow?
-        let application: SCRunningApplication?
-        let display: SCDisplay
-        let outputScale: CGFloat
-        let resolution: CGSize?
-        let sourceRect: CGRect?
-        let destinationRect: CGRect?
-        let showsCursor: Bool
-        let audioChannelCount: Int?
-        let includedWindows: [SCWindow]
-        let excludedWindows: [SCWindow]
-
-        init(
-            windowID: WindowID?,
-            applicationPID: pid_t?,
-            displayID: CGDirectDisplayID,
-            window: SCWindow?,
-            application: SCRunningApplication?,
-            display: SCDisplay,
-            outputScale: CGFloat,
-            resolution: CGSize?,
-            sourceRect: CGRect?,
-            destinationRect: CGRect? = nil,
-            showsCursor: Bool,
-            audioChannelCount: Int?,
-            includedWindows: [SCWindow] = [],
-            excludedWindows: [SCWindow] = []
-        ) {
-            self.windowID = windowID
-            self.applicationPID = applicationPID
-            self.displayID = displayID
-            self.window = window
-            self.application = application
-            self.display = display
-            self.outputScale = outputScale
-            self.resolution = resolution
-            self.sourceRect = sourceRect
-            self.destinationRect = destinationRect
-            self.showsCursor = showsCursor
-            self.audioChannelCount = audioChannelCount
-            self.includedWindows = includedWindows
-            self.excludedWindows = excludedWindows
-        }
-    }
-
     nonisolated static func resolvedDisplayFilter(
         display: SCDisplay,
         includedWindows: [SCWindow],
@@ -232,9 +117,7 @@ actor WindowCaptureEngine {
         return SCContentFilter(display: display, excludingWindows: excludedWindows)
     }
 
-    nonisolated static let captureBackgroundColor: CGColor = {
-        CGColor(gray: 0, alpha: 1)
-    }()
+    nonisolated static let captureBackgroundColor: CGColor = .init(gray: 0, alpha: 1)
 
     nonisolated static func applyCaptureGeometry(
         to streamConfig: SCStreamConfiguration,
@@ -270,44 +153,38 @@ actor WindowCaptureEngine {
         captureStallStageHandler = handler
     }
 
-    func captureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
-        streamOutput?.telemetrySnapshot()
+    var captureTelemetrySnapshot: CaptureStreamOutput.TelemetrySnapshot? {
+        streamOutput?.telemetrySnapshot
     }
 
     func consumeCaptureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
         streamOutput?.consumeTelemetrySnapshot()
     }
 
-    func capturePolicySnapshot() -> CapturePolicySnapshot {
-        let effectiveCaptureRate = minimumFrameIntervalRate()
-        let minimumFrameIntervalRate = minimumFrameIntervalRate()
-        let usesNativeRefreshMinimumFrameInterval = usesNativeRefreshMinimumFrameInterval()
+    var capturePolicySnapshot: CapturePolicySnapshot {
+        let captureRate = minimumFrameIntervalRate
+        let usesNativeRefreshInterval = usesNativeRefreshMinimumFrameInterval
         return CapturePolicySnapshot(
-            effectiveCaptureRate: effectiveCaptureRate,
-            minimumFrameIntervalRate: minimumFrameIntervalRate,
-            usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
+            effectiveCaptureRate: captureRate,
+            minimumFrameIntervalRate: captureRate,
+            usesNativeRefreshMinimumFrameInterval: usesNativeRefreshInterval,
             sckQueueDepth: sckQueueDepth,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence,
             displayRefreshRate: currentDisplayRefreshRate
         )
     }
 
-    func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
-        guard captureMode == .display else { return captureStartupReadiness() }
-        return streamOutput?.captureStartupReadiness() ?? .noScreenSamples
+    var displayStartupReadiness: DisplayCaptureStartupReadiness {
+        guard captureMode == .display else { return captureStartupReadiness }
+        return streamOutput?.captureStartupReadiness ?? .noScreenSamples
     }
 
-    func hasObservedDisplayStartupSample() -> Bool {
-        guard captureMode == .display else { return hasObservedCaptureStartupSample() }
-        return streamOutput?.hasObservedStartupSample() ?? false
+    var hasObservedDisplayStartupSample: Bool {
+        streamOutput?.hasObservedStartupSample ?? false
     }
 
-    func captureStartupReadiness() -> DisplayCaptureStartupReadiness {
-        streamOutput?.captureStartupReadiness() ?? .noScreenSamples
-    }
-
-    func hasObservedCaptureStartupSample() -> Bool {
-        streamOutput?.hasObservedStartupSample() ?? false
+    var captureStartupReadiness: DisplayCaptureStartupReadiness {
+        streamOutput?.captureStartupReadiness ?? .noScreenSamples
     }
 
     func waitForCaptureStartupReadiness(
@@ -316,7 +193,7 @@ actor WindowCaptureEngine {
     ) async -> DisplayCaptureStartupReadiness {
         let deadline = ContinuousClock.now + timeout
         while !Task.isCancelled {
-            let readiness = captureStartupReadiness()
+            let readiness = captureStartupReadiness
             switch readiness {
             case .usableFrameSeen, .idleFrameSeen:
                 return readiness
@@ -324,9 +201,13 @@ actor WindowCaptureEngine {
                 break
             }
             guard ContinuousClock.now < deadline else { return readiness }
-            try? await Task.sleep(for: pollInterval)
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                return readiness
+            }
         }
-        return captureStartupReadiness()
+        return captureStartupReadiness
     }
 
     func waitForDisplayStartupReadiness(
@@ -335,7 +216,7 @@ actor WindowCaptureEngine {
     ) async -> DisplayCaptureStartupReadiness {
         let deadline = ContinuousClock.now + timeout
         while !Task.isCancelled {
-            let readiness = displayStartupReadiness()
+            let readiness = displayStartupReadiness
             switch readiness {
             case .usableFrameSeen, .idleFrameSeen:
                 return readiness
@@ -343,9 +224,13 @@ actor WindowCaptureEngine {
                 break
             }
             guard ContinuousClock.now < deadline else { return readiness }
-            try? await Task.sleep(for: pollInterval)
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                return readiness
+            }
         }
-        return displayStartupReadiness()
+        return displayStartupReadiness
     }
 
     func captureDisplayStartupSeedFrame() async -> CapturedFrame? {
@@ -372,27 +257,33 @@ actor WindowCaptureEngine {
             destinationRect: config.destinationRect
         )
 
-        let image: CGImage? = try? await withCheckedThrowingContinuation { (
-            continuation: CheckedContinuation<CGImage, Error>
-        ) in
-            SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: screenshotConfiguration
-            ) { image, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                guard let image else {
-                    continuation.resume(
-                        throwing: MirageError.protocolError(
-                            "Display startup screenshot capture returned no image"
+        let image: CGImage?
+        do {
+            image = try await withCheckedThrowingContinuation { (
+                continuation: CheckedContinuation<CGImage, Error>
+            ) in
+                SCScreenshotManager.captureImage(
+                    contentFilter: filter,
+                    configuration: screenshotConfiguration
+                ) { image, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+                    guard let image else {
+                        continuation.resume(
+                            throwing: MirageError.protocolError(
+                                "Display startup screenshot capture returned no image"
+                            )
                         )
-                    )
-                    return
+                        return
+                    }
+                    continuation.resume(returning: image)
                 }
-                continuation.resume(returning: image)
             }
+        } catch {
+            MirageLogger.error(.capture, error: error, message: "Failed to capture display startup screenshot: ")
+            image = nil
         }
         guard let image else {
             return nil
@@ -409,29 +300,6 @@ actor WindowCaptureEngine {
         if frame != nil {
             MirageLogger.capture(
                 "Display startup screenshot seed captured for display \(config.displayID) at \(width)x\(height)"
-            )
-        }
-        return frame
-    }
-
-    func captureSyntheticDisplayStartupFrame() async -> CapturedFrame? {
-        guard captureMode == .display,
-              let config = captureSessionConfig else {
-            return nil
-        }
-
-        let width = max(1, currentWidth)
-        let height = max(1, currentHeight)
-        let frame = DisplayStartupFrameSeeder.makeSyntheticCapturedFrame(
-            targetWidth: width,
-            targetHeight: height,
-            pixelFormatType: pixelFormatType,
-            colorSpace: configuration.colorSpace,
-            frameRate: currentFrameRate
-        )
-        if frame != nil {
-            MirageLogger.capture(
-                "Display startup synthetic seed created for display \(config.displayID) at \(width)x\(height)"
             )
         }
         return frame
@@ -492,7 +360,11 @@ actor WindowCaptureEngine {
         MirageLogger.capture("event=restart_scheduled debounceMs=\(debounceMs) reason=\(reason)")
         scheduledRestartTask = Task(priority: .userInitiated) {
             if debounceMs > 0 {
-                try? await Task.sleep(for: .milliseconds(Int64(debounceMs)))
+                do {
+                    try await Task.sleep(for: .milliseconds(Int64(debounceMs)))
+                } catch {
+                    return
+                }
             }
             await self.executeScheduledCaptureRestart(token: token, reason: reason)
         }
@@ -526,15 +398,6 @@ actor WindowCaptureEngine {
 
         MirageLogger.capture("event=restart_executed reason=\(reason)")
         await restartCapture(reason: reason)
-    }
-
-    func hasScheduledCaptureRestartForTesting() -> Bool {
-        scheduledRestartTask != nil
-    }
-
-    func setCaptureStateForTesting(isCapturing: Bool, captureMode: CaptureMode?) {
-        self.isCapturing = isCapturing
-        self.captureMode = captureMode
     }
 }
 

@@ -10,10 +10,19 @@ import Foundation
 
 /// Phase for a high-rate pointer sample batch.
 public enum MiragePointerSampleBatchPhase: UInt8, Codable, Sendable, Hashable {
+    /// Pointer is hovering without contact.
     case hover = 0
+
+    /// Contact or button press began.
     case began = 1
+
+    /// Pointer moved during hover or contact.
     case moved = 2
+
+    /// Contact or button press ended normally.
     case ended = 3
+
+    /// Contact or button press was cancelled by the input system.
     case cancelled = 4
 }
 
@@ -91,16 +100,6 @@ public struct MiragePointerSampleBatch: Codable, Sendable, Hashable {
     /// Whether the batch represents Pencil hover rather than contact.
     public var isHover: Bool {
         phase == .hover
-    }
-
-    /// Whether the batch carries contact drawing samples.
-    public var isContact: Bool {
-        switch phase {
-        case .began, .moved, .ended, .cancelled:
-            true
-        case .hover:
-            false
-        }
     }
 
     /// Last sample location, used by cursor-state tracking.

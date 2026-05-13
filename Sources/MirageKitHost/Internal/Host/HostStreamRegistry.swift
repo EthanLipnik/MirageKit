@@ -9,25 +9,35 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
-/// Thread-safe callbacks keyed by stream identity.
+/// Thread-safe host stream side table for routing input and temporary pointer throttling.
 final class HostStreamRegistry: @unchecked Sendable {
+    /// Per-stream pointer throttling state used while capture output is stalled.
     private struct PointerCoalescingState {
+        /// Absolute time until pointer move/drag events are allowed to be rate-limited.
         var coalescingDeadline: CFAbsoluteTime = 0
+        /// Absolute time when the most recent move/drag event was allowed through.
         var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
     }
 
     private struct State {
+        /// Streams currently eligible for temporary pointer move coalescing.
         var pointerCoalescingByStreamID: [StreamID: PointerCoalescingState] = [:]
+        /// Custom-stream input handlers keyed by the stream that owns the handler.
         var customInputHandlers: [StreamID: any MirageCustomStreamInputHandler] = [:]
+        /// Active input session IDs mapped to the client that is authorized to use them.
         var activeInputSessionClientIDs: [UUID: UUID] = [:]
     }
 
+    /// Duration used after a soft capture stall where pointer moves are rate-limited.
     private static let pointerCoalescingSoftWindow: CFAbsoluteTime = 1.2
+    /// Duration used after a hard capture stall where pointer moves are rate-limited.
     private static let pointerCoalescingHardWindow: CFAbsoluteTime = 2.0
+    /// Short drain window after capture resumes so the host does not immediately refill the input queue.
     private static let pointerCoalescingResumeWindow: CFAbsoluteTime = 0.4
 
     private let state = Locked(State())
 
+    /// Registers the input handler for a custom stream.
     func registerCustomInputHandler(
         streamID: StreamID,
         _ handler: any MirageCustomStreamInputHandler
@@ -35,22 +45,27 @@ final class HostStreamRegistry: @unchecked Sendable {
         state.withLock { $0.customInputHandlers[streamID] = handler }
     }
 
+    /// Removes a custom stream input handler when its stream is torn down.
     func unregisterCustomInputHandler(streamID: StreamID) {
-        state.withLock { $0.customInputHandlers.removeValue(forKey: streamID) }
+        state.withLock { $0.customInputHandlers[streamID] = nil }
     }
 
+    /// Returns the input handler for a custom stream, if one is still registered.
     func customInputHandler(streamID: StreamID) -> (any MirageCustomStreamInputHandler)? {
         state.read { $0.customInputHandlers[streamID] }
     }
 
+    /// Marks an input session as active for one authenticated client.
     func registerInputSession(_ sessionID: UUID, clientID: UUID) {
         state.withLock { $0.activeInputSessionClientIDs[sessionID] = clientID }
     }
 
+    /// Removes an input session after the client stops using it.
     func unregisterInputSession(_ sessionID: UUID) {
-        state.withLock { $0.activeInputSessionClientIDs.removeValue(forKey: sessionID) }
+        state.withLock { $0.activeInputSessionClientIDs[sessionID] = nil }
     }
 
+    /// Removes every active input session owned by a disconnected client.
     func unregisterInputSessions(for clientID: UUID) {
         state.withLock { mutableState in
             mutableState.activeInputSessionClientIDs = mutableState.activeInputSessionClientIDs.filter {
@@ -59,10 +74,12 @@ final class HostStreamRegistry: @unchecked Sendable {
         }
     }
 
+    /// Returns whether the session exists and still belongs to the requesting client.
     func isInputSessionActive(_ sessionID: UUID, clientID: UUID) -> Bool {
         state.read { $0.activeInputSessionClientIDs[sessionID] == clientID }
     }
 
+    /// Enables pointer coalescing state for a desktop stream that can report capture stalls.
     func registerPointerCoalescingRoute(streamID: StreamID) {
         state.withLock { mutableState in
             if mutableState.pointerCoalescingByStreamID[streamID] == nil {
@@ -71,12 +88,14 @@ final class HostStreamRegistry: @unchecked Sendable {
         }
     }
 
+    /// Removes pointer coalescing state when the desktop stream is no longer active.
     func unregisterPointerCoalescingRoute(streamID: StreamID) {
         state.withLock { mutableState in
-            mutableState.pointerCoalescingByStreamID.removeValue(forKey: streamID)
+            mutableState.pointerCoalescingByStreamID[streamID] = nil
         }
     }
 
+    /// Extends or clears the pointer coalescing window after a capture stall stage update.
     func noteCaptureStallStage(
         streamID: StreamID,
         stage: CaptureStreamOutput.StallStage,

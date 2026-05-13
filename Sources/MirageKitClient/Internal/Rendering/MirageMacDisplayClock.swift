@@ -10,6 +10,7 @@
 import CoreVideo
 import CoreGraphics
 import Foundation
+import MirageKit
 import QuartzCore
 
 #if os(macOS)
@@ -27,37 +28,26 @@ final class MirageMacDisplayClock: @unchecked Sendable {
 
     func start(
         targetFPS: Int,
-        displayID: CGDirectDisplayID?,
         tickHandler: @escaping @Sendable (CFTimeInterval) -> Void
     ) {
-        let normalizedTargetFPS = Self.normalizedTargetFPS(targetFPS)
-        let oldLink: CVDisplayLink?
-
         lock.lock()
-        if displayLink != nil, self.displayID == displayID {
-            self.targetFPS = normalizedTargetFPS
+        let alreadyRunning: Bool
+        do {
+            defer { lock.unlock() }
+            self.targetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
             self.tickHandler = tickHandler
-            lock.unlock()
-            return
+            alreadyRunning = displayLink != nil
         }
-        oldLink = displayLink
-        self.displayLink = nil
-        self.displayID = displayID
-        self.targetFPS = normalizedTargetFPS
-        self.tickHandler = tickHandler
-        self.lastEmittedTickTime = 0
-        lock.unlock()
 
-        Self.stop(link: oldLink)
+        guard !alreadyRunning else { return }
 
-        guard let createdLink = Self.createDisplayLink(displayID: displayID) else {
-            lock.lock()
-            if self.displayID == displayID {
-                self.tickHandler = nil
-            }
-            lock.unlock()
-            return
+        var createdLink: CVDisplayLink?
+        var status = CVDisplayLinkCreateWithActiveCGDisplays(&createdLink)
+        if status != kCVReturnSuccess || createdLink == nil {
+            status = CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &createdLink)
+            guard status == kCVReturnSuccess, createdLink != nil else { return }
         }
+        guard let createdLink else { return }
 
         CVDisplayLinkSetOutputCallback(
             createdLink,
@@ -66,22 +56,18 @@ final class MirageMacDisplayClock: @unchecked Sendable {
         )
 
         lock.lock()
-        displayLink = createdLink
-        lock.unlock()
+        do {
+            defer { lock.unlock() }
+            displayLink = createdLink
+            lastEmittedTickTime = 0
+        }
         CVDisplayLinkStart(createdLink)
-    }
-
-    func start(
-        targetFPS: Int,
-        tickHandler: @escaping @Sendable (CFTimeInterval) -> Void
-    ) {
-        start(targetFPS: targetFPS, displayID: nil, tickHandler: tickHandler)
     }
 
     func updateTargetFPS(_ fps: Int) {
         lock.lock()
-        targetFPS = Self.normalizedTargetFPS(fps)
-        lock.unlock()
+        defer { lock.unlock() }
+        targetFPS = MirageStreamCadenceTarget.normalizedFPS(fps)
     }
 
     func updateTargetFPS(_ fps: Int, displayID: CGDirectDisplayID?) {
@@ -101,15 +87,78 @@ final class MirageMacDisplayClock: @unchecked Sendable {
         start(targetFPS: fps, displayID: displayID, tickHandler: currentHandler)
     }
 
+    func start(
+        targetFPS: Int,
+        displayID: CGDirectDisplayID?,
+        tickHandler: @escaping @Sendable (CFTimeInterval) -> Void
+    ) {
+        let normalizedTargetFPS = MirageStreamCadenceTarget.normalizedFPS(targetFPS)
+        let oldLink: CVDisplayLink?
+
+        lock.lock()
+        if displayLink != nil, self.displayID == displayID {
+            self.targetFPS = normalizedTargetFPS
+            self.tickHandler = tickHandler
+            lock.unlock()
+            return
+        }
+        oldLink = displayLink
+        displayLink = nil
+        self.displayID = displayID
+        self.targetFPS = normalizedTargetFPS
+        self.tickHandler = tickHandler
+        lock.unlock()
+
+        Self.stop(link: oldLink)
+
+        let previousDisplayID = displayID
+        var createdLink: CVDisplayLink?
+        if let displayID {
+            let status = CVDisplayLinkCreateWithCGDisplay(displayID, &createdLink)
+            if status != kCVReturnSuccess {
+                createdLink = nil
+            }
+        }
+        if createdLink == nil {
+            var status = CVDisplayLinkCreateWithActiveCGDisplays(&createdLink)
+            if status != kCVReturnSuccess || createdLink == nil {
+                status = CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &createdLink)
+                guard status == kCVReturnSuccess, createdLink != nil else {
+                    lock.lock()
+                    if self.displayID == previousDisplayID {
+                        self.tickHandler = nil
+                    }
+                    lock.unlock()
+                    return
+                }
+            }
+        }
+        guard let createdLink else { return }
+
+        CVDisplayLinkSetOutputCallback(
+            createdLink,
+            Self.outputCallback,
+            Unmanaged.passUnretained(self).toOpaque()
+        )
+
+        lock.lock()
+        displayLink = createdLink
+        lastEmittedTickTime = 0
+        lock.unlock()
+        CVDisplayLinkStart(createdLink)
+    }
+
     func stop() {
         let link: CVDisplayLink?
         lock.lock()
-        link = displayLink
-        displayLink = nil
-        displayID = nil
-        tickHandler = nil
-        lastEmittedTickTime = 0
-        lock.unlock()
+        do {
+            defer { lock.unlock() }
+            link = displayLink
+            displayLink = nil
+            displayID = nil
+            tickHandler = nil
+            lastEmittedTickTime = 0
+        }
 
         Self.stop(link: link)
     }
@@ -120,12 +169,8 @@ final class MirageMacDisplayClock: @unchecked Sendable {
         targetFPS: Int
     ) -> Bool {
         guard lastEmittedTickTime > 0 else { return true }
-        let interval = 1.0 / Double(normalizedTargetFPS(targetFPS))
-        return now - lastEmittedTickTime >= interval * 0.80
-    }
-
-    private static func normalizedTargetFPS(_ fps: Int) -> Int {
-        max(1, min(240, fps))
+        let interval = 1.0 / Double(MirageStreamCadenceTarget.normalizedFPS(targetFPS))
+        return now - lastEmittedTickTime >= interval * 0.90
     }
 
     static func shouldRestartDisplayLink(
@@ -135,62 +180,38 @@ final class MirageMacDisplayClock: @unchecked Sendable {
         currentDisplayID != newDisplayID
     }
 
-    private static func createDisplayLink(displayID: CGDirectDisplayID?) -> CVDisplayLink? {
-        var createdLink: CVDisplayLink?
-        if let displayID {
-            let status = CVDisplayLinkCreateWithCGDisplay(displayID, &createdLink)
-            if status == kCVReturnSuccess, createdLink != nil {
-                return createdLink
-            }
-        }
-
-        var status = CVDisplayLinkCreateWithActiveCGDisplays(&createdLink)
-        if status == kCVReturnSuccess, createdLink != nil {
-            return createdLink
-        }
-
-        status = CVDisplayLinkCreateWithCGDisplay(CGMainDisplayID(), &createdLink)
-        guard status == kCVReturnSuccess else { return nil }
-        return createdLink
-    }
-
     private static func stop(link: CVDisplayLink?) {
         guard let link else { return }
         CVDisplayLinkStop(link)
         CVDisplayLinkSetOutputCallback(link, nil, nil)
     }
 
-    private static func referenceTime(from timestamp: CVTimeStamp) -> CFTimeInterval? {
-        guard timestamp.hostTime > 0 else { return nil }
-        let frequency = CVGetHostClockFrequency()
-        guard frequency > 0 else { return nil }
-        return CFTimeInterval(timestamp.hostTime) / frequency
-    }
-
-    private func handleDisplayLinkOutput(outputTime: CVTimeStamp) {
-        let referenceTime = Self.referenceTime(from: outputTime) ?? CACurrentMediaTime()
+    private func handleDisplayLinkOutput() {
+        let now = CACurrentMediaTime()
         let handler: (@Sendable (CFTimeInterval) -> Void)?
 
         lock.lock()
-        guard Self.shouldEmitTick(
-            lastEmittedTickTime: lastEmittedTickTime,
-            now: referenceTime,
-            targetFPS: targetFPS
-        ) else {
-            lock.unlock()
-            return
+        do {
+            defer { lock.unlock() }
+            guard Self.shouldEmitTick(
+                lastEmittedTickTime: lastEmittedTickTime,
+                now: now,
+                targetFPS: targetFPS
+            ) else {
+                handler = nil
+                return
+            }
+            lastEmittedTickTime = now
+            handler = tickHandler
         }
-        lastEmittedTickTime = referenceTime
-        handler = tickHandler
-        lock.unlock()
 
-        handler?(referenceTime)
+        handler?(now)
     }
 
-    private static let outputCallback: CVDisplayLinkOutputCallback = { _, _, outputTime, _, _, context in
+    private static let outputCallback: CVDisplayLinkOutputCallback = { _, _, _, _, _, context in
         guard let context else { return kCVReturnSuccess }
         let clock = Unmanaged<MirageMacDisplayClock>.fromOpaque(context).takeUnretainedValue()
-        clock.handleDisplayLinkOutput(outputTime: outputTime.pointee)
+        clock.handleDisplayLinkOutput()
         return kCVReturnSuccess
     }
 }

@@ -7,7 +7,6 @@
 //  Host wallpaper request bookkeeping.
 //
 
-import Foundation
 import MirageKit
 
 @MainActor

@@ -11,8 +11,12 @@ import AVFAudio
 import Foundation
 import MirageKit
 
+/// Buffers and plays decoded host audio frames for the client.
 @MainActor
 public final class AudioPlaybackController {
+    /// Upper bound for extra runtime delay used to keep live audio synchronized with video.
+    private static let maxRuntimeExtraDelaySeconds: Double = 0.080
+
     private struct PlaybackConfigurationKey: Equatable {
         let sampleRate: Int
         let channelCount: Int
@@ -27,12 +31,12 @@ public final class AudioPlaybackController {
         }
     }
 
-    private struct PendingPlaybackFrame {
+    struct PendingPlaybackFrame {
         let frame: DecodedPCMFrame
         let generation: UInt64
     }
 
-    private final class PlaybackGraph {
+    final class PlaybackGraph {
         let engine = AVAudioEngine()
         let playerNode = AVAudioPlayerNode()
 
@@ -41,74 +45,67 @@ public final class AudioPlaybackController {
         }
     }
 
-    private static var defaultAutomaticallyStartsPlayer: Bool {
-        let isRunningTests = Bundle.main.bundlePath.contains(".xctest") ||
-            CommandLine.arguments.contains { argument in
-                argument.contains(".xctest") || argument.contains("swiftpm-testing-helper")
-            }
-        return !isRunningTests
-    }
+    let startupBufferSeconds: Double
+    let maxQueuedSeconds: Double
 
-    private let startupBufferSeconds: Double
-    private let maxQueuedSeconds: Double
-    private let maxRuntimeExtraDelaySeconds: Double = 0.080
-    private let automaticallyStartsPlayer: Bool
+    var playbackGraph: PlaybackGraph?
 
-    private var playbackGraph: PlaybackGraph?
-
-    private var configuredSampleRate: Int = 0
-    private var configuredChannelCount: Int = 0
-    private var configuredOutputChannelCount: Int = 0
-    private var pendingFrames: [PendingPlaybackFrame] = []
-    private var pendingDurationSeconds: Double = 0
-    private var scheduledDurationSeconds: Double = 0
-    private var hasStartedPlayback = false
-    private var runtimeExtraDelaySeconds: Double = 0
-    private var isDelayHoldActive = false
-    private var isConfigured = false
-    private var playbackGeneration: UInt64 = 0
+    var configuredSampleRate: Int = 0
+    var configuredChannelCount: Int = 0
+    #if os(iOS) || os(visionOS)
+    var configuredOutputChannelCount: Int = 0
+    #endif
+    var pendingFrames: [PendingPlaybackFrame] = []
+    var pendingDurationSeconds: Double = 0
+    var scheduledDurationSeconds: Double = 0
+    var hasStartedPlayback = false
+    var runtimeExtraDelaySeconds: Double = 0
+    var isDelayHoldActive = false
+    var isConfigured = false
+    var playbackGeneration: UInt64 = 0
     private var hasPlaybackSessionLease = false
-    private var configurationTask: Task<Void, Never>?
+    private var configurationTask: Task<Bool, Never>?
     private var configurationTaskKey: PlaybackConfigurationKey?
     private var configurationTaskGeneration: UInt64?
-    nonisolated(unsafe) private var audioSessionObserverTokens: [NSObjectProtocol] = []
-    private var lastQueueDepthLogTime: CFAbsoluteTime = 0
+    var lastQueueDepthLogTime: CFAbsoluteTime = 0
 
-    init(
-        startupBufferSeconds: Double = 0,
-        maxQueuedSeconds: Double = 0.350,
-        automaticallyStartsPlayer: Bool? = nil
-    ) {
+    init(startupBufferSeconds: Double = 0, maxQueuedSeconds: Double = 0.350) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
         self.maxQueuedSeconds = max(0.2, maxQueuedSeconds)
-        self.automaticallyStartsPlayer = automaticallyStartsPlayer ?? Self.defaultAutomaticallyStartsPlayer
+        #if os(iOS) || os(visionOS)
         installAudioSessionRecoveryObservers()
+        #endif
     }
 
     nonisolated deinit {
+        #if os(iOS) || os(visionOS)
         removeAudioSessionRecoveryObservers()
+        #endif
     }
 
     private func tearDownPlaybackGraph() {
-        guard let playbackGraph else { return }
-        if playbackGraph.playerNode.isPlaying {
-            playbackGraph.playerNode.pause()
+        if let playbackGraph {
+            if playbackGraph.playerNode.isPlaying {
+                playbackGraph.playerNode.pause()
+            }
+            playbackGraph.playerNode.reset()
+            if playbackGraph.engine.isRunning {
+                playbackGraph.engine.stop()
+            }
+            if isConfigured {
+                playbackGraph.engine.disconnectNodeOutput(playbackGraph.playerNode)
+            }
         }
-        playbackGraph.playerNode.reset()
-        if playbackGraph.engine.isRunning {
-            playbackGraph.engine.stop()
-        }
-        if isConfigured {
-            playbackGraph.engine.disconnectNodeOutput(playbackGraph.playerNode)
-        }
-        self.playbackGraph = nil
+        playbackGraph = nil
         scheduledDurationSeconds = 0
         hasStartedPlayback = false
         isDelayHoldActive = false
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
+        #if os(iOS) || os(visionOS)
         configuredOutputChannelCount = 0
+        #endif
     }
 
     private func resolvePlaybackGraph() -> PlaybackGraph {
@@ -120,10 +117,6 @@ public final class AudioPlaybackController {
         return playbackGraph
     }
 
-    func hasInitializedPlaybackGraphForTesting() -> Bool {
-        playbackGraph != nil
-    }
-
     func reset() async {
         playbackGeneration &+= 1
         configurationTask?.cancel()
@@ -133,14 +126,7 @@ public final class AudioPlaybackController {
         tearDownPlaybackGraph()
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
-        scheduledDurationSeconds = 0
-        hasStartedPlayback = false
         runtimeExtraDelaySeconds = 0
-        isDelayHoldActive = false
-        isConfigured = false
-        configuredSampleRate = 0
-        configuredChannelCount = 0
-        configuredOutputChannelCount = 0
         await releasePlaybackSessionIfNeeded()
     }
 
@@ -151,7 +137,7 @@ public final class AudioPlaybackController {
         return incoming
     }
 
-    private func resolvedOutputChannelCount(fallback: Int) -> Int {
+    func resolvedOutputChannelCount(fallback: Int) -> Int {
         if let playbackGraph {
             let channelCount = Int(playbackGraph.engine.outputNode.outputFormat(forBus: 0).channelCount)
             if channelCount > 0 {
@@ -159,34 +145,34 @@ public final class AudioPlaybackController {
             }
         }
 
-#if os(iOS) || os(visionOS)
+        #if os(iOS) || os(visionOS)
         let sessionChannelCount = Int(AVAudioSession.sharedInstance().outputNumberOfChannels)
         if sessionChannelCount > 0 {
             return sessionChannelCount
         }
-#endif
+        #endif
 
         return fallback
     }
 
     func setRuntimeExtraDelay(seconds: Double) {
-        let clamped = min(max(0, seconds), maxRuntimeExtraDelaySeconds)
+        let clamped = min(max(0, seconds), Self.maxRuntimeExtraDelaySeconds)
         guard abs(clamped - runtimeExtraDelaySeconds) > 0.001 else { return }
 
         let previousDelay = runtimeExtraDelaySeconds
         runtimeExtraDelaySeconds = clamped
-        let requiredBuffered = requiredBufferedSeconds()
+        let requiredBuffered = requiredBufferedSeconds
 
         if clamped > previousDelay,
            hasStartedPlayback,
-           totalBufferedSeconds() < requiredBuffered {
+           totalBufferedSeconds < requiredBuffered {
             if let playerNode = playbackGraph?.playerNode, playerNode.isPlaying {
                 playerNode.pause()
             }
             isDelayHoldActive = true
         } else if clamped < previousDelay,
                   isDelayHoldActive,
-                  totalBufferedSeconds() >= requiredBuffered {
+                  totalBufferedSeconds >= requiredBuffered {
             isDelayHoldActive = false
         }
 
@@ -217,25 +203,25 @@ public final class AudioPlaybackController {
     }
 
     func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) async {
-        await ensureConfigured(sampleRate: sampleRate, channelCount: channelCount)
+        _ = await ensureConfigured(sampleRate: sampleRate, channelCount: channelCount)
     }
 
-    private func ensureConfigured(sampleRate: Int, channelCount: Int) async {
+    private func ensureConfigured(sampleRate: Int, channelCount: Int) async -> Bool {
         let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
-            return
+            return true
         }
 
         if let configurationTask,
            configurationTaskKey == key,
            configurationTaskGeneration == playbackGeneration {
-            await configurationTask.value
-            return
+            return await configurationTask.value
         }
 
-        await awaitConfigurationTask(for: key)
+        let task = startConfigurationTask(for: key)
+        return await task.value
     }
 
     private func startConfigurationIfNeeded(sampleRate: Int, channelCount: Int) -> UInt64 {
@@ -261,33 +247,41 @@ public final class AudioPlaybackController {
             resetPendingPlaybackState()
         }
 
-        startConfigurationTask(for: key, generation: playbackGeneration)
+        beginConfigurationTask(for: key, generation: playbackGeneration)
         return playbackGeneration
     }
 
-    private func awaitConfigurationTask(
-        for key: PlaybackConfigurationKey,
-        generation: UInt64? = nil
-    ) async {
-        startConfigurationTask(for: key, generation: generation)
-        await configurationTask?.value
+    private func beginConfigurationTask(for key: PlaybackConfigurationKey, generation: UInt64? = nil) {
+        let resolvedGeneration = generation ?? playbackGeneration
+        let task = makeConfigurationTask(for: key, generation: resolvedGeneration)
+        configurationTask = task
+        configurationTaskKey = key
+        configurationTaskGeneration = resolvedGeneration
     }
 
     private func startConfigurationTask(
         for key: PlaybackConfigurationKey,
         generation: UInt64? = nil
-    ) {
-        let generation = generation ?? playbackGeneration
-        let task = Task { [weak self] in
-            guard let self else { return }
-            await self.performConfiguration(key: key, generation: generation)
-        }
+    ) -> Task<Bool, Never> {
+        let resolvedGeneration = generation ?? playbackGeneration
+        let task = makeConfigurationTask(for: key, generation: resolvedGeneration)
         configurationTask = task
         configurationTaskKey = key
-        configurationTaskGeneration = generation
+        configurationTaskGeneration = resolvedGeneration
+        return task
     }
 
-    private func performConfiguration(key: PlaybackConfigurationKey, generation: UInt64) async {
+    private func makeConfigurationTask(
+        for key: PlaybackConfigurationKey,
+        generation: UInt64
+    ) -> Task<Bool, Never> {
+        Task { [weak self] in
+            guard let self else { return false }
+            return await performConfiguration(key: key, generation: generation)
+        }
+    }
+
+    private func performConfiguration(key: PlaybackConfigurationKey, generation: UInt64) async -> Bool {
         defer {
             if configurationTaskKey == key, configurationTaskGeneration == generation {
                 configurationTask = nil
@@ -297,27 +291,27 @@ public final class AudioPlaybackController {
         }
 
         guard isCurrentConfigurationTask(key: key, generation: generation) else {
-            return
+            return false
         }
 
         if isConfigured,
            configuredSampleRate == key.sampleRate,
            configuredChannelCount == key.channelCount {
-            return
+            return true
         }
 
         tearDownPlaybackGraph()
         let hadPlaybackSessionLease = hasPlaybackSessionLease
 
         guard await ensurePlaybackSessionConfigured(generation: generation) else {
-            return
+            return false
         }
 
         if Task.isCancelled || !isCurrentConfigurationTask(key: key, generation: generation) {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return
+            return false
         }
 
         guard let format = AVAudioFormat(
@@ -329,14 +323,14 @@ public final class AudioPlaybackController {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return
+            return false
         }
 
         guard isCurrentConfigurationTask(key: key, generation: generation) else {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return
+            return false
         }
 
         let playbackGraph = resolvePlaybackGraph()
@@ -349,16 +343,19 @@ public final class AudioPlaybackController {
             if !hadPlaybackSessionLease {
                 await releasePlaybackSessionIfNeeded()
             }
-            return
+            return false
         }
 
         configuredSampleRate = key.sampleRate
         configuredChannelCount = key.channelCount
+        #if os(iOS) || os(visionOS)
         configuredOutputChannelCount = resolvedOutputChannelCount(fallback: key.channelCount)
+        #endif
         hasStartedPlayback = false
         isDelayHoldActive = false
         isConfigured = true
         drainPendingFramesIfNeeded()
+        return true
     }
 
     private func isCurrentConfigurationTask(key: PlaybackConfigurationKey, generation: UInt64) -> Bool {
@@ -392,254 +389,8 @@ public final class AudioPlaybackController {
         await MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
     }
 
-    private func installAudioSessionRecoveryObservers() {
-        #if os(iOS) || os(visionOS)
-        let center = NotificationCenter.default
-        let session = AVAudioSession.sharedInstance()
-        let names: [Notification.Name] = [
-            AVAudioSession.interruptionNotification,
-            AVAudioSession.mediaServicesWereLostNotification,
-            AVAudioSession.mediaServicesWereResetNotification,
-        ]
-        audioSessionObserverTokens = names.map { name in
-            center.addObserver(forName: name, object: session, queue: nil) { [weak self] notification in
-                let reason = notification.name.rawValue
-                Task { @MainActor [weak self, reason] in
-                    guard let self else { return }
-                    await self.handleAudioSessionRecovery(reason: reason)
-                }
-            }
-        }
-        let routeToken = center.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
-            object: session,
-            queue: nil
-        ) { [weak self] notification in
-            let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
-            Task { @MainActor [weak self, reasonValue] in
-                guard let self else { return }
-                await self.handleAudioRouteChange(reasonValue: reasonValue)
-            }
-        }
-        audioSessionObserverTokens.append(routeToken)
-        #endif
-    }
-
-    private nonisolated func removeAudioSessionRecoveryObservers() {
-        #if os(iOS) || os(visionOS)
-        let center = NotificationCenter.default
-        for token in audioSessionObserverTokens {
-            center.removeObserver(token)
-        }
-        audioSessionObserverTokens.removeAll()
-        #endif
-    }
-
-    private func resetPendingPlaybackState() {
-        pendingFrames.removeAll()
-        pendingDurationSeconds = 0
-        scheduledDurationSeconds = 0
-        hasStartedPlayback = false
-        isDelayHoldActive = false
-    }
-
-    private func drainPendingFramesIfNeeded() {
-        guard isConfigured else { return }
-        guard playbackGraph != nil else { return }
-
-        let requiredBuffered = requiredBufferedSeconds()
-        if !hasStartedPlayback {
-            guard totalBufferedSeconds() >= requiredBuffered else { return }
-            hasStartedPlayback = true
-        }
-
-        if isDelayHoldActive {
-            guard totalBufferedSeconds() >= requiredBuffered else { return }
-            isDelayHoldActive = false
-        }
-
-        while !pendingFrames.isEmpty {
-            let pendingFrame = pendingFrames[0]
-            let frame = pendingFrame.frame
-            if scheduledDurationSeconds > 0,
-               scheduledDurationSeconds + frame.durationSeconds > maxQueuedSeconds {
-                break
-            }
-            pendingFrames.removeFirst()
-            pendingDurationSeconds = max(0, pendingDurationSeconds - frame.durationSeconds)
-            guard pendingFrame.generation == playbackGeneration else { continue }
-            guard frameMatchesConfiguredFormat(frame) else { continue }
-            schedule(frame, generation: pendingFrame.generation)
-        }
-
-        if !isDelayHoldActive {
-            startPlayerIfNeeded()
-        }
-    }
-
-    private func requiredBufferedSeconds() -> Double {
-        startupBufferSeconds + runtimeExtraDelaySeconds
-    }
-
-    private func totalBufferedSeconds() -> Double {
-        pendingDurationSeconds + scheduledDurationSeconds
-    }
-
-    private func trimPendingFramesIfNeeded() {
-        let pendingLimitSeconds = min(maxQueuedSeconds, max(startupBufferSeconds, 0.500))
-        while pendingDurationSeconds > pendingLimitSeconds, !pendingFrames.isEmpty {
-            let removed = pendingFrames.removeFirst()
-            pendingDurationSeconds = max(0, pendingDurationSeconds - removed.frame.durationSeconds)
-        }
-    }
-
-    private func frameMatchesConfiguredFormat(_ frame: DecodedPCMFrame) -> Bool {
-        frame.sampleRate == configuredSampleRate &&
-            frame.channelCount == configuredChannelCount
-    }
-
-    private func schedule(_ frame: DecodedPCMFrame, generation: UInt64) {
-        guard generation == playbackGeneration else { return }
-        guard isConfigured, frameMatchesConfiguredFormat(frame) else { return }
-        guard let playbackGraph else { return }
-
-        let frameCount = max(0, frame.frameCount)
-        guard frameCount > 0 else { return }
-        let channelCount = max(1, frame.channelCount)
-        let expectedSampleCount = frameCount * channelCount
-        guard frame.pcmData.count >= expectedSampleCount * MemoryLayout<Float>.size else {
-            return
-        }
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(frame.sampleRate),
-            channels: AVAudioChannelCount(channelCount),
-            interleaved: false
-        ) else {
-            return
-        }
-
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: AVAudioFrameCount(frameCount)
-        ) else {
-            return
-        }
-        buffer.frameLength = AVAudioFrameCount(frameCount)
-
-        guard let channelData = buffer.floatChannelData else {
-            return
-        }
-
-        frame.pcmData.withUnsafeBytes { raw in
-            let samples = raw.bindMemory(to: Float.self)
-            guard samples.count >= expectedSampleCount, let baseAddress = samples.baseAddress else { return }
-
-            if channelCount == 1 {
-                channelData[0].update(from: baseAddress, count: frameCount)
-                return
-            }
-
-            for sampleIndex in 0 ..< frameCount {
-                let sourceBase = sampleIndex * channelCount
-                for channelIndex in 0 ..< channelCount {
-                    channelData[channelIndex][sampleIndex] = samples[sourceBase + channelIndex]
-                }
-            }
-        }
-
-        scheduledDurationSeconds += frame.durationSeconds
-        let durationSeconds = frame.durationSeconds
-        playbackGraph.playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard self.playbackGeneration == generation else { return }
-                self.scheduledDurationSeconds = max(0, self.scheduledDurationSeconds - durationSeconds)
-                self.drainPendingFramesIfNeeded()
-            }
-        }
-    }
-
-    private func startPlayerIfNeeded() {
-        guard isConfigured else { return }
-        guard let playbackGraph else { return }
-        if !playbackGraph.engine.isRunning {
-            do {
-                try playbackGraph.engine.start()
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Audio playback engine restart failed: ")
-                requestPlaybackGraphRecovery(reason: "engine-start-failed")
-                return
-            }
-        }
-        let playerNode = playbackGraph.playerNode
-        guard automaticallyStartsPlayer else { return }
-        if !playerNode.isPlaying { playerNode.play() }
-    }
-
-    private func requestPlaybackGraphRecovery(reason: String) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            MirageLogger.client("Resetting audio playback graph after \(reason)")
-            await self.reset()
-        }
-    }
-
-    func recoverPlaybackGraphForTesting(reason: String = "test") async {
-        await handleAudioSessionRecovery(reason: reason)
-    }
-
-    private func handleAudioSessionRecovery(reason: String) async {
-        MirageLogger.client("Audio playback session recovery: \(reason)")
-        await reset()
-    }
-
     #if os(iOS) || os(visionOS)
-    private func handleAudioRouteChange(reasonValue: UInt?) async {
-        guard let reasonValue,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
-              Self.shouldRecoverPlaybackForRouteChange(reason) else {
-            return
-        }
-        guard isConfigured, configuredOutputChannelCount > 0 else { return }
-        let currentOutputChannelCount = resolvedOutputChannelCount(fallback: configuredOutputChannelCount)
-        guard currentOutputChannelCount > 0,
-              currentOutputChannelCount != configuredOutputChannelCount else {
-            return
-        }
-
-        await handleAudioSessionRecovery(reason: "route-change-\(reason.rawValue)")
-    }
-
-    nonisolated static func shouldRecoverPlaybackForRouteChange(
-        _ reason: AVAudioSession.RouteChangeReason
-    ) -> Bool {
-        switch reason {
-        case .oldDeviceUnavailable, .newDeviceAvailable, .routeConfigurationChange:
-            return true
-        case .unknown, .categoryChange, .override, .wakeFromSleep, .noSuitableRouteForCategory:
-            return false
-        @unknown default:
-            return false
-        }
-    }
+    nonisolated(unsafe) var audioSessionObserverTokens: [NSObjectProtocol] = []
     #endif
-
-    private func logQueueDepthIfNeeded() {
-        guard MirageSteadyStateDiagnostics.isEnabled else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        guard lastQueueDepthLogTime == 0 || now - lastQueueDepthLogTime > 2.0 else { return }
-        let queuedMs = Int((totalBufferedSeconds() * 1000).rounded())
-        MirageLogger.client("Audio playback queued=\(queuedMs)ms")
-        lastQueueDepthLogTime = now
-    }
-
-    func pendingFrameCountForTesting() -> Int {
-        pendingFrames.count
-    }
-
-    func pendingDurationSecondsForTesting() -> Double {
-        pendingDurationSeconds
-    }
 
 }

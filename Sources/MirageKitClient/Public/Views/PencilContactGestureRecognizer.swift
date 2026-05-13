@@ -8,20 +8,30 @@
 #if os(iOS) || os(visionOS)
 import UIKit
 
+/// Gesture recognizer that forwards stylus-like touches before direct-touch scrolling handles them.
 final class PencilContactGestureRecognizer: UIGestureRecognizer {
+    /// Overrides the platform Pencil classification for direct touches with stylus metadata.
     var isStylusTouch: ((UITouch) -> Bool)?
-    var onTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)?
+
+    /// Called when one or more stylus touches begin tracking.
+    var onTouchesBegan: ((Set<UITouch>) -> Void)?
+
+    /// Called when tracked stylus touches move, preserving the event used for coalesced samples.
     var onTouchesMoved: ((Set<UITouch>, UIEvent?) -> Void)?
-    var onTouchesEnded: ((Set<UITouch>, UIEvent?) -> Void)?
-    var onTouchesCancelled: ((Set<UITouch>, UIEvent?) -> Void)?
+
+    /// Called when tracked stylus touches finish.
+    var onTouchesEnded: ((Set<UITouch>) -> Void)?
+
+    /// Called when tracked stylus touches are cancelled.
+    var onTouchesCancelled: ((Set<UITouch>) -> Void)?
 
     private var activeStylusTouches = Set<UITouch>()
 
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func canPrevent(_: UIGestureRecognizer) -> Bool {
         false
     }
 
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func canBePrevented(by _: UIGestureRecognizer) -> Bool {
         false
     }
 
@@ -30,7 +40,7 @@ final class PencilContactGestureRecognizer: UIGestureRecognizer {
         guard !stylusTouches.isEmpty else { return }
 
         activeStylusTouches.formUnion(stylusTouches)
-        onTouchesBegan?(Set(stylusTouches), event)
+        onTouchesBegan?(Set(stylusTouches))
         state = state == .possible ? .began : .changed
     }
 
@@ -40,7 +50,7 @@ final class PencilContactGestureRecognizer: UIGestureRecognizer {
         }
         if !newlyDetectedStylusTouches.isEmpty {
             activeStylusTouches.formUnion(newlyDetectedStylusTouches)
-            onTouchesBegan?(Set(newlyDetectedStylusTouches), event)
+            onTouchesBegan?(Set(newlyDetectedStylusTouches))
             if state == .possible { state = .began }
         }
 
@@ -62,7 +72,7 @@ final class PencilContactGestureRecognizer: UIGestureRecognizer {
             return
         }
 
-        onTouchesEnded?(Set(endedStylusTouches), event)
+        onTouchesEnded?(Set(endedStylusTouches))
         activeStylusTouches.subtract(endedStylusTouches)
         state = activeStylusTouches.isEmpty ? .ended : .changed
     }
@@ -74,7 +84,7 @@ final class PencilContactGestureRecognizer: UIGestureRecognizer {
             return
         }
 
-        onTouchesCancelled?(Set(cancelledStylusTouches), event)
+        onTouchesCancelled?(Set(cancelledStylusTouches))
         activeStylusTouches.subtract(cancelledStylusTouches)
         state = activeStylusTouches.isEmpty ? .cancelled : .changed
     }

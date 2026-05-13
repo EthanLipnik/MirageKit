@@ -8,25 +8,29 @@
 import Foundation
 
 package enum MirageSharedClipboard {
+    /// Maximum payload size for binary clipboard representations.
     package static let maximumBinaryPayloadBytes = 64 * 1024
+    /// Maximum payload size for text clipboard representations.
     package static let maximumTextPayloadBytes = 256 * 1024
-    package static let maximumPayloadBytes = maximumBinaryPayloadBytes
+    /// Target byte count for each shared-clipboard transfer chunk.
     package static let chunkSize = 4 * 1024
+    /// Delay between chunks when pacing automatic shared-clipboard sends.
     package static let automaticStreamChunkPacingDelay: Duration = .milliseconds(12)
-    package static let recentRemoteClipboardChangeWindowMilliseconds: Int64 = 3_000
+    /// Time window for suppressing local echo after applying a remote clipboard update.
+    package static let recentRemoteClipboardChangeWindowMilliseconds: Int64 = 3000
 
-    package struct ContentFingerprint: Sendable, Equatable {
+    /// Metadata fingerprint used to detect repeated local clipboard declarations.
+    package struct ContentFingerprint: Equatable {
+        /// Clipboard representation family, such as text, image, file, or unsupported.
         package let kind: SharedClipboardRepresentationKind
+        /// MIME or platform content type associated with the representation.
         package let contentType: String?
+        /// Original filename for file-backed clipboard payloads.
         package let filename: String?
+        /// Declared payload size in bytes.
         package let byteCount: Int
+        /// Stable hash of the payload bytes, when the payload is available locally.
         package let payloadHash: UInt64?
-    }
-
-    package static func validatedPayload(_ payload: Data?) -> Data? {
-        guard let payload, !payload.isEmpty else { return nil }
-        guard payload.count <= maximumPayloadBytes else { return nil }
-        return payload
     }
 
     package static func maximumPayloadBytes(for representation: SharedClipboardRepresentation) -> Int {
@@ -66,10 +70,10 @@ package enum MirageSharedClipboard {
     }
 
     private static func stablePayloadHash(_ payload: Data) -> UInt64 {
-        var hash: UInt64 = 0xcbf29ce484222325
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in payload {
             hash ^= UInt64(byte)
-            hash &*= 0x100000001b3
+            hash &*= 0x100_0000_01B3
         }
         return hash
     }
@@ -81,8 +85,7 @@ package enum MirageSharedClipboard {
     package static func makeUpdateMessages(
         localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64,
-        mediaSecurityContext: MirageMediaSecurityContext,
-        source: SharedClipboardSource
+        mediaSecurityContext: MirageMediaSecurityContext
     ) throws -> [ControlMessage] {
         let payload = validatedPayload(
             localSend.item.payload,
@@ -90,7 +93,9 @@ package enum MirageSharedClipboard {
         )
         let chunks = payload.map(chunkPayload) ?? [Data()]
         return try chunks.enumerated().map { index, chunk in
-            let encryptedPayload = try payload.map { _ in
+            let encryptedPayload: Data? = if payload == nil {
+                nil
+            } else {
                 try MirageMediaSecurity.encryptClipboardPayload(
                     chunk,
                     context: mediaSecurityContext
@@ -100,9 +105,7 @@ package enum MirageSharedClipboard {
                 changeID: localSend.orderingToken.changeID,
                 logicalVersion: localSend.orderingToken.logicalVersion,
                 sentAtMs: sentAtMs,
-                source: source,
                 representation: localSend.item.representation,
-                isPayloadTransferable: payload != nil,
                 encryptedPayload: encryptedPayload,
                 chunkIndex: index,
                 chunkCount: chunks.count
@@ -112,7 +115,7 @@ package enum MirageSharedClipboard {
     }
 }
 
-package struct MirageSharedClipboardOrderingToken: Sendable, Equatable, Comparable {
+package struct MirageSharedClipboardOrderingToken: Equatable, Comparable {
     package let logicalVersion: UInt64
     package let changeID: UUID
 
@@ -127,7 +130,7 @@ package struct MirageSharedClipboardOrderingToken: Sendable, Equatable, Comparab
     }
 }
 
-package struct MirageSharedClipboardItem: Sendable, Equatable {
+package struct MirageSharedClipboardItem: Equatable {
     package let representation: SharedClipboardRepresentation
     package let payload: Data?
 
@@ -149,16 +152,12 @@ package struct MirageSharedClipboardItem: Sendable, Equatable {
     }
 }
 
-package struct MirageSharedClipboardLocalSend: Sendable, Equatable {
+package struct MirageSharedClipboardLocalSend: Equatable {
     package let item: MirageSharedClipboardItem
     package let orderingToken: MirageSharedClipboardOrderingToken
-
-    package var hasPayload: Bool {
-        item.payload != nil
-    }
 }
 
-package struct MirageSharedClipboardState: Sendable {
+package struct MirageSharedClipboardState {
     package private(set) var isActive = false
     package private(set) var lastObservedChangeCount: Int?
     package private(set) var latestOrderingToken: MirageSharedClipboardOrderingToken?

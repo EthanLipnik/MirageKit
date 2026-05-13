@@ -7,23 +7,14 @@
 //  Host Mirage-app control request handling.
 //
 
-import Foundation
 import MirageKit
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
     func handleHostApplicationRestartRequest(
-        _ message: ControlMessage,
         from clientContext: ClientContext
     ) async {
-        do {
-            _ = try message.decode(HostApplicationRestartRequestMessage.self)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to decode host application restart request: ")
-            return
-        }
-
         guard let restartHandler = hostApplicationRestartHandler else {
             let response = HostApplicationRestartResultMessage(
                 accepted: false,
@@ -83,7 +74,11 @@ extension MirageHostService {
         }
 
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
             restartHandler()
         }
     }

@@ -7,119 +7,53 @@
 
 import Foundation
 
+/// Tracks receiver-side health samples and chooses bitrate backoff or promotion probes.
 public struct MirageReceiverHealthController: Sendable {
+    /// Current adaptive receiver-health state.
     public enum State: String, Sendable, Equatable {
+        /// Receiver samples are healthy enough to keep or raise bitrate.
         case stable
+        /// Receiver samples indicate pressure and the controller is reducing bitrate.
         case backingOff
     }
 
+    /// Bitrate action selected after evaluating recent receiver samples.
     public enum Action: Sendable, Equatable {
+        /// Keep the current bitrate.
         case none
+        /// Reduce bitrate to the supplied target.
         case backoff(targetBitrateBps: Int)
+        /// Probe the supplied higher bitrate.
         case probe(targetBitrateBps: Int)
     }
 
+    /// Strategy for recovering from a learned promotion ceiling after failed probes.
     public enum PromotionRecoveryMode: String, Sendable, Equatable {
+        /// Recover slowly once the current route has settled below the learned ceiling.
         case settledCeiling
+        /// Recover more aggressively when route changes suggest the ceiling may be stale.
         case dynamicRoute
     }
 
-    struct Diagnostics: Sendable, Equatable {
-        let healthySampleCount: Int
-        let stressSampleCount: Int
-        let nextProbeAllowedAt: CFAbsoluteTime
-        let promotionCeilingBps: Int?
+    /// Current receiver health state.
+    public internal(set) var state: State = .stable
 
-        init(
-            healthySampleCount: Int,
-            stressSampleCount: Int,
-            nextProbeAllowedAt: CFAbsoluteTime,
-            promotionCeilingBps: Int?
-        ) {
-            self.healthySampleCount = healthySampleCount
-            self.stressSampleCount = stressSampleCount
-            self.nextProbeAllowedAt = nextProbeAllowedAt
-            self.promotionCeilingBps = promotionCeilingBps
-        }
-    }
-
-    private struct Sample: Sendable {
-        let hasSevereTransportPressure: Bool
-        let hasTransportPressure: Bool
-        let isTransportClean: Bool
-        let allowsProbePromotion: Bool
-        let suppressesProbePromotion: Bool
-        let probeSuppressionCooldownSeconds: CFAbsoluteTime
-        let transportPressureReason: String?
-    }
-
-    private struct PendingPromotion: Sendable, Equatable {
-        let previousBitrateBps: Int
-        let targetBitrateBps: Int
-        var cleanSampleCount: Int
-        let startedAt: CFAbsoluteTime
-    }
-
-    private static let minimumBitrateBps = 12_000_000
-    private static let severeBackoffStep = 0.85
-    private static let normalBackoffStep = 0.90
-    private static let backoffCooldownSeconds: CFAbsoluteTime = 8
-    private static let recoveryHealthySampleThreshold = 3
-    private static let severeStressSampleThreshold = 2
-    private static let normalStressSampleThreshold = 3
-    private static let probeHealthySampleThreshold = 4
-    private static let fastStartProbeHealthySampleThreshold = 2
-    private static let pendingProbeHealthySampleThreshold = 2
-    private static let pendingProbeTimeoutSeconds: CFAbsoluteTime = 12
-    private static let normalProbeIncreaseFloorBps = 6_000_000
-    private static let normalProbeIncreasePercent = 115
-    private static let normalProbeIncreaseMaximumStepBps = 24_000_000
-    private static let fastStartProbeIncreaseFloorBps = 12_000_000
-    private static let fastStartProbeIncreasePercent = 120
-    private static let fastStartProbeIncreaseMaximumStepBps = 32_000_000
-    private static let successfulProbeCooldownSeconds: CFAbsoluteTime = 8
-    private static let failedProbeCooldownSeconds: CFAbsoluteTime = 12
-    private static let probeSuppressionCooldownSeconds: CFAbsoluteTime = 3
-    private static let presentationProbeSuppressionCooldownSeconds: CFAbsoluteTime = 30
-    private static let minimumStablePresentationSeconds: CFAbsoluteTime = 8
-    private static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
-    private static let fastStartFailedProbeCooldownSeconds: CFAbsoluteTime = 8
-    private static let fastStartDurationSeconds: CFAbsoluteTime = 12
-    private static let normalBackoffPromotionCeilingStep = 0.95
-    private static let severeBackoffPromotionCeilingStep = 0.90
-    private static let promotionCeilingRecoveryHealthySampleThreshold = 12
-    private static let dynamicRoutePromotionCeilingRecoveryHealthySampleThreshold = 8
-    private static let promotionCeilingRecoveryFloorBps = 3_000_000
-    private static let promotionCeilingRecoveryPercent = 105
-    private static let promotionCeilingRecoveryMaximumStepBps = 12_000_000
-    private static let sendQueueStressBytes = 800_000
-    private static let sendQueueSevereBytes = 2_000_000
-    private static let sendStartDelayStressMs = 4.0
-    private static let sendStartDelaySevereMs = 8.0
-    private static let sendCompletionStressMs = 18.0
-    private static let sendCompletionSevereMs = 32.0
-    private static let packetPacerStressMs = 0.75
-    private static let packetPacerSevereMs = 2.0
-    private static let transportDropStressCount: UInt64 = 4
-    private static let transportDropSevereCount: UInt64 = 24
-    private static let deliveryStressRatio = 0.90
-    private static let deliverySevereRatio = 0.70
-    private static let clientStarvationStressRatio = 0.50
-
-    public private(set) var state: State = .stable
+    /// Policy for recovering a promotion ceiling after failed probes.
     public var promotionRecoveryMode: PromotionRecoveryMode
+
+    /// Most recent transport-pressure reason that influenced receiver health.
     public private(set) var lastTransportPressureReason: String?
 
-    private var lastTransitionAt: CFAbsoluteTime?
-    private var sessionStartedAt: CFAbsoluteTime?
-    private var healthySampleCount: Int = 0
-    private var promotionHealthySampleCount: Int = 0
-    private var stressSampleCount: Int = 0
-    private var nextProbeAllowedAt: CFAbsoluteTime = 0
-    private var promotionCeilingBps: Int?
-    private var pendingPromotion: PendingPromotion?
-    private var lastObservedStaleVideoGateCount: UInt64 = 0
+    var lastTransitionAt: CFAbsoluteTime?
+    var sessionStartedAt: CFAbsoluteTime?
+    var healthySampleCount: Int = 0
+    var promotionHealthySampleCount: Int = 0
+    var stressSampleCount: Int = 0
+    var nextProbeAllowedAt: CFAbsoluteTime = 0
+    var promotionCeilingBps: Int?
+    var pendingPromotion: ReceiverPendingPromotion?
 
+    /// Creates a receiver health controller.
     public init(
         promotionRecoveryMode: PromotionRecoveryMode = .settledCeiling,
         promotionCeilingBps: Int? = nil
@@ -128,19 +62,7 @@ public struct MirageReceiverHealthController: Sendable {
         self.promotionCeilingBps = promotionCeilingBps
     }
 
-    public var learnedPromotionCeilingBps: Int? {
-        promotionCeilingBps
-    }
-
-    var diagnostics: Diagnostics {
-        Diagnostics(
-            healthySampleCount: healthySampleCount,
-            stressSampleCount: stressSampleCount,
-            nextProbeAllowedAt: nextProbeAllowedAt,
-            promotionCeilingBps: promotionCeilingBps
-        )
-    }
-
+    /// Resets sample counters, pending probes, and pressure state.
     public mutating func reset(
         preservingProbeCooldown: Bool = true,
         preservingSessionStart: Bool = true
@@ -152,46 +74,13 @@ public struct MirageReceiverHealthController: Sendable {
         lastTransportPressureReason = nil
         lastTransitionAt = nil
         sessionStartedAt = preservedSessionStartedAt
-        healthySampleCount = 0
-        promotionHealthySampleCount = 0
-        stressSampleCount = 0
+        resetSampleCounters()
         nextProbeAllowedAt = preservedNextProbeAllowedAt
         promotionCeilingBps = preservedPromotionCeilingBps
         pendingPromotion = nil
-        lastObservedStaleVideoGateCount = 0
     }
 
-    public mutating func noteProbeSucceeded(
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-    ) {
-        state = .stable
-        lastTransitionAt = now
-        healthySampleCount = 0
-        promotionHealthySampleCount = 0
-        stressSampleCount = 0
-        nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
-        pendingPromotion = nil
-    }
-
-    public mutating func noteProbeFailed(
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-    ) {
-        state = .stable
-        lastTransitionAt = now
-        healthySampleCount = 0
-        promotionHealthySampleCount = 0
-        stressSampleCount = 0
-        nextProbeAllowedAt = now + probeCooldown(success: false, now: now)
-        if let pendingPromotion {
-            recordFailedPromotion(
-                failedBitrateBps: pendingPromotion.targetBitrateBps,
-                fallbackBitrateBps: pendingPromotion.previousBitrateBps,
-                severe: false
-            )
-        }
-        pendingPromotion = nil
-    }
-
+    /// Advances receiver-health policy using multiple stream snapshots.
     public mutating func advance(
         snapshots: [MirageClientMetricsSnapshot],
         currentBitrateBps: Int,
@@ -219,6 +108,7 @@ public struct MirageReceiverHealthController: Sendable {
         )
     }
 
+    /// Advances receiver-health policy using one stream snapshot.
     public mutating func advance(
         snapshot: MirageClientMetricsSnapshot?,
         currentBitrateBps: Int,
@@ -240,16 +130,9 @@ public struct MirageReceiverHealthController: Sendable {
             return .none
         }
 
-        let staleVideoGateAdvanced = snapshot.clientAudioStaleVideoGateCount > lastObservedStaleVideoGateCount
-        lastObservedStaleVideoGateCount = max(
-            lastObservedStaleVideoGateCount,
-            snapshot.clientAudioStaleVideoGateCount
-        )
-
         let sample = Self.sample(
             from: snapshot,
-            minimumHealthyFrameRate: minimumHealthyFrameRate,
-            staleVideoGateAdvanced: staleVideoGateAdvanced
+            minimumHealthyFrameRate: minimumHealthyFrameRate
         )
         lastTransportPressureReason = sample.transportPressureReason
         updateSampleCounters(sample: sample, now: now, allowsBackoff: allowsBackoff)
@@ -311,15 +194,15 @@ public struct MirageReceiverHealthController: Sendable {
     }
 
     private mutating func updateSampleCounters(
-        sample: Sample,
+        sample: ReceiverHealthSample,
         now: CFAbsoluteTime,
         allowsBackoff: Bool
     ) {
         if sample.suppressesProbePromotion {
-            nextProbeAllowedAt = max(nextProbeAllowedAt, now + sample.probeSuppressionCooldownSeconds)
+            nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.probeSuppressionCooldownSeconds)
         }
 
-        if sample.hasTransportPressure && allowsBackoff {
+        if sample.hasTransportPressure, allowsBackoff {
             healthySampleCount = 0
             promotionHealthySampleCount = 0
             stressSampleCount += 1
@@ -339,33 +222,8 @@ public struct MirageReceiverHealthController: Sendable {
         }
     }
 
-    private mutating func probeActionIfReady(
-        sample: Sample,
-        currentBitrateBps: Int,
-        ceilingBps: Int,
-        now: CFAbsoluteTime,
-        allowsNewProbe: Bool
-    ) -> Action {
-        guard allowsNewProbe,
-              let probeTarget = probeTargetBitrate(
-                  sample: sample,
-                  currentBitrateBps: currentBitrateBps,
-                  ceilingBps: ceilingBps,
-                  now: now
-              ) else {
-            return .none
-        }
-        pendingPromotion = PendingPromotion(
-            previousBitrateBps: currentBitrateBps,
-            targetBitrateBps: probeTarget,
-            cleanSampleCount: 0,
-            startedAt: now
-        )
-        return .probe(targetBitrateBps: probeTarget)
-    }
-
     private mutating func applyBackoff(
-        sample: Sample,
+        sample: ReceiverHealthSample,
         currentBitrateBps: Int,
         now: CFAbsoluteTime
     ) -> Action {
@@ -383,16 +241,14 @@ public struct MirageReceiverHealthController: Sendable {
         )
         state = .backingOff
         lastTransitionAt = now
-        healthySampleCount = 0
-        promotionHealthySampleCount = 0
-        stressSampleCount = 0
+        resetSampleCounters()
         nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.backoffCooldownSeconds)
         guard nextBitrate < currentBitrateBps else { return .none }
         return .backoff(targetBitrateBps: nextBitrate)
     }
 
     private func shouldBackOff(
-        sample: Sample,
+        sample: ReceiverHealthSample,
         now: CFAbsoluteTime
     ) -> Bool {
         guard sample.hasTransportPressure else { return false }
@@ -404,494 +260,10 @@ public struct MirageReceiverHealthController: Sendable {
         return now - lastTransitionAt >= Self.backoffCooldownSeconds
     }
 
-    private mutating func advancePendingPromotion(
-        sample: Sample,
-        currentBitrateBps: Int,
-        now: CFAbsoluteTime,
-        allowsBackoff: Bool
-    ) -> Action? {
-        guard var pendingPromotion else { return nil }
-        guard currentBitrateBps >= pendingPromotion.targetBitrateBps else {
-            self.pendingPromotion = nil
-            return nil
-        }
-
-        if sample.hasTransportPressure {
-            guard allowsBackoff else {
-                self.pendingPromotion = nil
-                state = .stable
-                return nil
-            }
-            recordFailedPromotion(
-                failedBitrateBps: pendingPromotion.targetBitrateBps,
-                fallbackBitrateBps: pendingPromotion.previousBitrateBps,
-                severe: sample.hasSevereTransportPressure
-            )
-            self.pendingPromotion = nil
-            state = .backingOff
-            lastTransitionAt = now
-            healthySampleCount = 0
-            promotionHealthySampleCount = 0
-            stressSampleCount = 0
-            nextProbeAllowedAt = max(nextProbeAllowedAt, now + probeCooldown(success: false, now: now))
-            guard pendingPromotion.previousBitrateBps < currentBitrateBps else { return nil }
-            return .backoff(targetBitrateBps: pendingPromotion.previousBitrateBps)
-        }
-
-        guard sample.allowsProbePromotion else {
-            if now - pendingPromotion.startedAt >= Self.pendingProbeTimeoutSeconds {
-                self.pendingPromotion = nil
-                nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.failedProbeCooldownSeconds)
-            } else {
-                self.pendingPromotion = pendingPromotion
-            }
-            return nil
-        }
-
-        pendingPromotion.cleanSampleCount += 1
-        if pendingPromotion.cleanSampleCount >= Self.pendingProbeHealthySampleThreshold {
-            self.pendingPromotion = nil
-            state = .stable
-            lastTransitionAt = now
-            healthySampleCount = 0
-            promotionHealthySampleCount = 0
-            stressSampleCount = 0
-            nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
-            clearPromotionCeilingIfReached(currentBitrateBps)
-        } else {
-            self.pendingPromotion = pendingPromotion
-        }
-        return nil
-    }
-
-    private mutating func probeTargetBitrate(
-        sample: Sample,
-        currentBitrateBps: Int,
-        ceilingBps: Int,
-        now: CFAbsoluteTime
-    ) -> Int? {
-        guard sample.isTransportClean else { return nil }
-        guard sample.allowsProbePromotion else { return nil }
-        let fastStartActive = isFastStartActive(now: now)
-        let healthySampleThreshold = fastStartActive
-            ? Self.fastStartProbeHealthySampleThreshold
-            : Self.probeHealthySampleThreshold
-        guard promotionHealthySampleCount >= healthySampleThreshold else { return nil }
-        guard hasMinimumStablePresentationWindow(now: now) else { return nil }
-        guard now >= nextProbeAllowedAt else { return nil }
-        let effectiveCeilingBps = effectivePromotionCeiling(
-            configuredCeilingBps: ceilingBps,
-            currentBitrateBps: currentBitrateBps,
-            now: now
-        )
-        guard currentBitrateBps < effectiveCeilingBps else { return nil }
-
-        let increaseFloorBps = fastStartActive
-            ? Self.fastStartProbeIncreaseFloorBps
-            : Self.normalProbeIncreaseFloorBps
-        let increasePercent = fastStartActive
-            ? Self.fastStartProbeIncreasePercent
-            : Self.normalProbeIncreasePercent
-        let increaseMaximumStepBps = fastStartActive
-            ? Self.fastStartProbeIncreaseMaximumStepBps
-            : Self.normalProbeIncreaseMaximumStepBps
-        let scaledIncrease = Int(
-            (Int64(currentBitrateBps) * Int64(increasePercent) + 99) / 100
-        )
-        let cappedStep = currentBitrateBps + increaseMaximumStepBps
-        let nextBitrate = min(
-            effectiveCeilingBps,
-            cappedStep,
-            max(currentBitrateBps + increaseFloorBps, scaledIncrease)
-        )
-        guard nextBitrate > currentBitrateBps else { return nil }
-        return nextBitrate
-    }
-
-    private mutating func recordFailedPromotion(
-        failedBitrateBps: Int,
-        fallbackBitrateBps: Int,
-        severe: Bool
-    ) {
-        let ceilingStep = severe
-            ? Self.severeBackoffPromotionCeilingStep
-            : Self.normalBackoffPromotionCeilingStep
-        let rememberedCeiling = max(fallbackBitrateBps, Int(Double(failedBitrateBps) * ceilingStep))
-        rememberPromotionCeiling(rememberedCeiling)
-    }
-
-    private mutating func rememberPromotionCeiling(_ rememberedCeiling: Int) {
-        guard rememberedCeiling > 0 else { return }
-        if let existingPromotionCeiling = promotionCeilingBps {
-            promotionCeilingBps = min(existingPromotionCeiling, rememberedCeiling)
-        } else {
-            promotionCeilingBps = rememberedCeiling
-        }
-    }
-
-    private mutating func clearPromotionCeilingIfReached(_ currentBitrateBps: Int) {
-        guard let promotionCeilingBps else { return }
-        if currentBitrateBps >= promotionCeilingBps {
-            self.promotionCeilingBps = nil
-        }
-    }
-
-    private mutating func effectivePromotionCeiling(
-        configuredCeilingBps: Int,
-        currentBitrateBps: Int,
-        now: CFAbsoluteTime
-    ) -> Int {
-        guard let promotionCeilingBps else { return configuredCeilingBps }
-        guard promotionCeilingBps < configuredCeilingBps else {
-            self.promotionCeilingBps = nil
-            return configuredCeilingBps
-        }
-
-        var clampedCeiling = min(
-            configuredCeilingBps,
-            max(Self.minimumBitrateBps, promotionCeilingBps, currentBitrateBps)
-        )
-        let requiredHealthySamples = promotionRecoveryMode == .dynamicRoute
-            ? Self.dynamicRoutePromotionCeilingRecoveryHealthySampleThreshold
-            : Self.promotionCeilingRecoveryHealthySampleThreshold
-        if currentBitrateBps >= clampedCeiling,
-           promotionHealthySampleCount >= requiredHealthySamples,
-           now >= nextProbeAllowedAt {
-            let scaledCeiling = Int(
-                (Int64(clampedCeiling) * Int64(Self.promotionCeilingRecoveryPercent) + 99) / 100
-            )
-            clampedCeiling = min(
-                configuredCeilingBps,
-                clampedCeiling + Self.promotionCeilingRecoveryMaximumStepBps,
-                max(clampedCeiling + Self.promotionCeilingRecoveryFloorBps, scaledCeiling)
-            )
-        }
-
-        if clampedCeiling >= configuredCeilingBps {
-            self.promotionCeilingBps = nil
-            return configuredCeilingBps
-        }
-        self.promotionCeilingBps = clampedCeiling
-        return clampedCeiling
-    }
-
-    private static func sample(
-        from snapshot: MirageClientMetricsSnapshot,
-        minimumHealthyFrameRate: Int? = nil,
-        staleVideoGateAdvanced: Bool = false
-    ) -> Sample {
-        guard snapshot.hasHostMetrics else {
-            return Sample(
-                hasSevereTransportPressure: false,
-                hasTransportPressure: false,
-                isTransportClean: false,
-                allowsProbePromotion: false,
-                suppressesProbePromotion: true,
-                probeSuppressionCooldownSeconds: Self.probeSuppressionCooldownSeconds,
-                transportPressureReason: nil
-            )
-        }
-
-        let requestedTargetFrameRate = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
-        let targetFPS = Double(
-            Self.effectiveHealthFrameRate(
-                requestedTargetFrameRate: requestedTargetFrameRate,
-                minimumHealthyFrameRate: minimumHealthyFrameRate
-            )
-        )
-        let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
-        let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
-        let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
-        let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
-        let transportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
-            (snapshot.hostSenderLocalDeadlineDrops ?? 0)
-
-        let queueStress = queueBytes >= Self.sendQueueStressBytes
-        let queueSevere = queueBytes >= Self.sendQueueSevereBytes
-        let sendDelayStress = sendStartDelayAverageMs >= Self.sendStartDelayStressMs ||
-            sendCompletionAverageMs >= Self.sendCompletionStressMs
-        let sendDelaySevere = sendStartDelayAverageMs >= Self.sendStartDelaySevereMs ||
-            sendCompletionAverageMs >= Self.sendCompletionSevereMs
-        let pacerStress = packetPacerAverageSleepMs >= Self.packetPacerStressMs
-        let pacerSevere = packetPacerAverageSleepMs >= Self.packetPacerSevereMs
-        let dropStress = transportDropCount >= Self.transportDropStressCount
-        let dropSevere = transportDropCount >= Self.transportDropSevereCount
-
-        let hostPipelineHealthy = Self.hostPipelineHealthy(snapshot: snapshot, targetFPS: targetFPS)
-        let clientCanVerifyTransport = Self.clientCanVerifyTransport(snapshot: snapshot, targetFPS: targetFPS)
-        let deliveryRatio = snapshot.hostEncodedFPS > 0
-            ? max(0, snapshot.receivedFPS) / max(1, snapshot.hostEncodedFPS)
-            : 1
-        let deliveryBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliveryStressRatio
-        let deliverySevereBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliverySevereRatio
-        let deliveryStress = hostPipelineHealthy &&
-            clientCanVerifyTransport &&
-            deliveryBelowHealthFloor &&
-            deliveryRatio < Self.deliveryStressRatio
-        let deliverySevere = hostPipelineHealthy &&
-            clientCanVerifyTransport &&
-            deliverySevereBelowHealthFloor &&
-            deliveryRatio < Self.deliverySevereRatio
-        let clientKeyframeStarved = hostPipelineHealthy &&
-            snapshot.clientReassemblerPendingKeyframeCount > 0
-        let clientVisibleFrameFPS = max(0, snapshot.clientUniqueDeliveredSourceFrameFPS)
-        let clientVisibleCadenceKnown = snapshot.clientDeliveredSourceFrameCadenceKnown
-        let clientPresentationFPS = clientVisibleCadenceKnown ? clientVisibleFrameFPS : 0
-        let clientStarvationStress = clientKeyframeStarved && (
-            snapshot.receivedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.decodedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                clientPresentationFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.clientDroppedFrames > 0 ||
-                !snapshot.decodeHealthy
-        )
-        let targetFrameIntervalMs = 1000.0 / targetFPS
-        let visibleCadenceHealthy = clientVisibleCadenceKnown &&
-            clientVisibleFrameFPS >= targetFPS * 0.90 &&
-            snapshot.clientVisiblePresentationStallCount == 0 &&
-            snapshot.clientVisibleWorstPresentationGapMs < max(80, targetFrameIntervalMs * 4) &&
-            (
-                snapshot.clientVisibleFrameIntervalP99Ms == 0 ||
-                    snapshot.clientVisibleFrameIntervalP99Ms < max(80, targetFrameIntervalMs * 3)
-            )
-        let visibleCadencePressure = clientVisibleCadenceKnown && (
-            clientVisibleFrameFPS < targetFPS * 0.85 ||
-                snapshot.clientVisiblePresentationStallCount > 0 ||
-                snapshot.clientVisibleWorstPresentationGapMs >= max(80, targetFrameIntervalMs * 4) ||
-                snapshot.clientVisibleFrameIntervalP99Ms >= max(80, targetFrameIntervalMs * 3) ||
-                snapshot.clientRepeatedDeliveredSourceFrameCount > 0
-        )
-        let clientPresentationPressure = hostPipelineHealthy &&
-            snapshot.decodeHealthy &&
-            (visibleCadencePressure || staleVideoGateAdvanced)
-
-        let pairedPacerStress = pacerStress && (queueStress || dropStress)
-        let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
-        let severeTransportPressure = queueSevere ||
-            sendDelaySevere ||
-            dropSevere ||
-            pairedPacerSevere ||
-            deliverySevere
-        let sustainedTransportPressure = queueStress ||
-            sendDelaySevere ||
-            dropStress ||
-            pairedPacerStress ||
-            deliveryStress
-        let transportPressureReason = Self.transportPressureReason(
-            queueBytes: queueBytes,
-            queueStress: queueStress,
-            queueSevere: queueSevere,
-            sendStartDelayAverageMs: sendStartDelayAverageMs,
-            sendCompletionAverageMs: sendCompletionAverageMs,
-            sendDelayStress: sendDelayStress,
-            sendDelaySevere: sendDelaySevere,
-            packetPacerAverageSleepMs: packetPacerAverageSleepMs,
-            pairedPacerStress: pairedPacerStress,
-            pairedPacerSevere: pairedPacerSevere,
-            transportDropCount: transportDropCount,
-            dropStress: dropStress,
-            dropSevere: dropSevere,
-            deliveryRatio: deliveryRatio,
-            deliveryStress: deliveryStress,
-            deliverySevere: deliverySevere,
-            hostEncodedFPS: snapshot.hostEncodedFPS,
-            receivedFPS: snapshot.receivedFPS
-        )
-
-        let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
-            snapshot.clientWorstPresentationGapMs < max(250, targetFrameIntervalMs * 4) &&
-            (
-                snapshot.clientFrameIntervalP99Ms == 0 ||
-                    snapshot.clientFrameIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
-            ) &&
-            (
-                snapshot.clientDisplayTickIntervalP99Ms == 0 ||
-                    snapshot.clientDisplayTickIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
-            ) &&
-            snapshot.clientPendingFrameAgeMs < max(80, targetFrameIntervalMs * 5) &&
-            visibleCadenceHealthy
-        let suppressesProbePromotion = queueBytes > 0 ||
-            transportDropCount > 0 ||
-            sendDelayStress ||
-            pacerStress ||
-            clientStarvationStress ||
-            !visibleCadenceHealthy ||
-            clientPresentationPressure
-        let bottleneckKind = snapshot.bottleneckKind
-        let clientBottleneckBlocksPromotion =
-            bottleneckKind == .decodeBound ||
-            bottleneckKind == .presentationBound ||
-            !snapshot.decodeHealthy
-
-        return Sample(
-            hasSevereTransportPressure: severeTransportPressure,
-            hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
-            isTransportClean: !severeTransportPressure && !sustainedTransportPressure,
-            allowsProbePromotion: !suppressesProbePromotion &&
-                !clientBottleneckBlocksPromotion &&
-                smoothEnoughForPromotion,
-            suppressesProbePromotion: suppressesProbePromotion,
-            probeSuppressionCooldownSeconds: clientPresentationPressure ||
-                (clientVisibleCadenceKnown && !visibleCadenceHealthy)
-                ? Self.presentationProbeSuppressionCooldownSeconds
-                : Self.probeSuppressionCooldownSeconds,
-            transportPressureReason: transportPressureReason
-        )
-    }
-
-    private static func effectiveHealthFrameRate(
-        requestedTargetFrameRate: Int,
-        minimumHealthyFrameRate: Int?
-    ) -> Int {
-        let requestedTargetFrameRate = max(1, requestedTargetFrameRate)
-        guard let minimumHealthyFrameRate else { return requestedTargetFrameRate }
-        return min(requestedTargetFrameRate, max(1, minimumHealthyFrameRate))
-    }
-
-    private static func transportPressureReason(
-        queueBytes: Int,
-        queueStress: Bool,
-        queueSevere: Bool,
-        sendStartDelayAverageMs: Double,
-        sendCompletionAverageMs: Double,
-        sendDelayStress: Bool,
-        sendDelaySevere: Bool,
-        packetPacerAverageSleepMs: Double,
-        pairedPacerStress: Bool,
-        pairedPacerSevere: Bool,
-        transportDropCount: UInt64,
-        dropStress: Bool,
-        dropSevere: Bool,
-        deliveryRatio: Double,
-        deliveryStress: Bool,
-        deliverySevere: Bool,
-        hostEncodedFPS: Double,
-        receivedFPS: Double
-    ) -> String? {
-        if queueSevere || queueStress {
-            return "host send queue \(Self.formatBytes(queueBytes))"
-        }
-        if dropSevere || dropStress {
-            return "host packet drops \(transportDropCount)"
-        }
-        if sendDelaySevere || sendDelayStress {
-            let startText = Self.formatMilliseconds(sendStartDelayAverageMs)
-            let completionText = Self.formatMilliseconds(sendCompletionAverageMs)
-            return "host send delay start=\(startText) completion=\(completionText)"
-        }
-        if pairedPacerSevere || pairedPacerStress {
-            return "packet pacer \(Self.formatMilliseconds(packetPacerAverageSleepMs)) with queue/drop pressure"
-        }
-        if deliverySevere || deliveryStress {
-            let ratio = Int((deliveryRatio * 100).rounded())
-            let encodedText = hostEncodedFPS.formatted(.number.precision(.fractionLength(1)))
-            let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
-            return "delivery collapse \(ratio)% received (host=\(encodedText)fps received=\(receivedText)fps)"
-        }
-        return nil
-    }
-
-    private static func formatBytes(_ bytes: Int) -> String {
-        guard bytes >= 1024 else { return "\(bytes)B" }
-        let kib = Double(bytes) / 1024.0
-        if kib < 1024 {
-            return "\(kib.formatted(.number.precision(.fractionLength(1))))KiB"
-        }
-        let mib = kib / 1024.0
-        return "\(mib.formatted(.number.precision(.fractionLength(2))))MiB"
-    }
-
-    private static func formatMilliseconds(_ milliseconds: Double) -> String {
-        "\(milliseconds.formatted(.number.precision(.fractionLength(1))))ms"
-    }
-
-    private static func hostPipelineHealthy(
-        snapshot: MirageClientMetricsSnapshot,
-        targetFPS: Double
-    ) -> Bool {
-        let captureFPS = max(
-            snapshot.hostCaptureIngressFPS ?? 0,
-            snapshot.hostCaptureFPS ?? 0,
-            snapshot.hostEncodeAttemptFPS ?? 0
-        )
-        let encodedFPS = max(0, snapshot.hostEncodedFPS)
-        return captureFPS >= targetFPS * 0.85 &&
-            encodedFPS >= targetFPS * 0.75 &&
-            snapshot.bottleneckKind != .captureBound &&
-            snapshot.bottleneckKind != .encodeBound &&
-            snapshot.bottleneckKind != .hostCadenceLimited
-    }
-
-    private static func clientCanVerifyTransport(
-        snapshot: MirageClientMetricsSnapshot,
-        targetFPS: Double
-    ) -> Bool {
-        guard snapshot.decodeHealthy else { return false }
-        if snapshot.bottleneckKind == .decodeBound ||
-            snapshot.bottleneckKind == .presentationBound {
-            return false
-        }
-        let targetFrameIntervalMs = 1000.0 / targetFPS
-        return snapshot.clientPresentationStallCount == 0 &&
-            snapshot.clientDeliveredSourceFrameCadenceKnown &&
-            snapshot.clientUniqueDeliveredSourceFrameFPS >= targetFPS * Self.deliveryStressRatio &&
-            max(snapshot.clientWorstPresentationGapMs, snapshot.clientVisibleWorstPresentationGapMs) <
-                max(250, targetFrameIntervalMs * 6)
-    }
-
-    private func isFastStartActive(now: CFAbsoluteTime) -> Bool {
-        guard let sessionStartedAt else { return false }
-        return now - sessionStartedAt < Self.fastStartDurationSeconds
-    }
-
-    private func hasMinimumStablePresentationWindow(now: CFAbsoluteTime) -> Bool {
-        guard let sessionStartedAt else { return false }
-        return now - sessionStartedAt >= Self.minimumStablePresentationSeconds
-    }
-
-    private func probeCooldown(success: Bool, now: CFAbsoluteTime) -> CFAbsoluteTime {
-        let fastStartActive = isFastStartActive(now: now)
-        return switch (success, fastStartActive) {
-        case (true, true):
-            Self.fastStartSuccessfulProbeCooldownSeconds
-        case (true, false):
-            Self.successfulProbeCooldownSeconds
-        case (false, true):
-            Self.fastStartFailedProbeCooldownSeconds
-        case (false, false):
-            Self.failedProbeCooldownSeconds
-        }
-    }
-
-    private static func worstSnapshot(
-        from snapshots: [MirageClientMetricsSnapshot],
-        minimumHealthyFrameRate: Int?
-    ) -> MirageClientMetricsSnapshot {
-        snapshots.max(by: { lhs, rhs in
-            healthPriority(for: lhs, minimumHealthyFrameRate: minimumHealthyFrameRate) <
-                healthPriority(for: rhs, minimumHealthyFrameRate: minimumHealthyFrameRate)
-        }) ?? snapshots[0]
-    }
-
-    private static func healthPriority(
-        for snapshot: MirageClientMetricsSnapshot,
-        minimumHealthyFrameRate: Int?
-    ) -> Int {
-        let sample = sample(
-            from: snapshot,
-            minimumHealthyFrameRate: minimumHealthyFrameRate
-        )
-        var score = 0
-        if sample.hasSevereTransportPressure {
-            score += 1_000
-        } else if sample.hasTransportPressure {
-            score += 600
-        }
-        if sample.suppressesProbePromotion {
-            score += 100
-        }
-        if !sample.allowsProbePromotion {
-            score += 50
-        }
-        return score
+    /// Clears accumulated healthy, promotion, and stress sample streaks.
+    mutating func resetSampleCounters() {
+        healthySampleCount = 0
+        promotionHealthySampleCount = 0
+        stressSampleCount = 0
     }
 }

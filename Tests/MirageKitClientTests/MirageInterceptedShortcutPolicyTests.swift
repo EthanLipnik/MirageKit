@@ -11,7 +11,6 @@ import Testing
 
 @Suite("Intercepted Shortcut Policy")
 struct MirageInterceptedShortcutPolicyTests {
-
     @Test("Cmd+B builds a forwarded key down and key up sequence")
     func cmdBBuildsAForwardedKeySequence() throws {
         let shortcut = try #require(

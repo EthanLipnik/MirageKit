@@ -17,7 +17,6 @@ import ScreenCaptureKit
 /// Uses virtual displays for window isolation, with display-level capture cropped to visible bounds
 actor StreamContext {
     let streamID: StreamID
-    nonisolated let diagnosticsBuffer = MirageStreamingDiagnosticsBuffer()
     var windowID: WindowID
     let streamKind: VideoEncoder.StreamKind
     var encoderConfig: MirageEncoderConfiguration
@@ -47,16 +46,12 @@ actor StreamContext {
     /// Window capture engine (used for window and virtual-display modes).
     var captureEngine: WindowCaptureEngine?
 
-    /// Active auxiliary window captures keyed by host window ID.
-    var auxiliaryCaptures: [WindowID: AuxiliaryCaptureContext] = [:]
-
     // Virtual display components (provides window isolation)
     // Uses SharedVirtualDisplayManager dedicated stream displays.
     var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?
     var virtualDisplayVisibleBounds: CGRect = .zero
     var virtualDisplayCaptureSourceRect: CGRect = .zero
     var virtualDisplayCapturePresentationRect: CGRect = .zero
-    var virtualDisplayVisiblePixelResolution: CGSize = .zero
     var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
     var captureShowsCursor: Bool = false
@@ -64,8 +59,6 @@ actor StreamContext {
 
     var encoder: VideoEncoder?
     var isRunning = false
-    var frameNumber: UInt32 = 0
-    var sequenceNumber: UInt32 = 0
 
     /// Dimension token for rejecting old-dimension P-frames after resize.
     /// Incremented each time encoder dimensions change. Sent in every frame header
@@ -105,16 +98,10 @@ actor StreamContext {
     var syntheticIntervalCount: UInt64 = 0
     var lastCapturedFrame: CapturedFrame?
     var cachedStartupFrame: CapturedFrame?
-    var cachedDesktopResizeFrame: CapturedFrame?
-    var lastCapturedDuration: CMTime = .invalid
-    var lastEncodedPresentationTime: CMTime = .invalid
-    var lastSyntheticFrameTime: CFAbsoluteTime = 0
-    var lastSyntheticLogTime: CFAbsoluteTime = 0
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var captureCadenceRecoveryPolicy = HostCaptureCadenceRecoveryPolicy()
-    var realtimeMediaSession: RealtimeMediaSession
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
@@ -147,12 +134,11 @@ actor StreamContext {
     let qualityRaiseStep: Float = 0.02
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
-    let latencyBurstCaptureQueueDepth = 2
     var freshnessBurstActive = false
     var freshnessBurstEntryCount: UInt64 = 0
-    var freshnessBurstQueueResetCount: UInt64 = 0
-    var freshnessBurstRecoveryKeyframeCount: UInt64 = 0
-    var freshnessBurstCoalescedKeyframeCount: UInt64 = 0
+    var softFreshnessDrainActive = false
+    var softFreshnessDrainDeadline: CFAbsoluteTime = 0
+    var softFreshnessDrainCount: UInt64 = 0
     var latencyBurstActive = false
     var latencyBurstDrainsNewestFrames = false
     var latencyBurstCaptureQueueDepthOverride: Int?
@@ -185,13 +171,6 @@ actor StreamContext {
     var lastEncodeAttemptFPS: Double?
     var lastCaptureCadenceMetrics: StreamCaptureCadenceMetrics?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
-    var receiverHasPresentedFrame = false
-    var captureIngressDelayTotalMs: Double = 0
-    var captureIngressDelayMaxMs: Double = 0
-    var captureIngressDelayCount: UInt64 = 0
-    var preEncodeWaitTotalMs: Double = 0
-    var preEncodeWaitMaxMs: Double = 0
-    var preEncodeWaitCount: UInt64 = 0
     var startupBaseTime: CFAbsoluteTime = 0
     var startupLabel: String = ""
     var startupFirstCaptureLogged = false
@@ -229,8 +208,6 @@ actor StreamContext {
     let maxQueuedBytesCap: Int = 8_000_000
     var maxQueuedBytes: Int = 2_000_000
     var queuePressureBytes: Int = 1_200_000
-    let backpressureLogInterval: CFAbsoluteTime = 1.0
-    var lastBackpressureLogTime: CFAbsoluteTime = 0
     var backpressureActive: Bool = false
     nonisolated(unsafe) var backpressureActiveSnapshot: Bool = false
     var backpressureActivatedAt: CFAbsoluteTime = 0
@@ -329,8 +306,6 @@ actor StreamContext {
     var encoderLowPowerEnabled: Bool
     /// Capture pressure profile for SCK buffering/copy behavior.
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
-    nonisolated static let canonical6KWidth: Int = 6_016
-    nonisolated static let canonical6KHeight: Int = 3_384
     nonisolated static let minAudioCaptureChannelCount: Int = 1
     nonisolated static let maxAudioCaptureChannelCount: Int = 8
 
@@ -369,10 +344,6 @@ actor StreamContext {
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
 
         self.streamID = streamID
-        realtimeMediaSession = RealtimeMediaSession(
-            streamID: streamID,
-            targetFrameRate: resolvedEncoderConfig.targetFrameRate
-        )
         self.windowID = windowID
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
@@ -403,31 +374,17 @@ actor StreamContext {
         let prefersSmoothness = latencyMode == .smoothest
         let latencySensitive = latencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
-        let bufferDepth = Self.frameBufferDepth(
-            useLowLatencyPipeline: useLowLatencyPipeline,
+        let bufferPolicy = Self.resolvedBufferPolicy(
+            streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            useLowLatencyPipeline: useLowLatencyPipeline
         )
-        let minInFlight = Self.minInFlightFrames(
-            useLowLatencyPipeline: useLowLatencyPipeline,
-            frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: latencyMode
-        )
-        let inFlightCap = min(
-            bufferDepth,
-            Self.inFlightCap(
-                useLowLatencyPipeline: useLowLatencyPipeline,
-                frameRate: resolvedEncoderConfig.targetFrameRate,
-                latencyMode: latencyMode
-            )
-        )
-        let resolvedInFlightCap = max(1, inFlightCap)
-        let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)
-        maxInFlightFramesCap = resolvedInFlightCap
-        minInFlightFrames = minInFlight
-        maxInFlightFrames = resolvedInitialInFlight
-        frameBufferDepth = bufferDepth
-        frameInbox = StreamFrameInbox(capacity: bufferDepth)
+        maxInFlightFramesCap = bufferPolicy.maxInFlightFramesCap
+        minInFlightFrames = bufferPolicy.minimumInFlightFrames
+        maxInFlightFrames = bufferPolicy.initialInFlightFrames
+        frameBufferDepth = bufferPolicy.bufferDepth
+        frameInbox = StreamFrameInbox(capacity: bufferPolicy.bufferDepth)
         maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
         let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, compressionQualityCeiling)
@@ -452,146 +409,8 @@ actor StreamContext {
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = resolvedEncoderConfig.bitrate
-
     }
 
-    func setStartupBaseTime(_ baseTime: CFAbsoluteTime, label: String) {
-        startupBaseTime = baseTime
-        startupLabel = label
-        startupFirstCaptureLogged = false
-        startupFirstEncodeLogged = false
-        startupRegistrationLogged = false
-    }
-
-    func logStartupEvent(_ event: String) {
-        guard startupBaseTime > 0 else { return }
-        let deltaMs = Int((CFAbsoluteTimeGetCurrent() - startupBaseTime) * 1000)
-        let label = startupLabel.isEmpty ? "stream \(streamID)" : startupLabel
-        MirageLogger.stream("\(label) start: \(event) (+\(deltaMs)ms)")
-    }
-
-    static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
-        guard scale > 0 else { return 1.0 }
-        return max(0.1, min(1.0, scale))
-    }
-
-    func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {
-        if let override = captureFrameRateOverride { return override }
-        return targetFrameRate
-    }
-
-    func resolvedRuntimeQualityFloor(for qualityCeiling: Float) -> Float {
-        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
-        guard ceiling > 0 else { return 0 }
-        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
-        let floorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
-        let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
-        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
-    }
-
-    func resolvedRuntimeKeyframeQualityFloor(for qualityCeiling: Float) -> Float {
-        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
-        guard ceiling > 0 else { return 0 }
-        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
-        let floorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
-        let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
-        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
-    }
-
-    func refreshCaptureCadence() async {
-        guard let captureEngine else { return }
-        let effectiveRate = await captureEngine.minimumFrameIntervalRate()
-        captureFrameRate = effectiveRate
-    }
-
-    static func frameBufferDepth(
-        useLowLatencyPipeline: Bool,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Int {
-        if useLowLatencyPipeline { return 1 }
-        switch latencyMode {
-        case .smoothest:
-            if frameRate >= 120 { return 3 }
-            if frameRate >= 60 { return 2 }
-            return 3
-        case .lowestLatency:
-            if frameRate >= 120 { return 2 }
-            if frameRate >= 60 { return 2 }
-            return 1
-        }
-    }
-
-    static func inFlightCap(
-        useLowLatencyPipeline: Bool,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Int {
-        if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
-        switch latencyMode {
-        case .smoothest:
-            if frameRate >= 120 { return 2 }
-            if frameRate >= 60 { return 2 }
-            return 2
-        case .lowestLatency:
-            if frameRate >= 120 { return 2 }
-            return 1
-        }
-    }
-
-    static func minInFlightFrames(
-        useLowLatencyPipeline: Bool,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Int {
-        if useLowLatencyPipeline { return 1 }
-        switch latencyMode {
-        case .smoothest:
-            if frameRate >= 60 { return 1 }
-            return 1
-        case .lowestLatency:
-            return 1
-        }
-    }
-
-    static func lowLatencyPipelineInFlightLimit() -> Int {
-        1
-    }
-
-    nonisolated static func packetSendDeadline(
-        encodedAt: CFAbsoluteTime,
-        isKeyframe: Bool,
-        targetFrameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    ) -> CFAbsoluteTime {
-        guard !isKeyframe else { return .greatestFiniteMagnitude }
-        guard latencyMode == .lowestLatency else {
-            return StreamPacketSender.defaultSendDeadline(
-                encodedAt: encodedAt,
-                isKeyframe: isKeyframe,
-                targetFrameRate: targetFrameRate
-            )
-        }
-
-        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
-        return encodedAt + max(frameInterval * 3.0, 0.033)
-    }
-
-    func schedulePipelineStatsLog() {
-        guard !pipelineStatsLogScheduled else { return }
-        pipelineStatsLogScheduled = true
-        Task(priority: .utility) { [weak self] in
-            await self?.runScheduledPipelineStatsLog()
-        }
-    }
-
-    private func runScheduledPipelineStatsLog() async {
-        await logPipelineStatsIfNeeded()
-        pipelineStatsLogScheduled = false
-    }
 }
 
 #endif

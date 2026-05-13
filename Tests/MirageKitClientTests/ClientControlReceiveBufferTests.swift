@@ -12,7 +12,6 @@ import Testing
 private actor ReceiveCounter {
     private(set) var value = 0
 
-    @discardableResult
     func increment() -> Int {
         value += 1
         return value
@@ -29,8 +28,8 @@ struct ClientControlReceiveBufferTests {
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
-            service.controlMessageHandlers[.pong] = { _ in
-                await counter.increment()
+            service.controlMessageHandlers[.pong] = .empty {
+                _ = await counter.increment()
                 service.receiveBuffer.removeAll(keepingCapacity: false)
             }
             service.receiveBuffer = message.serialize()
@@ -52,7 +51,7 @@ struct ClientControlReceiveBufferTests {
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
-            service.controlMessageHandlers[.pong] = { _ in
+            service.controlMessageHandlers[.pong] = .empty {
                 let count = await counter.increment()
                 guard count == 1 else { return }
 
@@ -78,7 +77,7 @@ struct ClientControlReceiveBufferTests {
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
-            service.controlMessageHandlers[.pong] = { _ in
+            service.controlMessageHandlers[.pong] = .empty {
                 let count = await counter.increment()
                 guard count == 1 else { return }
                 service.connectionState = .disconnected
@@ -110,11 +109,11 @@ struct ClientControlReceiveBufferTests {
 
         await MainActor.run {
             service.connectionState = .connected(host: "Test Host")
-            service.controlMessageHandlers[.pong] = { _ in
-                await counter.increment()
+            service.controlMessageHandlers[.pong] = .empty {
+                _ = await counter.increment()
             }
-            service.drainBufferedControlMessagesIfNeeded()
         }
+        await service.processReceivedData()
 
         try await waitUntil("buffered bootstrap tail") {
             await counter.value == 1
@@ -131,7 +130,7 @@ struct ClientControlReceiveBufferTests {
         condition: @escaping @Sendable () async -> Bool
     ) async throws {
         let start = ContinuousClock.now
-        while !(await condition()) {
+        while await !condition() {
             if ContinuousClock.now - start > timeout {
                 Issue.record("Timed out waiting for \(label)")
                 return

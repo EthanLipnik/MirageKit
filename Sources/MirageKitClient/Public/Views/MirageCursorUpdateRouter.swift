@@ -16,7 +16,9 @@ protocol MirageCursorUpdateHandling: AnyObject {
     func refreshCursorUpdates(force: Bool)
 }
 
+/// Coalesces cursor refresh requests and routes them to the active input view for each stream.
 public final class MirageCursorUpdateRouter: @unchecked Sendable {
+    /// Shared router used by stream views and cursor stores.
     public static let shared = MirageCursorUpdateRouter()
 
     private final class WeakCursorView {
@@ -60,6 +62,7 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Schedules a cursor refresh for a stream, optionally bypassing normal deduplication in the view.
     public func notify(streamID: StreamID, force: Bool = false) {
         lock.lock()
         if viewsByStream[streamID]?.value == nil {
@@ -92,7 +95,7 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 for (streamID, force) in refreshes {
-                    self.view(for: streamID)?.refreshCursorUpdates(force: force)
+                    view(for: streamID)?.refreshCursorUpdates(force: force)
                 }
             }
 
@@ -137,6 +140,5 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         lock.unlock()
         return view
     }
-
 }
 #endif

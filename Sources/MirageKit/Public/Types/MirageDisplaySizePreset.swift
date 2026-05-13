@@ -7,9 +7,13 @@
 //  Client-selectable virtual display backing size for app streaming.
 //
 
-import Foundation
+import CoreGraphics
 
+/// Client-selectable virtual display backing size for app streaming.
 public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Equatable {
+    /// UserDefaults key for the selected app-stream backing size preset.
+    public static let defaultsKey = "streamSizePreset"
+
     /// iPad Pro 13-inch equivalent (2752x2064 @2x).
     case standard
     /// Mac 16:10 equivalent (3840x2400 @2x).
@@ -29,6 +33,7 @@ public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Eq
         }
     }
 
+    /// Width-to-height aspect ratio for this preset's backing pixel resolution.
     public var contentAspectRatio: CGFloat {
         let resolution = pixelResolution
         guard resolution.width > 0, resolution.height > 0 else { return 1 }
@@ -41,6 +46,7 @@ public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Eq
         return CGSize(width: px.width / 2, height: px.height / 2)
     }
 
+    /// User-facing preset name.
     public var displayName: String {
         switch self {
         case .standard:
@@ -52,6 +58,7 @@ public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Eq
         }
     }
 
+    /// Short guidance describing the displays this preset targets.
     public var subtitle: String {
         switch self {
         case .standard:
@@ -60,6 +67,18 @@ public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Eq
             "Best for Apple Vision Pro and Mac"
         case .large:
             "Best for large or high-resolution displays"
+        }
+    }
+
+    /// Settings footer text describing the app-stream scale target.
+    public var footerDescription: String {
+        switch self {
+        case .standard:
+            "Scale app streams for an iPad-sized display."
+        case .medium:
+            "Scale app streams for a MacBook-sized display."
+        case .large:
+            "Scale app streams for a Studio Display-sized display."
         }
     }
 }

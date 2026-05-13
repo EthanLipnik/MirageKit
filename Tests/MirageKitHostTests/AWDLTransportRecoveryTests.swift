@@ -65,6 +65,7 @@ struct AWDLTransportRecoveryTests {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
+            colorDepth: .pro,
             colorSpace: .displayP3,
             pixelFormat: .bgr10a2,
             bitrate: 120_000_000

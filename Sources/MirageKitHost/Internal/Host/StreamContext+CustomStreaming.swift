@@ -19,7 +19,7 @@ extension StreamContext {
     )
     async throws -> MirageCustomStreamFrameSink {
         guard !isRunning else {
-            return makeCustomFrameSink()
+            return makeCustomStreamFrameSink()
         }
 
         isRunning = true
@@ -56,10 +56,11 @@ extension StreamContext {
         )
 
         MirageLogger.stream("Started custom stream \(streamID) at \(width)x\(height)")
-        return makeCustomFrameSink()
+        return makeCustomStreamFrameSink()
     }
 
-    private func makeCustomFrameSink() -> MirageCustomStreamFrameSink {
+    /// Creates a frame sink that forwards supplied custom frames into this stream context.
+    func makeCustomStreamFrameSink() -> MirageCustomStreamFrameSink {
         MirageCustomStreamFrameSink { [weak self] frame in
             guard let self else { return }
             let info = CapturedFrameInfo(

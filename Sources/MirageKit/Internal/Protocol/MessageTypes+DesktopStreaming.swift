@@ -12,97 +12,101 @@ import Foundation
 
 // MARK: - Desktop Streaming Messages
 
-package enum StreamSetupKind: String, Codable, Sendable {
+/// Stream setup family used to scope cancellation and startup handling.
+package enum StreamSetupKind: String, Codable {
+    /// App-window stream setup.
     case app
+
+    /// Desktop stream setup.
     case desktop
+
+    /// Custom stream setup.
     case custom
 }
 
-/// Request to start streaming the desktop (Client → Host)
-/// This can stream the unified desktop or run as a secondary display
+/// Client-to-host request to start a desktop stream.
+///
+/// The request can start unified desktop mirroring or a secondary virtual display.
 package struct StartDesktopStreamMessage: Codable {
     /// Request-scoped identifier used to cancel or reject stale startup work.
     package let startupRequestID: UUID
-    /// Client's display scale factor
+
+    /// Client display scale factor.
     package let scaleFactor: CGFloat?
-    /// Client's display width in points (logical view bounds)
+
+    /// Client display width in points.
     package let displayWidth: Int
-    /// Client's display height in points (logical view bounds)
+
+    /// Client display height in points.
     package let displayHeight: Int
+
     /// Client-selected target frame rate in Hz.
     package let targetFrameRate: Int
-    /// Client-requested keyframe interval in frames
+
+    /// Client-requested keyframe interval in frames.
     package var keyFrameInterval: Int?
-    /// Client-requested ScreenCaptureKit queue depth
+
+    /// Client-requested ScreenCaptureKit queue depth.
     package var captureQueueDepth: Int?
+
     /// Client-requested stream color depth preset.
     package var colorDepth: MirageStreamColorDepth?
-    /// Desktop stream mode (unified vs secondary display)
+
+    /// Desktop stream mode.
     package var mode: MirageDesktopStreamMode?
+
     /// Desktop cursor presentation requested by the client.
     package var cursorPresentation: MirageDesktopCursorPresentation?
+
     /// Client-entered bitrate budget before any desktop geometry scaling.
     package var enteredBitrate: Int?
-    /// Client-requested target bitrate (bits per second)
+
+    /// Client-requested target bitrate in bits per second.
     package var bitrate: Int?
+
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
+
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
+
     /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
-    /// Client-requested stream scale (0.1-1.0)
+
+    /// Client-requested post-capture stream scale.
     package let streamScale: CGFloat?
-    /// Client audio streaming configuration
+
+    /// Client audio streaming configuration.
     package let audioConfiguration: MirageAudioConfiguration?
-    /// UDP port the client is listening on for video data
+
+    /// UDP port the client is listening on for video data.
     package let dataPort: UInt16?
+
     /// Maximum bitrate the in-stream adaptation governor may ramp toward.
     package var bitrateAdaptationCeiling: Int?
+
     /// Maximum encoded width in pixels for host-computed stream scaling.
     package var encoderMaxWidth: Int?
+
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+
     /// Requested media packet size for this stream.
     package var mediaMaxPacketSize: Int?
+
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
+
     /// Client-requested video codec.
     package var codec: MirageVideoCodec?
+
     /// When true, the host should use its current display resolution instead of the client-provided dimensions.
     package var useHostResolution: Bool?
 
-    enum CodingKeys: String, CodingKey {
-        case startupRequestID
-        case scaleFactor
-        case displayWidth
-        case displayHeight
-        case targetFrameRate
-        case keyFrameInterval
-        case captureQueueDepth
-        case colorDepth
-        case mode
-        case cursorPresentation
-        case enteredBitrate
-        case bitrate
-        case latencyMode
-        case allowRuntimeQualityAdjustment
-        case lowLatencyHighResolutionCompressionBoost
-        case disableResolutionCap
-        case streamScale
-        case audioConfiguration
-        case dataPort
-        case bitrateAdaptationCeiling
-        case encoderMaxWidth
-        case encoderMaxHeight
-        case mediaMaxPacketSize
-        case upscalingMode
-        case codec
-        case useHostResolution
-    }
-
+    /// Creates a desktop-stream startup request.
     package init(
         startupRequestID: UUID = UUID(),
         scaleFactor: CGFloat?,
@@ -149,60 +153,52 @@ package struct StartDesktopStreamMessage: Codable {
         self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        startupRequestID = (try? container.decodeIfPresent(UUID.self, forKey: .startupRequestID)) ?? UUID()
-        scaleFactor = container.decodeLossyIfPresent(CGFloat.self, forKey: .scaleFactor)
-        displayWidth = try container.decode(Int.self, forKey: .displayWidth)
-        displayHeight = try container.decode(Int.self, forKey: .displayHeight)
-        targetFrameRate = container.decodeLossyIfPresent(Int.self, forKey: .targetFrameRate) ?? 60
-        keyFrameInterval = container.decodeLossyIfPresent(Int.self, forKey: .keyFrameInterval)
-        captureQueueDepth = container.decodeLossyIfPresent(Int.self, forKey: .captureQueueDepth)
-        colorDepth = container.decodeLossyIfPresent(MirageStreamColorDepth.self, forKey: .colorDepth)
-        mode = container.decodeLossyIfPresent(MirageDesktopStreamMode.self, forKey: .mode)
-        cursorPresentation = container.decodeLossyIfPresent(
-            MirageDesktopCursorPresentation.self,
-            forKey: .cursorPresentation
+    /// Creates a copy of an existing desktop-start request with a new startup identity.
+    package init(
+        copying request: StartDesktopStreamMessage,
+        startupRequestID: UUID = UUID(),
+        targetFrameRate: Int? = nil
+    ) {
+        self.init(
+            startupRequestID: startupRequestID,
+            scaleFactor: request.scaleFactor,
+            displayWidth: request.displayWidth,
+            displayHeight: request.displayHeight,
+            targetFrameRate: targetFrameRate ?? request.targetFrameRate,
+            keyFrameInterval: request.keyFrameInterval,
+            captureQueueDepth: request.captureQueueDepth,
+            colorDepth: request.colorDepth,
+            mode: request.mode,
+            cursorPresentation: request.cursorPresentation,
+            enteredBitrate: request.enteredBitrate,
+            bitrate: request.bitrate,
+            latencyMode: request.latencyMode,
+            allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
+            lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost,
+            disableResolutionCap: request.disableResolutionCap,
+            streamScale: request.streamScale,
+            audioConfiguration: request.audioConfiguration,
+            dataPort: request.dataPort,
+            useHostResolution: request.useHostResolution,
+            mediaMaxPacketSize: request.mediaMaxPacketSize
         )
-        enteredBitrate = container.decodeLossyIfPresent(Int.self, forKey: .enteredBitrate)
-        bitrate = container.decodeLossyIfPresent(Int.self, forKey: .bitrate)
-        latencyMode = container.decodeLossyIfPresent(MirageStreamLatencyMode.self, forKey: .latencyMode)
-        allowRuntimeQualityAdjustment = container.decodeLossyIfPresent(
-            Bool.self,
-            forKey: .allowRuntimeQualityAdjustment
-        )
-        lowLatencyHighResolutionCompressionBoost = container.decodeLossyIfPresent(
-            Bool.self,
-            forKey: .lowLatencyHighResolutionCompressionBoost
-        )
-        disableResolutionCap = container.decodeLossyIfPresent(Bool.self, forKey: .disableResolutionCap)
-        streamScale = container.decodeLossyIfPresent(CGFloat.self, forKey: .streamScale)
-        audioConfiguration = container.decodeLossyIfPresent(
-            MirageAudioConfiguration.self,
-            forKey: .audioConfiguration
-        )
-        dataPort = container.decodeLossyIfPresent(UInt16.self, forKey: .dataPort)
-        bitrateAdaptationCeiling = container.decodeLossyIfPresent(Int.self, forKey: .bitrateAdaptationCeiling)
-        encoderMaxWidth = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxWidth)
-        encoderMaxHeight = container.decodeLossyIfPresent(Int.self, forKey: .encoderMaxHeight)
-        mediaMaxPacketSize = container.decodeLossyIfPresent(Int.self, forKey: .mediaMaxPacketSize)
-        upscalingMode = container.decodeLossyIfPresent(MirageUpscalingMode.self, forKey: .upscalingMode)
-        codec = container.decodeLossyIfPresent(MirageVideoCodec.self, forKey: .codec)
-        useHostResolution = container.decodeLossyIfPresent(Bool.self, forKey: .useHostResolution)
-    }
-}
-
-private extension KeyedDecodingContainer {
-    func decodeLossyIfPresent<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
-        try? decodeIfPresent(type, forKey: key)
+        bitrateAdaptationCeiling = request.bitrateAdaptationCeiling
+        encoderMaxWidth = request.encoderMaxWidth
+        encoderMaxHeight = request.encoderMaxHeight
+        upscalingMode = request.upscalingMode
+        codec = request.codec
     }
 }
 
 /// Runtime desktop cursor presentation update (Client → Host).
 package struct DesktopCursorPresentationChangeMessage: Codable {
+    /// Desktop stream to update.
     package let streamID: StreamID
+
+    /// New cursor presentation mode.
     package let cursorPresentation: MirageDesktopCursorPresentation
 
+    /// Creates a runtime cursor presentation change message.
     package init(
         streamID: StreamID,
         cursorPresentation: MirageDesktopCursorPresentation
@@ -212,38 +208,33 @@ package struct DesktopCursorPresentationChangeMessage: Codable {
     }
 }
 
-/// Request to stop the desktop stream (Client → Host)
+/// Client-to-host request to stop a desktop stream.
 package struct StopDesktopStreamMessage: Codable {
-    /// The desktop stream ID to stop
+    /// Desktop stream ID to stop.
     package let streamID: StreamID
+
     /// Session identifier for the active desktop stream.
     package let desktopSessionID: UUID
 
-    enum CodingKeys: String, CodingKey {
-        case streamID
-        case desktopSessionID
-    }
-
+    /// Creates a desktop-stream stop request.
     package init(streamID: StreamID, desktopSessionID: UUID) {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
     }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let streamID = try container.decode(StreamID.self, forKey: .streamID)
-        self.streamID = streamID
-        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
-    }
 }
 
-/// Client → Host: Cancel any in-progress stream setup (desktop or app).
-/// Sent when the user cancels during the loading phase before a stream ID is established.
+/// Client-to-host request to cancel in-progress stream setup before a stream ID exists.
 package struct CancelStreamSetupMessage: Codable {
+    /// Startup request to cancel, if known.
     package let startupRequestID: UUID?
+
+    /// Setup family to cancel.
     package let kind: StreamSetupKind?
+
+    /// App session to cancel when cancelling app-stream setup.
     package let appSessionID: UUID?
 
+    /// Creates a stream-setup cancellation request.
     package init(
         startupRequestID: UUID? = nil,
         kind: StreamSetupKind? = nil,
@@ -255,61 +246,93 @@ package struct CancelStreamSetupMessage: Codable {
     }
 }
 
-package enum MirageDesktopTransitionPhase: String, Codable, Sendable {
+/// Desktop presentation transition phase.
+package enum MirageDesktopTransitionPhase: String, Codable {
+    /// Initial desktop stream startup.
     case startup
+
+    /// Live desktop resize.
     case resize
 }
 
-package enum MirageDesktopTransitionOutcome: String, Codable, Sendable {
+/// Outcome reported for a desktop presentation transition.
+package enum MirageDesktopTransitionOutcome: String, Codable {
+    /// No geometry change was needed.
     case noChange
+
+    /// The desktop stream resized successfully.
     case resized
+
+    /// The host rolled back to the prior desktop geometry.
     case rolledBack
 }
 
-package enum MirageDesktopCaptureSource: String, Codable, Sendable {
+/// Host capture source used for a desktop stream.
+package enum MirageDesktopCaptureSource: String, Codable {
+    /// Capture comes from a Mirage-created virtual display.
     case virtualDisplay
+
+    /// Capture falls back to the physical main display.
     case mainDisplayFallback
 }
 
-/// Confirmation that desktop streaming has started (Host → Client)
+/// Host-to-client confirmation that desktop streaming has started or resized.
 package struct DesktopStreamStartedMessage: Codable {
-    /// Stream ID for the desktop stream
+    /// Stream ID for the desktop stream.
     package let streamID: StreamID
+
     /// Session identifier for the active desktop stream.
     package let desktopSessionID: UUID
-    /// Resolution of the virtual display
+
+    /// Encoded capture width in pixels.
     package let width: Int
+
+    /// Encoded capture height in pixels.
     package let height: Int
-    /// Frame rate of the stream
+
+    /// Frame rate of the stream.
     package let frameRate: Int
-    /// Video codec being used
+
+    /// Video codec being used.
     package let codec: MirageVideoCodec
+
     /// Startup-attempt identifier used to gate first-frame readiness.
     package let startupAttemptID: UUID?
-    /// Number of physical displays being mirrored
+
+    /// Number of physical displays being mirrored.
     package let displayCount: Int
+
     /// Dimension token for rejecting old-dimension P-frames after resize.
-    /// Client should update its reassembler with this token.
     package var dimensionToken: UInt16?
+
     /// Media packet size accepted by the host for this stream.
     package var acceptedMediaMaxPacketSize: Int?
+
     /// Optional transition identifier for resize commits.
     package var transitionID: UUID?
+
     /// Whether this packet describes initial startup or a live resize transition.
     package var transitionPhase: MirageDesktopTransitionPhase?
+
     /// Optional resize outcome metadata.
     package var transitionOutcome: MirageDesktopTransitionOutcome?
+
     /// Host-authoritative generation for desktop presentation geometry.
     package var desktopPresentationGeneration: UInt64?
+
     /// Effective host capture source for this desktop stream.
     package var captureSource: MirageDesktopCaptureSource
+
     /// Whether the client may request virtual-display resize transactions.
     package var allowsClientResize: Bool
+
     /// Client presentation/window sizing width, separate from capture pixels.
     package var presentationWidth: Int?
+
     /// Client presentation/window sizing height, separate from capture pixels.
     package var presentationHeight: Int?
 
+    /// Client presentation size, falling back to capture size when not sent separately.
     package var presentationSize: CGSize {
         CGSize(
             width: presentationWidth ?? width,
@@ -317,27 +340,7 @@ package struct DesktopStreamStartedMessage: Codable {
         )
     }
 
-    enum CodingKeys: String, CodingKey {
-        case streamID
-        case desktopSessionID
-        case width
-        case height
-        case frameRate
-        case codec
-        case startupAttemptID
-        case displayCount
-        case dimensionToken
-        case acceptedMediaMaxPacketSize
-        case transitionID
-        case transitionPhase
-        case transitionOutcome
-        case desktopPresentationGeneration
-        case captureSource
-        case allowsClientResize
-        case presentationWidth
-        case presentationHeight
-    }
-
+    /// Creates a desktop-stream startup or resize confirmation.
     package init(
         streamID: StreamID,
         desktopSessionID: UUID,
@@ -377,55 +380,20 @@ package struct DesktopStreamStartedMessage: Codable {
         self.presentationWidth = presentationWidth
         self.presentationHeight = presentationHeight
     }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let streamID = try container.decode(StreamID.self, forKey: .streamID)
-        self.streamID = streamID
-        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
-        width = try container.decode(Int.self, forKey: .width)
-        height = try container.decode(Int.self, forKey: .height)
-        frameRate = try container.decode(Int.self, forKey: .frameRate)
-        codec = try container.decode(MirageVideoCodec.self, forKey: .codec)
-        startupAttemptID = try container.decodeIfPresent(UUID.self, forKey: .startupAttemptID)
-        displayCount = try container.decodeIfPresent(Int.self, forKey: .displayCount) ?? 1
-        dimensionToken = try container.decodeIfPresent(UInt16.self, forKey: .dimensionToken)
-        acceptedMediaMaxPacketSize = try container.decodeIfPresent(Int.self, forKey: .acceptedMediaMaxPacketSize)
-        transitionID = try container.decodeIfPresent(UUID.self, forKey: .transitionID)
-        transitionPhase = try container.decodeIfPresent(MirageDesktopTransitionPhase.self, forKey: .transitionPhase)
-        transitionOutcome = try container.decodeIfPresent(
-            MirageDesktopTransitionOutcome.self,
-            forKey: .transitionOutcome
-        )
-        desktopPresentationGeneration = try container.decodeIfPresent(
-            UInt64.self,
-            forKey: .desktopPresentationGeneration
-        )
-        captureSource = try container.decodeIfPresent(
-            MirageDesktopCaptureSource.self,
-            forKey: .captureSource
-        ) ?? .virtualDisplay
-        allowsClientResize = try container.decodeIfPresent(Bool.self, forKey: .allowsClientResize) ?? true
-        presentationWidth = try container.decodeIfPresent(Int.self, forKey: .presentationWidth)
-        presentationHeight = try container.decodeIfPresent(Int.self, forKey: .presentationHeight)
-    }
 }
 
-/// Desktop stream stopped notification (Host → Client)
+/// Host-to-client notification that a desktop stream stopped.
 package struct DesktopStreamStoppedMessage: Codable {
-    /// The stream ID that was stopped
+    /// Stream ID that was stopped.
     package let streamID: StreamID
+
     /// Session identifier for the desktop stream that stopped.
     package let desktopSessionID: UUID
-    /// Why the stream was stopped
+
+    /// Why the stream was stopped.
     package let reason: DesktopStreamStopReason
 
-    enum CodingKeys: String, CodingKey {
-        case streamID
-        case desktopSessionID
-        case reason
-    }
-
+    /// Creates a desktop-stream stopped notification.
     package init(
         streamID: StreamID,
         desktopSessionID: UUID,
@@ -435,37 +403,30 @@ package struct DesktopStreamStoppedMessage: Codable {
         self.desktopSessionID = desktopSessionID
         self.reason = reason
     }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let streamID = try container.decode(StreamID.self, forKey: .streamID)
-        self.streamID = streamID
-        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
-        reason = try container.decode(DesktopStreamStopReason.self, forKey: .reason)
-    }
 }
 
-/// Desktop stream start failed notification (Host → Client)
+/// Host-to-client notification that desktop stream startup failed.
 package struct DesktopStreamFailedMessage: Codable {
-    /// Human-readable reason the stream failed to start
+    /// Human-readable reason the stream failed to start.
     package let reason: String
-    /// Error classification for client-side disposition
-    package let errorCode: ErrorMessage.ErrorCode
 
-    package init(reason: String, errorCode: ErrorMessage.ErrorCode) {
+    /// Creates a desktop-stream startup failure notification.
+    package init(reason: String) {
         self.reason = reason
-        self.errorCode = errorCode
     }
 }
 
-/// Reasons why a desktop stream was stopped
+/// Reason why a desktop stream stopped.
 public enum DesktopStreamStopReason: String, Codable, Sendable {
-    /// Client requested the stop
+    /// Client requested the stop.
     case clientRequested
-    /// User started an app stream (mutual exclusivity)
+
+    /// User started an app stream.
     case appStreamStarted
-    /// Host shut down or disconnected
+
+    /// Host shut down or disconnected.
     case hostShutdown
-    /// An error occurred
+
+    /// An error occurred.
     case error
 }

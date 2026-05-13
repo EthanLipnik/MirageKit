@@ -7,35 +7,46 @@
 
 import Foundation
 
-/// Statistics for an active stream
+/// Runtime statistics for an active media stream.
 public struct MirageStreamStatistics: Sendable {
-    /// Current frame rate
+    /// Current frame rate.
     public let currentFrameRate: Double
 
-    /// Total frames encoded (host) or decoded (client)
+    /// Total frames encoded on the host or decoded on the client.
     public let processedFrames: UInt64
 
-    /// Total frames dropped
+    /// Total frames dropped.
     public let droppedFrames: UInt64
 
-    /// Average end-to-end latency in milliseconds
+    /// Average end-to-end latency in milliseconds.
     public let averageLatencyMs: Double
 
-    /// Current bandwidth utilization (0.0 - 1.0)
+    /// Current bandwidth utilization from `0` to `1`.
     public let bandwidthUtilization: Double
 
-    /// Round-trip time in milliseconds
+    /// Round-trip time in milliseconds.
     public let rttMs: Double
 
-    /// Packet loss ratio (0.0 - 1.0)
+    /// Packet loss ratio from `0` to `1`.
     public let packetLoss: Double
 
-    /// Current quality level name
+    /// Current quality level label.
     public let qualityLevel: String
 
-    /// Stream uptime in seconds
+    /// Stream uptime in seconds.
     public let uptime: TimeInterval
 
+    /// Creates a stream statistics snapshot.
+    /// - Parameters:
+    ///   - currentFrameRate: Current frame rate in frames per second.
+    ///   - processedFrames: Frames successfully encoded or decoded.
+    ///   - droppedFrames: Frames dropped before presentation.
+    ///   - averageLatencyMs: Average end-to-end latency in milliseconds.
+    ///   - bandwidthUtilization: Bandwidth utilization ratio from `0` to `1`.
+    ///   - rttMs: Round-trip time in milliseconds.
+    ///   - packetLoss: Packet loss ratio from `0` to `1`.
+    ///   - qualityLevel: Human-readable quality label.
+    ///   - uptime: Stream uptime in seconds.
     public init(
         currentFrameRate: Double = 0,
         processedFrames: UInt64 = 0,
@@ -58,13 +69,14 @@ public struct MirageStreamStatistics: Sendable {
         self.uptime = uptime
     }
 
-    /// Frame drop percentage
+    /// Ratio of dropped frames to total observed frames.
     public var dropRate: Double {
-        guard processedFrames > 0 else { return 0 }
-        return Double(droppedFrames) / Double(processedFrames + droppedFrames)
+        let observedFrames = Double(processedFrames) + Double(droppedFrames)
+        guard observedFrames > 0 else { return 0 }
+        return Double(droppedFrames) / observedFrames
     }
 
-    /// Formatted latency string
+    /// Average latency formatted for compact status UI.
     public var formattedLatency: String {
         let value = averageLatencyMs.formatted(.number.precision(.fractionLength(1)))
         return "\(value) ms"

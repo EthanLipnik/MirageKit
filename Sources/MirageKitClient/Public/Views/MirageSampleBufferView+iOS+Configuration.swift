@@ -17,21 +17,18 @@ extension MirageSampleBufferView {
     func applyRenderConfiguration() {
         presentationPipeline.applyConfiguration(
             MirageStreamRenderConfiguration(
-                logicalStreamID: streamID,
                 mediaStreamID: streamID,
                 contentRectOverride: contentRectOverride,
                 presentationTier: streamPresentationTier,
-                preferredMaximumRenderFPS: preferredMaximumRenderFPS,
                 maxDrawableSize: maxDrawableSize,
-                prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
-                containerSizingMode: .viewBounds
+                prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
             )
         )
     }
 
     // MARK: - Metrics / Layout
 
-    func currentDrawableMetricsContext() -> MirageDrawableMetricsContext {
+    var currentDrawableMetricsContext: MirageDrawableMetricsContext {
         #if os(visionOS)
         let boundsSize = bounds.size
         let windowPointSize = window?.bounds.size ?? boundsSize
@@ -84,22 +81,14 @@ extension MirageSampleBufferView {
 
     func applyRenderPreferences() {
         refreshRateMonitor.preferredMaximumRefreshRate =
-            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate()
-        requestImmediateSubmission()
-    }
-
-    func applyRefreshRateOverride(_ override: Int) {
-        presentationPipeline.applyResolvedRenderFPS(override)
+            preferredMaximumRenderFPS ?? MirageRenderPreferences.preferredMaximumRefreshRate
+        presentationPipeline.requestImmediateSubmission()
     }
 
     func startObservingPreferences() {
         preferencesObserver.start { [weak self] in
             self?.applyRenderPreferences()
         }
-    }
-
-    func stopObservingPreferences() {
-        preferencesObserver.stop()
     }
 }
 #endif

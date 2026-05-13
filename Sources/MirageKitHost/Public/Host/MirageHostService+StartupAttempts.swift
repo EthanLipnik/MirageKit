@@ -33,7 +33,11 @@ extension MirageHostService {
         )
         startupAttemptTimeoutTasksByStreamID[streamID] = Task { @MainActor [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: startupAttemptTimeoutSeconds)
+            do {
+                try await Task.sleep(for: startupAttemptTimeoutSeconds)
+            } catch {
+                return
+            }
             await self.handlePendingStartupAttemptTimeout(streamID: streamID, startupAttemptID: startupAttemptID)
         }
     }
@@ -108,10 +112,13 @@ extension MirageHostService {
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID {
                 let failure = DesktopStreamFailedMessage(
-                    reason: "Desktop startup timed out waiting for client readiness acknowledgement.",
-                    errorCode: .networkError
+                    reason: "Desktop startup timed out waiting for client readiness acknowledgement."
                 )
-                try? await clientContext.send(.desktopStreamFailed, content: failure)
+                do {
+                    try await clientContext.send(.desktopStreamFailed, content: failure)
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamFailed: ")
+                }
             }
             await stopDesktopStream(reason: .error)
             MirageLogger.host(
@@ -123,7 +130,6 @@ extension MirageHostService {
                 sendControlError(
                     ErrorMessage.ErrorCode.networkError,
                     message: "Stream startup timed out waiting for client readiness acknowledgement.",
-                    streamID: streamID,
                     to: clientContext
                 )
             }
@@ -136,14 +142,16 @@ extension MirageHostService {
         case .custom:
             if let clientContext = findClientContext(sessionID: pending.sessionID),
                clientContext.client.id == pending.clientID,
-               let descriptor = customStreamDescriptorsByStreamID[streamID] {
+               customStreamDescriptorsByStreamID[streamID] != nil {
                 let failed = CustomStreamFailedMessage(
                     startupRequestID: customStreamStartupRequestIDByStreamID[streamID] ?? pending.startupAttemptID,
-                    kind: descriptor.kind,
-                    reason: "Custom stream startup timed out waiting for client readiness acknowledgement.",
-                    errorCode: .networkError
+                    reason: "Custom stream startup timed out waiting for client readiness acknowledgement."
                 )
-                try? await clientContext.send(.customStreamFailed, content: failed)
+                do {
+                    try await clientContext.send(.customStreamFailed, content: failed)
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to send customStreamFailed: ")
+                }
             }
             await stopCustomStream(streamID: streamID, reason: .error, notifyClient: true)
             MirageLogger.host(
@@ -155,7 +163,6 @@ extension MirageHostService {
                 sendControlError(
                     ErrorMessage.ErrorCode.networkError,
                     message: "App atlas startup timed out waiting for client readiness acknowledgement.",
-                    streamID: streamID,
                     to: clientContext
                 )
             }

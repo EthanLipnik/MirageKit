@@ -12,30 +12,48 @@ import MirageKit
 import AppKit
 import ApplicationServices
 
-enum HostWindowCloseAttemptResult: Sendable {
+/// Result of attempting to close a host window.
+enum HostWindowCloseAttemptResult {
     case closed
     case blocked(HostWindowCloseAlertSnapshot)
     case notClosed
 }
 
-struct HostWindowCloseAlertSnapshot: Sendable {
+/// Snapshot of a blocking close-confirmation alert.
+struct HostWindowCloseAlertSnapshot {
+    /// Alert title reported by Accessibility, when available.
     let title: String?
+
+    /// Alert explanatory text reported by Accessibility, when available.
     let message: String?
+
+    /// Pressable alert actions in the order presented by the host app.
     let actions: [HostWindowCloseAlertActionSnapshot]
 }
 
-struct HostWindowCloseAlertActionSnapshot: Sendable {
+/// Snapshot of one action in a blocking close-confirmation alert.
+struct HostWindowCloseAlertActionSnapshot {
+    /// Zero-based action index used when the client asks the host to press this button.
     let index: Int
+
+    /// Visible button title.
     let title: String
+
+    /// Whether the button appears to perform a destructive close/discard action.
     let isDestructive: Bool
 }
 
+/// AX button candidate extracted from a blocking alert.
 private struct HostAlertButtonCandidate {
+    /// Accessibility element backing the alert button.
     let element: AXUIElement
+
+    /// Visible button title.
     let title: String
 }
 
 extension MirageHostInputController {
+    /// Attempts to close a window and extracts any blocking confirmation alert.
     func attemptCloseWindowAndExtractBlockingAlert(
         windowID: WindowID,
         app: MirageApplication?
@@ -47,12 +65,12 @@ extension MirageHostInputController {
                     return
                 }
 
-                guard let axWindow = self.resolveAXWindow(windowID: windowID, app: app) else {
+                guard let axWindow = resolveAXWindow(windowID: windowID, app: app) else {
                     continuation.resume(returning: .closed)
                     return
                 }
 
-                guard let closeButton = self.axElementAttributeValue(
+                guard let closeButton = HostAccessibilityWindowLookup.elementAttributeValue(
                     axWindow,
                     attribute: kAXCloseButtonAttribute as CFString
                 ) else {
@@ -67,12 +85,12 @@ extension MirageHostInputController {
 
                 Thread.sleep(forTimeInterval: 0.2)
 
-                guard let updatedWindow = self.resolveAXWindow(windowID: windowID, app: app) else {
+                guard let updatedWindow = resolveAXWindow(windowID: windowID, app: app) else {
                     continuation.resume(returning: .closed)
                     return
                 }
 
-                guard let alert = self.blockingAlertSnapshot(for: updatedWindow),
+                guard let alert = blockingAlertSnapshot(for: updatedWindow),
                       !alert.actions.isEmpty else {
                     continuation.resume(returning: .notClosed)
                     return
@@ -83,6 +101,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Presses a previously reported blocking alert action.
     func pressBlockingAlertAction(
         windowID: WindowID,
         app: MirageApplication?,
@@ -92,13 +111,13 @@ extension MirageHostInputController {
         await withCheckedContinuation { continuation in
             accessibilityQueue.async { [weak self] in
                 guard let self,
-                      let axWindow = self.resolveAXWindow(windowID: windowID, app: app),
-                      let alertElement = self.findBlockingAlertElement(for: axWindow) else {
+                      let axWindow = resolveAXWindow(windowID: windowID, app: app),
+                      let alertElement = findBlockingAlertElement(for: axWindow) else {
                     continuation.resume(returning: false)
                     return
                 }
 
-                let buttons = self.alertButtons(in: alertElement)
+                let buttons = alertButtons(in: alertElement)
                 guard !buttons.isEmpty else {
                     continuation.resume(returning: false)
                     return
@@ -127,6 +146,7 @@ extension MirageHostInputController {
         }
     }
 
+    /// Builds a serializable snapshot from the blocking alert attached to a window.
     private func blockingAlertSnapshot(for axWindow: AXUIElement) -> HostWindowCloseAlertSnapshot? {
         guard let alertElement = findBlockingAlertElement(for: axWindow) else {
             return nil
@@ -134,17 +154,17 @@ extension MirageHostInputController {
 
         let descendants = descendantElements(of: alertElement)
         var title = normalizedAXText(
-            axStringAttributeValue(alertElement, attribute: kAXTitleAttribute as CFString)
+            HostAccessibilityWindowLookup.textAttribute(kAXTitleAttribute as CFString, from: alertElement)
         )
         let staticTexts = descendants
             .filter { element in
-                let role = axStringAttributeValue(element, attribute: kAXRoleAttribute as CFString)?.lowercased()
+                let role = HostAccessibilityWindowLookup.textAttribute(kAXRoleAttribute as CFString, from: element)?.lowercased()
                 return role == "axstatictext"
             }
             .compactMap { element in
                 normalizedAXText(
-                    axStringAttributeValue(element, attribute: kAXValueAttribute as CFString) ??
-                        axStringAttributeValue(element, attribute: kAXTitleAttribute as CFString)
+                    HostAccessibilityWindowLookup.textAttribute(kAXValueAttribute as CFString, from: element) ??
+                        HostAccessibilityWindowLookup.textAttribute(kAXTitleAttribute as CFString, from: element)
                 )
             }
 
@@ -174,17 +194,27 @@ extension MirageHostInputController {
         )
     }
 
+    /// Finds the sheet, dialog, or alert blocking a close action.
     private func findBlockingAlertElement(for axWindow: AXUIElement) -> AXUIElement? {
         let sheetsAttribute = "AXSheets" as CFString
-        if let sheets = axElementArrayAttributeValue(axWindow, attribute: sheetsAttribute),
+        if let sheets = HostAccessibilityWindowLookup.elementArrayAttributeValue(
+            axWindow,
+            attribute: sheetsAttribute
+        ),
            let firstSheet = sheets.first {
             return firstSheet
         }
 
         let descendants = descendantElements(of: axWindow)
         for element in descendants {
-            let role = axStringAttributeValue(element, attribute: kAXRoleAttribute as CFString)?.lowercased() ?? ""
-            let subrole = axStringAttributeValue(element, attribute: kAXSubroleAttribute as CFString)?.lowercased() ?? ""
+            let role = HostAccessibilityWindowLookup.textAttribute(
+                kAXRoleAttribute as CFString,
+                from: element
+            )?.lowercased() ?? ""
+            let subrole = HostAccessibilityWindowLookup.textAttribute(
+                kAXSubroleAttribute as CFString,
+                from: element
+            )?.lowercased() ?? ""
             if role.contains("sheet") || role.contains("dialog") || role.contains("alert") {
                 return element
             }
@@ -196,15 +226,19 @@ extension MirageHostInputController {
         return nil
     }
 
+    /// Returns titled buttons inside an alert element.
     private func alertButtons(in alertElement: AXUIElement) -> [HostAlertButtonCandidate] {
         let descendants = descendantElements(of: alertElement)
         var buttons: [HostAlertButtonCandidate] = []
         buttons.reserveCapacity(4)
         for element in descendants {
-            let role = axStringAttributeValue(element, attribute: kAXRoleAttribute as CFString)?.lowercased()
+            let role = HostAccessibilityWindowLookup.textAttribute(
+                kAXRoleAttribute as CFString,
+                from: element
+            )?.lowercased()
             guard role == "axbutton",
                   let title = normalizedAXText(
-                      axStringAttributeValue(element, attribute: kAXTitleAttribute as CFString)
+                      HostAccessibilityWindowLookup.textAttribute(kAXTitleAttribute as CFString, from: element)
                   ) else {
                 continue
             }
@@ -213,6 +247,7 @@ extension MirageHostInputController {
         return buttons
     }
 
+    /// Walks AX descendants breadth-first up to a bounded depth.
     private func descendantElements(of root: AXUIElement, maxDepth: Int = 6) -> [AXUIElement] {
         var result: [AXUIElement] = []
         var queue: [(AXUIElement, Int)] = [(root, 0)]
@@ -228,7 +263,10 @@ extension MirageHostInputController {
             result.append(element)
 
             guard depth < maxDepth else { continue }
-            let children = axElementArrayAttributeValue(element, attribute: kAXChildrenAttribute as CFString) ?? []
+            let children = HostAccessibilityWindowLookup.elementArrayAttributeValue(
+                element,
+                attribute: kAXChildrenAttribute as CFString
+            ) ?? []
             for child in children {
                 queue.append((child, depth + 1))
             }
@@ -237,34 +275,7 @@ extension MirageHostInputController {
         return result
     }
 
-    private func axElementArrayAttributeValue(_ element: AXUIElement, attribute: CFString) -> [AXUIElement]? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value,
-              CFGetTypeID(value) == CFArrayGetTypeID(),
-              let array = value as? [AXUIElement] else {
-            return nil
-        }
-        return array
-    }
-
-    private func axStringAttributeValue(_ element: AXUIElement, attribute: CFString) -> String? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
-              let value else {
-            return nil
-        }
-
-        if let stringValue = value as? String {
-            return stringValue
-        }
-        if let attributedStringValue = value as? NSAttributedString {
-            return attributedStringValue.string
-        }
-
-        return nil
-    }
-
+    /// Trims AX text and drops empty values.
     private func normalizedAXText(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -272,6 +283,7 @@ extension MirageHostInputController {
         return trimmed
     }
 
+    /// Returns whether an alert action title is likely destructive.
     private func isDestructiveAlertActionTitle(_ title: String) -> Bool {
         let lower = title.lowercased()
         return lower.contains("don't save") ||

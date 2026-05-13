@@ -17,15 +17,15 @@ import IOKit.pwr_mgt
 /// Darwin notification functions declared in `notify.h` but not exposed to Swift.
 @_silgen_name("notify_register_dispatch")
 func notify_register_dispatch(
-    _ name: UnsafePointer<CChar>,
-    _ outToken: UnsafeMutablePointer<Int32>,
-    _ queue: DispatchQueue,
-    _ handler: @convention(block) @Sendable (Int32) -> Void
+    _: UnsafePointer<CChar>,
+    _: UnsafeMutablePointer<Int32>,
+    _: DispatchQueue,
+    _: @convention(block) @Sendable (Int32) -> Void
 )
     -> UInt32
 
 @_silgen_name("notify_cancel")
-func notify_cancel(_ token: Int32) -> UInt32
+func notify_cancel(_: Int32) -> UInt32
 
 private let notifyStatusOK: UInt32 = 0
 
@@ -83,21 +83,21 @@ package actor SessionStateMonitor {
             return .unavailable
         }
 
-        let loginWindowVisible = isLoginWindowVisible()
+        let loginWindowVisible = MirageLoginSessionState.isLoginWindowVisible()
         if loginWindowVisible {
             MirageLogger.log(.host, "Login window visible (lock/login screen detected)")
         }
 
-        if let consoleUsers = getConsoleUserSessions(), !consoleUsers.isEmpty {
+        if let consoleUsers = MirageLoginSessionState.consoleUserSessions(), !consoleUsers.isEmpty {
             let summary = consoleUsers.enumerated().map { index, info in
                 "(#\(index) user=\(info.userName ?? "nil") loginDone=\(String(describing: info.loginDone)) onConsole=\(String(describing: info.onConsole)) locked=\(String(describing: info.locked)))"
             }.joined(separator: ", ")
             MirageLogger.log(.host, "Console sessions: [\(summary)]")
 
-            let loginWindowUsers = consoleUsers.filter { isLoginWindowUserName($0.userName) }
+            let loginWindowUsers = consoleUsers.filter { MirageLoginSessionState.isLoginWindowUserName($0.userName) }
             let loggedInUsers = consoleUsers.filter {
                 guard let name = $0.userName, !name.isEmpty else { return false }
-                return !isLoginWindowUserName(name)
+                return !MirageLoginSessionState.isLoginWindowUserName(name)
             }
 
             let hasLoggedInUser = !loggedInUsers.isEmpty
@@ -137,9 +137,9 @@ package actor SessionStateMonitor {
         }
 
         guard let sessionDict = CGSessionCopyCurrentDictionary() as? [String: Any] else {
-            if let consoleUser = getConsoleUser(),
+            if let consoleUser = MirageLoginSessionState.currentConsoleUser(),
                !consoleUser.isEmpty,
-               !isLoginWindowUserName(consoleUser) {
+               !MirageLoginSessionState.isLoginWindowUserName(consoleUser) {
                 let locked = isScreenLocked()
                 if locked {
                     MirageLogger.log(
@@ -211,87 +211,16 @@ package actor SessionStateMonitor {
         return .ready
     }
 
-    private struct ConsoleUserSession {
-        let userName: String?
-        let loginDone: Bool?
-        let onConsole: Bool?
-        let locked: Bool?
-    }
-
-    private func isLoginWindowUserName(_ name: String?) -> Bool {
-        guard let name else { return false }
-        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized == "loginwindow" || normalized == "loginwindow.app" || normalized == "login window"
-    }
-
-    private func getConsoleUserSessions() -> [ConsoleUserSession]? {
-        let entry = IORegistryEntryFromPath(kIOMainPortDefault, "IOService:/IOResources/IOConsoleUsers")
-        guard entry != MACH_PORT_NULL else { return nil }
-        defer { IOObjectRelease(entry) }
-
-        guard let usersRef = IORegistryEntryCreateCFProperty(
-            entry,
-            "IOConsoleUsers" as CFString,
-            kCFAllocatorDefault,
-            0
-        )?.takeRetainedValue(),
-            let users = usersRef as? [[String: Any]],
-            !users.isEmpty else {
-            return nil
-        }
-
-        return users.map { user in
-            let userName = user["kCGSSessionUserNameKey"] as? String
-                ?? user["kCGSessionUserNameKey"] as? String
-            let loginDone = user["kCGSessionLoginDoneKey"] as? Bool
-                ?? user["kCGSSessionLoginCompletedKey"] as? Bool
-                ?? user["kCGSSessionLoginDoneKey"] as? Bool
-            let onConsole = user["kCGSSessionOnConsoleKey"] as? Bool
-                ?? user["kCGSessionOnConsoleKey"] as? Bool
-            let locked = user["CGSSessionScreenIsLocked"] as? Bool
-                ?? user["kCGSSessionScreenIsLocked"] as? Bool
-                ?? user["kCGSessionScreenIsLocked"] as? Bool
-            return ConsoleUserSession(
-                userName: userName,
-                loginDone: loginDone,
-                onConsole: onConsole,
-                locked: locked
-            )
-        }
-    }
-
-    private func getConsoleUser() -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/stat")
-        task.arguments = ["-f", "%Su", "/dev/console"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let user = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                return user
-            }
-        } catch {
-        }
-
-        return NSUserName()
-    }
-
     private func isScreenLocked() -> Bool {
-        if isLoginWindowVisible() {
+        if MirageLoginSessionState.isLoginWindowVisible() {
             return true
         }
 
-        if let consoleUsers = getConsoleUserSessions(), !consoleUsers.isEmpty {
+        if let consoleUsers = MirageLoginSessionState.consoleUserSessions(), !consoleUsers.isEmpty {
             if consoleUsers.contains(where: { $0.locked == true }) {
                 return true
             }
-            if consoleUsers.contains(where: { isLoginWindowUserName($0.userName) }) {
+            if consoleUsers.contains(where: { MirageLoginSessionState.isLoginWindowUserName($0.userName) }) {
                 return true
             }
         }
@@ -304,33 +233,6 @@ package actor SessionStateMonitor {
             if lockedFlag {
                 return true
             }
-        }
-
-        return false
-    }
-
-    private func isLoginWindowVisible() -> Bool {
-        let shieldingLevel = CGShieldingWindowLevel()
-        let screenSaverLevel = CGWindowLevelForKey(.screenSaverWindow)
-
-        func containsLoginWindow(in windowList: [[String: Any]]) -> Bool {
-            for window in windowList {
-                guard let ownerName = window[kCGWindowOwnerName as String] as? String else { continue }
-                let layer = window[kCGWindowLayer as String] as? Int ?? 0
-
-                if ownerName == "loginwindow" || ownerName == "LoginWindow" {
-                    if layer >= shieldingLevel { return true }
-                }
-
-                if ownerName == "ScreenSaverEngine", layer >= screenSaverLevel { return true }
-            }
-
-            return false
-        }
-
-        if let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]],
-           containsLoginWindow(in: onScreen) {
-            return true
         }
 
         return false

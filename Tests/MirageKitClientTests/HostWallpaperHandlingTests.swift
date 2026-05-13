@@ -25,9 +25,6 @@ struct HostWallpaperHandlingTests {
         let port = try #require(NWEndpoint.Port(rawValue: 9))
         var receivedHostID: UUID?
         var receivedImageData: Data?
-        var receivedPixelWidth: Int?
-        var receivedPixelHeight: Int?
-        var receivedBytesPerPixelEstimate: Int?
 
         service.connectedHost = LoomPeer(
             id: hostID,
@@ -36,20 +33,16 @@ struct HostWallpaperHandlingTests {
             endpoint: .hostPort(host: "127.0.0.1", port: port),
             advertisement: LoomPeerAdvertisement(deviceID: hostID)
         )
-        service.onHostWallpaperReceived = { sourceHostID, data, pixelWidth, pixelHeight, bytesPerPixelEstimate in
+        service.onHostWallpaperReceived = { sourceHostID, data in
             receivedHostID = sourceHostID
             receivedImageData = data
-            receivedPixelWidth = pixelWidth
-            receivedPixelHeight = pixelHeight
-            receivedBytesPerPixelEstimate = bytesPerPixelEstimate
         }
 
         let message = HostWallpaperMessage(
             requestID: requestID,
             imageData: imageData,
             pixelWidth: 854,
-            pixelHeight: 480,
-            bytesPerPixelEstimate: 4
+            pixelHeight: 480
         )
         let envelope = try ControlMessage(type: .hostWallpaper, content: message)
 
@@ -61,9 +54,6 @@ struct HostWallpaperHandlingTests {
 
         #expect(receivedHostID == hostID)
         #expect(receivedImageData == imageData)
-        #expect(receivedPixelWidth == 854)
-        #expect(receivedPixelHeight == 480)
-        #expect(receivedBytesPerPixelEstimate == 4)
         #expect(service.hostWallpaperRequestID == nil)
         #expect(service.hostWallpaperContinuation == nil)
     }

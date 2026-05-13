@@ -7,8 +7,6 @@
 //  AWDL experiment transport recovery hooks.
 //
 
-import Foundation
-import Network
 import MirageKit
 
 #if os(macOS)

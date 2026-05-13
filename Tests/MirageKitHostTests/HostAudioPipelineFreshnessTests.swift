@@ -63,7 +63,6 @@ struct HostAudioPipelineFreshnessTests {
             sampleRate: 48_000,
             channelCount: 2,
             frameCount: 4_800,
-            bytesPerFrame: 2 * MemoryLayout<Float>.size,
             bitsPerChannel: 32,
             isFloat: true,
             isInterleaved: true,

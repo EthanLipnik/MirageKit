@@ -15,209 +15,7 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    private func awaitBootstrapStep<T: Sendable>(
-        timeout: Duration,
-        peerName: String,
-        phase: String,
-        operation: @escaping @MainActor @Sendable () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw MirageError.protocolError("Timed out waiting for \(phase) from \(peerName)")
-            }
-
-            let result = try await group.next() ?? {
-                throw MirageError.protocolError("Bootstrap step ended unexpectedly")
-            }()
-            group.cancelAll()
-            return result
-        }
-    }
-
-    nonisolated func isExpectedBootstrapConnectionClosure(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case let .protocolError(message):
-                return message == "Authenticated Loom session closed before Mirage control stream opened" ||
-                    message == "Control stream closed before session bootstrap request"
-            case let .connectionRejected(rejection):
-                return rejection.isTerminal
-            case let .connectionFailed(underlyingError):
-                return isExpectedBootstrapConnectionClosure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let loomError = error as? LoomError {
-            switch loomError {
-            case let .connectionFailed(underlyingError):
-                return isExpectedBootstrapConnectionClosure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let failure = error as? LoomConnectionFailure {
-            switch failure.reason {
-            case .cancelled, .closed:
-                return true
-            case .timedOut, .transportLoss, .connectionRefused, .addressUnavailable, .other:
-                break
-            }
-        }
-
-        return false
-    }
-
-    nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case .authenticationFailed, .connectionFailed, .timeout:
-                return true
-            default:
-                break
-            }
-        }
-
-        let fatalPosixCodes: Set<POSIXErrorCode> = [
-            .ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE,
-            .EADDRNOTAVAIL, // 49 — can't assign requested address (transport gone)
-            .ECONNREFUSED, // 61 — connection refused (peer closed/crashed)
-        ]
-        if let nwError = error as? NWError {
-            switch nwError {
-            case let .posix(code):
-                return fatalPosixCodes.contains(code)
-            default:
-                break
-            }
-        }
-
-        let nsError = error as NSError
-
-        // LoomError(0) = cancelled, LoomError(3) = authenticationFailed
-        // Both indicate the session is dead — treat as fatal.
-        if nsError.domain == "Loom.LoomError" {
-            let fatalLoomCodes: Set<Int> = [0, 3]
-            return fatalLoomCodes.contains(nsError.code)
-        }
-
-        // NWError.connectionFailed wraps the underlying POSIX code in its
-        // description but doesn't expose it as .posix().  Extract it from
-        // the NSError bridge.
-        if nsError.domain == NSPOSIXErrorDomain,
-           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
-            return fatalPosixCodes.contains(code)
-        }
-        // NWError domain uses negative codes; the underlying POSIX code is
-        // embedded in the userInfo or the code itself for connectionFailed.
-        if nsError.domain == "NWError" {
-            if nsError.code == -65554 || nsError.code == -65555 {
-                return true
-            }
-            // connectionFailed wraps a POSIX code as a positive value in
-            // the underlying error chain.
-            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
-               underlying.domain == NSPOSIXErrorDomain,
-               let code = POSIXErrorCode(rawValue: Int32(underlying.code)) {
-                return fatalPosixCodes.contains(code)
-            }
-        }
-        // Last resort: check the string representation for known POSIX codes
-        let desc = String(describing: error)
-        if desc.contains("POSIXErrorCode(rawValue: 89)") ||
-           desc.contains("POSIXErrorCode(rawValue: 61)") ||
-           desc.contains("POSIXErrorCode(rawValue: 57)") ||
-           desc.contains("POSIXErrorCode(rawValue: 54)") ||
-           desc.contains("POSIXErrorCode(rawValue: 49)") ||
-           desc.contains("POSIXErrorCode(rawValue: 32)") {
-            return true
-        }
-        return false
-    }
-
-    nonisolated func isExpectedLifecycleControlSendFailure(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == "Loom.LoomError", nsError.code == 0 {
-            return true
-        }
-
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case let .connectionFailed(underlyingError):
-                return isExpectedLifecycleControlSendFailure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let loomError = error as? LoomError {
-            switch loomError {
-            case let .connectionFailed(underlyingError):
-                return isExpectedLifecycleControlSendFailure(underlyingError)
-            default:
-                break
-            }
-        }
-
-        if let failure = error as? LoomConnectionFailure {
-            switch failure.reason {
-            case .cancelled, .closed:
-                return true
-            case .timedOut, .transportLoss, .connectionRefused, .addressUnavailable, .other:
-                break
-            }
-        }
-
-        return false
-    }
-
-    func handleControlChannelSendFailure(
-        client: MirageConnectedClient,
-        error: Error,
-        operation: String,
-        sessionID: UUID? = nil
-    ) async {
-        if let sessionID,
-           findClientContext(sessionID: sessionID)?.client.id != client.id {
-            return
-        }
-
-        // After the first send failure for a client, subsequent sends will
-        // also fail while disconnectClient() is in flight.  Log only the
-        // first failure as a Sentry event to avoid flooding diagnostics
-        // with one error per queued app icon / metadata send.
-        let isFirstFailure = controlChannelSendFailureReported.insert(client.id).inserted
-
-        if isFatalConnectionError(error) ||
-            isExpectedLifecycleControlSendFailure(error) ||
-            LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
-            if isFirstFailure {
-                MirageLogger.host(
-                    "\(operation) skipped because the control channel closed for \(client.name): \(error.localizedDescription)"
-                )
-            }
-        } else if isFirstFailure {
-            MirageLogger.error(.host, error: error, message: "\(operation) failed: ")
-        }
-
-        guard clientsByID[client.id] != nil else { return }
-        await disconnectClient(client, sessionID: sessionID, notifyClient: false)
-    }
-
+    /// Creates the Loom hello payload advertised to authenticated peers.
     func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
         LoomSessionHelloRequest(
             deviceID: hostID,
@@ -227,6 +25,7 @@ extension MirageHostService {
         )
     }
 
+    /// Accepts and bootstraps an authenticated Loom session into a Mirage client context.
     func handleIncomingSession(_ session: LoomAuthenticatedSession) async {
         guard let context = await session.context else {
             await session.cancel()
@@ -269,8 +68,10 @@ extension MirageHostService {
         // Safe because preemptExistingClientIfSuperseded already handled any
         // same-device reconnect, so a non-nil singleClientSessionID with no
         // tracked clients is genuinely orphaned.
-        if singleClientSessionID != nil, clientsBySessionID.isEmpty, connectedClients.isEmpty {
-            MirageLogger.host("Releasing stale client slot reservation \(singleClientSessionID!)")
+        if let staleSingleClientSessionID = singleClientSessionID,
+           clientsBySessionID.isEmpty,
+           connectedClients.isEmpty {
+            MirageLogger.host("Releasing stale client slot reservation \(staleSingleClientSessionID)")
             singleClientSessionID = nil
         }
 
@@ -279,7 +80,7 @@ extension MirageHostService {
             guard reserveSingleClientSlot(for: sessionID) else {
                 MirageLogger.host(
                     "Connection rejected: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
-                    + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
+                        + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
                 )
                 await rejectIncomingSession(session, reason: .hostBusy)
                 return
@@ -316,12 +117,17 @@ extension MirageHostService {
 
             guard connectionAccepted else {
                 MirageLogger.host("Connection from \(peerIdentity.name) rejected by delegate (origin=\(origin))")
-                let controlChannel = try? await MirageControlChannel.accept(from: session)
-                if let controlChannel {
+                do {
+                    let controlChannel = try await MirageControlChannel.accept(from: session)
                     let rejection = makeRejectedBootstrapResponse(reason: .unauthorized)
-                    try? await controlChannel.send(.sessionBootstrapResponse, content: rejection)
-                    try? await controlChannel.closeStream()
-                } else {
+                    do {
+                        try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    } catch {
+                        MirageLogger.error(.host, error: error, message: "Failed to send unauthorized bootstrap rejection: ")
+                    }
+                    await closeBootstrapControlChannel(controlChannel, reason: "unauthorized rejection")
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to accept control channel for unauthorized rejection: ")
                     await session.cancel()
                 }
                 return
@@ -340,7 +146,7 @@ extension MirageHostService {
                 peerName: peerIdentity.name,
                 phase: "Mirage bootstrap request"
             ) { [self] in
-                try await self.receiveBootstrapRequest(from: controlChannel)
+                try await receiveBootstrapRequest(from: controlChannel)
             }
             MirageLogger.host("Received Mirage bootstrap request from \(peerIdentity.name)")
 
@@ -356,7 +162,7 @@ extension MirageHostService {
                     )
                     let rejection = makeRejectedBootstrapResponse(reason: rejectionReason)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
-                    try? await controlChannel.closeStream()
+                    await closeBootstrapControlChannel(controlChannel, reason: "busy rejection")
                     return
                 }
 
@@ -367,8 +173,7 @@ extension MirageHostService {
                     busyClientContext.client,
                     sessionID: busyClientContext.sessionID,
                     notifyClient: true,
-                    reason: .takenOver,
-                    message: "Disconnected because a trusted client connected to this host."
+                    reason: .takenOver
                 )
                 delegate?.didDisconnectClient(busyClientContext.client)
             }
@@ -381,7 +186,7 @@ extension MirageHostService {
                     )
                     let rejection = makeRejectedBootstrapResponse(reason: .hostBusy)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
-                    try? await controlChannel.closeStream()
+                    await closeBootstrapControlChannel(controlChannel, reason: "slot reservation rejection")
                     return
                 }
                 reservedSingleClientSlot = true
@@ -400,7 +205,7 @@ extension MirageHostService {
             )
 
             guard responseResult.response.accepted else {
-                try? await controlChannel.closeStream()
+                await closeBootstrapControlChannel(controlChannel, reason: "bootstrap rejection")
                 return
             }
 
@@ -418,9 +223,7 @@ extension MirageHostService {
             let clientContext = ClientContext(
                 sessionID: sessionID,
                 client: client,
-                negotiatedFeatures: responseResult.response.selectedFeatures,
                 controlChannel: controlChannel,
-                remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot
             )
             connectedClients.append(client)
@@ -446,335 +249,6 @@ extension MirageHostService {
                 MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
             }
             await session.cancel()
-        }
-    }
-
-    private func receiveBootstrapRequest(
-        from controlChannel: MirageControlChannel
-    ) async throws -> MirageSessionBootstrapRequest {
-        var buffer = Data()
-
-        for await chunk in controlChannel.incomingBytes {
-            guard !chunk.isEmpty else { continue }
-            buffer.append(chunk)
-
-            switch ControlMessage.deserialize(from: buffer) {
-            case let .success(message, _):
-                guard message.type == .sessionBootstrapRequest else {
-                    throw MirageError.protocolError("Expected Mirage session bootstrap request")
-                }
-                return try message.decode(MirageSessionBootstrapRequest.self)
-            case .needMoreData:
-                continue
-            case let .invalidFrame(reason):
-                MirageLogger.host("Rejected incompatible Mirage bootstrap frame: \(reason)")
-                throw MirageError.connectionRejected(
-                    MirageConnectionRejection(
-                        reason: .malformedBootstrap,
-                        recoveryHint: "Invalid Mirage bootstrap frame: \(reason)"
-                    )
-                )
-            }
-        }
-
-        throw MirageError.protocolError("Control stream closed before session bootstrap request")
-    }
-
-    private func makeBootstrapResponse(
-        for request: MirageSessionBootstrapRequest,
-        peerIdentity: LoomPeerIdentity,
-        remoteEndpoint: NWEndpoint?,
-        pathSnapshot: LoomSessionNetworkPathSnapshot?,
-        autoTrustGranted: Bool
-    ) async throws -> (response: MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
-        let hostName = serviceName
-
-        guard request.protocolVersion == Int(MirageKit.protocolVersion) else {
-            let triggerResult = await handleProtocolMismatchUpdateRequestIfNeeded(
-                request: request,
-                peerIdentity: peerIdentity
-            )
-            return (
-                MirageSessionBootstrapResponse(
-                    accepted: false,
-                    hostID: hostID,
-                    hostName: hostName,
-                    selectedFeatures: [],
-                    mediaEncryptionEnabled: false,
-                    udpRegistrationToken: Data(),
-                    rejectionReason: .protocolVersionMismatch,
-                    protocolMismatchHostVersion: Int(MirageKit.protocolVersion),
-                    protocolMismatchClientVersion: request.protocolVersion,
-                    protocolMismatchUpdateTriggerAccepted: triggerResult?.accepted,
-                    protocolMismatchUpdateTriggerMessage: triggerResult?.message
-                ),
-                nil
-            )
-        }
-
-        let selectedFeatures = request.requestedFeatures.intersection(mirageSupportedFeatures)
-        let requiredFeatures: MirageFeatureSet = [.udpRegistrationAuthV1, .encryptedMediaV1]
-        guard selectedFeatures.contains(requiredFeatures) else {
-            return (
-                MirageSessionBootstrapResponse(
-                    accepted: false,
-                    hostID: hostID,
-                    hostName: hostName,
-                    selectedFeatures: [],
-                    mediaEncryptionEnabled: false,
-                    udpRegistrationToken: Data(),
-                    rejectionReason: .protocolFeaturesMismatch
-                ),
-                nil
-            )
-        }
-
-        guard let identityManager else {
-            throw MirageError.protocolError("Cannot bootstrap session without identity manager")
-        }
-        guard let clientPublicKey = peerIdentity.identityPublicKey,
-              let clientKeyID = peerIdentity.identityKeyID else {
-            throw MirageError.protocolError("Authenticated Loom session is missing client identity metadata")
-        }
-
-        let hostIdentity = try identityManager.currentIdentity()
-        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(
-            clientRequiresMediaEncryption: request.clientRequiresMediaEncryption,
-            remoteEndpoint: remoteEndpoint,
-            pathSnapshot: pathSnapshot
-        )
-        let udpRegistrationToken = MirageMediaSecurity.makeRegistrationToken()
-        let mediaSecurity = try MirageMediaSecurity.deriveContextForAuthenticatedSession(
-            identityManager: identityManager,
-            peerPublicKey: clientPublicKey,
-            hostID: hostID,
-            clientID: peerIdentity.deviceID,
-            hostKeyID: hostIdentity.keyID,
-            clientKeyID: clientKeyID,
-            udpRegistrationToken: udpRegistrationToken
-        )
-
-        let response = MirageSessionBootstrapResponse(
-            accepted: true,
-            hostID: hostID,
-            hostName: hostName,
-            selectedFeatures: selectedFeatures,
-            mediaEncryptionEnabled: mediaEncryptionEnabled,
-            udpRegistrationToken: udpRegistrationToken,
-            autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: delegate?.remoteAccessAllowedForConnections ?? false
-        )
-        return (response, mediaSecurity)
-    }
-
-    func mediaEncryptionEnabledForAcceptedSession(
-        isPeerToPeer: Bool,
-        clientRequiresMediaEncryption: Bool
-    ) -> Bool {
-        if clientRequiresMediaEncryption { return true }
-        guard isPeerToPeer else { return true }
-        return networkConfig.requireEncryptedMediaOnLocalNetwork
-    }
-
-    func resolveAcceptedSessionMediaEncryptionPolicy(
-        clientRequiresMediaEncryption: Bool,
-        remoteEndpoint: NWEndpoint?,
-        pathSnapshot: LoomSessionNetworkPathSnapshot?
-    ) -> Bool {
-        return mediaEncryptionEnabledForAcceptedSession(
-            isPeerToPeer: ClientContext.isPeerToPeerConnection(
-                remoteEndpoint: remoteEndpoint,
-                pathSnapshot: pathSnapshot
-            ),
-            clientRequiresMediaEncryption: clientRequiresMediaEncryption
-        )
-    }
-
-    func mediaSecurityContextForMediaPayload(clientID: UUID) -> MirageMediaSecurityContext? {
-        guard mediaEncryptionEnabledByClientID[clientID] == true else { return nil }
-        return mediaSecurityByClientID[clientID]
-    }
-
-    func handleProtocolMismatchUpdateRequestIfNeeded(
-        request: MirageSessionBootstrapRequest,
-        peerIdentity: LoomPeerIdentity
-    ) async -> (accepted: Bool, message: String)? {
-        guard request.requestHostUpdateOnProtocolMismatch == true else { return nil }
-        guard let softwareUpdateController else {
-            return (false, "Host update service unavailable.")
-        }
-
-        let result = await softwareUpdateController.performSoftwareUpdateInstall(
-            for: peerIdentity,
-            trigger: .protocolMismatch
-        )
-        return (result.accepted, result.message)
-    }
-
-    func hostSoftwareUpdateInstallInProgress() async -> Bool {
-        guard let softwareUpdateController else { return false }
-        let status = await softwareUpdateController.softwareUpdateStatus(
-            forceRefresh: false
-        )
-        return status.isInstallInProgress
-    }
-
-    func rejectIncomingSession(
-        _ session: LoomAuthenticatedSession,
-        reason: MirageSessionBootstrapRejectionReason
-    ) async {
-        let controlChannel = try? await MirageControlChannel.accept(from: session)
-        if let controlChannel {
-            let response = MirageSessionBootstrapResponse(
-                accepted: false,
-                hostID: hostID,
-                hostName: serviceName,
-                selectedFeatures: [],
-                mediaEncryptionEnabled: false,
-                udpRegistrationToken: Data(),
-                rejectionReason: reason
-            )
-            try? await controlChannel.send(.sessionBootstrapResponse, content: response)
-            try? await controlChannel.closeStream()
-        } else {
-            await session.cancel()
-        }
-    }
-
-    func makeRejectedBootstrapResponse(
-        reason: MirageSessionBootstrapRejectionReason
-    ) -> MirageSessionBootstrapResponse {
-        MirageSessionBootstrapResponse(
-            accepted: false,
-            hostID: hostID,
-            hostName: serviceName,
-            selectedFeatures: [],
-            mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
-            rejectionReason: reason
-        )
-    }
-
-    func busyClientContext(forIncomingSessionID sessionID: UUID) -> ClientContext? {
-        clientsBySessionID.values.first { context in
-            context.sessionID != sessionID
-        }
-    }
-
-    func busyHostTakeoverRejectionReason(
-        for request: MirageSessionBootstrapRequest,
-        trustEvaluation: LoomTrustEvaluation,
-        existingClient: MirageConnectedClient? = nil,
-        incomingPeerIdentity: LoomPeerIdentity? = nil
-    ) -> MirageSessionBootstrapRejectionReason? {
-        if let existingClient,
-           let incomingPeerIdentity,
-           shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) {
-            return nil
-        }
-
-        guard request.requestTakeoverIfBusy == true else {
-            return .hostBusy
-        }
-
-        guard trustEvaluation.decision == .trusted else {
-            return .takeoverRequiresTrustedRequester
-        }
-
-        return nil
-    }
-
-    func shouldPreemptExistingClient(
-        _ existingClient: MirageConnectedClient,
-        for incomingPeerIdentity: LoomPeerIdentity
-    ) -> Bool {
-        existingClient.id == incomingPeerIdentity.deviceID
-    }
-
-    func preemptExistingClientIfSuperseded(by incomingPeerIdentity: LoomPeerIdentity) async {
-        guard let existingClient = clientsBySessionID.values.first?.client else { return }
-        guard shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) else { return }
-
-        MirageLogger.host(
-            "Preempting existing client \(existingClient.name) for reconnect from \(incomingPeerIdentity.name)"
-        )
-        await disconnectClient(existingClient)
-    }
-
-    func waitForDisconnectCompletionIfNeeded(
-        for incomingPeerIdentity: LoomPeerIdentity,
-        timeout: Duration = .seconds(5)
-    ) async {
-        guard shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) else { return }
-
-        let deadline = ContinuousClock.now + timeout
-        MirageLogger.host(
-            "Waiting for disconnect teardown to finish before accepting reconnect from \(incomingPeerIdentity.name)"
-        )
-
-        while shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) {
-            if ContinuousClock.now >= deadline {
-                MirageLogger.host(
-                    "Timed out waiting for disconnect teardown before reconnect from \(incomingPeerIdentity.name)"
-                )
-                return
-            }
-
-            do {
-                try await Task.sleep(for: .milliseconds(50))
-            } catch {
-                return
-            }
-        }
-    }
-
-    private func shouldWaitForDisconnectCompletion(for incomingPeerIdentity: LoomPeerIdentity) -> Bool {
-        if disconnectingClientIDs.contains(incomingPeerIdentity.deviceID) {
-            return true
-        }
-
-        guard let existingClient = connectedClients.first(where: {
-            shouldPreemptExistingClient($0, for: incomingPeerIdentity)
-        }) else {
-            return false
-        }
-
-        return disconnectingClientIDs.contains(existingClient.id)
-    }
-
-    func expireStaleSingleClientReservationIfNeeded(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
-        guard let reservedSessionID = singleClientSessionID,
-              clientsBySessionID.isEmpty,
-              connectedClients.isEmpty,
-              disconnectingClientIDs.isEmpty,
-              let reservationStartedAt = singleClientReservationStartedAt,
-              now - reservationStartedAt >= connectionApprovalTimeoutSeconds else {
-            return
-        }
-
-        MirageLogger.host(
-            "Expiring stale client slot reservation \(reservedSessionID.uuidString) after \(now - reservationStartedAt)s"
-        )
-        singleClientSessionID = nil
-    }
-
-    func reserveSingleClientSlot(for sessionID: UUID) -> Bool {
-        expireStaleSingleClientReservationIfNeeded()
-
-        if let reservedID = singleClientSessionID, reservedID != sessionID { return false }
-
-        if let existingSessionID = clientsBySessionID.keys.first, existingSessionID != sessionID {
-            singleClientSessionID = existingSessionID
-            return false
-        }
-
-        singleClientSessionID = sessionID
-        return true
-    }
-
-    func releaseSingleClientSlot(for sessionID: UUID) {
-        if singleClientSessionID == sessionID {
-            singleClientSessionID = nil
         }
     }
 }

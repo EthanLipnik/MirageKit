@@ -19,18 +19,15 @@ struct InputCapturingResponderRecoveryTests {
     @Test("Hardware keyboard presence keeps software keyboard state while targeting capture view")
     func hardwareKeyboardPresenceKeepsSoftwareStateWhileTargetingCaptureView() {
         let view = InputCapturingView(frame: .zero)
-        var requestedTriggers: [InputCapturingResponderRecoveryTrigger] = []
         var hardwarePresenceEvents: [Bool] = []
         view.softwareKeyboardVisible = true
-        view.onResponderRecoveryRequestedForTesting = { requestedTriggers.append($0) }
         view.onHardwareKeyboardPresenceChanged = { hardwarePresenceEvents.append($0) }
 
         view.updateHardwareKeyboardPresence(true)
 
         #expect(view.hardwareKeyboardPresent)
         #expect(view.softwareKeyboardVisible)
-        #expect(view.responderRecoveryTarget() == .captureView)
-        #expect(requestedTriggers == [.hardwareKeyboardPresenceChanged])
+        #expect(view.responderRecoveryTarget == .captureView)
         #expect(hardwarePresenceEvents == [true])
     }
 
@@ -41,7 +38,7 @@ struct InputCapturingResponderRecoveryTests {
         view.softwareKeyboardVisible = true
 
         #expect(!view.hardwareKeyboardPresent)
-        #expect(view.responderRecoveryTarget() == .softwareKeyboardField)
+        #expect(view.responderRecoveryTarget == .softwareKeyboardField)
     }
 
     @Test("Controller retries once when the first recovery attempt lands before the window is key")
@@ -73,7 +70,7 @@ struct InputCapturingResponderRecoveryTests {
                     return Task {}
                 }
             ),
-            contextProvider: { _ in
+            contextProvider: {
                 if snapshots.count > 1 {
                     return snapshots.removeFirst()
                 }
@@ -144,18 +141,6 @@ struct InputCapturingResponderRecoveryTests {
         )
     }
 
-    @Test("Disabled input capture skips responder recovery without retry")
-    func disabledInputCaptureSkipsResponderRecoveryWithoutRetry() {
-        let disabledContext = makeContext(inputCaptureEnabled: false)
-        let decision = InputCapturingResponderRecoveryPolicy.decision(
-            for: disabledContext,
-            trigger: .streamIdentityUpdated
-        )
-
-        #expect(decision == .skip(.inputCaptureDisabled))
-        #expect(!InputCapturingResponderRecoveryPolicy.shouldRetry(decision, attempt: 0))
-    }
-
     @Test("Software keyboard input sends events while hardware keyboard is present")
     func softwareKeyboardInputSendsEventsWhileHardwareKeyboardIsPresent() {
         let view = InputCapturingView(frame: .zero)
@@ -180,45 +165,13 @@ struct InputCapturingResponderRecoveryTests {
         #expect(keyEvents[2].keyCode == 0x33)
     }
 
-    #if os(iOS)
-    @Test("Active system keyboard hide is treated as software keyboard dismissal")
-    func activeSystemKeyboardHideIsTreatedAsSoftwareKeyboardDismissal() {
-        let decision = softwareKeyboardSystemHideDecision(
-            softwareKeyboardVisible: true,
-            isSoftwareKeyboardShown: true,
-            isSoftwareKeyboardResponderActive: true,
-            applicationState: .active,
-            isKeyWindow: true,
-            sceneActivationState: .foregroundActive
-        )
-
-        #expect(decision == .dismiss)
-    }
-
-    @Test("Background system keyboard hide does not dismiss requested software keyboard")
-    func backgroundSystemKeyboardHideDoesNotDismissRequestedSoftwareKeyboard() {
-        let decision = softwareKeyboardSystemHideDecision(
-            softwareKeyboardVisible: true,
-            isSoftwareKeyboardShown: true,
-            isSoftwareKeyboardResponderActive: true,
-            applicationState: .background,
-            isKeyWindow: true,
-            sceneActivationState: .foregroundActive
-        )
-
-        #expect(decision == .ignore)
-    }
-    #endif
-
     private func makeContext(
-        inputCaptureEnabled: Bool = true,
         hasWindow: Bool = true,
         isKeyWindow: Bool = true,
         sceneActivationState: UISceneActivationState? = .foregroundActive,
         targetIsFirstResponder: Bool = false
     ) -> InputCapturingResponderRecoveryContext {
         InputCapturingResponderRecoveryContext(
-            inputCaptureEnabled: inputCaptureEnabled,
             hasWindow: hasWindow,
             isKeyWindow: isKeyWindow,
             sceneActivationState: sceneActivationState,

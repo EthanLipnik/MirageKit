@@ -64,8 +64,8 @@ struct HostScrollEventFactoryTests {
         #expect(nsEvent.scrollingDeltaX == 0)
     }
 
-    @Test("Legacy precise scroll events keep constructor movement fields")
-    func legacyPreciseScrollEventsKeepConstructorMovementFields() throws {
+    @Test("Phase-less precise scroll events keep constructor movement fields")
+    func phaseLessPreciseScrollEventsKeepConstructorMovementFields() throws {
         let event = MirageScrollEvent(
             deltaX: -2.5,
             deltaY: 4.75,
@@ -87,8 +87,8 @@ struct HostScrollEventFactoryTests {
         #expect(nsEvent.scrollingDeltaX == -2)
     }
 
-    @Test("Legacy precise sub-pixel scroll events wait for integer fallback")
-    func legacyPreciseSubPixelScrollEventsWaitForIntegerFallback() {
+    @Test("Phase-less precise sub-pixel scroll events wait for integer fallback")
+    func phaseLessPreciseSubPixelScrollEventsWaitForIntegerFallback() {
         let event = MirageScrollEvent(
             deltaX: 0.25,
             deltaY: -0.5,

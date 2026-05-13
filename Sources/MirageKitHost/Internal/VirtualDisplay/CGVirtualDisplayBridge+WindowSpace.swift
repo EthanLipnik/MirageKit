@@ -33,46 +33,46 @@ enum CGSWindowSpaceBridge {
 
     @_silgen_name("CGSAddWindowsToSpaces")
     private static func CGSAddWindowsToSpaces(
-        _ connection: CGSConnectionID,
-        _ windows: CFArray,
-        _ spaces: CFArray
+        _ _: CGSConnectionID,
+        _ _: CFArray,
+        _ _: CFArray
     )
 
     @_silgen_name("CGSRemoveWindowsFromSpaces")
     private static func CGSRemoveWindowsFromSpaces(
-        _ connection: CGSConnectionID,
-        _ windows: CFArray,
-        _ spaces: CFArray
+        _ _: CGSConnectionID,
+        _ _: CFArray,
+        _ _: CFArray
     )
 
     @_silgen_name("CGSCopySpacesForWindows")
     private static func CGSCopySpacesForWindows(
-        _ connection: CGSConnectionID,
-        _ mask: UInt32,
-        _ windows: CFArray
+        _ _: CGSConnectionID,
+        _ _: UInt32,
+        _ _: CFArray
     )
         -> CFArray?
 
     @_silgen_name("CGSManagedDisplayGetCurrentSpace")
     private static func CGSManagedDisplayGetCurrentSpace(
-        _ connection: CGSConnectionID,
-        _ displayUUID: CFString
+        _ _: CGSConnectionID,
+        _ _: CFString
     )
         -> CGSSpaceID
 
     @_silgen_name("CGSManagedDisplaySetCurrentSpace")
     private static func CGSManagedDisplaySetCurrentSpace(
-        _ connection: CGSConnectionID,
-        _ displayUUID: CFString,
-        _ spaceID: CGSSpaceID
+        _ _: CGSConnectionID,
+        _ _: CFString,
+        _ _: CGSSpaceID
     )
         -> CGError
 
     @_silgen_name("CGSMoveWindow")
     private static func CGSMoveWindow(
-        _ connection: CGSConnectionID,
-        _ window: CGWindowID,
-        _ point: UnsafePointer<CGPoint>
+        _ _: CGSConnectionID,
+        _ _: CGWindowID,
+        _ _: UnsafePointer<CGPoint>
     )
         -> CGError
 
@@ -80,30 +80,21 @@ enum CGSWindowSpaceBridge {
     /// place: 1 = above, -1 = below, 0 = out (hide)
     @_silgen_name("CGSOrderWindow")
     private static func CGSOrderWindow(
-        _ connection: CGSConnectionID,
-        _ window: CGWindowID,
-        _ place: Int32,
-        _ relativeToWindow: CGWindowID
-    )
-        -> CGError
-
-    /// Set window level (like always-on-top)
-    @_silgen_name("CGSSetWindowLevel")
-    private static func CGSSetWindowLevel(
-        _ connection: CGSConnectionID,
-        _ window: CGWindowID,
-        _ level: Int32
+        _ _: CGSConnectionID,
+        _ _: CGWindowID,
+        _ _: Int32,
+        _ _: CGWindowID
     )
         -> CGError
 
     // MARK: - Public Interface
 
-    static func getConnectionID() -> UInt32 {
+    static var connectionID: UInt32 {
         CGSMainConnectionID()
     }
 
-    static func getSpacesForWindow(_ windowID: CGWindowID) -> [CGSSpaceID] {
-        let connection = getConnectionID()
+    static func spaces(for windowID: CGWindowID) -> [CGSSpaceID] {
+        let connection = connectionID
         let windowArray = [windowID] as CFArray
 
         guard let spacesArray = CGSCopySpacesForWindows(connection, CGSSpaceMask.all.rawValue, windowArray) else { return [] }
@@ -134,9 +125,9 @@ enum CGSWindowSpaceBridge {
         return Array(Set(spaces)).sorted()
     }
 
-    static func getCurrentSpaceForDisplay(_ displayID: CGDirectDisplayID) -> CGSSpaceID {
-        let connection = getConnectionID()
-        guard let uuid = getDisplayUUID(displayID) else {
+    static func currentSpace(for displayID: CGDirectDisplayID) -> CGSSpaceID {
+        let connection = connectionID
+        guard let uuid = displayUUID(for: displayID) else {
             MirageLogger.host("Cannot get current space: no valid UUID for display \(displayID)")
             return 0
         }
@@ -144,8 +135,8 @@ enum CGSWindowSpaceBridge {
     }
 
     static func setCurrentSpaceForDisplay(_ displayID: CGDirectDisplayID, spaceID: CGSSpaceID) -> Bool {
-        let connection = getConnectionID()
-        guard let uuid = getDisplayUUID(displayID) else {
+        let connection = connectionID
+        guard let uuid = displayUUID(for: displayID) else {
             MirageLogger.host("Cannot set current space: no valid UUID for display \(displayID)")
             return false
         }
@@ -154,12 +145,12 @@ enum CGSWindowSpaceBridge {
     }
 
     static func moveWindowToSpace(_ windowID: CGWindowID, spaceID: CGSSpaceID) {
-        let connection = getConnectionID()
+        let connection = connectionID
         let windowArray = [windowID] as CFArray
         let spaceArray = [spaceID] as CFArray
 
         // Remove from current spaces first
-        let currentSpaces = getSpacesForWindow(windowID)
+        let currentSpaces = spaces(for: windowID)
         if !currentSpaces.isEmpty {
             let currentSpacesArray = currentSpaces as CFArray
             CGSRemoveWindowsFromSpaces(connection, windowArray, currentSpacesArray)
@@ -169,9 +160,8 @@ enum CGSWindowSpaceBridge {
         MirageLogger.host("Moved window \(windowID) to space \(spaceID)")
     }
 
-    @discardableResult
     static func moveWindow(_ windowID: CGWindowID, to point: CGPoint) -> Bool {
-        let connection = getConnectionID()
+        let connection = connectionID
         var mutablePoint = point
         let result = CGSMoveWindow(connection, windowID, &mutablePoint)
         return result == .success
@@ -181,15 +171,20 @@ enum CGSWindowSpaceBridge {
     /// This works even on virtual displays where AXUIElement fails
     /// - Parameter windowID: The CGWindowID to bring to front
     /// - Returns: true if successful
-    @discardableResult
     static func bringWindowToFront(_ windowID: CGWindowID) -> Bool {
-        let connection = getConnectionID()
+        let connection = connectionID
         // place = 1 means "above", relativeToWindow = 0 means "above all"
         let result = CGSOrderWindow(connection, windowID, 1, 0)
         return result == .success
     }
 
-    private static func getDisplayUUID(_ displayID: CGDirectDisplayID) -> String? {
+    static func bringWindowToFrontIfPossible(_ windowID: CGWindowID) {
+        let connection = connectionID
+        let result = CGSOrderWindow(connection, windowID, 1, 0)
+        guard result != .success else { return }
+    }
+
+    private static func displayUUID(for displayID: CGDirectDisplayID) -> String? {
         guard let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue() else {
             return nil
         }

@@ -8,7 +8,6 @@
 //
 
 import CoreGraphics
-import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -18,6 +17,7 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Scroll Event Injection (runs on accessibilityQueue)
 
+    /// Injects a scroll event at the resolved host-window location.
     func injectScrollEvent(
         _ event: MirageScrollEvent,
         _ windowFrame: CGRect,
@@ -26,7 +26,6 @@ extension MirageHostInputController {
         let resolvedFrame = resolvedInputWindowFrame(for: windowID, streamFrame: windowFrame)
         let scrollPoint = Self.scrollInjectionPoint(event.location, in: resolvedFrame)
 
-        // Accumulate fractional remainders so sub-pixel deltas aren't lost.
         let integerDeltaX = MirageHostScrollEventFactory.accumulatedIntegerDelta(
             for: event.deltaX,
             remainder: &directScrollRemainderX
@@ -45,11 +44,11 @@ extension MirageHostInputController {
         }
 
         cgEvent.location = scrollPoint
-        // Apply modifier flags so CMD+scroll zoom works in Preview/Safari
         cgEvent.flags = event.modifiers.cgEventFlags
         postEvent(cgEvent)
     }
 
+    /// Converts an optional normalized scroll location into a host-window screen point.
     nonisolated static func scrollInjectionPoint(_ location: CGPoint?, in windowFrame: CGRect) -> CGPoint {
         let resolvedLocation = location ?? CGPoint(x: 0.5, y: 0.5)
         return CGPoint(
@@ -57,7 +56,6 @@ extension MirageHostInputController {
             y: windowFrame.origin.y + resolvedLocation.y * windowFrame.height
         )
     }
-
 }
 
 #endif

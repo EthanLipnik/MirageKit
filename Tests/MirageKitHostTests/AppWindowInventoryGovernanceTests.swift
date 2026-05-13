@@ -15,7 +15,6 @@ import Testing
 
 @Suite("App Window Inventory Governance")
 struct AppWindowInventoryGovernanceTests {
-
     @Test("Orchestrator ownership hysteresis prevents rapid ping-pong")
     func orchestratorOwnershipHysteresisPreventsPingPong() async {
         let orchestrator = AppStreamRuntimeOrchestrator()
@@ -94,6 +93,34 @@ struct AppWindowInventoryGovernanceTests {
         #expect(policy.targetBitrateBps == 8_000_000)
     }
 
+    @Test("Active auxiliary parent selection ignores inactive and hidden streams")
+    func activeAuxiliaryParentSelectionIgnoresInactiveAndHiddenStreams() {
+        let selected = MirageHostService.preferredActiveVisibleStreamID(
+            activeStreams: [
+                1: true,
+                2: false,
+                3: true,
+                9: true,
+            ],
+            visibleStreamIDs: [2, 3, 4]
+        )
+
+        #expect(selected == 3)
+    }
+
+    @Test("Active auxiliary parent selection returns nil without active visible streams")
+    func activeAuxiliaryParentSelectionReturnsNilWithoutActiveVisibleStreams() {
+        let selected = MirageHostService.preferredActiveVisibleStreamID(
+            activeStreams: [
+                1: true,
+                2: false,
+            ],
+            visibleStreamIDs: [2, 3]
+        )
+
+        #expect(selected == nil)
+    }
+
     @Test("Policy applier suppresses no-op and cooldown reconfiguration")
     func policyApplierSuppressesNoopAndCooldown() async {
         let applier = StreamPolicyApplier()
@@ -103,6 +130,7 @@ struct AppWindowInventoryGovernanceTests {
             encoderConfig: .highQuality,
             maxPacketSize: mirageDefaultMaxPacketSize
         )
+        await context.configureRunningForPolicyApplierTest()
 
         let first = MirageStreamPolicy(
             streamID: 101,
@@ -117,15 +145,20 @@ struct AppWindowInventoryGovernanceTests {
             targetBitrateBps: 28_000_000
         )
 
+        try? await context.updateEncoderSettings(colorDepth: nil, bitrate: 10_000_000)
+
         await applier.apply(policy: first, context: context, requestRecoveryKeyframe: false)
+        #expect(await context.encoderSettings.bitrate == 24_000_000)
+
         await applier.apply(policy: first, context: context, requestRecoveryKeyframe: false)
         await applier.apply(policy: second, context: context, requestRecoveryKeyframe: false)
-
-        let diagnostics = await applier.diagnostics(streamID: 101)
-        #expect(diagnostics?.appliedUpdates == 1)
-        #expect(diagnostics?.suppressedNoOpUpdates == 1)
-        #expect(diagnostics?.suppressedCooldownUpdates == 1)
+        #expect(await context.encoderSettings.bitrate == 24_000_000)
     }
+}
 
+private extension StreamContext {
+    func configureRunningForPolicyApplierTest() {
+        isRunning = true
+    }
 }
 #endif

@@ -11,32 +11,31 @@ import Foundation
 
 // MARK: - Keyframe Messages
 
+/// Client-to-host request for a fresh keyframe on a stream.
 package struct KeyframeRequestMessage: Codable {
+    /// Stream that needs a keyframe.
     package let streamID: StreamID
 
+    /// Creates a keyframe request.
     package init(streamID: StreamID) {
         self.streamID = streamID
     }
 }
 
-package struct KeyframeRecoveryAckMessage: Codable, Sendable, Equatable {
+/// Host-to-client acknowledgement for keyframe recovery state.
+package struct KeyframeRecoveryAckMessage: Codable, Equatable {
+    /// Stream whose recovery request was evaluated.
     package let streamID: StreamID
-    package let accepted: Bool
-    package let hostEpoch: UInt16?
-    package let deadlineMilliseconds: Int
-    package let reason: String
 
+    /// Estimated recovery deadline in milliseconds.
+    package let deadlineMilliseconds: Int
+
+    /// Creates a keyframe recovery acknowledgement.
     package init(
         streamID: StreamID,
-        accepted: Bool,
-        hostEpoch: UInt16?,
-        deadlineMilliseconds: Int,
-        reason: String
+        deadlineMilliseconds: Int
     ) {
         self.streamID = streamID
-        self.accepted = accepted
-        self.hostEpoch = hostEpoch
         self.deadlineMilliseconds = max(0, deadlineMilliseconds)
-        self.reason = reason
     }
 }

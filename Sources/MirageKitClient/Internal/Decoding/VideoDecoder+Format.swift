@@ -13,37 +13,6 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-enum AVCCValidationResult: Equatable, Sendable {
-    case valid
-    case empty
-    case annexBDetected
-    case zeroLengthNAL(offset: Int)
-    case truncatedNAL(offset: Int, declared: Int, available: Int)
-    case trailingBytes(validEnd: Int, totalCount: Int)
-
-    var isValid: Bool {
-        if case .valid = self { return true }
-        return false
-    }
-
-    var logSummary: String {
-        switch self {
-        case .valid:
-            "valid"
-        case .empty:
-            "empty payload"
-        case .annexBDetected:
-            "Annex-B start codes detected (not AVCC)"
-        case let .zeroLengthNAL(offset):
-            "zero-length NAL at offset \(offset)"
-        case let .truncatedNAL(offset, declared, available):
-            "truncated NAL at offset \(offset): declared \(declared) bytes, only \(available) available"
-        case let .trailingBytes(validEnd, totalCount):
-            "trailing bytes: valid data ends at \(validEnd), total \(totalCount) (\(totalCount - validEnd) extra bytes)"
-        }
-    }
-}
-
 extension VideoDecoder {
     func extractFormatDescriptionAndStripParameterSets(from data: Data) throws -> Data {
         // ProRes frames are self-contained — no NAL units or parameter sets
@@ -62,9 +31,6 @@ extension VideoDecoder {
                 strippedData = stripSEINALUnits(from: strippedData)
                 return strippedData
             }
-            throw malformedKeyframeError(
-                "Framed keyframe missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
-            )
         }
 
         // Parse HEVC NAL units to extract VPS, SPS, PPS (in Annex B format)
@@ -94,7 +60,7 @@ extension VideoDecoder {
 
         guard startCodePositions.count >= 3 else {
             MirageLogger.decoder("Not enough start codes found: \(startCodePositions.count)")
-            throw malformedKeyframeError("Keyframe missing Annex-B parameter-set start codes")
+            return data
         }
 
         var vps: Data?
@@ -144,9 +110,14 @@ extension VideoDecoder {
                 .decoder,
                 "Missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
             )
-            throw malformedKeyframeError(
-                "Keyframe missing parameter sets - VPS: \(vps != nil), SPS: \(sps != nil), PPS: \(pps != nil)"
-            )
+
+            // Try to use cached format description if available
+            if let cached = cachedFormatDescription {
+                MirageLogger.decoder("Using cached format description due to corrupted keyframe")
+                formatDescription = cached
+            }
+
+            return data // Return original data, will try again on next keyframe
         }
 
         try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
@@ -164,14 +135,6 @@ extension VideoDecoder {
         }
 
         return data
-    }
-
-    private func malformedKeyframeError(_ message: String) -> MirageError {
-        MirageError.decodingError(NSError(
-            domain: "MirageKit.VideoDecoder.Keyframe",
-            code: -1,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        ))
     }
 
     private func splitFramedKeyframeData(from data: Data) -> (parameterSets: Data, frameData: Data)? {
@@ -251,72 +214,6 @@ extension VideoDecoder {
         return (vps, sps, pps)
     }
 
-    func isValidLengthPrefixedHEVCBitstream(_ data: Data) -> Bool {
-        validateLengthPrefixedHEVCBitstream(data).isValid
-    }
-
-    func validateLengthPrefixedHEVCBitstream(_ data: Data) -> AVCCValidationResult {
-        guard !data.isEmpty else { return .empty }
-
-        // Try the AVCC structural walk first. A valid walk proves the data IS
-        // length-prefixed AVCC even when the first bytes happen to look like an
-        // Annex-B start code (e.g. a NAL length of 0x0001XX → `00 00 01 XX`).
-        var cursor = 0
-        let count = data.count
-        while cursor + 4 <= count {
-            let nalLength = Int(data[cursor]) << 24 |
-                Int(data[cursor + 1]) << 16 |
-                Int(data[cursor + 2]) << 8 |
-                Int(data[cursor + 3])
-            guard nalLength > 0 else {
-                if cursor == 0 && data.starts(with: [0x00, 0x00, 0x00, 0x01]) {
-                    return .annexBDetected
-                }
-                return .zeroLengthNAL(offset: cursor)
-            }
-
-            let nalEnd = cursor + 4 + nalLength
-            guard nalEnd <= count else {
-                if cursor == 0 &&
-                    (data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01])) {
-                    return .annexBDetected
-                }
-                return .truncatedNAL(offset: cursor, declared: nalLength, available: count - cursor - 4)
-            }
-            cursor = nalEnd
-        }
-
-        guard cursor == count else { return .trailingBytes(validEnd: cursor, totalCount: count) }
-        return .valid
-    }
-
-    /// Walk AVCC 4-byte length prefixes, accumulating valid NAL units.
-    /// Returns `data.prefix(lastValidCursor)` if at least one NAL was valid, or `nil` if unusable.
-    func trimToValidAVCCBoundary(_ data: Data) -> Data? {
-        guard !data.isEmpty else { return nil }
-
-        var cursor = 0
-        var lastValidCursor = 0
-        let count = data.count
-
-        while cursor + 4 <= count {
-            let nalLength = Int(data[cursor]) << 24 |
-                Int(data[cursor + 1]) << 16 |
-                Int(data[cursor + 2]) << 8 |
-                Int(data[cursor + 3])
-            guard nalLength > 0 else { break }
-
-            let nalEnd = cursor + 4 + nalLength
-            guard nalEnd <= count else { break }
-
-            cursor = nalEnd
-            lastValidCursor = cursor
-        }
-
-        guard lastValidCursor > 0 else { return nil }
-        return data.prefix(lastValidCursor)
-    }
-
     private func updateFormatDescription(vpsData: Data, spsData: Data, ppsData: Data) throws {
         try vpsData.withUnsafeBytes { vpsPtr in
             try spsData.withUnsafeBytes { spsPtr in
@@ -344,6 +241,11 @@ extension VideoDecoder {
                     )
 
                     guard status == noErr, let desc = formatDesc else {
+                        if let cached = self.cachedFormatDescription {
+                            MirageLogger.decoder("Format description creation failed (status \(status)), using cached")
+                            self.formatDescription = cached
+                            return
+                        }
                         throw MirageError.decodingError(NSError(
                             domain: NSOSStatusErrorDomain,
                             code: Int(status),
@@ -502,61 +404,4 @@ extension VideoDecoder {
         return min(nalStart + 10, data.count)
     }
 
-    // MARK: - ProRes Format Description
-
-    private func extractProResFormatDescription(from data: Data) throws -> Data {
-        // Create format description from codec type and dimensions if we don't have one yet.
-        // The ProRes frame header is the authoritative source for dimensions — the stream
-        // started message reports virtual display size which may differ from encoder output
-        // (e.g. after stream scaling or resolution capping).
-        let dims: (width: Int, height: Int)? =
-            proResFrameDimensions(from: data) ?? expectedDimensions ?? proResStreamDimensions
-        let needsNewDescription: Bool
-        if let dims {
-            if let existing = formatDescription {
-                let existingDims = CMVideoFormatDescriptionGetDimensions(existing)
-                needsNewDescription = Int32(dims.width) != existingDims.width || Int32(dims.height) != existingDims.height
-            } else {
-                needsNewDescription = true
-            }
-        } else {
-            needsNewDescription = false
-        }
-        if needsNewDescription, let dims {
-            let colorExtensions = MirageColorAttachments.formatDescriptionExtensions(
-                for: preferredOutputColorDepth.colorSpace
-            )
-
-            var formatDesc: CMFormatDescription?
-            let status = CMVideoFormatDescriptionCreate(
-                allocator: kCFAllocatorDefault,
-                codecType: kCMVideoCodecType_AppleProRes4444,
-                width: Int32(dims.width),
-                height: Int32(dims.height),
-                extensions: colorExtensions,
-                formatDescriptionOut: &formatDesc
-            )
-            if status == noErr, let desc = formatDesc {
-                formatDescription = desc
-                cachedFormatDescription = desc
-                outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
-                MirageLogger.decoder("ProRes 4444 format description created (\(dims.width)x\(dims.height))")
-            } else {
-                MirageLogger.error(.decoder, "Failed to create ProRes format description: \(status)")
-            }
-        }
-        // ProRes data is passed through unchanged — no stripping needed
-        return data
-    }
-
-    /// Extract width/height from ProRes picture header.
-    /// ProRes frame layout: 4B frame_size, 4B "icpf", 2B header_size, 2B version, 4B creator_id, 2B width, 2B height
-    private func proResFrameDimensions(from data: Data) -> (width: Int, height: Int)? {
-        // Width at offset 16, height at offset 18 in the ProRes frame header
-        guard data.count >= 20 else { return nil }
-        let width = Int(data[16]) << 8 | Int(data[17])
-        let height = Int(data[18]) << 8 | Int(data[19])
-        guard width > 0, height > 0, width < 16384, height < 16384 else { return nil }
-        return (width: width, height: height)
-    }
 }

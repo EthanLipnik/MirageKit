@@ -12,18 +12,42 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+/// Actor-local stream sizing state captured before a resize so failures can restore the pipeline.
 struct StreamResizeRollbackSnapshot: Sendable {
+    /// Source capture size before the resize attempt.
     let baseCaptureSize: CGSize
+
+    /// Encoder output size before the resize attempt.
     let currentEncodedSize: CGSize
+
+    /// Capture buffer size before the resize attempt.
     let currentCaptureSize: CGSize
+
+    /// Pixel format active before the resize attempt.
     let activePixelFormat: MiragePixelFormat
+
+    /// Last compositor frame observed for the streamed window.
     let lastWindowFrame: CGRect
+
+    /// Effective stream scale in use before the resize attempt.
     let streamScale: CGFloat
+
+    /// User-requested stream scale before resize clamping or fallback.
     let requestedStreamScale: CGFloat
+
+    /// Capture mode active before the resize attempt.
     let captureMode: StreamContext.CaptureMode
+
+    /// Dimension token clients use to reject frames from stale encoder sizes.
     let dimensionToken: UInt16
+
+    /// Content rect reported by ScreenCaptureKit before the resize attempt.
     let currentContentRect: CGRect
+
+    /// Display-capture crop rect before the resize attempt.
     let virtualDisplayCaptureSourceRect: CGRect
+
+    /// Display-space presentation rect before the resize attempt.
     let virtualDisplayCapturePresentationRect: CGRect
 }
 
@@ -84,7 +108,7 @@ extension StreamContext {
             : snapshot.currentEncodedSize
 
         restoreResizeRollbackSnapshot(snapshot, restoredWindowFrame: effectiveWindowFrame)
-        frameInbox.clear()
+        frameInbox.discardAll()
         await packetSender?.bumpGeneration(reason: "\(logLabel) rollback")
         resetPipelineStateForReconfiguration(reason: "\(logLabel) rollback")
 

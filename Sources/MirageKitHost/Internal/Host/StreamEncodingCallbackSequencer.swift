@@ -9,12 +9,15 @@ import Foundation
 
 #if os(macOS)
 
-/// Serializes per-frame numbering for encoded-frame callbacks that may arrive concurrently.
+/// Serializes host frame and packet sequence numbering for encoded-frame callbacks that may arrive concurrently.
 final class StreamEncodingCallbackSequencer: @unchecked Sendable {
+    /// Numbering and capacity reserved for packetizing one encoded frame.
     struct Reservation: Sendable {
+        /// Monotonic host frame number assigned to the encoded frame.
         let frameNumber: UInt32
+        /// First packet sequence number reserved for the frame's data fragments and any FEC parity fragments.
         let sequenceNumberStart: UInt32
-        let totalFragments: Int
+        /// Encoded frame bytes plus the payload capacity reserved for parity fragments.
         let wireBytes: Int
     }
 
@@ -25,11 +28,13 @@ final class StreamEncodingCallbackSequencer: @unchecked Sendable {
 
     private let state = Locked(State())
 
+    /// Reserves a frame number and the packet sequence range needed before packetization.
+    ///
+    /// Zero-byte callbacks still consume a frame number but reserve no packet sequence numbers.
     func reserve(
         frameByteCount: Int,
         maxPayloadSize: Int,
-        fecBlockSize: Int,
-        isKeyframe: Bool
+        fecBlockSize: Int
     ) -> Reservation {
         state.withLock { state in
             let frameNumber = state.nextFrameNumber
@@ -53,7 +58,6 @@ final class StreamEncodingCallbackSequencer: @unchecked Sendable {
             return Reservation(
                 frameNumber: frameNumber,
                 sequenceNumberStart: sequenceNumberStart,
-                totalFragments: totalFragments,
                 wireBytes: wireBytes
             )
         }

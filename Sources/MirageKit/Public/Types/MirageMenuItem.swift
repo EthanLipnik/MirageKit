@@ -12,15 +12,16 @@ import Foundation
 /// Represents the complete menu bar structure of a remote application.
 /// Sent from host to client when the streamed app's menus change.
 public struct MirageMenuBar: Codable, Sendable, Hashable {
-    /// The app's bundle identifier
+    /// Bundle identifier for the app that owns this menu bar.
     public let bundleIdentifier: String
 
-    /// Top-level menus (File, Edit, View, etc.)
+    /// Top-level menus such as File, Edit, and View.
     public let menus: [MirageMenu]
 
-    /// Version counter for change detection (increments on each update)
+    /// Monotonic version counter used for change detection.
     public let version: UInt64
 
+    /// Creates a remote menu-bar snapshot for one host application.
     public init(bundleIdentifier: String, menus: [MirageMenu], version: UInt64) {
         self.bundleIdentifier = bundleIdentifier
         self.menus = menus
@@ -32,17 +33,19 @@ public struct MirageMenuBar: Codable, Sendable, Hashable {
 
 /// Represents a top-level menu (e.g., File, Edit, View).
 public struct MirageMenu: Codable, Sendable, Identifiable, Hashable {
+    /// Stable menu identity for client-side diffing.
     public let id: UUID
 
-    /// Menu title (e.g., "File", "Edit")
+    /// Menu title, such as File or Edit.
     public let title: String
 
-    /// Items within this menu
+    /// Items within this menu.
     public let items: [MirageMenuItem]
 
-    /// Index of this menu in the menu bar (for action paths)
+    /// Index of this menu in the menu bar for action paths.
     public let menuIndex: Int
 
+    /// Creates a top-level menu snapshot.
     public init(id: UUID = UUID(), title: String, items: [MirageMenuItem], menuIndex: Int) {
         self.id = id
         self.title = title
@@ -55,21 +58,22 @@ public struct MirageMenu: Codable, Sendable, Identifiable, Hashable {
 
 /// Represents a single menu item in the remote app's menu bar.
 public struct MirageMenuItem: Codable, Sendable, Identifiable, Hashable {
+    /// Stable menu-item identity for client-side diffing.
     public let id: UUID
 
-    /// Display title of the menu item
+    /// Display title of the menu item.
     public let title: String
 
-    /// Whether this item is currently enabled
+    /// Whether this item is currently enabled.
     public let isEnabled: Bool
 
-    /// Whether this is a separator line
+    /// Whether this is a separator line.
     public let isSeparator: Bool
 
-    /// Keyboard shortcut, if any
+    /// Keyboard shortcut, if any.
     public let keyboardShortcut: MirageKeyboardShortcut?
 
-    /// Submenu items, if this item has a submenu
+    /// Submenu items, if this item has a submenu.
     public let submenu: [MirageMenuItem]?
 
     /// Path from menu bar to this item for triggering actions.
@@ -77,12 +81,13 @@ public struct MirageMenuItem: Codable, Sendable, Identifiable, Hashable {
     /// e.g., [0, 2, 1] = first menu, third item, second submenu item
     public let actionPath: [Int]
 
-    /// Whether this item has a checkmark
+    /// Whether this item has a checkmark.
     public let isChecked: Bool
 
-    /// Whether this item is in mixed state (dash mark)
+    /// Whether this item is in mixed state.
     public let isMixed: Bool
 
+    /// Creates a remote menu-item snapshot.
     public init(
         id: UUID = UUID(),
         title: String,
@@ -105,7 +110,8 @@ public struct MirageMenuItem: Codable, Sendable, Identifiable, Hashable {
         self.isMixed = isMixed
     }
 
-    /// Creates a separator item
+    /// Creates a separator item.
+    /// - Parameter actionPath: Path from the menu bar to the separator's position.
     public static func separator(actionPath: [Int]) -> MirageMenuItem {
         MirageMenuItem(
             title: "",
@@ -120,19 +126,19 @@ public struct MirageMenuItem: Codable, Sendable, Identifiable, Hashable {
 
 /// Represents a keyboard shortcut for a menu item.
 public struct MirageKeyboardShortcut: Codable, Sendable, Hashable {
-    /// The key character (e.g., "S", "N", "Z")
-    /// For function keys, uses "F1", "F2", etc.
+    /// Key character, or function-key label such as `F1`.
     public let key: String
 
-    /// Modifier flags (command, shift, option, control)
+    /// Modifier flags such as Command, Shift, Option, and Control.
     public let modifiers: MirageModifierFlags
 
+    /// Creates a keyboard shortcut displayed beside a remote menu item.
     public init(key: String, modifiers: MirageModifierFlags) {
         self.key = key
         self.modifiers = modifiers
     }
 
-    /// Human-readable display string (e.g., "⌘S", "⇧⌘N")
+    /// Human-readable display string such as `⌘S` or `⇧⌘N`.
     public var displayString: String {
         var result = ""
 

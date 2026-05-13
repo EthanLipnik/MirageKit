@@ -23,12 +23,7 @@ actor AudioPacketizer {
         mediaSecurityContext: MirageMediaSecurityContext? = nil
     ) {
         self.maxPayloadSize = max(1, maxPayloadSize)
-        mediaSecurityKey = mediaSecurityContext.map { MirageMediaSecurity.makePacketKey(context: $0) }
-    }
-
-    func resetCounters() {
-        frameNumber = 0
-        sequenceNumber = 0
+        mediaSecurityKey = mediaSecurityContext.map(MirageMediaPacketKey.init(context:))
     }
 
     func packetize(

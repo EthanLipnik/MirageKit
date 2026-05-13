@@ -26,21 +26,20 @@ extension VideoEncoder {
 
     nonisolated func releaseEncoderSlot() {
         encoderInFlightLock.lock()
+        defer { encoderInFlightLock.unlock() }
         encoderInFlightCount = max(0, encoderInFlightCount - 1)
-        encoderInFlightLock.unlock()
     }
 
     nonisolated func resetEncoderSlots() {
         encoderInFlightLock.lock()
+        defer { encoderInFlightLock.unlock() }
         encoderInFlightCount = 0
-        encoderInFlightLock.unlock()
     }
 
-    nonisolated func encoderInFlightSnapshot() -> Int {
+    nonisolated var encoderInFlightSnapshot: Int {
         encoderInFlightLock.lock()
-        let value = encoderInFlightCount
-        encoderInFlightLock.unlock()
-        return value
+        defer { encoderInFlightLock.unlock() }
+        return encoderInFlightCount
     }
 }
 

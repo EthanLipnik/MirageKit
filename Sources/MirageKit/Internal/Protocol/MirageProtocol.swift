@@ -11,35 +11,62 @@ import Foundation
 /// Magic number for packet validation
 package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
-/// Mirage wire-contract version for bootstrap negotiation and media packets.
+/// Mirage wire-contract version for session bootstrap and media packets.
 package let mirageProtocolVersion: UInt8 = 2
-package let mirageSupportedFeatures: MirageFeatureSet = [
-    .controlMessageRouting,
-    .protocolNegotiation,
-    .identityAuthV2,
-    .udpRegistrationAuthV1,
-    .encryptedMediaV1,
-    .sharedClipboardV1,
-    .customStreamsV1,
-]
 
-/// Audio registration packet magic value.
+/// Registration packet magic values.
 package let mirageAudioRegistrationMagic: UInt32 = 0x4D49_5241 // "MIRA"
 
 /// Default maximum UDP packet size (header + payload) to avoid IPv6 fragmentation.
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
 public let mirageDefaultMaxPacketSize: Int = 1200
 
-/// Header size in bytes:
-/// Base fields (4+1+2+2+4+8+4+2+2+1+4+4+4 = 42) +
-/// contentRect (4 x Float32 = 16) +
-/// dimensionToken (UInt16 = 2) +
-/// epoch (UInt16 = 2) = 62 total
-package let mirageHeaderSize: Int = 62
+private enum MiragePacketHeaderFieldSize {
+    static let uint8 = MemoryLayout<UInt8>.size
+    static let uint16 = MemoryLayout<UInt16>.size
+    static let uint32 = MemoryLayout<UInt32>.size
+    static let uint64 = MemoryLayout<UInt64>.size
+    static let float32 = MemoryLayout<Float32>.size
+}
+
+/// Video packet header size in bytes.
+package let mirageHeaderSize: Int =
+    MiragePacketHeaderFieldSize.uint32 + // magic
+    MiragePacketHeaderFieldSize.uint8 + // version
+    MiragePacketHeaderFieldSize.uint16 + // flags
+    MiragePacketHeaderFieldSize.uint16 + // streamID
+    MiragePacketHeaderFieldSize.uint32 + // sequenceNumber
+    MiragePacketHeaderFieldSize.uint64 + // timestamp
+    MiragePacketHeaderFieldSize.uint32 + // frameNumber
+    MiragePacketHeaderFieldSize.uint16 + // fragmentIndex
+    MiragePacketHeaderFieldSize.uint16 + // fragmentCount
+    MiragePacketHeaderFieldSize.uint8 + // fecBlockSize
+    MiragePacketHeaderFieldSize.uint32 + // payloadLength
+    MiragePacketHeaderFieldSize.uint32 + // frameByteCount
+    MiragePacketHeaderFieldSize.uint32 + // checksum
+    (4 * MiragePacketHeaderFieldSize.float32) + // contentRect
+    MiragePacketHeaderFieldSize.uint16 + // dimensionToken
+    MiragePacketHeaderFieldSize.uint16 // epoch
 
 /// Audio packet header size in bytes.
-/// Base fields (4+1+1+1+1+2+4+8+4+2+2+2+4+4+1+2+4 = 47).
-package let mirageAudioHeaderSize: Int = 47
+package let mirageAudioHeaderSize: Int =
+    MiragePacketHeaderFieldSize.uint32 + // magic
+    MiragePacketHeaderFieldSize.uint8 + // version
+    MiragePacketHeaderFieldSize.uint8 + // codec
+    MiragePacketHeaderFieldSize.uint8 + // flags
+    MiragePacketHeaderFieldSize.uint8 + // reserved
+    MiragePacketHeaderFieldSize.uint16 + // streamID
+    MiragePacketHeaderFieldSize.uint32 + // sequenceNumber
+    MiragePacketHeaderFieldSize.uint64 + // timestamp
+    MiragePacketHeaderFieldSize.uint32 + // frameNumber
+    MiragePacketHeaderFieldSize.uint16 + // fragmentIndex
+    MiragePacketHeaderFieldSize.uint16 + // fragmentCount
+    MiragePacketHeaderFieldSize.uint16 + // payloadLength
+    MiragePacketHeaderFieldSize.uint32 + // frameByteCount
+    MiragePacketHeaderFieldSize.uint32 + // sampleRate
+    MiragePacketHeaderFieldSize.uint8 + // channelCount
+    MiragePacketHeaderFieldSize.uint16 + // samplesPerFrame
+    MiragePacketHeaderFieldSize.uint32 // checksum
 
 /// AEAD authentication tag size (AES-256-GCM).
 package let mirageMediaAuthTagSize: Int = 16
@@ -53,199 +80,7 @@ package func miragePayloadSize(maxPacketSize: Int) -> Int {
     return mirageDefaultMaxPacketSize - mirageHeaderSize - mirageMediaAuthTagSize
 }
 
-/// Payload checksum validation contract:
-/// - Unencrypted packets: CRC validation is mandatory.
-/// - Encrypted packets: checksum `0` indicates AEAD-only integrity; non-zero checksums are validated.
-package func mirageShouldValidatePayloadChecksum(
-    isEncrypted: Bool,
-    checksum: UInt32
-) -> Bool {
-    !isEncrypted || checksum != 0
-}
-
-/// Audio frame packet header (47 bytes, fixed size).
-package struct AudioPacketHeader {
-    /// Magic number for validation ("MIRA").
-    package var magic: UInt32 = mirageAudioRegistrationMagic
-
-    /// Protocol version.
-    package var version: UInt8 = mirageProtocolVersion
-
-    /// Wire codec.
-    package var codec: MirageAudioCodec
-
-    /// Packet flags.
-    package var flags: AudioPacketFlags
-
-    /// Reserved for future use.
-    package var reserved: UInt8 = 0
-
-    /// Associated stream identifier.
-    package var streamID: StreamID
-
-    /// Packet sequence number (per stream).
-    package var sequenceNumber: UInt32
-
-    /// Presentation timestamp in nanoseconds.
-    package var timestamp: UInt64
-
-    /// Encoded frame number within stream.
-    package var frameNumber: UInt32
-
-    /// Fragment index within frame.
-    package var fragmentIndex: UInt16
-
-    /// Total fragments for this frame.
-    package var fragmentCount: UInt16
-
-    /// Payload length in bytes.
-    package var payloadLength: UInt16
-
-    /// Total encoded frame size in bytes.
-    package var frameByteCount: UInt32
-
-    /// Output sample rate in Hz.
-    package var sampleRate: UInt32
-
-    /// Output channel count.
-    package var channelCount: UInt8
-
-    /// Number of PCM samples per channel in this encoded frame.
-    package var samplesPerFrame: UInt16
-
-    /// CRC32 checksum for payload bytes.
-    /// Encrypted packets may set `0` to indicate AEAD-only integrity.
-    package var checksum: UInt32
-
-    package init(
-        codec: MirageAudioCodec,
-        flags: AudioPacketFlags = [],
-        streamID: StreamID,
-        sequenceNumber: UInt32,
-        timestamp: UInt64,
-        frameNumber: UInt32,
-        fragmentIndex: UInt16,
-        fragmentCount: UInt16,
-        payloadLength: UInt16,
-        frameByteCount: UInt32,
-        sampleRate: UInt32,
-        channelCount: UInt8,
-        samplesPerFrame: UInt16,
-        checksum: UInt32
-    ) {
-        self.codec = codec
-        self.flags = flags
-        self.streamID = streamID
-        self.sequenceNumber = sequenceNumber
-        self.timestamp = timestamp
-        self.frameNumber = frameNumber
-        self.fragmentIndex = fragmentIndex
-        self.fragmentCount = fragmentCount
-        self.payloadLength = payloadLength
-        self.frameByteCount = frameByteCount
-        self.sampleRate = sampleRate
-        self.channelCount = channelCount
-        self.samplesPerFrame = samplesPerFrame
-        self.checksum = checksum
-    }
-
-    package func serialize() -> Data {
-        var data = Data(capacity: mirageAudioHeaderSize)
-        withUnsafeBytes(of: magic.littleEndian) { data.append(contentsOf: $0) }
-        data.append(version)
-        data.append(codec.rawValue)
-        data.append(flags.rawValue)
-        data.append(reserved)
-        withUnsafeBytes(of: streamID.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: sequenceNumber.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: timestamp.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: frameNumber.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: fragmentIndex.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: fragmentCount.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: payloadLength.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: frameByteCount.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: sampleRate.littleEndian) { data.append(contentsOf: $0) }
-        data.append(channelCount)
-        withUnsafeBytes(of: samplesPerFrame.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: checksum.littleEndian) { data.append(contentsOf: $0) }
-        return data
-    }
-
-    package static func deserialize(from data: Data) -> AudioPacketHeader? {
-        guard data.count >= mirageAudioHeaderSize else { return nil }
-
-        var offset = 0
-
-        func read<T: FixedWidthInteger>(_: T.Type) -> T {
-            let value = data.withUnsafeBytes { ptr in
-                ptr.loadUnaligned(fromByteOffset: offset, as: T.self)
-            }
-            offset += MemoryLayout<T>.size
-            return T(littleEndian: value)
-        }
-
-        func readByte() -> UInt8 {
-            let value = data[offset]
-            offset += 1
-            return value
-        }
-
-        let magic = read(UInt32.self)
-        guard magic == mirageAudioRegistrationMagic else { return nil }
-
-        let version = readByte()
-        guard version == mirageProtocolVersion else { return nil }
-
-        let codecRaw = readByte()
-        guard let codec = MirageAudioCodec(rawValue: codecRaw) else { return nil }
-        let flags = AudioPacketFlags(rawValue: readByte())
-        _ = readByte() // reserved
-        let streamID = read(StreamID.self)
-        let sequenceNumber = read(UInt32.self)
-        let timestamp = read(UInt64.self)
-        let frameNumber = read(UInt32.self)
-        let fragmentIndex = read(UInt16.self)
-        let fragmentCount = read(UInt16.self)
-        let payloadLength = read(UInt16.self)
-        let frameByteCount = read(UInt32.self)
-        let sampleRate = read(UInt32.self)
-        let channelCount = readByte()
-        let samplesPerFrame = read(UInt16.self)
-        let checksum = read(UInt32.self)
-
-        return AudioPacketHeader(
-            codec: codec,
-            flags: flags,
-            streamID: streamID,
-            sequenceNumber: sequenceNumber,
-            timestamp: timestamp,
-            frameNumber: frameNumber,
-            fragmentIndex: fragmentIndex,
-            fragmentCount: fragmentCount,
-            payloadLength: payloadLength,
-            frameByteCount: frameByteCount,
-            sampleRate: sampleRate,
-            channelCount: channelCount,
-            samplesPerFrame: samplesPerFrame,
-            checksum: checksum
-        )
-    }
-}
-
-package struct AudioPacketFlags: OptionSet, Sendable {
-    package let rawValue: UInt8
-
-    package init(rawValue: UInt8) {
-        self.rawValue = rawValue
-    }
-
-    /// Stream discontinuity (decoder should reset buffer state).
-    package static let discontinuity = AudioPacketFlags(rawValue: 1 << 0)
-    /// Payload is encrypted with session media key.
-    package static let encryptedPayload = AudioPacketFlags(rawValue: 1 << 1)
-}
-
-/// Video frame packet header (61 bytes, fixed size)
+/// Fixed-size video frame packet header.
 package struct FrameHeader {
     /// Magic number for validation (0x4D495247 = "MIRG")
     package var magic: UInt32 = mirageProtocolMagic
@@ -284,8 +119,7 @@ package struct FrameHeader {
     /// Total encoded frame length in bytes (data only, excludes parity)
     package var frameByteCount: UInt32
 
-    /// CRC32 checksum of payload.
-    /// Encrypted packets may set `0` to indicate AEAD-only integrity.
+    /// CRC32 checksum of unencrypted payload bytes; encrypted packets set `0` because AEAD provides integrity.
     package var checksum: UInt32
 
     /// Content rectangle within the frame buffer (x, y, width, height in pixels)
@@ -340,7 +174,7 @@ package struct FrameHeader {
         self.epoch = epoch
     }
 
-    /// Get contentRect as CGRect
+    /// Content rectangle represented as a Core Graphics rectangle.
     package var contentRect: CGRect {
         CGRect(
             x: CGFloat(contentRectX),
@@ -350,7 +184,7 @@ package struct FrameHeader {
         )
     }
 
-    /// Serialize header to bytes
+    /// Serializes the header to its fixed-width little-endian wire layout.
     package func serialize() -> Data {
         var data = Data(capacity: mirageHeaderSize)
 
@@ -386,7 +220,7 @@ package struct FrameHeader {
         guard buffer.count >= mirageHeaderSize, buffer.baseAddress != nil else { return }
         var offset = 0
 
-        func write<T: FixedWidthInteger>(_ value: T) {
+        func write(_ value: some FixedWidthInteger) {
             var littleEndian = value.littleEndian
             withUnsafeBytes(of: &littleEndian) { bytes in
                 let end = offset + bytes.count
@@ -421,13 +255,13 @@ package struct FrameHeader {
         write(epoch)
     }
 
-    /// Deserialize header from bytes
+    /// Deserializes a fixed-width little-endian header from packet bytes.
     package static func deserialize(from data: Data) -> FrameHeader? {
         guard data.count >= mirageHeaderSize else { return nil }
 
         var offset = 0
 
-        func read<T: FixedWidthInteger>(_: T.Type) -> T {
+        func read<T: FixedWidthInteger>() -> T {
             let value = data.withUnsafeBytes { ptr in
                 ptr.loadUnaligned(fromByteOffset: offset, as: T.self)
             }
@@ -442,38 +276,38 @@ package struct FrameHeader {
         }
 
         func readFloat32() -> Float32 {
-            let bits = read(UInt32.self)
+            let bits: UInt32 = read()
             return Float32(bitPattern: bits)
         }
 
-        let magic = read(UInt32.self)
+        let magic: UInt32 = read()
         guard magic == mirageProtocolMagic else { return nil }
 
         let version = readByte()
         guard version == mirageProtocolVersion else { return nil }
 
-        let flagsRaw = read(UInt16.self)
+        let flagsRaw: UInt16 = read()
         let flags = FrameFlags(rawValue: flagsRaw)
-        let streamID = read(UInt16.self)
-        let sequenceNumber = read(UInt32.self)
-        let timestamp = read(UInt64.self)
-        let frameNumber = read(UInt32.self)
-        let fragmentIndex = read(UInt16.self)
-        let fragmentCount = read(UInt16.self)
+        let streamID: UInt16 = read()
+        let sequenceNumber: UInt32 = read()
+        let timestamp: UInt64 = read()
+        let frameNumber: UInt32 = read()
+        let fragmentIndex: UInt16 = read()
+        let fragmentCount: UInt16 = read()
         let fecBlockSize = readByte()
-        let payloadLength = read(UInt32.self)
-        let frameByteCount = read(UInt32.self)
-        let checksum = read(UInt32.self)
+        let payloadLength: UInt32 = read()
+        let frameByteCount: UInt32 = read()
+        let checksum: UInt32 = read()
         let contentRectX = readFloat32()
         let contentRectY = readFloat32()
         let contentRectWidth = readFloat32()
         let contentRectHeight = readFloat32()
 
         // Dimension token
-        let dimensionToken = read(UInt16.self)
+        let dimensionToken: UInt16 = read()
 
         // Epoch
-        let epoch = read(UInt16.self)
+        let epoch: UInt16 = read()
 
         return FrameHeader(
             flags: flags,
@@ -519,7 +353,7 @@ package struct FrameFlags: OptionSet, Sendable {
     /// Stream discontinuity (decoder should reset)
     package static let discontinuity = FrameFlags(rawValue: 1 << 3)
 
-    /// High priority packet (for QoS)
+    /// High-priority packet for QoS and ingress recovery.
     package static let priority = FrameFlags(rawValue: 1 << 4)
 
     /// This is a full desktop stream (virtual display mirroring mode)

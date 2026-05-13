@@ -18,7 +18,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 1000, height: 700),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 100, height: 44),
-            buttonsHiddenState: .unknown,
             source: .fallback
         )
 
@@ -44,7 +43,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 102, height: 420),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 100, height: 44),
-            buttonsHiddenState: .unknown,
             source: .fallback
         )
 
@@ -69,7 +67,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 1000, height: 500),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 200, height: 100),
-            buttonsHiddenState: .unknown,
             source: .fallback
         )
 
@@ -92,7 +89,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         let oversizedGeometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 500, height: 250),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 2000, height: 1000),
-            buttonsHiddenState: .unknown,
             source: .fallback
         )
         let clampedDecision = HostTrafficLightCloneStampPlanner.makeDecision(
@@ -117,7 +113,6 @@ struct HostTrafficLightCloneStampPlannerTests {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 1000, height: 700),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 96, height: 44),
-            buttonsHiddenState: .unknown,
             source: .fallback
         )
 

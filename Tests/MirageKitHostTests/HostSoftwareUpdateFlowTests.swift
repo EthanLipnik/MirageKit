@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/16/26.
 //
-//  Coverage for host-side software update mismatch and control-flow handling.
+//  Coverage for host-side software update control-flow handling.
 //
 
 @testable import MirageKit
@@ -15,110 +15,30 @@ import Testing
 @Suite("Host Software Update Flow")
 struct HostSoftwareUpdateFlowTests {
     @MainActor
-    @Test("Protocol mismatch metadata round-trips in bootstrap rejection payload")
-    func protocolMismatchMetadataRoundTrip() throws {
-        let response = MirageSessionBootstrapResponse(
-            accepted: false,
-            hostID: UUID(),
-            hostName: "Host",
-            selectedFeatures: [],
-            mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
-            rejectionReason: .protocolVersionMismatch,
-            protocolMismatchHostVersion: 7,
-            protocolMismatchClientVersion: 8,
-            protocolMismatchUpdateTriggerAccepted: true,
-            protocolMismatchUpdateTriggerMessage: "Update request accepted."
-        )
-        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
-
-        #expect(!decoded.accepted)
-        #expect(decoded.rejectionReason == .protocolVersionMismatch)
-        #expect(decoded.protocolMismatchHostVersion == 7)
-        #expect(decoded.protocolMismatchClientVersion == 8)
-        #expect(decoded.protocolMismatchUpdateTriggerAccepted == true)
-        #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update request accepted.")
-    }
-
-    @MainActor
-    @Test("Protocol mismatch update trigger returns install result")
-    func protocolMismatchUpdateTriggerReturnsInstallResult() async {
-        let host = MirageHostService()
-        let controller = MockHostSoftwareUpdateController()
-        host.softwareUpdateController = controller
-
-        let peerIdentity = makePeerIdentity()
-        let mismatchRequest = makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: true)
-
-        controller.installResult = .init(
-            accepted: true,
-            message: "Install started.",
-            code: .started,
-            blockReason: nil,
-            remediationHint: nil,
-            status: controller.snapshot
-        )
-
-        let acceptedResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            request: mismatchRequest,
-            peerIdentity: peerIdentity
-        )
-        #expect(acceptedResult?.accepted == true)
-        #expect(acceptedResult?.message == "Install started.")
-
-        controller.installResult = .init(
-            accepted: false,
-            message: "Remote update request denied for this device.",
-            code: .denied,
-            blockReason: .policyDenied,
-            remediationHint: nil,
-            status: controller.snapshot
-        )
-        let deniedResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            request: mismatchRequest,
-            peerIdentity: peerIdentity
-        )
-        #expect(deniedResult?.accepted == false)
-        #expect(deniedResult?.message == "Remote update request denied for this device.")
-
-        let noRequestRequest = makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: nil)
-        let noRequestResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            request: noRequestRequest,
-            peerIdentity: peerIdentity
-        )
-        #expect(noRequestResult == nil)
-    }
-
-    @MainActor
     @Test("Connected install request returns denied result for unauthorized peers")
     func connectedInstallRequestDeniedForUnauthorizedPeer() async {
         let host = MirageHostService()
         let controller = MockHostSoftwareUpdateController()
         host.softwareUpdateController = controller
-        controller.installResult = .init(
+        controller.installResult = MirageHostSoftwareUpdateInstallResult(
             accepted: false,
-            message: "Remote update request denied for this device.",
+            message: "Approve this client on the host before requesting a remote update.",
             code: .denied,
-            blockReason: .policyDenied,
-            remediationHint: nil,
+            blockReason: .authorizationRequired,
+            remediationHint: "Open Mirage Host on the Mac and approve or trust this client, then try again.",
             status: controller.snapshot
         )
 
         let result = await host.resolveHostSoftwareUpdateInstallResult(
-            for: makePeerIdentity(),
-            trigger: .manual
+            for: makePeerIdentity()
         )
 
-        #expect(result.accepted == false)
-        #expect(result.message == "Remote update request denied for this device.")
-        #expect(result.status?.currentVersion == controller.snapshot.currentVersion)
+        #expect(result.message == "Approve this client on the host before requesting a remote update.")
+        #expect(result.status.currentVersion == controller.snapshot.currentVersion)
         #expect(result.resultCode == .denied)
-        #expect(result.blockReason == .policyDenied)
-        #expect(result.remediationHint == nil)
+        #expect(result.blockReason == .authorizationRequired)
+        #expect(result.remediationHint == "Open Mirage Host on the Mac and approve or trust this client, then try again.")
     }
-
 }
 
 @MainActor
@@ -176,22 +96,17 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
             lastCheckedAtMs: 1_700_000_000_000
         )
     )
-    var lastStatusForceRefresh: Bool?
-    var lastInstallTrigger: MirageHostSoftwareUpdateInstallTrigger?
 
     func softwareUpdateStatus(
-        forceRefresh: Bool
+        forceRefresh _: Bool
     ) async -> MirageHostSoftwareUpdateStatusSnapshot {
-        lastStatusForceRefresh = forceRefresh
-        return snapshot
+        snapshot
     }
 
     func performSoftwareUpdateInstall(
-        for _: LoomPeerIdentity,
-        trigger: MirageHostSoftwareUpdateInstallTrigger
+        for _: LoomPeerIdentity
     ) async -> MirageHostSoftwareUpdateInstallResult {
-        lastInstallTrigger = trigger
-        return installResult
+        installResult
     }
 }
 
@@ -208,12 +123,4 @@ private func makePeerIdentity() -> LoomPeerIdentity {
     )
 }
 
-private func makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: Bool?) -> MirageSessionBootstrapRequest {
-    MirageSessionBootstrapRequest(
-        protocolVersion: Int(MirageKit.protocolVersion),
-        requestedFeatures: mirageSupportedFeatures,
-        clientRequiresMediaEncryption: false,
-        requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
-    )
-}
 #endif

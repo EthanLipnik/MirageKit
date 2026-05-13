@@ -7,7 +7,7 @@
 //  Audio frame decode and downmix helpers for playback.
 //
 
-@preconcurrency import AVFAudio
+import AVFAudio
 import AudioToolbox
 import Foundation
 import MirageKit
@@ -25,26 +25,35 @@ struct DecodedPCMFrame: Sendable {
     }
 }
 
-actor AudioDecoder {
-    private final class ConverterInputProvider: @unchecked Sendable {
-        private let buffer: AVAudioBuffer
-        private var didProvideInput = false
+private final class AudioDecoderInputProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private let buffer: AVAudioBuffer
+    private let drainedStatus: AVAudioConverterInputStatus
+    private var hasProvidedInput = false
 
-        init(buffer: AVAudioBuffer) {
-            self.buffer = buffer
-        }
-
-        func nextBuffer(outStatus: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
-            if didProvideInput {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            didProvideInput = true
-            outStatus.pointee = .haveData
-            return buffer
-        }
+    init(buffer: AVAudioBuffer, drainedStatus: AVAudioConverterInputStatus = .endOfStream) {
+        self.buffer = buffer
+        self.drainedStatus = drainedStatus
     }
 
+    func provideInput(
+        outStatus: UnsafeMutablePointer<AVAudioConverterInputStatus>
+    ) -> AVAudioBuffer? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard !hasProvidedInput else {
+            outStatus.pointee = drainedStatus
+            return nil
+        }
+
+        hasProvidedInput = true
+        outStatus.pointee = .haveData
+        return buffer
+    }
+}
+
+actor AudioDecoder {
     private struct ConverterKey: Hashable {
         let codec: MirageAudioCodec
         let inputSampleRate: Int
@@ -150,10 +159,10 @@ actor AudioDecoder {
             return nil
         }
 
-        let inputProvider = ConverterInputProvider(buffer: compressedBuffer)
+        let inputProvider = AudioDecoderInputProvider(buffer: compressedBuffer)
         var conversionError: NSError?
         let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-            inputProvider.nextBuffer(outStatus: outStatus)
+            inputProvider.provideInput(outStatus: outStatus)
         }
 
         guard conversionError == nil else { return nil }
@@ -221,10 +230,10 @@ actor AudioDecoder {
             return nil
         }
 
-        let inputProvider = ConverterInputProvider(buffer: inputBuffer)
+        let inputProvider = AudioDecoderInputProvider(buffer: inputBuffer)
         var conversionError: NSError?
         let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-            inputProvider.nextBuffer(outStatus: outStatus)
+            inputProvider.provideInput(outStatus: outStatus)
         }
 
         guard conversionError == nil else { return nil }

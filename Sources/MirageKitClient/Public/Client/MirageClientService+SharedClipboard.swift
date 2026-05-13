@@ -48,7 +48,6 @@ extension MirageClientService {
     }
 
     /// Reads the local clipboard and sends it to the host. Called on Cmd+V.
-    @discardableResult
     public func syncLocalClipboardToHost() async -> Bool {
         guard case .connected = connectionState,
               sharedClipboardEnabled,
@@ -78,7 +77,8 @@ extension MirageClientService {
         #endif
     }
 
-    func sendSharedClipboardUpdateReliably(
+    #if canImport(UIKit)
+    private func sendSharedClipboardUpdateReliably(
         localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64
     ) async throws {
@@ -92,11 +92,10 @@ extension MirageClientService {
         let messages = try MirageSharedClipboard.makeUpdateMessages(
             localSend: localSend,
             sentAtMs: sentAtMs,
-            mediaSecurityContext: mediaSecurityContext,
-            source: .client
+            mediaSecurityContext: mediaSecurityContext
         )
         MirageLogger.client(
-            "Sending shared clipboard update to host: kind=\(localSend.item.representation.kind.rawValue), bytes=\(localSend.item.representation.byteCount), chunks=\(messages.count), transferable=\(localSend.hasPayload)"
+            "Sending shared clipboard update to host: kind=\(localSend.item.representation.kind.rawValue), bytes=\(localSend.item.representation.byteCount), chunks=\(messages.count), transferable=\(localSend.item.payload != nil)"
         )
         for (index, message) in messages.enumerated() {
             try await controlChannel.send(message)
@@ -104,6 +103,7 @@ extension MirageClientService {
             try await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
         }
     }
+    #endif
 
     func ensureSharedClipboardBridge() -> MirageClientSharedClipboardBridge {
         if let sharedClipboardBridge {

@@ -8,22 +8,33 @@
 //
 
 import Foundation
-import Network
 import MirageKit
+import Network
 
+/// Strategy used when building a client-to-host network quality test.
 public enum MirageQualityTestMode: Sendable {
+    /// Measures transport and replay throughput, then chooses a stable operating point.
     case automaticSelection
+    /// Sweeps upward until packet loss crosses the connection limit threshold.
     case connectionLimit
 }
 
+/// Incremental progress emitted while a client quality test advances through probe stages.
 public struct MirageQualityTestProgressUpdate: Sendable {
+    /// One-based index of the stage currently being measured.
     public let currentStage: Int
+    /// Total number of planned stages.
     public let totalStages: Int
+    /// Number of stages completed before this update.
     public let completedStages: Int
+    /// Probe path used by the current stage.
     public let probeKind: MirageQualityTestPlan.ProbeKind
+    /// Target bitrate for the current stage, in bits per second.
     public let targetBitrateBps: Int
+    /// Most recent completed stage result, when available.
     public let latestCompletedStageResult: MirageQualityTestSummary.StageResult?
 
+    /// Creates a quality-test progress update.
     public init(
         currentStage: Int,
         totalStages: Int,
@@ -43,53 +54,7 @@ public struct MirageQualityTestProgressUpdate: Sendable {
 
 @MainActor
 extension MirageClientService {
-    private struct QualityTestProbeProfile {
-        let probeKind: MirageQualityTestPlan.ProbeKind
-        let minTargetBitrate: Int
-        let maxTargetBitrate: Int
-        let warmupDurationMs: Int
-        let stageDurationMs: Int
-        let growthFactor: Double
-        let maxStages: Int
-        let throughputFloor: Double?
-        let lossCeiling: Double
-        let includesRefinementTargets: Bool
-    }
-
-    private struct QualityTestModeProfile {
-        let transport: QualityTestProbeProfile
-        let streamingReplay: QualityTestProbeProfile
-    }
-
-    struct QualityTestExecutionPlan {
-        let plan: MirageQualityTestPlan
-        let transportMeasurementStageIDs: Set<Int>
-        let streamingReplayMeasurementStageIDs: Set<Int>
-        let stopAfterFirstBreach: Bool
-    }
-
-    struct QualityTestPhaseSummary {
-        let bitrateBps: Int
-        let lossPercent: Double
-    }
-
-    nonisolated static func resolvedQualityTestCandidateBitrate(
-        stableBitrateBps: Int,
-        measuredBitrateBps: Int
-    ) -> Int {
-        if stableBitrateBps > 0 { return stableBitrateBps }
-        return max(0, measuredBitrateBps)
-    }
-
-    nonisolated static func defaultQualityTestSweepTargets() -> [Int] {
-        qualityTestSweepTargets(profile: qualityTestProfile(for: .automaticSelection).streamingReplay)
-    }
-
-    nonisolated static func connectionLimitQualityTestSweepTargets() -> [Int] {
-        qualityTestSweepTargets(profile: qualityTestProfile(for: .connectionLimit).transport)
-    }
-
-    nonisolated static let qualityTestControlMessageMarginMs = 1_500
+    nonisolated static let qualityTestControlMessageMarginMs = 1500
     nonisolated static let connectionLimitLossThresholdPercent = 1.0
 
     nonisolated static func qualityTestShouldStopConnectionLimitSweep(
@@ -98,6 +63,7 @@ extension MirageClientService {
         stage.lossPercent >= connectionLimitLossThresholdPercent
     }
 
+    /// Runs the negotiated client-to-host quality test and returns the measured summary.
     public func runQualityTest(
         includeThroughput: Bool = true,
         mode: MirageQualityTestMode = .automaticSelection,
@@ -111,16 +77,17 @@ extension MirageClientService {
 
             qualityTestPendingTestID = testID
 
-            let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
+            let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
             let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
-            let executionPlan = includeThroughput
-                ? Self.qualityTestExecutionPlan(for: mode)
-                : QualityTestExecutionPlan(
-                    plan: MirageQualityTestPlan(stages: []),
-                    transportMeasurementStageIDs: [],
-                    streamingReplayMeasurementStageIDs: [],
-                    stopAfterFirstBreach: false
-                )
+            let executionPlan =
+                includeThroughput
+                    ? Self.qualityTestExecutionPlan(for: mode)
+                    : QualityTestExecutionPlan(
+                        plan: MirageQualityTestPlan(stages: []),
+                        transportMeasurementStageIDs: [],
+                        streamingReplayMeasurementStageIDs: [],
+                        stopAfterFirstBreach: false
+                    )
 
             if includeThroughput {
                 MirageLogger.client(
@@ -131,7 +98,9 @@ extension MirageClientService {
             }
 
             let benchmarkTask = Task { try await runDecodeBenchmark() }
-            let hostBenchmarkTimeout = Duration.milliseconds(executionPlan.plan.totalDurationMs + 20_000)
+            let hostBenchmarkTimeout = Duration.milliseconds(
+                executionPlan.plan.totalDurationMs + 20000
+            )
             let hostBenchmarkTask = Task { [weak self] in
                 await self?.awaitQualityTestBenchmark(testID: testID, timeout: hostBenchmarkTimeout)
             }
@@ -160,7 +129,7 @@ extension MirageClientService {
                 onStageUpdate: onStageUpdate
             )
 
-            let benchmarkRecord = try await benchmarkTask.value
+            let clientDecodeMs = try await benchmarkTask.value
             let hostBenchmark = await hostBenchmarkTask.value
 
             let transportSummary = Self.summarizeQualityTestPhase(
@@ -187,29 +156,34 @@ extension MirageClientService {
                 streamingSummary: streamingSummary
             )
 
-            if resolvedBitrates.transportHeadroomBps <= 0 && resolvedBitrates.streamingSafeBitrateBps <= 0 {
-                throw MirageError.protocolError("Connection test failed: no usable throughput measurement was recorded.")
+            if resolvedBitrates.transportHeadroomBps <= 0
+                && resolvedBitrates.streamingSafeBitrateBps <= 0 {
+                throw MirageError.protocolError(
+                    "Connection test failed: no usable throughput measurement was recorded."
+                )
             }
 
-            let lossPercent = streamingSummary.bitrateBps > 0 ? streamingSummary.lossPercent : transportSummary.lossPercent
+            let lossPercent =
+                streamingSummary.bitrateBps > 0
+                    ? streamingSummary.lossPercent : transportSummary.lossPercent
             return MirageQualityTestSummary(
                 testID: testID,
                 rttMs: rttMs,
                 lossPercent: lossPercent,
                 transportHeadroomBps: resolvedBitrates.transportHeadroomBps,
                 streamingSafeBitrateBps: resolvedBitrates.streamingSafeBitrateBps,
-                targetFrameRate: getScreenMaxRefreshRate(),
-                benchmarkWidth: benchmarkRecord.benchmarkWidth,
-                benchmarkHeight: benchmarkRecord.benchmarkHeight,
+                targetFrameRate: screenMaxRefreshRate,
+                benchmarkWidth: MirageCodecBenchmarkConstants.benchmarkWidth,
+                benchmarkHeight: MirageCodecBenchmarkConstants.benchmarkHeight,
                 hostEncodeMs: hostBenchmark?.encodeMs,
-                clientDecodeMs: benchmarkRecord.clientDecodeMs,
+                clientDecodeMs: clientDecodeMs,
                 hostCaptureCapability: hostBenchmark?.hostCaptureCapability,
                 stageResults: stageResults
             )
         } onCancel: {
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                await self.cancelActiveQualityTest(
+                await cancelActiveQualityTest(
                     reason: "quality test task cancelled",
                     notifyHost: true
                 )
@@ -217,6 +191,7 @@ extension MirageClientService {
         }
     }
 
+    /// Runs a short in-stream probe at a target bitrate on the active connection.
     public func runInStreamProbe(
         targetBitrateBps: Int,
         durationMs: Int = 600
@@ -226,13 +201,11 @@ extension MirageClientService {
         }
 
         let testID = UUID()
-        let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
+        let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize
         let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
 
-        let targetMbps = (Double(targetBitrateBps) / 1_000_000.0)
-            .formatted(.number.precision(.fractionLength(1)))
         MirageLogger.client(
-            "In-stream probe starting: target \(targetMbps) Mbps, duration \(durationMs)ms"
+            "In-stream probe starting: target \(mirageFormattedMegabitRate(targetBitrateBps)), duration \(durationMs)ms"
         )
 
         let result = try await runQualityTestStage(
@@ -256,19 +229,17 @@ extension MirageClientService {
         return result
     }
 
-    func handlePing() {
-        sendControlMessageBestEffort(.pong)
-    }
-
-    func handlePong() {
-        completePingRequest(
-            expectedRequestID: pingRequestID,
-            result: .success(())
-        )
-    }
-
+    /// Handles the host-side encode benchmark result for the active quality test.
     func handleQualityTestBenchmark(_ message: ControlMessage) {
-        guard let result = try? message.decode(QualityTestBenchmarkMessage.self) else { return }
+        let result: QualityTestBenchmarkMessage
+        do {
+            result = try message.decode(QualityTestBenchmarkMessage.self)
+        } catch {
+            MirageLogger.error(
+                .client, error: error, message: "Failed to decode quality test benchmark: "
+            )
+            return
+        }
         guard qualityTestPendingTestID == result.testID else { return }
         completeQualityTestBenchmarkWaiter(
             expectedTestID: result.testID,
@@ -276,8 +247,17 @@ extension MirageClientService {
         )
     }
 
+    /// Handles a host-reported quality-test stage completion or buffers it until the stage waiter is armed.
     func handleQualityTestStageCompletion(_ message: ControlMessage) {
-        guard let result = try? message.decode(QualityTestStageCompleteMessage.self) else { return }
+        let result: QualityTestStageCompleteMessage
+        do {
+            result = try message.decode(QualityTestStageCompleteMessage.self)
+        } catch {
+            MirageLogger.error(
+                .client, error: error, message: "Failed to decode quality test stage completion: "
+            )
+            return
+        }
         guard qualityTestPendingTestID == result.testID else { return }
 
         if qualityTestStageCompletionContinuation != nil {
@@ -290,302 +270,4 @@ extension MirageClientService {
         }
     }
 
-    nonisolated static func summarizeQualityTestPhase(
-        stageResults: [MirageQualityTestSummary.StageResult],
-        measurementStageIDs: Set<Int>,
-        throughputFloor: Double?,
-        lossCeiling: Double,
-        payloadBytes: Int,
-        requiresLossBelowCeiling: Bool = false,
-        allowsMeasuredFallback: Bool = true
-    ) -> QualityTestPhaseSummary {
-        let measuredStages = stageResults
-            .filter { measurementStageIDs.contains($0.stageID) }
-            .sorted { $0.stageID < $1.stageID }
-
-        var lastStableBitrate = 0
-        var lastStableLoss = 0.0
-        var candidateBitrate = 0
-        var candidateLoss = 0.0
-
-        for stage in measuredStages {
-            if stage.throughputBps > candidateBitrate {
-                candidateBitrate = stage.throughputBps
-                candidateLoss = stage.lossPercent
-            }
-            if qualityTestStageIsStable(
-                stage,
-                targetBitrate: stage.targetBitrateBps,
-                payloadBytes: payloadBytes,
-                throughputFloor: throughputFloor,
-                lossCeiling: lossCeiling,
-                requiresLossBelowCeiling: requiresLossBelowCeiling
-            ) {
-                lastStableBitrate = stage.throughputBps
-                lastStableLoss = stage.lossPercent
-            }
-        }
-
-        let bitrateBps: Int
-        if allowsMeasuredFallback {
-            bitrateBps = Self.resolvedQualityTestCandidateBitrate(
-                stableBitrateBps: lastStableBitrate,
-                measuredBitrateBps: candidateBitrate
-            )
-        } else {
-            bitrateBps = lastStableBitrate
-        }
-
-        let lossPercent: Double
-        if lastStableBitrate > 0 {
-            lossPercent = lastStableLoss
-        } else if allowsMeasuredFallback {
-            lossPercent = candidateLoss
-        } else {
-            lossPercent = 0
-        }
-        return QualityTestPhaseSummary(
-            bitrateBps: bitrateBps,
-            lossPercent: lossPercent
-        )
-    }
-
-    nonisolated static func resolvedQualityTestSummaryBitrates(
-        mode: MirageQualityTestMode,
-        transportSummary: QualityTestPhaseSummary,
-        streamingSummary: QualityTestPhaseSummary
-    ) -> (transportHeadroomBps: Int, streamingSafeBitrateBps: Int) {
-        let transportHeadroomBps = transportSummary.bitrateBps
-        let streamingSafeBitrateBps: Int
-        switch mode {
-        case .automaticSelection:
-            streamingSafeBitrateBps = streamingSummary.bitrateBps
-        case .connectionLimit:
-            // Manual connection-limit probes can terminate during transport before any
-            // replay stages are sampled. Surface the last clean transport bitrate as the
-            // best available safe estimate instead of reporting an artificial zero.
-            streamingSafeBitrateBps = streamingSummary.bitrateBps > 0
-                ? streamingSummary.bitrateBps
-                : transportHeadroomBps
-        }
-
-        return (
-            transportHeadroomBps: transportHeadroomBps,
-            streamingSafeBitrateBps: streamingSafeBitrateBps
-        )
-    }
-
-    nonisolated static func qualityTestStageIsStable(
-        _ stage: MirageQualityTestSummary.StageResult,
-        targetBitrate: Int,
-        payloadBytes: Int,
-        throughputFloor: Double?,
-        lossCeiling: Double,
-        requiresLossBelowCeiling: Bool = false
-    ) -> Bool {
-        if requiresLossBelowCeiling {
-            guard stage.lossPercent < lossCeiling else { return false }
-        } else {
-            guard stage.lossPercent <= lossCeiling else { return false }
-        }
-        guard !stage.deliveryWindowMissed else { return false }
-        guard let throughputFloor else { return true }
-        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
-        let payloadRatio = packetBytes > 0
-            ? Double(payloadBytes) / Double(packetBytes)
-            : 1.0
-        let targetPayloadBps = Double(targetBitrate) * payloadRatio
-        return Double(stage.throughputBps) >= targetPayloadBps * throughputFloor
-    }
-
-    nonisolated private static func qualityTestProfile(
-        for mode: MirageQualityTestMode
-    ) -> QualityTestModeProfile {
-        switch mode {
-        case .automaticSelection:
-            return QualityTestModeProfile(
-                transport: QualityTestProbeProfile(
-                    probeKind: .transport,
-                    minTargetBitrate: 8_000_000,
-                    maxTargetBitrate: 600_000_000,
-                    warmupDurationMs: 800,
-                    stageDurationMs: 1_200,
-                    growthFactor: 1.55,
-                    maxStages: 11,
-                    throughputFloor: nil,
-                    lossCeiling: 5.0,
-                    includesRefinementTargets: false
-                ),
-                streamingReplay: QualityTestProbeProfile(
-                    probeKind: .streamingReplay,
-                    minTargetBitrate: 8_000_000,
-                    maxTargetBitrate: 600_000_000,
-                    warmupDurationMs: 800,
-                    stageDurationMs: 1_500,
-                    growthFactor: 1.55,
-                    maxStages: 11,
-                    throughputFloor: 0.9,
-                    lossCeiling: 2.0,
-                    includesRefinementTargets: true
-                )
-            )
-        case .connectionLimit:
-            return QualityTestModeProfile(
-                transport: QualityTestProbeProfile(
-                    probeKind: .transport,
-                    minTargetBitrate: 8_000_000,
-                    maxTargetBitrate: 10_000_000_000,
-                    warmupDurationMs: 800,
-                    stageDurationMs: 1_500,
-                    growthFactor: 2.0,
-                    maxStages: 16,
-                    throughputFloor: nil,
-                    lossCeiling: 1.0,
-                    includesRefinementTargets: false
-                ),
-                streamingReplay: QualityTestProbeProfile(
-                    probeKind: .streamingReplay,
-                    minTargetBitrate: 8_000_000,
-                    maxTargetBitrate: 10_000_000_000,
-                    warmupDurationMs: 800,
-                    stageDurationMs: 1_500,
-                    growthFactor: 2.0,
-                    maxStages: 16,
-                    throughputFloor: 0.9,
-                    lossCeiling: 1.0,
-                    includesRefinementTargets: false
-                )
-            )
-        }
-    }
-
-    nonisolated static func qualityTestExecutionPlan(
-        for mode: MirageQualityTestMode
-    ) -> QualityTestExecutionPlan {
-        let modeProfile = Self.qualityTestProfile(for: mode)
-        var stages: [MirageQualityTestPlan.Stage] = []
-        var nextStageID = 0
-
-        func appendStages(
-            for profile: QualityTestProbeProfile
-        ) -> Set<Int> {
-            var measurementStageIDs: Set<Int> = []
-            let measurementTargets = Self.qualityTestMeasurementTargets(profile: profile)
-
-            stages.append(
-                MirageQualityTestPlan.Stage(
-                    id: nextStageID,
-                    probeKind: profile.probeKind,
-                    targetBitrateBps: profile.minTargetBitrate,
-                    durationMs: profile.warmupDurationMs
-                )
-            )
-            nextStageID += 1
-
-            for target in measurementTargets {
-                let stageID = nextStageID
-                stages.append(
-                    MirageQualityTestPlan.Stage(
-                        id: stageID,
-                        probeKind: profile.probeKind,
-                        targetBitrateBps: target,
-                        durationMs: profile.stageDurationMs
-                    )
-                )
-                measurementStageIDs.insert(stageID)
-                nextStageID += 1
-            }
-            return measurementStageIDs
-        }
-
-        let transportMeasurementStageIDs: Set<Int>
-        let streamingReplayMeasurementStageIDs: Set<Int>
-        switch mode {
-        case .automaticSelection:
-            transportMeasurementStageIDs = []
-            streamingReplayMeasurementStageIDs = appendStages(for: modeProfile.streamingReplay)
-        case .connectionLimit:
-            transportMeasurementStageIDs = appendStages(for: modeProfile.transport)
-            streamingReplayMeasurementStageIDs = appendStages(for: modeProfile.streamingReplay)
-        }
-        return QualityTestExecutionPlan(
-            plan: MirageQualityTestPlan(stages: stages),
-            transportMeasurementStageIDs: transportMeasurementStageIDs,
-            streamingReplayMeasurementStageIDs: streamingReplayMeasurementStageIDs,
-            stopAfterFirstBreach: false
-        )
-    }
-
-    nonisolated static func qualityTestStabilityConstraints(
-        for mode: MirageQualityTestMode,
-        probeKind: MirageQualityTestPlan.ProbeKind
-    ) -> (throughputFloor: Double?, lossCeiling: Double) {
-        let modeProfile = qualityTestProfile(for: mode)
-        switch probeKind {
-        case .transport:
-            return (modeProfile.transport.throughputFloor, modeProfile.transport.lossCeiling)
-        case .streamingReplay:
-            return (modeProfile.streamingReplay.throughputFloor, modeProfile.streamingReplay.lossCeiling)
-        }
-    }
-
-    nonisolated private static func qualityTestMeasurementTargets(
-        profile: QualityTestProbeProfile
-    ) -> [Int] {
-        let baseTargets = qualityTestSweepTargets(profile: profile)
-        guard profile.includesRefinementTargets, baseTargets.count > 1 else {
-            return baseTargets
-        }
-
-        var targets: [Int] = []
-        for (index, lower) in baseTargets.enumerated() {
-            targets.append(lower)
-            guard index < baseTargets.count - 1 else { continue }
-            let upper = baseTargets[index + 1]
-            let midpoint = Int(Double(lower) * sqrt(Double(upper) / Double(max(1, lower))))
-            if midpoint > lower, midpoint < upper {
-                targets.append(midpoint)
-            }
-        }
-        return targets
-    }
-
-    nonisolated private static func qualityTestSweepTargets(
-        profile: QualityTestProbeProfile
-    ) -> [Int] {
-        qualityTestSweepTargets(
-            minTargetBitrate: profile.minTargetBitrate,
-            maxTargetBitrate: profile.maxTargetBitrate,
-            growthFactor: profile.growthFactor,
-            maxStages: profile.maxStages
-        )
-    }
-
-    nonisolated private static func qualityTestSweepTargets(
-        minTargetBitrate: Int,
-        maxTargetBitrate: Int,
-        growthFactor: Double,
-        maxStages: Int
-    ) -> [Int] {
-        guard minTargetBitrate > 0 else { return [] }
-        guard maxStages > 0 else { return [] }
-        guard growthFactor > 1 else { return [minTargetBitrate] }
-
-        var targets: [Int] = []
-        var targetBitrate = minTargetBitrate
-        while targets.count < maxStages, targetBitrate <= maxTargetBitrate {
-            targets.append(targetBitrate)
-            let next = Int(Double(targetBitrate) * growthFactor)
-            if next <= targetBitrate { break }
-            if next > maxTargetBitrate {
-                if targets.count < maxStages, targets.last != maxTargetBitrate {
-                    targets.append(maxTargetBitrate)
-                }
-                break
-            }
-            targetBitrate = next
-        }
-
-        return targets
-    }
 }

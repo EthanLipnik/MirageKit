@@ -8,11 +8,13 @@
 #if os(iOS) || os(visionOS)
 import UIKit
 
+/// UIResponder endpoint that should own stream input at the current moment.
 enum InputCapturingResponderTarget: String {
     case captureView = "capture_view"
     case softwareKeyboardField = "software_keyboard_field"
 }
 
+/// Event that asks the stream view to re-evaluate first-responder ownership.
 enum InputCapturingResponderRecoveryTrigger: String {
     case didMoveToWindow = "did_move_to_window"
     case applicationDidBecomeActive = "application_did_become_active"
@@ -29,27 +31,29 @@ enum InputCapturingResponderRecoveryTrigger: String {
     case interaction = "interaction"
 }
 
+/// Window, scene, and responder state used to decide whether recovery is safe.
 struct InputCapturingResponderRecoveryContext: Equatable {
-    let inputCaptureEnabled: Bool
     let hasWindow: Bool
     let isKeyWindow: Bool
     let sceneActivationState: UIScene.ActivationState?
     let targetIsFirstResponder: Bool
 }
 
+/// Reason responder recovery was deferred or skipped.
 enum InputCapturingResponderRecoverySkipReason: String, Equatable {
-    case inputCaptureDisabled = "input_capture_disabled"
     case noWindow = "no_window"
     case windowNotKey = "window_not_key"
     case sceneNotForegroundActive = "scene_not_foreground_active"
     case targetAlreadyFirstResponder = "target_already_first_responder"
 }
 
+/// Policy result for a responder recovery attempt.
 enum InputCapturingResponderRecoveryDecision: Equatable {
     case recover
     case skip(InputCapturingResponderRecoverySkipReason)
 }
 
+/// Pure policy for choosing the input responder and deciding whether to recover it.
 enum InputCapturingResponderRecoveryPolicy {
     static func target(
         softwareKeyboardVisible: Bool,
@@ -66,7 +70,6 @@ enum InputCapturingResponderRecoveryPolicy {
         trigger: InputCapturingResponderRecoveryTrigger
     ) -> InputCapturingResponderRecoveryDecision {
         guard context.hasWindow else { return .skip(.noWindow) }
-        guard context.inputCaptureEnabled else { return .skip(.inputCaptureDisabled) }
         guard !context.targetIsFirstResponder else {
             return .skip(.targetAlreadyFirstResponder)
         }
@@ -88,8 +91,7 @@ enum InputCapturingResponderRecoveryPolicy {
         switch decision {
         case .recover,
              .skip(.noWindow),
-             .skip(.targetAlreadyFirstResponder),
-             .skip(.inputCaptureDisabled):
+             .skip(.targetAlreadyFirstResponder):
             return false
         case .skip(.windowNotKey),
              .skip(.sceneNotForegroundActive):
@@ -125,6 +127,7 @@ enum InputCapturingResponderRecoveryPolicy {
     }
 }
 
+/// Schedules delayed responder recovery attempts on the main actor.
 struct InputCapturingResponderRecoveryScheduler {
     var schedule: @MainActor (
         _ delay: Duration,
@@ -150,10 +153,10 @@ struct InputCapturingResponderRecoveryScheduler {
 }
 
 @MainActor
+/// Coordinates first-responder recovery retries after lifecycle and input events.
 final class InputCapturingResponderRecoveryController {
     typealias ContextProvider =
-        (_ trigger: InputCapturingResponderRecoveryTrigger)
-            -> (target: InputCapturingResponderTarget, context: InputCapturingResponderRecoveryContext)
+        () -> (target: InputCapturingResponderTarget, context: InputCapturingResponderRecoveryContext)
     typealias AttemptHandler = (_ target: InputCapturingResponderTarget) -> Bool
     typealias LogHandler = (
         _ trigger: InputCapturingResponderRecoveryTrigger,
@@ -210,7 +213,7 @@ final class InputCapturingResponderRecoveryController {
         _ trigger: InputCapturingResponderRecoveryTrigger,
         attempt: Int
     ) {
-        let snapshot = contextProvider(trigger)
+        let snapshot = contextProvider()
         let decision = InputCapturingResponderRecoveryPolicy.decision(
             for: snapshot.context,
             trigger: trigger

@@ -15,21 +15,24 @@ package enum MirageMediaDirection: UInt8, Sendable {
     case clientToHost = 2
 }
 
+/// Prepared symmetric key used by packet fast paths to avoid rebuilding `SymmetricKey` per fragment.
 package struct MirageMediaPacketKey {
     fileprivate let symmetricKey: SymmetricKey
 
-    package init(sessionKeyData: Data) {
-        symmetricKey = SymmetricKey(data: sessionKeyData)
+    /// Creates the packet key from an established media security context.
+    package init(context: MirageMediaSecurityContext) {
+        symmetricKey = SymmetricKey(data: context.sessionKey)
     }
 }
 
+/// Per-session media encryption material derived after authenticated connection setup.
 package struct MirageMediaSecurityContext: Sendable {
+    /// AES-GCM session key shared by the host and client for media and clipboard payloads.
     package let sessionKey: Data
-    package let udpRegistrationToken: Data
 
-    package init(sessionKey: Data, udpRegistrationToken: Data) {
+    /// Creates a media security context from already-derived keying material.
+    package init(sessionKey: Data) {
         self.sessionKey = sessionKey
-        self.udpRegistrationToken = udpRegistrationToken
     }
 }
 
@@ -42,17 +45,14 @@ package enum MirageMediaSecurityError: Error {
 }
 
 package enum MirageMediaSecurity {
+    /// HKDF shared-info domain for Mirage protocol v2 media sessions.
+    private static let sessionKeyDerivationInfo = Data("mirage-media-session-v2".utf8)
+    /// Salt-domain marker that prevents media keys from colliding with other Loom-derived material.
+    private static let derivationSaltType = "media-key-derivation-v2"
+
     package static let sessionKeyLength = 32
     package static let registrationTokenLength = 32
     package static let authTagLength = mirageMediaAuthTagSize
-
-    package static func makePacketKey(context: MirageMediaSecurityContext) -> MirageMediaPacketKey {
-        makePacketKey(sessionKeyData: context.sessionKey)
-    }
-
-    package static func makePacketKey(sessionKeyData: Data) -> MirageMediaPacketKey {
-        MirageMediaPacketKey(sessionKeyData: sessionKeyData)
-    }
 
     package static func makeRegistrationToken() -> Data {
         let key = SymmetricKey(size: .bits256)
@@ -85,12 +85,11 @@ package enum MirageMediaSecurity {
         let key = try identityManager.deriveSharedKey(
             with: peerPublicKey,
             salt: salt,
-            sharedInfo: Data("mirage-media-session-v1".utf8),
+            sharedInfo: sessionKeyDerivationInfo,
             outputByteCount: sessionKeyLength
         )
         return MirageMediaSecurityContext(
-            sessionKey: key,
-            udpRegistrationToken: udpRegistrationToken
+            sessionKey: key
         )
     }
 
@@ -118,23 +117,6 @@ package enum MirageMediaSecurity {
     }
 
     package static func encryptVideoPayload(
-        _ plaintext: Data,
-        header: FrameHeader,
-        context: MirageMediaSecurityContext,
-        direction: MirageMediaDirection
-    ) throws -> Data {
-        let key = makePacketKey(context: context)
-        return try plaintext.withUnsafeBytes { plaintextBytes in
-            try encryptVideoPayload(
-                plaintextBytes,
-                header: header,
-                key: key,
-                direction: direction
-            )
-        }
-    }
-
-    package static func encryptVideoPayload(
         _ plaintext: UnsafeRawBufferPointer,
         header: FrameHeader,
         key: MirageMediaPacketKey,
@@ -144,20 +126,6 @@ package enum MirageMediaSecurity {
             plaintext,
             key: key.symmetricKey,
             nonce: videoNonce(for: header, direction: direction)
-        )
-    }
-
-    package static func decryptVideoPayload<Payload: DataProtocol>(
-        _ wirePayload: Payload,
-        header: FrameHeader,
-        context: MirageMediaSecurityContext,
-        direction: MirageMediaDirection
-    ) throws -> Data {
-        try decryptVideoPayload(
-            wirePayload,
-            header: header,
-            key: makePacketKey(context: context),
-            direction: direction
         )
     }
 
@@ -175,23 +143,6 @@ package enum MirageMediaSecurity {
     }
 
     package static func encryptAudioPayload(
-        _ plaintext: Data,
-        header: AudioPacketHeader,
-        context: MirageMediaSecurityContext,
-        direction: MirageMediaDirection
-    ) throws -> Data {
-        let key = makePacketKey(context: context)
-        return try plaintext.withUnsafeBytes { plaintextBytes in
-            try encryptAudioPayload(
-                plaintextBytes,
-                header: header,
-                key: key,
-                direction: direction
-            )
-        }
-    }
-
-    package static func encryptAudioPayload(
         _ plaintext: UnsafeRawBufferPointer,
         header: AudioPacketHeader,
         key: MirageMediaPacketKey,
@@ -201,20 +152,6 @@ package enum MirageMediaSecurity {
             plaintext,
             key: key.symmetricKey,
             nonce: audioNonce(for: header, direction: direction)
-        )
-    }
-
-    package static func decryptAudioPayload<Payload: DataProtocol>(
-        _ wirePayload: Payload,
-        header: AudioPacketHeader,
-        context: MirageMediaSecurityContext,
-        direction: MirageMediaDirection
-    ) throws -> Data {
-        try decryptAudioPayload(
-            wirePayload,
-            header: header,
-            key: makePacketKey(context: context),
-            direction: direction
         )
     }
 
@@ -351,7 +288,7 @@ package enum MirageMediaSecurity {
     }
 
     private static func dataView(_ buffer: UnsafeRawBufferPointer) -> Data {
-        guard buffer.count > 0, let baseAddress = buffer.baseAddress else { return Data() }
+        guard !buffer.isEmpty, let baseAddress = buffer.baseAddress else { return Data() }
         return Data(
             bytesNoCopy: UnsafeMutableRawPointer(mutating: baseAddress),
             count: buffer.count,
@@ -374,7 +311,7 @@ package enum MirageMediaSecurity {
             ("hostID", hostID.uuidString.lowercased()),
             ("hostKeyID", hostKeyID),
             ("hostNonce", hostNonce),
-            ("type", "media-key-derivation-v1"),
+            ("type", derivationSaltType),
         ]
             .sorted { $0.0 < $1.0 }
             .map { "\($0.0)=\($0.1)" }

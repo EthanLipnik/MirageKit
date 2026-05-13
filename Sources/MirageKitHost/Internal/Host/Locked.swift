@@ -17,14 +17,21 @@ final class Locked<State>: @unchecked Sendable {
         state = initial
     }
 
-    @discardableResult
+    /// Runs a synchronous mutation while holding the underlying lock.
+    func withLock(_ body: (inout State) throws -> Void) rethrows {
+        lock.lock()
+        defer { lock.unlock() }
+        try body(&state)
+    }
+
+    /// Runs a synchronous mutation while holding the underlying lock and returning a value.
     func withLock<T>(_ body: (inout State) throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
         return try body(&state)
     }
 
-    @discardableResult
+    /// Runs a synchronous read while holding the underlying lock.
     func read<T>(_ body: (State) throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }

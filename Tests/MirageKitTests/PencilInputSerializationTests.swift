@@ -77,6 +77,30 @@ struct PencilInputSerializationTests {
         #expect(abs(decoded.pressure - mouseEventWithoutStylus.pressure) < 0.0001)
     }
 
+    @Test("Binary input decoder rejects unknown mouse buttons")
+    func binaryInputDecoderRejectsUnknownMouseButtons() throws {
+        let mouseEvent = MirageMouseEvent(button: .left, location: .zero)
+        let envelope = InputEventMessage(streamID: 42, event: .mouseDown(mouseEvent))
+        var payload = try envelope.serializePayload()
+        payload[4] = UInt8.max
+
+        #expect(throws: Error.self) {
+            _ = try InputEventMessage.deserializePayload(payload)
+        }
+    }
+
+    @Test("Binary input decoder rejects unknown scroll phases")
+    func binaryInputDecoderRejectsUnknownScrollPhases() throws {
+        let scrollEvent = MirageScrollEvent(deltaX: 0, deltaY: -1, phase: .changed)
+        let envelope = InputEventMessage(streamID: 42, event: .scrollWheel(scrollEvent))
+        var payload = try envelope.serializePayload()
+        payload[21] = UInt8.max
+
+        #expect(throws: Error.self) {
+            _ = try InputEventMessage.deserializePayload(payload)
+        }
+    }
+
     @Test("Pointer sample batch preserves ordered stylus samples")
     func pointerSampleBatchRoundTripPreservesOrderedSamples() throws {
         let stylus = MirageStylusEvent(
@@ -135,5 +159,4 @@ struct PencilInputSerializationTests {
         #expect(decodedBatch.samples.map(\.location.x) == [0.1, 0.2, 0.3])
         #expect(decodedBatch.samples.map(\.pressure) == [0.25, 0.5, 0.75])
     }
-
 }

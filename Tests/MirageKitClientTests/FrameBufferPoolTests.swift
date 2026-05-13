@@ -44,7 +44,7 @@ struct FrameBufferPoolTests {
         let oversizedBuffer = pool.acquire(capacity: 32)
         oversizedBuffer.release()
 
-        #expect(pool.retainedByteCount() == 0)
+        #expect(pool.retainedByteCount == 0)
     }
 
     @Test("Retained buffers stay under total byte budget")
@@ -60,10 +60,10 @@ struct FrameBufferPoolTests {
         firstBuffer.release()
         secondBuffer.release()
 
-        #expect(pool.retainedByteCount() <= 24)
+        #expect(pool.retainedByteCount <= 24)
 
         let reusedBuffer = pool.acquire(capacity: 16)
-        #expect(pool.retainedByteCount() == 0)
+        #expect(pool.retainedByteCount == 0)
         reusedBuffer.release()
     }
 
@@ -80,12 +80,12 @@ struct FrameBufferPoolTests {
         firstBuffer.release()
         secondBuffer.release()
 
-        #expect(pool.retainedByteCount() == 48)
+        #expect(pool.retainedByteCount == 48)
 
         let purgedBytes = pool.purgeRetainedBuffers()
 
         #expect(purgedBytes == 48)
-        #expect(pool.retainedByteCount() == 0)
+        #expect(pool.retainedByteCount == 0)
     }
 }
 #endif

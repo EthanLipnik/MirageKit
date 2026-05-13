@@ -40,11 +40,9 @@ struct CursorUpdateRouterCoalescingTests {
             router.notify(streamID: streamID)
         }
 
-        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while CFAbsoluteTimeGetCurrent() < deadline {
+        try await waitUntil(timeout: .seconds(2)) {
             let lastSeen = await MainActor.run { probe.lastSeenSequence }
-            if lastSeen == burstCount { break }
-            try await Task.sleep(for: .milliseconds(5))
+            return lastSeen == burstCount
         }
 
         let refreshCount = await MainActor.run { probe.refreshCount }
@@ -81,12 +79,10 @@ struct CursorUpdateRouterCoalescingTests {
         sequence.store(2)
         router.notify(streamID: streamID, force: true)
 
-        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
-        while CFAbsoluteTimeGetCurrent() < deadline {
+        try await waitUntil(timeout: .seconds(2)) {
             let lastSeen = await MainActor.run { probe.lastSeenSequence }
             let forcedCount = await MainActor.run { probe.forcedRefreshCount }
-            if lastSeen == 2, forcedCount > 0 { break }
-            try await Task.sleep(for: .milliseconds(5))
+            return lastSeen == 2 && forcedCount > 0
         }
 
         let lastSeenSequence = await MainActor.run { probe.lastSeenSequence }
@@ -95,7 +91,17 @@ struct CursorUpdateRouterCoalescingTests {
         #expect(lastSeenSequence == 2)
         #expect(forcedRefreshCount == 1)
     }
+}
 
+private func waitUntil(
+    timeout: Duration,
+    condition: () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !Task.isCancelled, ContinuousClock.now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 private final class SharedSequence: @unchecked Sendable {

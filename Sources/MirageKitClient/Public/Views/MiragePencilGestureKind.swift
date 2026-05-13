@@ -9,9 +9,12 @@ import Foundation
 
 /// Identifies a hardware gesture performed on Apple Pencil.
 public enum MiragePencilGestureKind: String, CaseIterable, Codable, Sendable {
+    /// Apple Pencil double-tap gesture.
     case doubleTap
+    /// Apple Pencil squeeze gesture.
     case squeeze
 
+    /// User-visible gesture name.
     public var displayName: String {
         switch self {
         case .doubleTap:

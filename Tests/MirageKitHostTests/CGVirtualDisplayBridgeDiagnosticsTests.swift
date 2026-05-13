@@ -14,7 +14,6 @@ import Testing
 
 @Suite("CGVirtualDisplayBridge Diagnostics", .serialized)
 struct CGVirtualDisplayBridgeDiagnosticsTests {
-
     @Test("Cached descriptor profile is evicted immediately after failure")
     func cachedDescriptorProfileEvictionDecision() {
         let failedAttempt = CGVirtualDisplayBridge.DescriptorAttempt(
@@ -25,8 +24,7 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         )
         let cachedHint = CGVirtualDisplayBridge.CachedValidationHint(
             profile: .persistentGlobalQueue,
-            serial: 42,
-            coverageStatus: .strictCanonical
+            serial: 42
         )
 
         #expect(
@@ -118,21 +116,5 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
         )
         #expect(attempts.first?.profile != .serial0GlobalQueue)
     }
-
-    private func waitUntil(
-        timeout: Duration = .seconds(3),
-        condition: @escaping @Sendable () async -> Bool
-    ) async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now + timeout
-        while clock.now < deadline {
-            if await condition() {
-                return true
-            }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return await condition()
-    }
 }
-
 #endif

@@ -5,34 +5,55 @@
 //  Created by Ethan Lipnik on 1/3/26.
 //
 
-import Foundation
-
 /// Standard cursor types that can be synchronized between host and client.
 /// These map to macOS NSCursor types and are rendered appropriately on each platform.
 public enum MirageCursorType: Int, Codable, Sendable, Hashable {
-    case arrow = 0 // Default pointer
-    case iBeam = 1 // Text selection cursor
-    case crosshair = 2 // Precision selection
-    case closedHand = 3 // Grabbed/dragging
-    case openHand = 4 // Ready to grab
-    case pointingHand = 5 // Link/clickable element
-    case resizeLeft = 6 // Left edge resize
-    case resizeRight = 7 // Right edge resize
-    case resizeLeftRight = 8 // Horizontal resize (both directions)
-    case resizeUp = 9 // Top edge resize
-    case resizeDown = 10 // Bottom edge resize
-    case resizeUpDown = 11 // Vertical resize (both directions)
-    case disappearingItem = 12 // Dragging item out of valid area
-    case operationNotAllowed = 13 // Forbidden/not-allowed action
-    case dragLink = 14 // Dragging a link
-    case dragCopy = 15 // Dragging with copy modifier
-    case contextualMenu = 16 // Context menu available
-    case resizeNorthEast = 17 // NE corner resize
-    case resizeNorthWest = 18 // NW corner resize
-    case resizeSouthEast = 19 // SE corner resize
-    case resizeSouthWest = 20 // SW corner resize
-    case resizeNESW = 21 // NE/SW bidirectional diagonal
-    case resizeNWSE = 22 // NW/SE bidirectional diagonal
+    /// Default pointer.
+    case arrow = 0
+    /// Text selection cursor.
+    case iBeam = 1
+    /// Precision selection cursor.
+    case crosshair = 2
+    /// Grabbed or dragging hand cursor.
+    case closedHand = 3
+    /// Ready-to-grab hand cursor.
+    case openHand = 4
+    /// Link or clickable-element cursor.
+    case pointingHand = 5
+    /// Left-edge resize cursor.
+    case resizeLeft = 6
+    /// Right-edge resize cursor.
+    case resizeRight = 7
+    /// Horizontal bidirectional resize cursor.
+    case resizeLeftRight = 8
+    /// Top-edge resize cursor.
+    case resizeUp = 9
+    /// Bottom-edge resize cursor.
+    case resizeDown = 10
+    /// Vertical bidirectional resize cursor.
+    case resizeUpDown = 11
+    /// Cursor used while dragging an item out of a valid destination.
+    case disappearingItem = 12
+    /// Cursor for forbidden or unavailable actions.
+    case operationNotAllowed = 13
+    /// Cursor used while dragging a link.
+    case dragLink = 14
+    /// Cursor used while dragging with copy semantics.
+    case dragCopy = 15
+    /// Cursor indicating a contextual menu is available.
+    case contextualMenu = 16
+    /// Northeast corner resize cursor.
+    case resizeNorthEast = 17
+    /// Northwest corner resize cursor.
+    case resizeNorthWest = 18
+    /// Southeast corner resize cursor.
+    case resizeSouthEast = 19
+    /// Southwest corner resize cursor.
+    case resizeSouthWest = 20
+    /// Northeast/southwest bidirectional diagonal resize cursor.
+    case resizeNESW = 21
+    /// Northwest/southeast bidirectional diagonal resize cursor.
+    case resizeNWSE = 22
 }
 
 // MARK: - macOS NSCursor Conversion
@@ -285,24 +306,23 @@ import UIKit
 
 public extension MirageCursorType {
     /// Get the appropriate UIPointerStyle for this cursor type.
-    /// - Parameter region: The pointer region for context-aware styling
     /// - Returns: A UIPointerStyle that best represents this cursor type on iPadOS
-    func pointerStyle(for _: UIPointerRegion) -> UIPointerStyle {
+    func pointerStyle() -> UIPointerStyle {
         switch self {
         case .arrow,
              .contextualMenu,
              .operationNotAllowed:
             // Default system pointer - use automatic behavior
-            return UIPointerStyle.system()
+            UIPointerStyle.system()
 
         case .iBeam:
             // Text selection cursor - vertical beam
-            return UIPointerStyle(shape: .verticalBeam(length: 24))
+            UIPointerStyle(shape: .verticalBeam(length: 24))
 
         case .crosshair:
             // Precision cursor - small plus-shaped indicator
             // iPadOS doesn't have a native crosshair, so we use a small dot
-            return UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 8, height: 8), radius: 4))
+            UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 8, height: 8), radius: 4))
 
         case .closedHand,
              .dragCopy,
@@ -310,35 +330,35 @@ public extension MirageCursorType {
              .openHand,
              .pointingHand:
             // Drag-related cursors - rely on system pointer presentation
-            return UIPointerStyle.system()
+            UIPointerStyle.system()
 
         case .resizeLeft,
              .resizeLeftRight,
              .resizeRight:
             // Horizontal resize with a compact center indicator and directional arrows.
-            return resizePointerStyle(accessories: [.arrow(.left), .arrow(.right)])
+            resizePointerStyle(accessories: [.arrow(.left), .arrow(.right)])
 
         case .resizeDown,
              .resizeUp,
              .resizeUpDown:
             // Vertical resize with a compact center indicator and directional arrows.
-            return resizePointerStyle(accessories: [.arrow(.top), .arrow(.bottom)])
+            resizePointerStyle(accessories: [.arrow(.top), .arrow(.bottom)])
 
         case .resizeNESW,
              .resizeNorthEast,
              .resizeSouthWest:
             // NE/SW diagonal resize with a compact center indicator and directional arrows.
-            return resizePointerStyle(accessories: [.arrow(.topRight), .arrow(.bottomLeft)])
+            resizePointerStyle(accessories: [.arrow(.topRight), .arrow(.bottomLeft)])
 
         case .resizeNorthWest,
              .resizeNWSE,
              .resizeSouthEast:
             // NW/SE diagonal resize with a compact center indicator and directional arrows.
-            return resizePointerStyle(accessories: [.arrow(.topLeft), .arrow(.bottomRight)])
+            resizePointerStyle(accessories: [.arrow(.topLeft), .arrow(.bottomRight)])
 
         case .disappearingItem:
             // Dragging out of bounds - use small fading indicator
-            return UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 16, height: 16), radius: 8))
+            UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 16, height: 16), radius: 8))
         }
     }
 

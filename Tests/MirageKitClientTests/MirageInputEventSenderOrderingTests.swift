@@ -37,7 +37,9 @@ struct MirageInputEventSenderOrderingTests {
         sender.sendInputFireAndForget(.keyDown(keyEvent), streamID: streamID)
         sender.sendInputFireAndForget(.keyUp(keyEvent), streamID: streamID)
 
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitUntil(timeout: .seconds(1)) {
+            await recorder.snapshot().count == 3
+        }
 
         #expect(await recorder.snapshot() == ["flagsChanged", "keyDown", "keyUp"])
     }
@@ -53,6 +55,17 @@ struct MirageInputEventSenderOrderingTests {
         default:
             "other"
         }
+    }
+}
+
+private func waitUntil(
+    timeout: Duration,
+    condition: () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !Task.isCancelled, ContinuousClock.now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: .milliseconds(5))
     }
 }
 

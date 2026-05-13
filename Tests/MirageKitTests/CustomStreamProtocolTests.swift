@@ -2,7 +2,7 @@
 //  CustomStreamProtocolTests.swift
 //  MirageKit
 //
-//  Created by Codex on 4/30/26.
+//  Created by Ethan Lipnik on 4/30/26.
 //
 
 @testable import MirageKit
@@ -11,7 +11,6 @@ import Testing
 
 @Suite("Custom Stream Protocol")
 struct CustomStreamProtocolTests {
-
     @Test("Custom stream control messages round-trip through control envelope")
     func customStreamMessagesRoundTrip() throws {
         let startupRequestID = UUID()
@@ -31,7 +30,6 @@ struct CustomStreamProtocolTests {
             displayWidth: 1024,
             displayHeight: 768,
             targetFrameRate: 60,
-            scaleFactor: 2,
             streamScale: 1,
             mediaMaxPacketSize: 1200
         )
