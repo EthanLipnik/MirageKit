@@ -12,7 +12,7 @@ import MirageKit
 #if os(macOS)
 
 extension MirageHostService {
-    /// Recovers a failed desktop resize by rolling back, falling back to main display capture, or stopping the stream.
+    /// Recovers a failed desktop resize by rolling back to the previous virtual display or stopping the stream.
     func handleDesktopResizeFailure(
         _ resizeError: Error,
         streamID: StreamID,
@@ -75,22 +75,6 @@ extension MirageHostService {
                         shouldStopStreamWithError = true
                     }
                 } else {
-                    shouldStopStreamWithError = true
-                }
-            case .mainDisplayFallback:
-                do {
-                    let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
-                        streamID: streamID,
-                        request: request,
-                        context: latestDesktopContext,
-                        reason: "desktop_resize_failed"
-                    )
-                    completionContext = fallbackContext
-                    outcome = .rolledBack
-                    shouldRestoreMirroring = false
-                } catch {
-                    MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
-                    MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                     shouldStopStreamWithError = true
                 }
             case .stopStream:
@@ -197,64 +181,6 @@ extension MirageHostService {
                     "(outcome: \(outcomeLabel), input bounds: \(inputGeometry.inputBounds))"
             )
 
-        return context
-    }
-
-    /// Switches desktop capture from the virtual display to the main physical display.
-    func switchDesktopStreamToMainDisplayFallback(
-        streamID: StreamID,
-        request: DesktopResizeRequestState,
-        context: StreamContext,
-        reason: String
-    )
-    async throws -> StreamContext {
-        try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
-        let fallback = try await mainDisplayDesktopCaptureFallback(reason: reason)
-
-        if let sharedDisplayID = await SharedVirtualDisplayManager.shared.displayID {
-            _ = await disableDisplayMirroring(displayID: sharedDisplayID)
-        } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
-            _ = await disableDisplayMirroring(displayID: fallback.displayID)
-        }
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
-
-        desktopVirtualDisplayID = nil
-        desktopPrimaryPhysicalDisplayID = fallback.displayID
-        desktopPrimaryPhysicalBounds = fallback.bounds
-        desktopDisplayBounds = fallback.bounds
-        sharedVirtualDisplayGeneration = 0
-        sharedVirtualDisplayScaleFactor = fallback.scaleFactor
-        desktopUsesHostResolution = true
-        desktopCaptureSource = .mainDisplayFallback
-
-        if desktopStreamMode == .unified {
-            let mirroringConfigured = await setupDisplayMirroring(
-                targetDisplayID: fallback.displayID,
-                expectedPixelResolution: fallback.resolution,
-                requiresResidualMirageDisplaysClear: false
-            )
-            if !mirroringConfigured {
-                MirageLogger.host(
-                    "Desktop stream main display fallback continuing with incomplete display mirroring"
-                )
-            }
-        }
-
-        try await context.hardResetDesktopDisplayCapture(
-            displayWrapper: fallback.display,
-            resolution: fallback.resolution
-        )
-
-        let inputGeometry = updateDesktopInputGeometry(
-            streamID: streamID,
-            physicalBounds: fallback.bounds,
-            virtualResolution: fallback.resolution
-        )
-        MirageLogger.host(
-            "Desktop stream switched to main display fallback for stream \(streamID): " +
-                "\(Int(fallback.resolution.width))x\(Int(fallback.resolution.height)) px " +
-                "(input bounds: \(inputGeometry.inputBounds))"
-        )
         return context
     }
 

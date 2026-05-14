@@ -20,6 +20,10 @@ struct ClientStreamingAnomalySample {
     let submitAttemptFPS: Double
     let layerAcceptedFPS: Double
     let presentedFPS: Double
+    let layerEnqueueFPS: Double
+    let uniqueLayerEnqueueFPS: Double
+    let visibleFrameFPS: Double
+    let visibleFrameCadenceKnown: Bool
     let submittedFPS: Double
     let uniqueSubmittedFPS: Double
     let pendingFrameCount: Int
@@ -114,10 +118,16 @@ struct ClientStreamingAnomalySample {
         self.displayTickFPS = displayTickFPS
         self.submitAttemptFPS = submitAttemptFPS
         self.layerAcceptedFPS = layerAcceptedFPS
-        self.presentedFPS = visibleFrameFPS ?? presentedFPS
-        _ = visibleFrameCadenceKnown
-        self.submittedFPS = submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
-        self.uniqueSubmittedFPS = uniqueSubmittedFPS ?? uniqueLayerEnqueueFPS ?? submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
+        let resolvedSubmittedFPS = submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
+        let resolvedUniqueSubmittedFPS = uniqueSubmittedFPS ?? uniqueLayerEnqueueFPS ?? resolvedSubmittedFPS
+        let resolvedVisibleFrameFPS = visibleFrameFPS ?? presentedFPS
+        self.presentedFPS = resolvedVisibleFrameFPS
+        self.layerEnqueueFPS = layerEnqueueFPS ?? resolvedSubmittedFPS
+        self.uniqueLayerEnqueueFPS = uniqueLayerEnqueueFPS ?? resolvedUniqueSubmittedFPS
+        self.visibleFrameFPS = resolvedVisibleFrameFPS
+        self.visibleFrameCadenceKnown = visibleFrameCadenceKnown
+        self.submittedFPS = resolvedSubmittedFPS
+        self.uniqueSubmittedFPS = resolvedUniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
@@ -233,6 +243,7 @@ struct ClientStreamingAnomalySample {
         snapshot.hostGenerationAbortDrops = hostMetrics?.generationAbortDrops
         snapshot.hostNonKeyframeHoldDrops = hostMetrics?.nonKeyframeHoldDrops
         snapshot.applyHostCaptureCadence(hostMetrics?.captureCadence)
+        snapshot.clientVisibleFrameCadenceKnown = visibleFrameCadenceKnown
         return snapshot
     }
 }
@@ -289,6 +300,9 @@ func clientStreamingAnomalyDiagnostic(
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
         "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
         "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
+        "layerEnqueueFPS=\(formattedFPS(sample.layerEnqueueFPS))fps " +
+        "uniqueLayerEnqueueFPS=\(formattedFPS(sample.uniqueLayerEnqueueFPS))fps " +
+        "visibleFrameFPS=\(formattedFPS(sample.visibleFrameFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
@@ -374,6 +388,19 @@ private func resolvedAnomalyBottleneckKind(
     if decodeKeepsUp,
        submissionLaggingDecode && presentationBackpressure ||
        severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90 {
+        return .presentationBound
+    }
+
+    let hostEncodedFPS = sample.hostMetrics?.encodedFPS ?? 0
+    let stalePresentationLoop =
+        hostEncodedFPS >= targetFPS * 0.75 &&
+        sample.submitAttemptFPS >= targetFPS * 0.75 &&
+        sample.uniqueSubmittedFPS + presentationGapGrace < sample.submitAttemptFPS &&
+        sample.visibleFrameCadenceKnown &&
+        sample.visibleFrameFPS + presentationGapGrace < sample.submitAttemptFPS &&
+        sample.pendingFrameAgeMs >= pendingAgeThresholdMs &&
+        sample.reassemblerPendingFrameCount == 0
+    if stalePresentationLoop {
         return .presentationBound
     }
 

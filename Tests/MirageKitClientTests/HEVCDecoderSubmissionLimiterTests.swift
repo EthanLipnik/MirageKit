@@ -9,13 +9,20 @@
 
 @testable import MirageKitClient
 import Foundation
+import MirageKit
 import Testing
 
 #if os(macOS)
 private extension VideoDecoder {
     /// Applies the production baseline mapping for target-refresh submission-limit tests.
-    func setDecodeSubmissionLimit(targetFrameRate: Int) {
-        let desiredLimit = Self.baselineDecodeSubmissionLimit(targetFrameRate: targetFrameRate)
+    func setDecodeSubmissionLimit(
+        targetFrameRate: Int,
+        latencyMode: MirageStreamLatencyMode = .smoothest
+    ) {
+        let desiredLimit = Self.baselineDecodeSubmissionLimit(
+            targetFrameRate: targetFrameRate,
+            latencyMode: latencyMode
+        )
         setDecodeSubmissionLimit(limit: desiredLimit, reason: "test target \(targetFrameRate)fps")
     }
 }
@@ -27,11 +34,14 @@ struct VideoDecoderSubmissionLimiterTests {
         let decoder = VideoDecoder()
         #expect(await decoder.decodeSubmissionLimit == 1)
 
-        await decoder.setDecodeSubmissionLimit(targetFrameRate: 120)
+        await decoder.setDecodeSubmissionLimit(targetFrameRate: 120, latencyMode: .smoothest)
         #expect(await decoder.decodeSubmissionLimit == 3)
 
-        await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
+        await decoder.setDecodeSubmissionLimit(targetFrameRate: 60, latencyMode: .smoothest)
         #expect(await decoder.decodeSubmissionLimit == 2)
+
+        await decoder.setDecodeSubmissionLimit(targetFrameRate: 120, latencyMode: .lowestLatency)
+        #expect(await decoder.decodeSubmissionLimit == 1)
     }
 
     @Test("Submission limiter enforces cap and releases waiters")

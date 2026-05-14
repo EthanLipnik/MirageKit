@@ -121,14 +121,14 @@ struct DesktopResizeTransactionTests {
         #expect(decision == .stopStream)
     }
 
-    @Test("Secondary resize failure may fall back to main display")
-    func secondaryResizeFailureMayFallBackToMainDisplay() {
+    @Test("Secondary resize failure rolls back instead of falling back to main display")
+    func secondaryResizeFailureRollsBackInsteadOfFallingBackToMainDisplay() {
         let decision = desktopResizeFailureRecoveryPlan(
             desktopStreamMode: .secondary,
             hasPreResizeSnapshot: true
         )
 
-        #expect(decision == .mainDisplayFallback)
+        #expect(decision == .rollbackToLastKnownGood)
     }
 
     @Test("Desktop mirroring restore aborts when stream is inactive")

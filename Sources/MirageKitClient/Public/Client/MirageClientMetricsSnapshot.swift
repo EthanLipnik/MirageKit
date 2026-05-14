@@ -28,6 +28,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientLayerAcceptedFPS: Double
     /// Frames per second presented by the client display layer.
     public var clientPresentedFPS: Double
+    var clientVisibleFrameCadenceKnownStorage: Bool
     /// Frame submissions per second, including repeated frames.
     public var submittedFPS: Double
     /// Unique frame submissions per second.
@@ -44,6 +45,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientDisplayLayerNotReadyCount: UInt64
     /// Number of repeated-frame presentations used to preserve cadence.
     public var clientRepeatedFrameCount: UInt64
+    var clientRepeatedDeliveredSourceFrameCountStorage: UInt64
+    var clientRepeatedDisplayTickFrameCountStorage: UInt64
     /// Number of expected display ticks that did not present a new frame.
     public var clientMissedVSyncCount: UInt64
     /// 95th percentile display-tick interval, in milliseconds.
@@ -64,6 +67,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var decodeHealthy: Bool
     /// Total frames dropped by client-side decode or render admission.
     public var clientDroppedFrames: UInt64
+    var clientRenderQueueBacklogFramesStorage: Int
+    var clientDecodeQueueBacklogFramesStorage: Int
+    var clientDecodeSubmissionInFlightCountStorage: Int
+    var clientDecodeSubmissionLimitStorage: Int
     /// Number of incomplete frames currently retained by the packet reassembler.
     public var clientReassemblerPendingFrameCount: Int
     /// Number of pending reassembled frames that are keyframes.
@@ -288,12 +295,15 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientPresentedFPS = clientPresentedFPS
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.clientVisibleFrameCadenceKnownStorage = clientPresentedFPS > 0 || uniqueSubmittedFPS > 0
         self.pendingFrameCount = pendingFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientLateFrameDrops = clientLateFrameDrops
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
+        self.clientRepeatedDeliveredSourceFrameCountStorage = clientRepeatedFrameCount
+        self.clientRepeatedDisplayTickFrameCountStorage = clientRepeatedFrameCount
         self.clientMissedVSyncCount = clientMissedVSyncCount
         self.clientDisplayTickIntervalP95Ms = clientDisplayTickIntervalP95Ms
         self.clientDisplayTickIntervalP99Ms = clientDisplayTickIntervalP99Ms
@@ -304,6 +314,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientFrameIntervalP99Ms = clientFrameIntervalP99Ms
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
+        self.clientRenderQueueBacklogFramesStorage = pendingFrameCount
+        self.clientDecodeQueueBacklogFramesStorage = pendingFrameCount
+        self.clientDecodeSubmissionInFlightCountStorage = 0
+        self.clientDecodeSubmissionLimitStorage = 0
         self.clientReassemblerPendingFrameCount = clientReassemblerPendingFrameCount
         self.clientReassemblerPendingKeyframeCount = clientReassemblerPendingKeyframeCount
         self.clientReassemblerPendingBytes = clientReassemblerPendingBytes
@@ -440,17 +454,24 @@ public extension MirageClientMetricsSnapshot {
 
     var clientVisibleFrameFPS: Double {
         get { clientPresentedFPS }
-        set { clientPresentedFPS = newValue }
+        set {
+            clientPresentedFPS = newValue
+            if newValue > 0 { clientVisibleFrameCadenceKnownStorage = true }
+        }
     }
 
     var clientUniqueDeliveredSourceFrameFPS: Double {
         get { clientPresentedFPS }
-        set { clientPresentedFPS = newValue }
+        set {
+            clientPresentedFPS = newValue
+            if newValue > 0 { clientVisibleFrameCadenceKnownStorage = true }
+        }
     }
 
     var clientVisibleFrameCadenceKnown: Bool {
-        get { clientPresentedFPS > 0 || uniqueSubmittedFPS > 0 }
+        get { clientVisibleFrameCadenceKnownStorage }
         set {
+            clientVisibleFrameCadenceKnownStorage = newValue
             if !newValue {
                 clientPresentedFPS = 0
             }
@@ -473,18 +494,21 @@ public extension MirageClientMetricsSnapshot {
     }
 
     var clientRepeatedDeliveredSourceFrameCount: UInt64 {
-        get { clientRepeatedFrameCount }
-        set { clientRepeatedFrameCount = newValue }
+        get { clientRepeatedDeliveredSourceFrameCountStorage }
+        set { clientRepeatedDeliveredSourceFrameCountStorage = newValue }
     }
 
     var clientRepeatedSourceFrameCount: UInt64 {
-        get { clientRepeatedFrameCount }
-        set { clientRepeatedFrameCount = newValue }
+        get { clientRepeatedDeliveredSourceFrameCountStorage }
+        set { clientRepeatedDeliveredSourceFrameCountStorage = newValue }
     }
 
     var clientRepeatedDisplayTickFrameCount: UInt64 {
-        get { clientRepeatedFrameCount }
-        set { clientRepeatedFrameCount = newValue }
+        get { clientRepeatedDisplayTickFrameCountStorage }
+        set {
+            clientRepeatedDisplayTickFrameCountStorage = newValue
+            clientRepeatedFrameCount = newValue
+        }
     }
 
     var clientDisplayRefreshTickFPS: Double {
@@ -493,33 +517,39 @@ public extension MirageClientMetricsSnapshot {
     }
 
     var clientRenderQueueBacklogFrames: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientRenderQueueBacklogFramesStorage }
+        set {
+            clientRenderQueueBacklogFramesStorage = newValue
+            pendingFrameCount = newValue
+        }
     }
 
     var clientDecodeQueueBacklogFrames: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientDecodeQueueBacklogFramesStorage }
+        set { clientDecodeQueueBacklogFramesStorage = newValue }
     }
 
     var clientUnsubmittedPendingFrameCount: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientRenderQueueBacklogFramesStorage }
+        set {
+            clientRenderQueueBacklogFramesStorage = newValue
+            pendingFrameCount = newValue
+        }
     }
 
     var clientDecodeBacklogFrames: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientDecodeQueueBacklogFramesStorage }
+        set { clientDecodeQueueBacklogFramesStorage = newValue }
     }
 
     var clientDecodeSubmissionInFlightCount: Int {
-        get { 0 }
-        set { _ = newValue }
+        get { clientDecodeSubmissionInFlightCountStorage }
+        set { clientDecodeSubmissionInFlightCountStorage = newValue }
     }
 
     var clientDecodeSubmissionLimit: Int {
-        get { 0 }
-        set { _ = newValue }
+        get { clientDecodeSubmissionLimitStorage }
+        set { clientDecodeSubmissionLimitStorage = newValue }
     }
 
     var clientIncomingMediaBatchIntervalMaxMs: Double {

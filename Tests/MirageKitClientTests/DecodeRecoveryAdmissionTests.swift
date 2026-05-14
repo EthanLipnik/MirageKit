@@ -29,7 +29,7 @@ struct DecodeRecoveryAdmissionTests {
 
     @Test("Session reset blocks P-frame admission until a recovery keyframe decodes")
     func sessionResetBlocksPFrameAdmissionUntilRecoveryKeyframeDecodes() {
-        let tracker = DecodeErrorTracker(maxErrors: 2, onThresholdReached: {})
+        let tracker = DecodeErrorTracker(onThresholdReached: {})
 
         tracker.clearForSessionReset()
 
@@ -44,9 +44,9 @@ struct DecodeRecoveryAdmissionTests {
     @Test("Decode error threshold blocks P-frame admission until a keyframe decodes")
     func decodeErrorThresholdBlocksPFrameAdmissionUntilKeyframeDecodes() {
         let thresholdRequests = TestCounter()
-        let tracker = DecodeErrorTracker(maxErrors: 2) {
+        let tracker = DecodeErrorTracker(onThresholdReached: {
             thresholdRequests.increment()
-        }
+        })
 
         tracker.recordError(isKeyframe: false)
         tracker.recordError(isKeyframe: false)
@@ -63,9 +63,9 @@ struct DecodeRecoveryAdmissionTests {
     @Test("First decode error fences P-frame admission")
     func firstDecodeErrorFencesPFrameAdmission() {
         let thresholdRequests = TestCounter()
-        let tracker = DecodeErrorTracker(maxErrors: 5) {
+        let tracker = DecodeErrorTracker(onThresholdReached: {
             thresholdRequests.increment()
-        }
+        })
 
         tracker.recordError(isKeyframe: false)
 
@@ -77,9 +77,9 @@ struct DecodeRecoveryAdmissionTests {
     @Test("Throttled threshold keeps P-frame admission after recovered session reset")
     func throttledThresholdKeepsPFrameAdmissionAfterRecoveredSessionReset() {
         let thresholdRequests = TestCounter()
-        let tracker = DecodeErrorTracker(maxErrors: 2) {
+        let tracker = DecodeErrorTracker(onThresholdReached: {
             thresholdRequests.increment()
-        }
+        })
 
         tracker.recordError(isKeyframe: false)
         tracker.recordError(isKeyframe: false)

@@ -156,6 +156,16 @@ extension StreamController {
             }
             return
         }
+        if streamCadenceTarget.latencyMode == .lowestLatency {
+            decodeSubmissionStressStreak = 0
+            decodeSubmissionHealthyStreak = 0
+            decodeSubmissionBaselineLimit = 1
+            currentDecodeSubmissionLimit = 1
+            if await decoder.decodeSubmissionLimit != 1 {
+                await decoder.setDecodeSubmissionLimit(limit: 1, reason: "lowest-latency fixed submission")
+            }
+            return
+        }
 
         let targetFPS = max(1, decodeSchedulerTargetFPS)
         let ratio = decodedFPS / Double(targetFPS)

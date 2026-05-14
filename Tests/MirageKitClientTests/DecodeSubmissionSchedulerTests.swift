@@ -8,6 +8,7 @@
 //
 
 @testable import MirageKitClient
+import MirageKit
 import Testing
 
 #if os(macOS)
@@ -40,6 +41,21 @@ struct DecodeSubmissionSchedulerTests {
 
         let decoderLimit = await controller.decoder.decodeSubmissionLimit
         #expect(decoderLimit == 2)
+        await controller.stop()
+    }
+
+    @Test("Lowest latency stays single-slot under decode-bound stress")
+    func lowestLatencyStaysSingleSlotUnderDecodeBoundStress() async {
+        let controller = StreamController(streamID: 904, maxPayloadSize: 1200)
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60, latencyMode: .lowestLatency)
+        #expect(await controller.decoder.decodeSubmissionLimit == 1)
+
+        for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
+            await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40, receivedFPS: 56)
+        }
+
+        let decoderLimit = await controller.decoder.decodeSubmissionLimit
+        #expect(decoderLimit == 1)
         await controller.stop()
     }
 

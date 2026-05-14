@@ -185,9 +185,9 @@ func desktopVirtualDisplayStartupPlan(
     let conservative = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
             logicalResolution: logicalResolution,
-            defaultScaleFactor: 1.0
+            defaultScaleFactor: requestedScaleFactor
         ),
-        refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: requestedRefreshRate),
+        refreshRate: SharedVirtualDisplayManager.preferredStreamRefreshRate,
         colorSpace: .sRGB,
         label: "conservative-retry",
         fallbackKind: .conservative,

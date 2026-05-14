@@ -6,14 +6,15 @@
 //
 
 @testable import MirageKitClient
+import CoreGraphics
 import Foundation
 import Testing
 
 #if os(macOS)
 @Suite("Automatic Desktop Workload Controller")
 struct AutomaticDesktopWorkloadControllerTests {
-    @Test("Sustained 4K60 host pipeline pressure preserves 60fps by reducing resolution")
-    func sustainedFourK60HostPipelinePressurePreserves60FPSByReducingResolution() {
+    @Test("Clean 4K60 host pipeline pressure does not reconfigure workload")
+    func cleanFourK60HostPipelinePressureDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         let snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -24,15 +25,11 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target == .qhd60)
+        #expect(action == .none)
     }
 
-    @Test("Sustained 4K30 pipeline pressure drops resolution")
-    func sustainedFourK30PipelinePressureDropsResolution() {
+    @Test("Clean 4K30 host pipeline pressure does not reconfigure workload")
+    func cleanFourK30HostPipelinePressureDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         let snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -43,15 +40,11 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target == .qhd30)
+        #expect(action == .none)
     }
 
-    @Test("Dirty transport suppresses workload changes")
-    func dirtyTransportSuppressesWorkloadChanges() {
+    @Test("Dirty transport lowers frame rate without changing resolution")
+    func dirtyTransportLowersFrameRateWithoutChangingResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -63,7 +56,12 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        #expect(action == .none)
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected workload reconfiguration")
+            return
+        }
+        #expect(target.encodedPixelSize == CGSize(width: 3840, height: 2160))
+        #expect(target.targetFrameRate == 30)
     }
 
     @Test("Resize critical sections suppress workload changes")
@@ -91,12 +89,13 @@ struct AutomaticDesktopWorkloadControllerTests {
     @Test("Workload reconfiguration has a 20 second cooldown")
     func workloadReconfigurationHasCooldown() {
         var controller = MirageAutomaticDesktopWorkloadController()
-        let snapshot = pipelineBoundSnapshot(
+        var snapshot = pipelineBoundSnapshot(
             width: 3840,
             height: 2160,
             targetFrameRate: 60,
             cadenceFPS: 45
         )
+        snapshot.hostSendQueueBytes = 2_000_000
 
         let firstAction = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
         #expect(firstAction != .none)
@@ -116,8 +115,8 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
-    @Test("Client presentation deficit preserves 60fps while lowering resolution")
-    func clientPresentationDeficitPreserves60FPSWhileLoweringResolution() {
+    @Test("Client presentation deficit does not reconfigure workload")
+    func clientPresentationDeficitDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 3840,
@@ -134,17 +133,11 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize.width < 3840)
-        #expect(target.encodedPixelSize.height < 2160)
+        #expect(action == .none)
     }
 
-    @Test("Severe client presentation cadence spikes downshift even near target FPS")
-    func severeClientPresentationCadenceSpikesDownshiftEvenNearTargetFPS() {
+    @Test("Severe client presentation cadence spikes do not reconfigure workload")
+    func severeClientPresentationCadenceSpikesDoNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -158,13 +151,7 @@ struct AutomaticDesktopWorkloadControllerTests {
 
         let action = advanceThroughPipelinePressure(controller: &controller, snapshot: snapshot)
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 60)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(action == .none)
     }
 
     @Test("Sustained clean cadence promotes one tier after cooldown")
@@ -196,15 +183,16 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target == .qhd60)
     }
 
-    @Test("Automatic 60fps floor prevents silent downgrade to 30fps")
-    func automatic60FPSFloorPreventsSilentDowngradeTo30FPS() {
+    @Test("Automatic 60fps floor prevents transport downshift to 30fps")
+    func automatic60FPSFloorPreventsTransportDownshiftTo30FPS() {
         var controller = MirageAutomaticDesktopWorkloadController()
-        let snapshot = pipelineBoundSnapshot(
+        var snapshot = pipelineBoundSnapshot(
             width: 2752,
             height: 2064,
             targetFrameRate: 60,
             cadenceFPS: 25
         )
+        snapshot.hostSendQueueBytes = 2_000_000
 
         let action = advanceThroughPipelinePressure(
             controller: &controller,
@@ -212,22 +200,18 @@ struct AutomaticDesktopWorkloadControllerTests {
             minimumTargetFrameRate: 60
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 60)
+        #expect(action == .none)
     }
 
-    @Test("Workload reconfiguration is atomic when resize is unavailable")
-    func workloadReconfigurationIsAtomicWhenResizeIsUnavailable() {
+    @Test("Workload reconfiguration ignores resize availability")
+    func workloadReconfigurationIgnoresResizeAvailability() {
         let decision = MirageClientService.automaticDesktopWorkloadReconfigurationDecision(
             needsFrameRateChange: true,
             needsResize: true,
             allowsAutomaticResolutionResize: false
         )
 
-        #expect(!decision.shouldChangeFrameRate)
+        #expect(decision.shouldChangeFrameRate)
         #expect(!decision.shouldResize)
     }
 

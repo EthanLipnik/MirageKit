@@ -13,7 +13,7 @@ import MirageKit
 import ScreenCaptureKit
 
 extension MirageHostService {
-    /// Resolves the desktop capture context, preferring a virtual display and falling back to main-display capture.
+    /// Resolves the desktop capture context, using main-display capture only when explicitly requested.
     func acquireDesktopCaptureContext(
         _ request: DesktopCaptureAcquisitionRequest,
         config: inout MirageEncoderConfiguration,
@@ -144,11 +144,16 @@ extension MirageHostService {
         }
 
         if let acquiredCaptureContext { return acquiredCaptureContext }
-        return try await acquireFallbackMainDisplayDesktopCaptureContext(
-            request,
-            lastVirtualDisplayError: lastVirtualDisplayError,
-            logDesktopStartStep: logDesktopStartStep
-        )
+        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        if let lastVirtualDisplayError {
+            MirageLogger.error(
+                .host,
+                error: lastVirtualDisplayError,
+                message: "Desktop virtual display acquisition failed without changing requested resolution: "
+            )
+            throw lastVirtualDisplayError
+        }
+        throw MirageError.captureSetupFailed("Desktop virtual display acquisition failed")
     }
 
     /// Acquires a main-display desktop capture context.
@@ -203,33 +208,6 @@ extension MirageHostService {
             presentationResolution: presentationResolution,
             virtualDisplaySnapshot: nil,
             usesDisplayRefreshCadence: nil
-        )
-    }
-
-    /// Falls back to main-display capture after virtual display acquisition fails.
-    func acquireFallbackMainDisplayDesktopCaptureContext(
-        _ request: DesktopCaptureAcquisitionRequest,
-        lastVirtualDisplayError: (any Error)?,
-        logDesktopStartStep: (String) -> Void
-    ) async throws -> DesktopCaptureContext {
-        if let lastVirtualDisplayError {
-            MirageLogger.host(
-                "Desktop virtual display acquisition failed; falling back to main display capture: " +
-                    "\(lastVirtualDisplayError)"
-            )
-        } else {
-            MirageLogger.host("Desktop virtual display acquisition produced no capture context; falling back to main display")
-        }
-
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
-        return try await acquireMainDisplayDesktopCaptureContext(
-            request,
-            reason: "virtual_display_startup_failed",
-            startupStage: "after main display fallback acquisition",
-            mirroringStage: "after main display fallback mirroring",
-            successLogPrefix: "main display fallback",
-            configureMirroring: request.mode == .unified,
-            logDesktopStartStep: logDesktopStartStep
         )
     }
 
@@ -375,7 +353,7 @@ extension MirageHostService {
             if mirroringConfigured {
                 logDesktopStartStep("display mirroring configured")
             } else {
-                logDesktopStartStep("display mirroring unavailable; falling back to main display capture")
+                logDesktopStartStep("display mirroring unavailable; aborting virtual display acquisition")
                 _ = await disableDisplayMirroring(displayID: context.displayID)
                 await resetFailedDesktopVirtualDisplayAcquisition(
                     restoreHostResolution: request.usesHostResolution

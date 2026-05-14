@@ -141,7 +141,7 @@ extension StreamContext {
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
     }
 
-    /// Applies runtime encoder quality changes using queue pressure and encode timing.
+    /// Applies runtime encoder quality changes using transport queue pressure.
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
         guard runtimeQualityAdjustmentEnabled else { return }
@@ -154,13 +154,9 @@ extension StreamContext {
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 
         let averageEncodeMs = await encoder.averageEncodeTimeMs
-        if averageEncodeMs <= 0 { return }
-
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
+        let transportPressure = queueBytes > queuePressureBytes
         let sourceCadenceDeficient = virtualDisplaySourceCadenceIsDeficient(queueBytes: queueBytes)
         let allowsRaise = now >= qualityRaiseSuppressionUntil
-        let allowEncodeDrivenQualityRelief = true
         let baseDropThreshold = qualityDropThreshold
         let baseDropStep = qualityDropStep
 
@@ -172,10 +168,9 @@ extension StreamContext {
             ),
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
-            encodeOverBudget: encodeOverBudget,
+            transportPressure: transportPressure,
             sourceCadenceDeficient: sourceCadenceDeficient,
             allowsRaise: allowsRaise,
-            allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
             qualityDropThreshold: baseDropThreshold,
             qualityRaiseThreshold: qualityRaiseThreshold,
             qualityDropStep: baseDropStep,
@@ -197,9 +192,8 @@ extension StreamContext {
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
             MirageLogger.metrics(
-                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, reason=\(reason))"
+                "Quality down to \(qualityText) (queue \(queueBytes / 1024)KB, reason=\(reason))"
             )
 
         case .raise:

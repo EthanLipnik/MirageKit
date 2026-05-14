@@ -60,7 +60,6 @@ extension VideoDecoder {
         onRecovery: (@Sendable () -> Void)? = nil
     ) {
         errorTracker = DecodeErrorTracker(
-            maxErrors: maxConsecutiveErrors,
             onThresholdReached: handler,
             onRecovery: onRecovery
         )

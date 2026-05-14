@@ -47,8 +47,6 @@ actor VideoDecoder {
     var errorTracker: DecodeErrorTracker?
     /// Thread-safe rate limiter for non-fatal VideoToolbox callback diagnostics.
     let callbackFailureLogLimiter = DecodeCallbackFailureLogLimiter()
-    /// Consecutive decode errors allowed before requesting recovery.
-    let maxConsecutiveErrors = 5
     /// Thread-safe decode performance tracker (updated from decode callback)
     let performanceTracker = DecodePerformanceTracker()
 
@@ -256,7 +254,6 @@ final class DecodeInfo: @unchecked Sendable {
 final class DecodeErrorTracker: @unchecked Sendable {
     let lock = NSLock()
     var consecutiveErrors: Int = 0
-    let maxConsecutiveErrors: Int
     let onThresholdReached: @Sendable () -> Void
     let onRecovery: (@Sendable () -> Void)?
     var thresholdFired = false
@@ -296,11 +293,9 @@ final class DecodeErrorTracker: @unchecked Sendable {
     var recoverySuccessCount: Int = 0
 
     init(
-        maxErrors: Int,
         onThresholdReached: @escaping @Sendable () -> Void,
         onRecovery: (@Sendable () -> Void)? = nil
     ) {
-        maxConsecutiveErrors = maxErrors
         self.onThresholdReached = onThresholdReached
         self.onRecovery = onRecovery
     }

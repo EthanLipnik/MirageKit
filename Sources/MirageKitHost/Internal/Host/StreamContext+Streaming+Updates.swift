@@ -112,21 +112,21 @@ extension StreamContext {
     }
 
     func updateFrameRate(_ fps: Int) async throws {
-        guard isRunning, let captureEngine else { return }
+        guard isRunning else { return }
         let clamped = max(1, fps)
-        captureFrameRateOverride = clamped
-        let desiredCaptureRate = resolvedCaptureFrameRate(for: clamped)
-        if desiredCaptureRate != captureFrameRate { try await captureEngine.updateFrameRate(desiredCaptureRate) }
         currentFrameRate = clamped
+        lastFrameRateThrottleAdmissionTime = 0
         encoderConfig = encoderConfig.withTargetFrameRate(clamped)
-        await refreshCaptureCadence()
         await encoder?.updateFrameRate(clamped)
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Frame rate update")
         }
         updateKeyframeCadence()
         updateQueueLimits()
-        MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps (capture \(captureFrameRate) fps)")
+        MirageLogger.stream(
+            "Stream \(streamID) target frame rate updated to \(clamped) fps " +
+                "(capture remains \(captureFrameRate) fps, frames are skipped before encode)"
+        )
     }
 
     func updateCaptureShowsCursor(_ showsCursor: Bool) async throws {

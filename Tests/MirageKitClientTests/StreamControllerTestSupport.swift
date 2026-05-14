@@ -7,14 +7,19 @@
 
 @testable import MirageKitClient
 import Foundation
+import MirageKit
 
 #if os(macOS)
 extension StreamController {
     /// Applies a symmetric source/display cadence for decode-submission scheduler tests.
-    func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
+    func updateDecodeSubmissionLimit(
+        targetFrameRate: Int,
+        latencyMode: MirageStreamLatencyMode = .smoothest
+    ) async {
         await updateCadenceTarget(
             sourceFPS: targetFrameRate,
             displayFPS: targetFrameRate,
+            latencyMode: latencyMode,
             reason: "test target refresh update"
         )
     }

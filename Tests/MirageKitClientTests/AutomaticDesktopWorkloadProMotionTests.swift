@@ -33,8 +33,8 @@ extension AutomaticDesktopWorkloadControllerTests {
         #expect(action == .none)
     }
 
-    @Test("ProMotion presentation deficit preserves refresh before reducing FPS")
-    func proMotionPresentationDeficitPreservesRefreshBeforeReducingFPS() {
+    @Test("ProMotion transport pressure lowers refresh at the same resolution")
+    func proMotionTransportPressureLowersRefreshAtSameResolution() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -42,11 +42,7 @@ extension AutomaticDesktopWorkloadControllerTests {
             targetFrameRate: 120,
             cadenceFPS: 118
         )
-        snapshot.submittedFPS = 92
-        snapshot.uniqueSubmittedFPS = 92
-        snapshot.clientOverwrittenPendingFrames = 4
-        snapshot.clientDisplayLayerNotReadyCount = 2
-        snapshot.clientPendingFrameAgeMs = 24
+        snapshot.hostSendQueueBytes = 2_000_000
 
         let action = advanceThroughPipelinePressure(
             controller: &controller,
@@ -59,13 +55,12 @@ extension AutomaticDesktopWorkloadControllerTests {
             Issue.record("Expected workload reconfiguration")
             return
         }
-        #expect(target.targetFrameRate == 120)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(target.encodedPixelSize == CGSize(width: 2752, height: 2064))
+        #expect(target.targetFrameRate == 90)
     }
 
-    @Test("ProMotion presentation collapse preserves refresh with a lower resolution first")
-    func proMotionPresentationCollapsePreservesRefreshWithLowerResolutionFirst() {
+    @Test("ProMotion presentation collapse does not reconfigure workload")
+    func proMotionPresentationCollapseDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -86,17 +81,11 @@ extension AutomaticDesktopWorkloadControllerTests {
             maximumTargetFrameRate: 120
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 120)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(action == .none)
     }
 
-    @Test("Severe ProMotion presentation collapse downshifts after three samples")
-    func severeProMotionPresentationCollapseDownshiftsAfterThreeSamples() {
+    @Test("Severe ProMotion presentation collapse does not downshift")
+    func severeProMotionPresentationCollapseDoesNotDownshift() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -123,14 +112,7 @@ extension AutomaticDesktopWorkloadControllerTests {
             )
         }
 
-        guard case .reconfigure(let target, let reason) = action else {
-            Issue.record("Expected fast workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 120)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
-        #expect(reason.contains("client presentation collapse"))
+        #expect(action == .none)
     }
 
     @Test("Virtual-display source-bound ProMotion samples do not reconfigure workload")
@@ -159,8 +141,8 @@ extension AutomaticDesktopWorkloadControllerTests {
         #expect(action == .none)
     }
 
-    @Test("ProMotion severe presentation collapse still preserves refresh while reducing resolution")
-    func proMotionSeverePresentationCollapsePreservesRefreshWhileReducingResolution() {
+    @Test("ProMotion severe presentation collapse does not reconfigure workload")
+    func proMotionSeverePresentationCollapseDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -181,17 +163,11 @@ extension AutomaticDesktopWorkloadControllerTests {
             maximumTargetFrameRate: 120
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 120)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(action == .none)
     }
 
-    @Test("ProMotion client failure below floor recovers without dropping refresh")
-    func proMotionClientFailureBelowFloorRecoversWithoutDroppingRefresh() {
+    @Test("ProMotion client failure below floor does not reconfigure workload")
+    func proMotionClientFailureBelowFloorDoesNotReconfigureWorkload() {
         var controller = MirageAutomaticDesktopWorkloadController()
         var snapshot = pipelineBoundSnapshot(
             width: 2752,
@@ -215,13 +191,7 @@ extension AutomaticDesktopWorkloadControllerTests {
             minimumHealthyFrameRate: 60
         )
 
-        guard case .reconfigure(let target, _) = action else {
-            Issue.record("Expected workload reconfiguration")
-            return
-        }
-        #expect(target.targetFrameRate == 120)
-        #expect(target.encodedPixelSize.width < 2752)
-        #expect(target.encodedPixelSize.height < 2064)
+        #expect(action == .none)
     }
 
     @Test("Sustained clean ProMotion custom tier promotes refresh at the same resolution")

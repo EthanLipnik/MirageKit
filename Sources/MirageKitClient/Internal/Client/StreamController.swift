@@ -113,10 +113,10 @@ actor StreamController {
     var streamCadenceTarget = MirageStreamCadenceTarget(sourceFPS: 60, displayFPS: 60)
     var streamCadenceClock = MirageStreamCadenceClock(targetFPS: 60)
     var decodeSchedulerTargetFPS: Int = 60
-    var decodeSubmissionBaselineLimit: Int = 2
+    var decodeSubmissionBaselineLimit: Int = 1
     var decodeSubmissionStressStreak: Int = 0
     var decodeSubmissionHealthyStreak: Int = 0
-    var currentDecodeSubmissionLimit: Int = 2
+    var currentDecodeSubmissionLimit: Int = 1
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var lastSourceBoundDiagnosticSignature: String?
     var latestHostMetricsMessage: StreamMetricsMessage?

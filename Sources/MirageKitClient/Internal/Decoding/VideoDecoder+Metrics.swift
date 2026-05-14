@@ -26,8 +26,10 @@ extension DecodeErrorTracker {
         }
         let now = CFAbsoluteTimeGetCurrent()
 
-        // Initial threshold fire
-        if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
+        // A foreground decode failure usually means subsequent P-frames depend on a
+        // corrupted reference chain, so fence P-frames immediately and retry later
+        // only if the initial recovery keyframe does not arrive.
+        if consecutiveErrors >= 1, !thresholdFired {
             thresholdFired = true
             let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
             guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {

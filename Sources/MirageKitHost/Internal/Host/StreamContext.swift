@@ -258,6 +258,8 @@ actor StreamContext {
     var captureFrameRate: Int
     /// Optional override for capture frame rate.
     var captureFrameRateOverride: Int?
+    /// Host wall time for the last frame admitted after target-FPS throttling.
+    var lastFrameRateThrottleAdmissionTime: CFAbsoluteTime = 0
 
     /// Maximum encoded resolution (5K cap)
     static let maxEncodedWidth: CGFloat = 5120

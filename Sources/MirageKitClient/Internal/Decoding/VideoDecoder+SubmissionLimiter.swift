@@ -11,8 +11,12 @@ import Foundation
 import MirageKit
 
 extension VideoDecoder {
-    nonisolated static func baselineDecodeSubmissionLimit(targetFrameRate: Int) -> Int {
-        targetFrameRate >= 120 ? 3 : 2
+    nonisolated static func baselineDecodeSubmissionLimit(
+        targetFrameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        if latencyMode == .lowestLatency { return 1 }
+        return targetFrameRate >= 120 ? 3 : 2
     }
 
     func setDecodeSubmissionLimit(limit: Int, reason: String? = nil) {

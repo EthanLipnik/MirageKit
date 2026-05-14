@@ -23,6 +23,7 @@ public enum MirageAdaptiveStreamingRecoveryPhase: String, Sendable, Equatable {
 
 public enum MirageAdaptiveStreamingRecoveryTrigger: String, Sendable, Equatable {
     case cleanPromotion
+    case transportPressure
     case clientPresentationPressure
     case hostPipelinePressure
     case memoryPressure
@@ -171,19 +172,13 @@ public struct MirageAdaptiveStreamingController: Sendable {
             return .none
         }
 
-        let trigger: MirageAdaptiveStreamingRecoveryTrigger
-        if health.isClientPipelineBound {
-            trigger = .clientPresentationPressure
-        } else if health.isPipelineBound {
-            trigger = .hostPipelinePressure
-        } else {
-            trigger = .cleanPromotion
-        }
+        let transportPressureActive = !health.transportIsClean || health.bottleneckKind == .networkBound
+        let trigger: MirageAdaptiveStreamingRecoveryTrigger = transportPressureActive ? .transportPressure : .cleanPromotion
 
         let vector = MirageWorkloadVector(
             currentTier: currentTier,
             targetTier: target,
-            phase: target.pixelRate < currentTier.pixelRate ? .encoderOnlyRelief : .steady,
+            phase: target.pixelRate < currentTier.pixelRate ? .freshnessCatchUp : .steady,
             trigger: trigger
         )
         return .reconfigure(vector: vector, reason: reason)

@@ -321,30 +321,17 @@ public extension MirageClientService {
     package func remoteStartupRecoveryRestartRequest(
         from request: StartDesktopStreamMessage
     ) -> StartDesktopStreamMessage {
-        var lowered = StartDesktopStreamMessage(
+        let preserved = StartDesktopStreamMessage(
             copying: request,
-            startupRequestID: request.startupRequestID,
-            targetFrameRate: min(max(1, request.targetFrameRate), 60)
+            startupRequestID: request.startupRequestID
         )
-        lowered.disableResolutionCap = false
-        lowered.encoderMaxWidth = min(request.encoderMaxWidth ?? 1920, 1920)
-        lowered.encoderMaxHeight = min(request.encoderMaxHeight ?? 1080, 1080)
-        if let bitrate = request.bitrate {
-            lowered.bitrate = min(bitrate, 24_000_000)
-        }
-        if let enteredBitrate = request.enteredBitrate {
-            lowered.enteredBitrate = min(enteredBitrate, 24_000_000)
-        }
-        if let bitrateAdaptationCeiling = request.bitrateAdaptationCeiling {
-            lowered.bitrateAdaptationCeiling = min(bitrateAdaptationCeiling, 80_000_000)
-        }
         MirageLogger.client(
-            "Lowered remote desktop restart tier after startup recovery: " +
-                "fps=\(lowered.targetFrameRate), bitrate=\(lowered.bitrate ?? 0), " +
-                "ceiling=\(lowered.bitrateAdaptationCeiling ?? 0), " +
-                "encoderMax=\(lowered.encoderMaxWidth ?? 0)x\(lowered.encoderMaxHeight ?? 0)"
+            "Preserving remote desktop restart tier after startup recovery: " +
+                "fps=\(preserved.targetFrameRate), bitrate=\(preserved.bitrate ?? 0), " +
+                "ceiling=\(preserved.bitrateAdaptationCeiling ?? 0), " +
+                "encoderMax=\(preserved.encoderMaxWidth ?? 0)x\(preserved.encoderMaxHeight ?? 0)"
         )
-        return lowered
+        return preserved
     }
 
     /// Cancel any in-progress stream setup on the host.

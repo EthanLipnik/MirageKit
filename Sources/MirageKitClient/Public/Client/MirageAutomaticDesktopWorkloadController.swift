@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 4/21/26.
 //
-//  Automatic desktop workload policy for pipeline-bound streams.
+//  Automatic desktop workload policy for transport-bound streams.
 //
 
 import CoreGraphics
@@ -17,7 +17,7 @@ public enum MirageAdaptiveQualityPriority: String, Codable, CaseIterable, Sendab
     case prioritizeSmoothness
 }
 
-/// Stateful policy that adjusts desktop stream workload after sustained clean pipeline pressure.
+/// Stateful policy that adjusts desktop stream cadence after sustained transport pressure.
 public struct MirageAutomaticDesktopWorkloadController: Sendable {
     /// Decision returned after evaluating a metrics sample.
     public enum Action: Sendable, Equatable {
@@ -28,14 +28,11 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         case reconfigure(target: MirageAutomaticDesktopWorkloadTier, reason: String)
     }
 
-    private static let requiredPipelinePressureSamples = 8
-    private static let requiredPresentationCollapseSamples = 3
+    private static let requiredTransportPressureSamples = 4
     private static let requiredPromotionSamples = 6
     private static let reconfigurationCooldownSeconds: CFAbsoluteTime = 20
-    private static let observedPixelRateSafetyFactor = 0.85
 
-    private var pipelinePressureSampleCount = 0
-    private var presentationCollapseSampleCount = 0
+    private var transportPressureSampleCount = 0
     private var promotionSampleCount = 0
     private var lastReconfigurationAt: CFAbsoluteTime?
 
@@ -69,109 +66,58 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
             snapshot: snapshot,
             minimumHealthyFrameRate: minimumHealthyFrameRate
         )
-        guard health.transportIsClean,
-              let currentTier = health.currentTier else {
+        guard let currentTier = health.currentTier else {
             resetSampleCounters()
             return .none
         }
 
-        if health.sourceCadenceDeficient {
-            resetSampleCounters()
-            return .none
-        }
-
-        if health.isClientPipelineBound {
-            guard let observedPixelRate = health.observedPixelRate else {
-                resetSampleCounters()
-                return .none
-            }
-
+        let transportPressureActive = !health.transportIsClean || health.bottleneckKind == .networkBound
+        if transportPressureActive {
             promotionSampleCount = 0
-            if Self.isSevereClientPresentationCollapse(snapshot: snapshot, currentTier: currentTier) {
-                presentationCollapseSampleCount += 1
-            } else {
-                presentationCollapseSampleCount = 0
-            }
-            pipelinePressureSampleCount += 1
-            let requiredSamples = presentationCollapseSampleCount >= Self.requiredPresentationCollapseSamples
-                ? Self.requiredPresentationCollapseSamples
-                : Self.requiredPipelinePressureSamples
-            guard pipelinePressureSampleCount >= requiredSamples,
+            transportPressureSampleCount += 1
+            guard transportPressureSampleCount >= Self.requiredTransportPressureSamples,
                   cooldownElapsed(now: now),
-                  var targetTier = Self.clientPipelineTargetTier(
+                  let targetTier = Self.lowerFrameRateTier(
                       currentTier: currentTier,
-                      pipelinePixelRate: observedPixelRate,
-                      minimumTargetFrameRate: minimumTargetFrameRate,
-                      maximumTargetFrameRate: maximumTargetFrameRate
+                      minimumTargetFrameRate: minimumTargetFrameRate
                   ) else {
                 return .none
             }
-            if let preferredMaximumTier, targetTier.pixelRate > preferredMaximumTier.pixelRate {
-                targetTier = preferredMaximumTier
-            }
-
             recordReconfiguration(now: now)
-            let reasonPrefix = requiredSamples == Self.requiredPresentationCollapseSamples
-                ? "client presentation collapse"
-                : health.bottleneckKind.rawValue
-            let reason = "\(reasonPrefix), client presented \(Int(observedPixelRate)) px/s"
+            let reason = "transport pressure, target fps \(currentTier.targetFrameRate)->\(targetTier.targetFrameRate)"
             return .reconfigure(target: targetTier, reason: reason)
         }
 
-        if !health.isPipelineBound {
-            resetPressureCounters()
-            promotionSampleCount += 1
-            guard promotionSampleCount >= Self.requiredPromotionSamples,
-                  cooldownElapsed(now: now),
-                  var targetTier = Self.nextHigherTier(
-                      after: currentTier,
-                      maximumTargetFrameRate: maximumTargetFrameRate
-                  ) else {
-                return .none
-            }
-            if let preferredMaximumTier, targetTier.pixelRate > preferredMaximumTier.pixelRate {
-                targetTier = preferredMaximumTier
-            }
+        resetPressureCounters()
+        guard !health.isPipelineBound else {
             promotionSampleCount = 0
-            lastReconfigurationAt = now
-            return .reconfigure(target: targetTier, reason: "sustained clean transport and host cadence")
-        }
-
-        guard let hostPipelinePixelRate = health.hostPipelinePixelRate else {
-            resetSampleCounters()
             return .none
         }
-
-        promotionSampleCount = 0
-        presentationCollapseSampleCount = 0
-        pipelinePressureSampleCount += 1
-        guard pipelinePressureSampleCount >= Self.requiredPipelinePressureSamples else {
-            return .none
-        }
-        guard cooldownElapsed(now: now) else {
-            return .none
-        }
-        guard var targetTier = Self.targetTier(
-            currentTier: currentTier,
-            pipelinePixelRate: hostPipelinePixelRate,
-            minimumTargetFrameRate: minimumTargetFrameRate,
-            maximumTargetFrameRate: maximumTargetFrameRate
-        ) else {
+        promotionSampleCount += 1
+        guard promotionSampleCount >= Self.requiredPromotionSamples,
+              cooldownElapsed(now: now),
+              var targetTier = Self.nextHigherTier(
+                  after: currentTier,
+                  maximumTargetFrameRate: maximumTargetFrameRate
+              ) else {
             return .none
         }
         if let preferredMaximumTier, targetTier.pixelRate > preferredMaximumTier.pixelRate {
             targetTier = preferredMaximumTier
         }
-
-        recordReconfiguration(now: now)
-        let reason = "\(health.bottleneckKind.rawValue), host pipeline \(Int(hostPipelinePixelRate)) px/s"
-        return .reconfigure(target: targetTier, reason: reason)
+        guard targetTier.encodedPixelSize == currentTier.encodedPixelSize,
+              targetTier.targetFrameRate > currentTier.targetFrameRate else {
+            promotionSampleCount = 0
+            return .none
+        }
+        promotionSampleCount = 0
+        lastReconfigurationAt = now
+        return .reconfigure(target: targetTier, reason: "sustained clean transport")
     }
 
     /// Clears pressure-related sample counters while preserving promotion history.
     private mutating func resetPressureCounters() {
-        pipelinePressureSampleCount = 0
-        presentationCollapseSampleCount = 0
+        transportPressureSampleCount = 0
     }
 
     /// Clears all accumulated workload sample counters.
@@ -191,151 +137,21 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return now - lastReconfigurationAt >= Self.reconfigurationCooldownSeconds
     }
 
-    private static func targetTier(
+    private static func lowerFrameRateTier(
         currentTier: MirageAutomaticDesktopWorkloadTier,
-        pipelinePixelRate: Double,
-        minimumTargetFrameRate: Int,
-        maximumTargetFrameRate: Int
-    ) -> MirageAutomaticDesktopWorkloadTier? {
-        let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
-        let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
-        let normalizedMaximumTargetFrameRate = max(
-            normalizedMinimumTargetFrameRate,
-            MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
-        )
-        if currentTier.targetFrameRate > 60,
-           currentTier.targetFrameRate > normalizedMinimumTargetFrameRate,
-           let frameRatePreservingTier = reducedResolutionTierPreservingFrameRate(
-               currentTier: currentTier,
-               pipelinePixelRate: pipelinePixelRate
-           ) {
-            return frameRatePreservingTier
-        }
-
-        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers.filter {
-            $0.targetFrameRate >= normalizedMinimumTargetFrameRate &&
-                $0.targetFrameRate <= normalizedMaximumTargetFrameRate
-        }
-        let sameFrameRateTier = tiers.first { tier in
-            tier.targetFrameRate == currentTier.targetFrameRate &&
-                tier.pixelRate < currentTier.pixelRate &&
-                tier.pixelRate <= sustainablePixelRate
-        }
-        let eligibleTier = sameFrameRateTier ?? tiers.first { tier in
-            tier.pixelRate <= sustainablePixelRate
-        } ?? tiers.last
-
-        guard let eligibleTier else { return nil }
-        guard eligibleTier.pixelRate < currentTier.pixelRate else { return nil }
-        return eligibleTier
-    }
-
-    private static func clientPipelineTargetTier(
-        currentTier: MirageAutomaticDesktopWorkloadTier,
-        pipelinePixelRate: Double,
-        minimumTargetFrameRate: Int,
-        maximumTargetFrameRate: Int
+        minimumTargetFrameRate: Int
     ) -> MirageAutomaticDesktopWorkloadTier? {
         let normalizedMinimumTargetFrameRate = MirageRenderModePolicy.normalizedTargetFPS(minimumTargetFrameRate)
-        let normalizedMaximumTargetFrameRate = max(
-            normalizedMinimumTargetFrameRate,
-            MirageRenderModePolicy.normalizedTargetFPS(maximumTargetFrameRate)
+        guard currentTier.targetFrameRate > normalizedMinimumTargetFrameRate else { return nil }
+        let lowerFrameRate = MirageAutomaticDesktopWorkloadTier.sameResolutionPromotionFrameRates
+            .reversed()
+            .first { $0 < currentTier.targetFrameRate && $0 >= normalizedMinimumTargetFrameRate }
+            ?? normalizedMinimumTargetFrameRate
+        guard lowerFrameRate < currentTier.targetFrameRate else { return nil }
+        return MirageAutomaticDesktopWorkloadTier(
+            encodedPixelSize: currentTier.encodedPixelSize,
+            targetFrameRate: lowerFrameRate
         )
-        guard currentTier.targetFrameRate >= normalizedMinimumTargetFrameRate,
-              currentTier.targetFrameRate <= normalizedMaximumTargetFrameRate else {
-            return targetTier(
-                currentTier: currentTier,
-                pipelinePixelRate: pipelinePixelRate,
-                minimumTargetFrameRate: normalizedMinimumTargetFrameRate,
-                maximumTargetFrameRate: normalizedMaximumTargetFrameRate
-            )
-        }
-
-        let currentPixels = currentTier.encodedPixelCount
-        let targetPixels = targetPixelsPreservingFrameRate(
-            currentTier: currentTier,
-            pipelinePixelRate: pipelinePixelRate
-        )
-        guard targetPixels < currentPixels * 0.97 else { return nil }
-
-        let scale = max(0.35, sqrt(max(1.0, targetPixels) / currentPixels))
-        let targetSize = CGSize(
-            width: currentTier.encodedPixelSize.width * scale,
-            height: currentTier.encodedPixelSize.height * scale
-        )
-        let targetTier = MirageAutomaticDesktopWorkloadTier(
-            encodedPixelSize: targetSize,
-            targetFrameRate: currentTier.targetFrameRate
-        )
-        guard targetTier.pixelRate < currentTier.pixelRate else { return nil }
-        return targetTier
-    }
-
-    private static func reducedResolutionTierPreservingFrameRate(
-        currentTier: MirageAutomaticDesktopWorkloadTier,
-        pipelinePixelRate: Double
-    ) -> MirageAutomaticDesktopWorkloadTier? {
-        let currentPixels = currentTier.encodedPixelCount
-        let targetPixels = targetPixelsPreservingFrameRate(
-            currentTier: currentTier,
-            pipelinePixelRate: pipelinePixelRate
-        )
-        guard targetPixels < currentPixels * 0.97 else { return nil }
-        let scale = max(0.35, sqrt(max(1.0, targetPixels) / currentPixels))
-        let targetTier = MirageAutomaticDesktopWorkloadTier(
-            encodedPixelSize: CGSize(
-                width: currentTier.encodedPixelSize.width * scale,
-                height: currentTier.encodedPixelSize.height * scale
-            ),
-            targetFrameRate: currentTier.targetFrameRate
-        )
-        guard targetTier.pixelRate < currentTier.pixelRate else { return nil }
-        return targetTier
-    }
-
-    private static func targetPixelsPreservingFrameRate(
-        currentTier: MirageAutomaticDesktopWorkloadTier,
-        pipelinePixelRate: Double
-    ) -> Double {
-        let sustainablePixelRate = pipelinePixelRate * observedPixelRateSafetyFactor
-        return sustainablePixelRate / Double(max(1, currentTier.targetFrameRate))
-    }
-
-    private static func isSevereClientPresentationCollapse(
-        snapshot: MirageClientMetricsSnapshot?,
-        currentTier: MirageAutomaticDesktopWorkloadTier
-    )
-    -> Bool {
-        guard let snapshot else { return false }
-        guard currentTier.targetFrameRate >= 90 else { return false }
-        guard snapshot.bottleneckKind == .presentationBound ||
-            snapshot.bottleneckKind == .decodeBound ||
-            snapshot.bottleneckKind == .mixed else {
-            return false
-        }
-
-        let targetFPS = Double(max(1, currentTier.targetFrameRate))
-        let hostCadence = minimumPositive(
-            snapshot.hostCaptureFPS,
-            snapshot.hostEncodeAttemptFPS,
-            snapshot.hostEncodedFPS
-        ) ?? 0
-        let clientCadence = minimumPositive(
-            snapshot.submittedFPS,
-            snapshot.uniqueSubmittedFPS,
-            snapshot.clientPresentedFPS > 0 ? snapshot.clientPresentedFPS : nil,
-            snapshot.clientLayerAcceptedFPS > 0 ? snapshot.clientLayerAcceptedFPS : nil
-        ) ?? 0
-        guard hostCadence >= targetFPS * 0.85 else { return false }
-        guard snapshot.decodedFPS >= targetFPS * 0.60 else { return false }
-        guard clientCadence > 0, clientCadence <= targetFPS * 0.72 else { return false }
-
-        let frameBudgetMs = 1000.0 / targetFPS
-        return snapshot.clientPendingFrameAgeMs >= max(28.0, frameBudgetMs * 3.0) ||
-            snapshot.clientOverwrittenPendingFrames >= 3 ||
-            snapshot.clientDisplayLayerNotReadyCount >= 2 ||
-            snapshot.clientFrameIntervalP99Ms >= max(36.0, frameBudgetMs * 4.0) ||
-            snapshot.clientWorstPresentationGapMs >= max(120.0, frameBudgetMs * 10.0)
     }
 
     private static func nextHigherTier(

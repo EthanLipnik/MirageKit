@@ -139,7 +139,10 @@ extension StreamController {
         )
         let resolvedBaseline = presentationTier == .passiveSnapshot
             ? 1
-            : VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: target.sourceFPS)
+            : VideoDecoder.baselineDecodeSubmissionLimit(
+                targetFrameRate: target.sourceFPS,
+                latencyMode: target.latencyMode
+            )
         let targetUnchanged = target == streamCadenceTarget
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
 

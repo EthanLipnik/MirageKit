@@ -45,16 +45,19 @@ extension StreamController {
     }
 
     /// Logs a decode backpressure threshold event without forcing keyframe recovery.
-    func maybeLogDecodeBackpressure(queueDepth: Int) {
+    func maybeLogDecodeBackpressure(queueDepth: Int, recoveryRequested: Bool = false) {
         let now = currentTime
         if lastBackpressureLogTime > 0,
            now - lastBackpressureLogTime < Self.backpressureLogCooldown {
             return
         }
         lastBackpressureLogTime = now
+        let suffix = recoveryRequested
+            ? "replacing stale queued frame and requesting keyframe recovery"
+            : "continuing decode without keyframe recovery"
         MirageLogger.client(
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "continuing decode without keyframe recovery"
+                suffix
         )
     }
 
@@ -259,6 +262,11 @@ extension StreamController {
             return
         }
 
+        if presentationTier == .activeLive,
+           !hasPresentedFirstFrame,
+           !awaitingFirstPresentedFrame {
+            await armFirstPresentedFrameAwaiter(reason: "decode-threshold-startup")
+        }
         if awaitingFirstPresentedFrame {
             firstPresentedFrameLastRecoveryRequestTime = now
             MirageLogger.client(

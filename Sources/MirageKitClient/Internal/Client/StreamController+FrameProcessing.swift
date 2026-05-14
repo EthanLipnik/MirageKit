@@ -226,12 +226,25 @@ extension StreamController {
             return
         }
 
-        if queuedFrames.count >= Self.maxQueuedFrames {
+        let maxQueuedFrames = maxQueuedFramesForCurrentLatency()
+        if queuedFrames.count >= maxQueuedFrames {
             let queueDepth = queuedFrames.count
             if frame.isKeyframe {
                 discardQueuedFramesForRecovery()
                 queuedFrames.append(frame)
                 maybeLogDecodeBackpressure(queueDepth: queueDepth)
+                return
+            }
+
+            if streamCadenceTarget.latencyMode == .lowestLatency,
+               hasDecodedFirstFrame,
+               let droppedFrame = queuedFrames.popFirst() {
+                droppedFrame.releaseBuffer()
+                recordQueueDrop()
+                queuedFrames.append(frame)
+                maybeLogDecodeBackpressure(queueDepth: queueDepth, recoveryRequested: true)
+                logQueueDropIfNeeded()
+                await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
                 return
             }
 
@@ -243,6 +256,13 @@ extension StreamController {
         }
 
         queuedFrames.append(frame)
+    }
+
+    private func maxQueuedFramesForCurrentLatency() -> Int {
+        if streamCadenceTarget.latencyMode == .lowestLatency, hasDecodedFirstFrame {
+            return 1
+        }
+        return Self.maxQueuedFrames
     }
 
     private func dequeueFrame() async -> FrameData? {

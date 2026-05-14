@@ -113,8 +113,8 @@ struct DesktopStopFailureSuppressionTests {
     }
 
     @MainActor
-    @Test("Remote startup recovery restart lowers aggressive desktop tier")
-    func remoteStartupRecoveryRestartLowersAggressiveDesktopTier() {
+    @Test("Remote startup recovery restart preserves desktop tier")
+    func remoteStartupRecoveryRestartPreservesDesktopTier() {
         let service = MirageClientService(deviceName: "Test Device")
         var request = StartDesktopStreamMessage(
             startupRequestID: UUID(),
@@ -135,16 +135,16 @@ struct DesktopStopFailureSuppressionTests {
         request.encoderMaxWidth = 4096
         request.encoderMaxHeight = 2304
 
-        let lowered = service.remoteStartupRecoveryRestartRequest(from: request)
+        let preserved = service.remoteStartupRecoveryRestartRequest(from: request)
 
-        #expect(lowered.targetFrameRate == 60)
-        #expect(lowered.enteredBitrate == 24_000_000)
-        #expect(lowered.bitrate == 24_000_000)
-        #expect(lowered.disableResolutionCap == false)
-        #expect(lowered.bitrateAdaptationCeiling == 80_000_000)
-        #expect(lowered.encoderMaxWidth == 1920)
-        #expect(lowered.encoderMaxHeight == 1080)
-        #expect(lowered.startupRequestID == request.startupRequestID)
+        #expect(preserved.targetFrameRate == request.targetFrameRate)
+        #expect(preserved.enteredBitrate == request.enteredBitrate)
+        #expect(preserved.bitrate == request.bitrate)
+        #expect(preserved.disableResolutionCap == request.disableResolutionCap)
+        #expect(preserved.bitrateAdaptationCeiling == request.bitrateAdaptationCeiling)
+        #expect(preserved.encoderMaxWidth == request.encoderMaxWidth)
+        #expect(preserved.encoderMaxHeight == request.encoderMaxHeight)
+        #expect(preserved.startupRequestID == request.startupRequestID)
     }
 
     @MainActor

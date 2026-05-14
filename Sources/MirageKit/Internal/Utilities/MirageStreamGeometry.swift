@@ -87,25 +87,23 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     ) -> MirageStreamGeometry {
         let normalizedBasePixelSize = alignedEncodedSize(basePixelSize)
         let clampedRequestedScale = clampStreamScale(requestedStreamScale)
-        let resolvedScale: CGFloat
+        let requestedScaleLimit: CGFloat
         let widthLimit = positiveEncoderLimit(encoderMaxWidth) ?? normalizedBasePixelSize.width
         let heightLimit = positiveEncoderLimit(encoderMaxHeight) ?? normalizedBasePixelSize.height
         let hasExplicitResolutionLimit = positiveEncoderLimit(encoderMaxWidth) != nil ||
             positiveEncoderLimit(encoderMaxHeight) != nil
         if disableResolutionCap && !hasExplicitResolutionLimit {
-            resolvedScale = clampedRequestedScale
+            requestedScaleLimit = clampedRequestedScale
         } else {
             let widthScale = normalizedBasePixelSize.width > 0 ? widthLimit / normalizedBasePixelSize.width : 1.0
             let heightScale = normalizedBasePixelSize.height > 0 ? heightLimit / normalizedBasePixelSize.height : 1.0
             let maxScale = min(1.0, widthScale, heightScale)
-            resolvedScale = min(clampedRequestedScale, maxScale)
+            requestedScaleLimit = min(clampedRequestedScale, maxScale)
         }
 
-        let encodedPixelSize = alignedEncodedSize(
-            CGSize(
-                width: normalizedBasePixelSize.width * resolvedScale,
-                height: normalizedBasePixelSize.height * resolvedScale
-            )
+        let alignedPlan = aspectPreservingAlignedEncodedPlan(
+            basePixelSize: normalizedBasePixelSize,
+            requestedScaleLimit: requestedScaleLimit
         )
 
         return MirageStreamGeometry(
@@ -113,8 +111,8 @@ package struct MirageStreamGeometry: Sendable, Equatable {
             displayScaleFactor: 1.0,
             displayPixelSize: normalizedBasePixelSize,
             requestedStreamScale: clampedRequestedScale,
-            resolvedStreamScale: resolvedScale,
-            encodedPixelSize: encodedPixelSize
+            resolvedStreamScale: alignedPlan.scale,
+            encodedPixelSize: alignedPlan.encodedPixelSize
         )
     }
 
@@ -154,6 +152,67 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     private static func positiveEncoderLimit(_ value: Int?) -> CGFloat? {
         guard let value, value > 0 else { return nil }
         return CGFloat(value)
+    }
+
+    private struct EncodedScalePlan {
+        let scale: CGFloat
+        let encodedPixelSize: CGSize
+    }
+
+    private static func aspectPreservingAlignedEncodedPlan(
+        basePixelSize: CGSize,
+        requestedScaleLimit: CGFloat
+    ) -> EncodedScalePlan {
+        guard basePixelSize.width > 0,
+              basePixelSize.height > 0,
+              requestedScaleLimit > 0 else {
+            return EncodedScalePlan(scale: 1.0, encodedPixelSize: .zero)
+        }
+
+        let scaledWidth = basePixelSize.width * requestedScaleLimit
+        let scaledHeight = basePixelSize.height * requestedScaleLimit
+        let alignedWidth = CGFloat(alignedEncodedDimension(scaledWidth))
+        let alignedHeight = CGFloat(alignedEncodedDimension(scaledHeight))
+        let aspect = basePixelSize.width / basePixelSize.height
+
+        let widthAnchoredHeight = min(
+            alignedHeight,
+            CGFloat(alignedEncodedDimension(alignedWidth / aspect))
+        )
+        let widthAnchored = EncodedScalePlan(
+            scale: alignedWidth / basePixelSize.width,
+            encodedPixelSize: CGSize(width: alignedWidth, height: widthAnchoredHeight)
+        )
+
+        let heightAnchoredWidth = min(
+            alignedWidth,
+            CGFloat(alignedEncodedDimension(alignedHeight * aspect))
+        )
+        let heightAnchored = EncodedScalePlan(
+            scale: alignedHeight / basePixelSize.height,
+            encodedPixelSize: CGSize(width: heightAnchoredWidth, height: alignedHeight)
+        )
+
+        return [widthAnchored, heightAnchored]
+            .filter { $0.encodedPixelSize.width > 0 && $0.encodedPixelSize.height > 0 }
+            .min { lhs, rhs in
+                let lhsAspect = lhs.encodedPixelSize.width / lhs.encodedPixelSize.height
+                let rhsAspect = rhs.encodedPixelSize.width / rhs.encodedPixelSize.height
+                let lhsError = abs(lhsAspect - aspect) / aspect
+                let rhsError = abs(rhsAspect - aspect) / aspect
+                if abs(lhsError - rhsError) > 0.0001 {
+                    return lhsError < rhsError
+                }
+
+                let lhsArea = lhs.encodedPixelSize.width * lhs.encodedPixelSize.height
+                let rhsArea = rhs.encodedPixelSize.width * rhs.encodedPixelSize.height
+                return lhsArea > rhsArea
+            } ?? EncodedScalePlan(
+                scale: requestedScaleLimit,
+                encodedPixelSize: alignedEncodedSize(
+                    CGSize(width: scaledWidth, height: scaledHeight)
+                )
+            )
     }
 
     private static func inferredDisplayScaleFactor(

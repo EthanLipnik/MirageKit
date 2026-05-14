@@ -55,17 +55,25 @@ extension StreamContext {
     }
 
     nonisolated func enqueueCapturedFrame(_ frame: CapturedFrame) {
+        Task(priority: .userInitiated) { await self.receiveCapturedFrame(frame) }
+    }
+
+    func receiveCapturedFrame(_ frame: CapturedFrame) {
         guard shouldEncodeFrames else {
-            Task(priority: .userInitiated) { await self.handleCapturedFrameWhileStartupGated(frame) }
+            handleCapturedFrameWhileStartupGated(frame)
             return
         }
+        recordCaptureIngress(frame)
         if frame.info.isIdleFrame {
-            Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
             return
         }
-        Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
+        if shouldSkipFrameForTargetCadence(frame) {
+            captureDroppedIntervalCount += 1
+            droppedFrameCount += 1
+            return
+        }
         if frameInbox.enqueue(frame) {
-            Task(priority: .userInitiated) { await self.processPendingFrames() }
+            scheduleProcessingIfNeeded()
         }
     }
 
@@ -84,6 +92,25 @@ extension StreamContext {
             startupFirstCaptureLogged = true
             logStartupEvent("first captured frame")
         }
+    }
+
+    /// Returns true when capture is intentionally running faster than the target encode cadence.
+    func shouldSkipFrameForTargetCadence(_ frame: CapturedFrame) -> Bool {
+        let sourceFrameRate = max(1, captureFrameRate)
+        let targetFrameRate = max(1, currentFrameRate)
+        guard sourceFrameRate > targetFrameRate else {
+            lastFrameRateThrottleAdmissionTime = frame.captureTime
+            return false
+        }
+
+        let targetInterval = 1.0 / Double(targetFrameRate)
+        if lastFrameRateThrottleAdmissionTime > 0,
+           frame.captureTime - lastFrameRateThrottleAdmissionTime < targetInterval * 0.85 {
+            return true
+        }
+
+        lastFrameRateThrottleAdmissionTime = frame.captureTime
+        return false
     }
 
     func scheduleProcessingIfNeeded() {

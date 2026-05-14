@@ -403,11 +403,8 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         #expect(await controller.clientRecoveryStatus == .idle)
 
         let baselineThresholds = thresholdCounter.value
-        let maxErrors = await controller.decoder.maxConsecutiveErrors
         tracker.lastThresholdTime = CFAbsoluteTimeGetCurrent()
-        for _ in 0 ..< maxErrors {
-            tracker.recordError(isKeyframe: false)
-        }
+        tracker.recordError(isKeyframe: false)
 
         #expect(thresholdCounter.value == baselineThresholds)
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))

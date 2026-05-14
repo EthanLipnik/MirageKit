@@ -34,22 +34,18 @@ extension StreamContext {
         latencyMode: MirageStreamLatencyMode,
         useLowLatencyPipeline: Bool
     ) -> StreamBufferPolicy {
-        let usesDesktopLowLatency60HzBufferPolicy = usesStandardDesktopLowLatency60HzBufferPolicy(
-            streamKind: streamKind,
-            frameRate: frameRate,
-            latencyMode: latencyMode
-        )
-        var bufferDepth = frameBufferDepth(
+        _ = streamKind
+        let bufferDepth = frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: frameRate,
             latencyMode: latencyMode
         )
-        var minInFlight = minInFlightFrames(
+        let minInFlight = minInFlightFrames(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: frameRate,
             latencyMode: latencyMode
         )
-        var inFlightCap = min(
+        let inFlightCap = min(
             bufferDepth,
             inFlightCap(
                 useLowLatencyPipeline: useLowLatencyPipeline,
@@ -57,12 +53,6 @@ extension StreamContext {
                 latencyMode: latencyMode
             )
         )
-
-        if usesDesktopLowLatency60HzBufferPolicy {
-            bufferDepth = max(bufferDepth, 2)
-            minInFlight = max(minInFlight, 2)
-            inFlightCap = max(inFlightCap, 2)
-        }
 
         let resolvedInFlightCap = max(1, inFlightCap)
         return StreamBufferPolicy(
@@ -80,7 +70,8 @@ extension StreamContext {
         latencyMode: MirageStreamLatencyMode
     )
     -> Int {
-        if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
+        _ = frameRate
+        if useLowLatencyPipeline { return 1 }
         switch latencyMode {
         case .smoothest:
             if frameRate >= 120 { return 6 }
@@ -100,7 +91,8 @@ extension StreamContext {
         latencyMode: MirageStreamLatencyMode
     )
     -> Int {
-        if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
+        _ = frameRate
+        if useLowLatencyPipeline { return 1 }
         switch latencyMode {
         case .smoothest:
             if frameRate >= 120 { return 5 }
@@ -130,32 +122,16 @@ extension StreamContext {
         }
     }
 
-    /// Returns whether desktop 60 Hz lowest-latency streams use the standard two-frame buffer policy.
-    static func usesStandardDesktopLowLatency60HzBufferPolicy(
-        streamKind: VideoEncoder.StreamKind,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
-    )
-    -> Bool {
-        streamKind == .desktop &&
-            latencyMode == .lowestLatency &&
-            frameRate == 60
-    }
-
-    /// Returns the low-latency in-flight cap after desktop-specific policy overrides.
+    /// Returns the low-latency in-flight cap.
     static func lowLatencyPipelineInFlightLimit(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode
     ) -> Int {
-        if usesStandardDesktopLowLatency60HzBufferPolicy(
-            streamKind: streamKind,
-            frameRate: frameRate,
-            latencyMode: latencyMode
-        ) {
-            return 2
-        }
-        return frameRate >= 120 ? 2 : 1
+        _ = streamKind
+        _ = frameRate
+        _ = latencyMode
+        return 1
     }
 }
 #endif

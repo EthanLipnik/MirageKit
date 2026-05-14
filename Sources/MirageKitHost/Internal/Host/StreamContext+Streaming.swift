@@ -240,15 +240,6 @@ extension StreamContext {
         await captureEngine?.restartCapture(reason: reason)
     }
 
-    func restartDisplayCaptureForCadenceRecovery(reason: String) async {
-        guard captureMode == .display, !isResizing, !encodingSuspendedForResize else { return }
-        await captureEngine?.restartCapture(reason: reason)
-        await scheduleCoalescedRecoveryKeyframe(
-            reason: "Capture cadence recovery",
-            ignoreExistingInFlight: true
-        )
-    }
-
     func hasObservedDisplayStartupSample() async -> Bool {
         guard captureMode == .display, let captureEngine else { return false }
         return await captureEngine.hasObservedDisplayStartupSample

@@ -97,7 +97,6 @@ enum DesktopResizeTransactionContinuationDecision: Equatable {
 /// Recovery strategy after a desktop resize failure.
 enum DesktopResizeFailureRecoveryPlan: Equatable {
     case rollbackToLastKnownGood
-    case mainDisplayFallback
     case stopStream
 }
 
@@ -118,10 +117,8 @@ func desktopResizeFailureRecoveryPlan(
     desktopStreamMode: MirageDesktopStreamMode,
     hasPreResizeSnapshot: Bool
 ) -> DesktopResizeFailureRecoveryPlan {
-    if desktopStreamMode == .unified {
-        return hasPreResizeSnapshot ? .rollbackToLastKnownGood : .stopStream
-    }
-    return .mainDisplayFallback
+    _ = desktopStreamMode
+    return hasPreResizeSnapshot ? .rollbackToLastKnownGood : .stopStream
 }
 
 /// Pixel resolution produced from a logical desktop size and backing scale.
