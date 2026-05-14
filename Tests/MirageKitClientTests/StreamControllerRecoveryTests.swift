@@ -110,8 +110,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Passive tier frame loss enters keyframe-only mode without requesting keyframe")
-    func passiveTierFrameLossEntersKeyframeOnlyMode() async throws {
+    @Test("Passive tier frame loss requests bounded recovery keyframe")
+    func passiveTierFrameLossRequestsBoundedRecoveryKeyframe() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 96
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -119,17 +119,17 @@ struct StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
         await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal()
-        try await Task.sleep(for: .seconds(2))
-
-        // Passive streams enter keyframe-only mode and wait for the next
-        // natural keyframe rather than requesting one explicitly.
-        #expect(keyframeCounter.value == 0)
+        try await streamControllerWaitUntil("passive frame loss keyframe request") {
+            keyframeCounter.value >= 1
+        }
+        #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
     }
@@ -143,12 +143,13 @@ struct StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
         await controller.markFirstFramePresented()
         let reassembler = await controller.reassembler
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
         #expect(reassembler.isAwaitingKeyframe)
 
         await controller.updatePresentationTier(.passiveSnapshot)
@@ -157,6 +158,41 @@ struct StreamControllerRecoveryTests {
             keyframeCounter.value >= 1
         }
         #expect(keyframeCounter.value >= 1)
+
+        await controller.stop()
+    }
+
+    @Test("Pending keyframe progress suppresses duplicate decode recovery requests")
+    func pendingKeyframeProgressSuppressesDuplicateDecodeRecoveryRequests() async {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let streamID: StreamID = 97
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 4)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+
+        let reassembler = await controller.reassembler
+        let keyframeFragment = Data([0x00, 0x00, 0x00, 0x2A])
+        reassembler.processPacket(
+            keyframeFragment,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 42,
+                payload: keyframeFragment,
+                fragmentIndex: 0,
+                fragmentCount: 8,
+                frameByteCount: 32
+            )
+        )
+
+        let didDispatch = await controller.requestKeyframeRecovery(reason: .decodeErrorThreshold)
+
+        #expect(didDispatch == false)
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }
@@ -171,6 +207,7 @@ struct StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -298,6 +335,7 @@ struct StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 

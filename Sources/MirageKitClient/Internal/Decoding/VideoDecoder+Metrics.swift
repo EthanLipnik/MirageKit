@@ -117,6 +117,16 @@ extension DecodeErrorTracker {
         if wasInRecoveryState { onRecovery?() }
     }
 
+    func recordKeyframeSubmittedForRecovery() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard recoveryRequiresKeyframeDecode else { return }
+        recoveryRequiresKeyframeDecode = false
+        nonKeyframesSkippedForRecovery = 0
+        MirageLogger.decoder("Recovery keyframe submitted - admitting dependent P-frames")
+    }
+
     func requestKeyframeForDimensionChange() {
         lock.lock()
         do {

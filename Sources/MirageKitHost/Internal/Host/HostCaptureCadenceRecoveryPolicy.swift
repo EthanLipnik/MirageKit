@@ -20,6 +20,10 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         case recreateVirtualDisplay
     }
 
+    enum SuppressionReason: Sendable, Equatable {
+        case receiverAlreadyPresented
+    }
+
     struct Configuration: Sendable, Equatable {
         var consecutiveBadWindowsRequired: Int = 2
         var goodWindowsRequiredToResetEscalation: Int = 3
@@ -73,6 +77,8 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
     private var captureRestartCount = 0
     private var virtualDisplayReassertCount = 0
     private var lastActionTime: CFAbsoluteTime = 0
+    private(set) var lastSuppressedAction: Action?
+    private(set) var lastSuppressionReason: SuppressionReason?
 
     mutating func reset() {
         badWindowCount = 0
@@ -81,9 +87,14 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         captureRestartCount = 0
         virtualDisplayReassertCount = 0
         lastActionTime = 0
+        lastSuppressedAction = nil
+        lastSuppressionReason = nil
     }
 
     mutating func evaluate(_ sample: Sample) -> Action {
+        lastSuppressedAction = nil
+        lastSuppressionReason = nil
+
         guard sample.isDesktopDisplayStream,
               sample.startupSettled,
               !sample.isResizing,
@@ -115,7 +126,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             guard lastActionTime <= 0 || sample.now - lastActionTime >= configuration.actionCooldownSeconds else {
                 return .none
             }
-            guard allowsAction(immediateAction, receiverHasPresentedFrame: sample.receiverHasPresentedFrame) else {
+            guard recordAndAllowAction(immediateAction, receiverHasPresentedFrame: sample.receiverHasPresentedFrame) else {
                 return .none
             }
             badWindowCount = 0
@@ -162,7 +173,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         return .recreateVirtualDisplay
     }
 
-    private func allowsAction(
+    private mutating func recordAndAllowAction(
         _ action: Action,
         receiverHasPresentedFrame: Bool
     ) -> Bool {
@@ -174,6 +185,8 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         case .restartVirtualDisplayCadenceDriver,
              .reassertVirtualDisplayMode,
              .recreateVirtualDisplay:
+            lastSuppressedAction = action
+            lastSuppressionReason = .receiverAlreadyPresented
             return false
         }
     }
@@ -184,13 +197,17 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
     ) -> Bool {
         let targetFPS = effectiveHealthFrameRate(sample, configuration: configuration)
         let fpsFloor = targetFPS * configuration.captureFPSFloorRatio
-        let lowCaptureFPS = [
+        let observedCaptureRates = [
             sample.captureFPS,
             sample.captureIngressFPS,
-            sample.encodeAttemptFPS,
-        ].contains { value in
-            guard let value, value > 0 else { return false }
-            return value < fpsFloor
+        ].compactMap { value -> Double? in
+            guard let value, value > 0 else { return nil }
+            return value
+        }
+        let lowCaptureFPS = if let observedCaptureFPS = observedCaptureRates.max() {
+            observedCaptureFPS < fpsFloor
+        } else {
+            sample.encodeAttemptFPS.map { $0 > 0 && $0 < fpsFloor } ?? false
         }
 
         let cadence = sample.captureCadence
@@ -242,11 +259,10 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
               let observedCaptureFPS = [
                   sample.captureFPS,
                   sample.captureIngressFPS,
-                  sample.encodeAttemptFPS,
               ].compactMap({ value -> Double? in
                   guard let value, value > 0 else { return nil }
                   return value
-              }).max() else {
+              }).max() ?? sample.encodeAttemptFPS else {
             return nil
         }
 

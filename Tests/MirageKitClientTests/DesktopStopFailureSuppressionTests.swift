@@ -113,41 +113,6 @@ struct DesktopStopFailureSuppressionTests {
     }
 
     @MainActor
-    @Test("Remote startup recovery restart lowers aggressive desktop tier")
-    func remoteStartupRecoveryRestartLowersAggressiveDesktopTier() {
-        let service = MirageClientService(deviceName: "Test Device")
-        var request = StartDesktopStreamMessage(
-            startupRequestID: UUID(),
-            scaleFactor: 2,
-            displayWidth: 2752,
-            displayHeight: 2064,
-            targetFrameRate: 120,
-            streamScale: 1,
-            audioConfiguration: MirageAudioConfiguration(enabled: true),
-            dataPort: 7341,
-            useHostResolution: false,
-            mediaMaxPacketSize: 1180
-        )
-        request.enteredBitrate = 120_000_000
-        request.bitrate = 120_000_000
-        request.disableResolutionCap = true
-        request.bitrateAdaptationCeiling = 220_000_000
-        request.encoderMaxWidth = 4096
-        request.encoderMaxHeight = 2304
-
-        let lowered = service.remoteStartupRecoveryRestartRequest(from: request)
-
-        #expect(lowered.targetFrameRate == 60)
-        #expect(lowered.enteredBitrate == 24_000_000)
-        #expect(lowered.bitrate == 24_000_000)
-        #expect(lowered.disableResolutionCap == false)
-        #expect(lowered.bitrateAdaptationCeiling == 80_000_000)
-        #expect(lowered.encoderMaxWidth == 1920)
-        #expect(lowered.encoderMaxHeight == 1080)
-        #expect(lowered.startupRequestID == request.startupRequestID)
-    }
-
-    @MainActor
     @Test("Terminal startup desktop restart is bounded to one attempt")
     func terminalStartupDesktopRestartIsBoundedToOneAttempt() {
         let service = MirageClientService(deviceName: "Test Device")

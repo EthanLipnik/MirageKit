@@ -36,6 +36,28 @@ extension StreamController {
         return min(0.50, max(0.15, frameScaledThreshold))
     }
 
+    nonisolated static func shouldDeferForPendingKeyframeProgress(
+        _ progress: FrameReassembler.PendingKeyframeProgress,
+        now: CFAbsoluteTime,
+        targetFPS: Int
+    ) -> Bool {
+        let recentProgress = now - progress.lastProgressTime <
+            keyframeProgressFreshThreshold(targetFPS: targetFPS)
+        if recentProgress { return true }
+
+        let frameScaledBase = frameIntervalSeconds(targetFPS: targetFPS) * 90.0
+        let baseAssemblyWindow = min(3.0, max(0.75, frameScaledBase))
+        let progressBonus: CFAbsoluteTime
+        if progress.progressRatio >= 0.75 {
+            progressBonus = 2.0
+        } else if progress.progressRatio >= 0.25 {
+            progressBonus = 1.0
+        } else {
+            progressBonus = 0
+        }
+        return progress.age < baseAssemblyWindow + progressBonus
+    }
+
     nonisolated static func keyframeRecoveryRetryDelay(
         attempt: Int,
         targetFPS: Int

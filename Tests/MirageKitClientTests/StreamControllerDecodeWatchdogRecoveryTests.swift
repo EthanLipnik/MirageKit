@@ -30,6 +30,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -65,6 +66,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
@@ -97,6 +99,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -119,6 +122,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -130,7 +134,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         #expect(await controller.lastPresentedProgressTime > 0)
 
         let reassembler = await controller.reassembler
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
 
         try await streamControllerWaitUntil("freeze monitor keyframe request", timeout: .seconds(3)) {
             keyframeCounter.value >= 1
@@ -165,6 +169,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -173,6 +178,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         MirageRenderStreamStore.shared.markSubmitted(sequence: 1, for: streamID)
         await controller.markFirstFramePresented()
         await controller.simulatePresentationStall(now: clock.now)
+        await controller.testSeedFrameRates(decodedFPS: 60, receivedFPS: 60, now: clock.now)
 
         _ = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makeStreamControllerPixelBuffer(),
@@ -188,6 +194,48 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         #expect(keyframeCounter.value == 0)
         let reassembler = await controller.reassembler
         #expect(!reassembler.isAwaitingKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("Freeze monitor does not recover presentation while decode is stalled")
+    func freezeMonitorDoesNotRecoverPresentationWhileDecodeIsStalled() async throws {
+        let presenterRecoveryCounter = StreamControllerLockedCounter()
+        let presenterOwner = NSObject()
+        let streamID: StreamID = 150
+        let clock = StreamControllerManualTimeProvider(start: 8200)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+        await controller.simulatePresentationStall(now: clock.now)
+        await controller.testSeedFrameRates(decodedFPS: 0, receivedFPS: 60, now: clock.now)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makeStreamControllerPixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        await controller.evaluateFreezeState()
+
+        #expect(presenterRecoveryCounter.value == 0)
 
         await controller.stop()
     }
@@ -242,6 +290,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-presentation")
@@ -368,6 +417,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.decoder.setErrorThresholdHandler {

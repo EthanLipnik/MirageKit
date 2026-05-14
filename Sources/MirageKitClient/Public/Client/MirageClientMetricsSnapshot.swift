@@ -38,12 +38,15 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientPendingFrameAgeMs: Double
     /// Number of pending decoded frames overwritten before presentation.
     public var clientOverwrittenPendingFrames: UInt64
+    /// Number of Smoothest-mode decoded frames dropped by local playout queue bounds.
+    public var clientSmoothestQueueDrops: UInt64
     /// Number of frames dropped because they arrived too late for presentation.
     public var clientLateFrameDrops: UInt64
     /// Number of times the display layer rejected submission because it was not ready.
     public var clientDisplayLayerNotReadyCount: UInt64
     /// Number of repeated-frame presentations used to preserve cadence.
     public var clientRepeatedFrameCount: UInt64
+    private var clientRepeatedDeliveredSourceFrameCountStorage: UInt64
     /// Number of expected display ticks that did not present a new frame.
     public var clientMissedVSyncCount: UInt64
     /// 95th percentile display-tick interval, in milliseconds.
@@ -74,6 +77,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientFrameBufferPoolRetainedBytes: Int
     /// Number of packet reassembler evictions caused by memory budget pressure.
     public var clientReassemblerBudgetEvictions: UInt64
+    private var clientDecodeBacklogFrameCountStorage: Int
     /// Frames encoded per second by the host encoder.
     public var hostEncodedFPS: Double
     /// Idle frames per second emitted by the host when no new capture content is available.
@@ -224,6 +228,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         pendingFrameCount: Int = 0,
         clientPendingFrameAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
+        clientSmoothestQueueDrops: UInt64 = 0,
         clientLateFrameDrops: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
         clientRepeatedFrameCount: UInt64 = 0,
@@ -291,9 +296,11 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.pendingFrameCount = pendingFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
+        self.clientSmoothestQueueDrops = clientSmoothestQueueDrops
         self.clientLateFrameDrops = clientLateFrameDrops
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
+        clientRepeatedDeliveredSourceFrameCountStorage = 0
         self.clientMissedVSyncCount = clientMissedVSyncCount
         self.clientDisplayTickIntervalP95Ms = clientDisplayTickIntervalP95Ms
         self.clientDisplayTickIntervalP99Ms = clientDisplayTickIntervalP99Ms
@@ -309,6 +316,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReassemblerPendingBytes = clientReassemblerPendingBytes
         self.clientFrameBufferPoolRetainedBytes = clientFrameBufferPoolRetainedBytes
         self.clientReassemblerBudgetEvictions = clientReassemblerBudgetEvictions
+        clientDecodeBacklogFrameCountStorage = 0
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS
         self.hostDroppedFrames = hostDroppedFrames
@@ -473,13 +481,13 @@ public extension MirageClientMetricsSnapshot {
     }
 
     var clientRepeatedDeliveredSourceFrameCount: UInt64 {
-        get { clientRepeatedFrameCount }
-        set { clientRepeatedFrameCount = newValue }
+        get { clientRepeatedDeliveredSourceFrameCountStorage }
+        set { clientRepeatedDeliveredSourceFrameCountStorage = newValue }
     }
 
     var clientRepeatedSourceFrameCount: UInt64 {
-        get { clientRepeatedFrameCount }
-        set { clientRepeatedFrameCount = newValue }
+        get { clientRepeatedDeliveredSourceFrameCountStorage }
+        set { clientRepeatedDeliveredSourceFrameCountStorage = newValue }
     }
 
     var clientRepeatedDisplayTickFrameCount: UInt64 {
@@ -498,8 +506,8 @@ public extension MirageClientMetricsSnapshot {
     }
 
     var clientDecodeQueueBacklogFrames: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientDecodeBacklogFrameCountStorage }
+        set { clientDecodeBacklogFrameCountStorage = newValue }
     }
 
     var clientUnsubmittedPendingFrameCount: Int {
@@ -508,8 +516,8 @@ public extension MirageClientMetricsSnapshot {
     }
 
     var clientDecodeBacklogFrames: Int {
-        get { pendingFrameCount }
-        set { pendingFrameCount = newValue }
+        get { clientDecodeBacklogFrameCountStorage }
+        set { clientDecodeBacklogFrameCountStorage = newValue }
     }
 
     var clientDecodeSubmissionInFlightCount: Int {

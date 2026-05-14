@@ -37,11 +37,6 @@ struct ReceiverTransportPressureContext {
     let transportDropCount: UInt64
     let dropStress: Bool
     let dropSevere: Bool
-    let deliveryRatio: Double
-    let deliveryStress: Bool
-    let deliverySevere: Bool
-    let hostEncodedFPS: Double
-    let receivedFPS: Double
 }
 
 extension MirageReceiverHealthController {
@@ -60,13 +55,7 @@ extension MirageReceiverHealthController {
             )
         }
 
-        let requestedTargetFrameRate = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
-        let targetFPS = Double(
-            effectiveHealthFrameRate(
-                requestedTargetFrameRate: requestedTargetFrameRate,
-                minimumHealthyFrameRate: minimumHealthyFrameRate
-            )
-        )
+        _ = minimumHealthyFrameRate
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
@@ -85,43 +74,17 @@ extension MirageReceiverHealthController {
         let dropStress = transportDropCount >= Self.transportDropStressCount
         let dropSevere = transportDropCount >= Self.transportDropSevereCount
 
-        let hostPipelineHealthy = Self.hostPipelineHealthy(snapshot: snapshot, targetFPS: targetFPS)
-        let clientCanVerifyTransport = Self.clientCanVerifyTransport(snapshot: snapshot, targetFPS: targetFPS)
-        let deliveryRatio = snapshot.hostEncodedFPS > 0
-            ? max(0, snapshot.receivedFPS) / max(1, snapshot.hostEncodedFPS)
-            : 1
-        let deliveryBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliveryStressRatio
-        let deliverySevereBelowHealthFloor = max(0, snapshot.receivedFPS) < targetFPS * Self.deliverySevereRatio
-        let deliveryStress = hostPipelineHealthy &&
-            clientCanVerifyTransport &&
-            deliveryBelowHealthFloor &&
-            deliveryRatio < Self.deliveryStressRatio
-        let deliverySevere = hostPipelineHealthy &&
-            clientCanVerifyTransport &&
-            deliverySevereBelowHealthFloor &&
-            deliveryRatio < Self.deliverySevereRatio
-        let clientKeyframeStarved = hostPipelineHealthy &&
-            snapshot.clientReassemblerPendingKeyframeCount > 0
-        let clientStarvationStress = clientKeyframeStarved && (
-            snapshot.receivedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.decodedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.submittedFPS < targetFPS * Self.clientStarvationStressRatio ||
-                snapshot.clientDroppedFrames > 0 ||
-                !snapshot.decodeHealthy
-        )
-
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
         let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
+        let keyframeAssemblyInProgress = snapshot.clientReassemblerPendingKeyframeCount > 0
         let severeTransportPressure = queueSevere ||
             sendDelaySevere ||
             dropSevere ||
-            pairedPacerSevere ||
-            deliverySevere
+            pairedPacerSevere
         let sustainedTransportPressure = queueStress ||
             sendDelaySevere ||
             dropStress ||
-            pairedPacerStress ||
-            deliveryStress
+            pairedPacerStress
         let transportPressureReason = Self.transportPressureReason(
             ReceiverTransportPressureContext(
                 queueBytes: queueBytes,
@@ -136,45 +99,21 @@ extension MirageReceiverHealthController {
                 pairedPacerSevere: pairedPacerSevere,
                 transportDropCount: transportDropCount,
                 dropStress: dropStress,
-                dropSevere: dropSevere,
-                deliveryRatio: deliveryRatio,
-                deliveryStress: deliveryStress,
-                deliverySevere: deliverySevere,
-                hostEncodedFPS: snapshot.hostEncodedFPS,
-                receivedFPS: snapshot.receivedFPS
+                dropSevere: dropSevere
             )
         )
 
-        let targetFrameIntervalMs = 1000.0 / targetFPS
-        let smoothEnoughForPromotion = snapshot.clientPresentationStallCount == 0 &&
-            snapshot.clientWorstPresentationGapMs < max(250, targetFrameIntervalMs * 4) &&
-            (
-                snapshot.clientFrameIntervalP99Ms == 0 ||
-                    snapshot.clientFrameIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
-            ) &&
-            (
-                snapshot.clientDisplayTickIntervalP99Ms == 0 ||
-                    snapshot.clientDisplayTickIntervalP99Ms < max(120, targetFrameIntervalMs * 3)
-            ) &&
-            snapshot.clientPendingFrameAgeMs < max(80, targetFrameIntervalMs * 5)
         let suppressesProbePromotion = queueBytes > 0 ||
             transportDropCount > 0 ||
             sendDelayStress ||
             pacerStress ||
-            clientStarvationStress
-        let bottleneckKind = snapshot.bottleneckKind
-        let clientBottleneckBlocksPromotion =
-            bottleneckKind == .decodeBound ||
-            bottleneckKind == .presentationBound ||
-            !snapshot.decodeHealthy
+            keyframeAssemblyInProgress
 
         return ReceiverHealthSample(
             hasSevereTransportPressure: severeTransportPressure,
             hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
-            isTransportClean: !severeTransportPressure && !sustainedTransportPressure,
-            allowsProbePromotion: !suppressesProbePromotion &&
-                !clientBottleneckBlocksPromotion &&
-                smoothEnoughForPromotion,
+            isTransportClean: !severeTransportPressure && !sustainedTransportPressure && !keyframeAssemblyInProgress,
+            allowsProbePromotion: !suppressesProbePromotion,
             suppressesProbePromotion: suppressesProbePromotion,
             transportPressureReason: transportPressureReason
         )
@@ -195,12 +134,6 @@ extension MirageReceiverHealthController {
         if context.pairedPacerSevere || context.pairedPacerStress {
             return "packet pacer \(formatMilliseconds(context.packetPacerAverageSleepMs)) with queue/drop pressure"
         }
-        if context.deliverySevere || context.deliveryStress {
-            let ratio = Int((context.deliveryRatio * 100).rounded())
-            let encodedText = context.hostEncodedFPS.formatted(.number.precision(.fractionLength(1)))
-            let receivedText = context.receivedFPS.formatted(.number.precision(.fractionLength(1)))
-            return "delivery collapse \(ratio)% received (host=\(encodedText)fps received=\(receivedText)fps)"
-        }
         return nil
     }
 
@@ -216,37 +149,6 @@ extension MirageReceiverHealthController {
 
     private static func formatMilliseconds(_ milliseconds: Double) -> String {
         "\(milliseconds.formatted(.number.precision(.fractionLength(1))))ms"
-    }
-
-    private static func hostPipelineHealthy(
-        snapshot: MirageClientMetricsSnapshot,
-        targetFPS: Double
-    ) -> Bool {
-        let captureFPS = max(
-            snapshot.hostCaptureIngressFPS ?? 0,
-            snapshot.hostCaptureFPS ?? 0,
-            snapshot.hostEncodeAttemptFPS ?? 0
-        )
-        let encodedFPS = max(0, snapshot.hostEncodedFPS)
-        return captureFPS >= targetFPS * 0.85 &&
-            encodedFPS >= targetFPS * 0.75 &&
-            snapshot.bottleneckKind != .captureBound &&
-            snapshot.bottleneckKind != .encodeBound &&
-            snapshot.bottleneckKind != .hostCadenceLimited
-    }
-
-    private static func clientCanVerifyTransport(
-        snapshot: MirageClientMetricsSnapshot,
-        targetFPS: Double
-    ) -> Bool {
-        guard snapshot.decodeHealthy else { return false }
-        if snapshot.bottleneckKind == .decodeBound ||
-            snapshot.bottleneckKind == .presentationBound {
-            return false
-        }
-        let targetFrameIntervalMs = 1000.0 / targetFPS
-        return snapshot.clientPresentationStallCount == 0 &&
-            snapshot.clientWorstPresentationGapMs < max(250, targetFrameIntervalMs * 6)
     }
 
     func isFastStartActive(now: CFAbsoluteTime) -> Bool {

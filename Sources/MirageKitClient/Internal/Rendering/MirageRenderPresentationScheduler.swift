@@ -9,7 +9,7 @@ import Foundation
 import MirageKit
 import QuartzCore
 
-enum MirageRenderSubmissionResult: Equatable, Sendable {
+enum MirageRenderSubmissionResult: Equatable {
     case submitted
     case noPendingFrame
     case displayLayerNotReady
@@ -38,6 +38,11 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     private var runningPass = false
     private var pendingScheduledPass = false
     private var targetFPS: Int = 60
+
+    private var activeLiveFallbackThreshold: CFTimeInterval {
+        let targetFrameInterval = 1.0 / Double(max(1, targetFPS))
+        return min(0.050, max(1.0 / 120.0, targetFrameInterval * 1.25))
+    }
 
     init(
         referenceTimeProvider: @escaping () -> CFTimeInterval = CACurrentMediaTime,
@@ -146,8 +151,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard hasPendingFrame() else { return }
         if presentationTier == .activeLive, displayClockActive {
             guard lastDisplayTickWallTime == 0 ||
-                referenceTimeProvider() - lastDisplayTickWallTime >= max(0.008, 0.85 / Double(max(1, targetFPS)))
-            else {
+                referenceTimeProvider() - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
                 return
             }
         }
@@ -192,7 +196,6 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             return
         }
         let now = referenceTimeProvider()
-        let activeLiveFallbackThreshold = max(0.008, 0.85 / Double(max(1, targetFPS)))
         guard pendingFrameCount() > 0 else { return }
         guard lastDisplayTickWallTime == 0 ||
             now - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
@@ -255,7 +258,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
             displayClockFramePending = true
         }
-        if submissionResult == .displayLayerNotReady, !(presentationTier == .activeLive && displayClockActive) {
+        if submissionResult == .displayLayerNotReady {
             onDisplayLayerNotReady()
         }
 

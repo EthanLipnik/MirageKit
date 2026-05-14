@@ -489,6 +489,15 @@ public final class MirageClientService {
     /// Last keyframe request timestamp by stream for cooldown enforcement.
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
 
+    /// Last receiver feedback send timestamp by stream.
+    var receiverMediaFeedbackLastSendTime: [StreamID: CFAbsoluteTime] = [:]
+
+    /// Monotonic sequence for receiver media feedback messages.
+    var receiverMediaFeedbackSequence: UInt64 = 0
+
+    /// Minimum spacing between receiver media feedback messages per stream.
+    let receiverMediaFeedbackInterval: CFAbsoluteTime = 0.5
+
     /// Minimum spacing between recovery keyframe requests.
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75
 
@@ -520,7 +529,7 @@ public final class MirageClientService {
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
 
     /// Delay that lets host-side desktop resize settle before reconciling the window.
-    @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .seconds(3)
+    @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .milliseconds(350)
 
     /// Maximum time to keep post-resize transition UI before clearing it locally.
     @ObservationIgnored var desktopPostResizeTransitionTimeout: Duration = .seconds(10)

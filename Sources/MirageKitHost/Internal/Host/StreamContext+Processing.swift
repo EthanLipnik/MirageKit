@@ -184,8 +184,10 @@ extension StreamContext {
         expireSoftFreshnessDrainIfNeeded()
 
         while inFlightCount < maxInFlightFrames {
+            let now = CFAbsoluteTimeGetCurrent()
             let queueBytesBeforeDrain = packetSender?.queuedByteCount ?? 0
-            let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
+            let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames ||
+                receiverFrameAdmissionIsActive(now: now) {
                 .newest
             } else if queueBytesBeforeDrain > queuePressureBytes {
                 .newest
@@ -202,6 +204,13 @@ extension StreamContext {
                 )
             }
             guard let frame = drainResult.frame else { return }
+
+            if shouldDropForReceiverFrameAdmission(now: now) {
+                captureDroppedIntervalCount += 1
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
 
             let encoderStuck = inFlightCount > 0 && lastEncodeActivityTime > 0 &&
                 (CFAbsoluteTimeGetCurrent() - lastEncodeActivityTime) * 1000 > maxEncodeTimeMs

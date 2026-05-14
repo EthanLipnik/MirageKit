@@ -88,15 +88,16 @@ extension StreamController {
         }
 
         if presentationTier == .passiveSnapshot {
-            reassembler.enterKeyframeOnlyMode()
+            reassembler.beginKeyframeWait()
             MirageLogger.client(
-                "Frame loss detected for passive stream \(streamID); entering keyframe-only mode"
+                "Frame loss detected for passive stream \(streamID); requesting recovery keyframe"
             )
+            await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
 
         if reason.requestsImmediateActiveRecovery {
-            reassembler.enterKeyframeOnlyMode()
+            reassembler.beginKeyframeWait()
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
             )
@@ -106,7 +107,7 @@ extension StreamController {
         }
 
         if reason == .memoryBudget {
-            reassembler.enterKeyframeOnlyMode()
+            reassembler.beginKeyframeWait()
             discardQueuedFramesForRecovery()
             startFreezeMonitorIfNeeded()
             if memoryBudgetRecoveryTask != nil {
@@ -173,7 +174,6 @@ extension StreamController {
             reason: reason.logLabel,
             targetFPS: decodeSchedulerTargetFPS,
             forceNewEpisode: reason == .manualRecovery ||
-                reason == .startupKeyframeTimeout ||
                 reason == .decodeErrorThreshold
         )
         switch recoveryDecision {
@@ -187,17 +187,24 @@ extension StreamController {
             )
             return false
         }
-        lastRecoveryRequestDispatchTime = now
-        lastRecoveryRequestTime = now
+        guard let handler = onKeyframeNeeded else {
+            recoveryCoordinator.recordDispatchNotSent()
+            return false
+        }
+        MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
+        let didSend = await MainActor.run {
+            handler()
+        }
+        guard didSend else {
+            recoveryCoordinator.recordDispatchNotSent()
+            MirageLogger.client("Recovery keyframe request not sent by client service for stream \(streamID)")
+            return false
+        }
         if keyframeRecoveryTask != nil, reason != .keyframeRecoveryLoop {
             keyframeRecoveryAttempt = max(1, keyframeRecoveryAttempt)
         }
-
-        guard let handler = onKeyframeNeeded else { return false }
-        MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
-        await MainActor.run {
-            handler()
-        }
+        lastRecoveryRequestDispatchTime = now
+        lastRecoveryRequestTime = now
         return true
     }
 
@@ -205,14 +212,15 @@ extension StreamController {
         now: CFAbsoluteTime,
         reason: RecoveryReason
     ) -> Bool {
-        guard reason != .manualRecovery,
-              reason != .decodeErrorThreshold else { return false }
-        guard reassembler.isAwaitingKeyframe,
-              let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress else {
+        guard reason != .manualRecovery else { return false }
+        guard let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress else {
             return false
         }
-        return now - pendingKeyframeProgress.lastProgressTime <
-            Self.keyframeProgressFreshThreshold(targetFPS: decodeSchedulerTargetFPS)
+        return Self.shouldDeferForPendingKeyframeProgress(
+            pendingKeyframeProgress,
+            now: now,
+            targetFPS: decodeSchedulerTargetFPS
+        )
     }
 
     func handleDecodeErrorThresholdSignal() async {
@@ -345,7 +353,7 @@ extension StreamController {
             }
             if reason == .decodeErrorThreshold {
                 discardQueuedFramesForRecovery()
-                reassembler.enterKeyframeOnlyMode()
+                reassembler.beginKeyframeWait()
                 await requestKeyframeRecoveryIfPossible(reason: reason)
             }
             return
@@ -375,7 +383,7 @@ extension StreamController {
         }
         discardQueuedFramesForRecovery()
         reassembler.trimPendingFramesForRecovery(reason: reason.logLabel)
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
         if postResizeRecoveryActive {
             await armPostResizeRecoveryWindow(reason: "post-resize-soft-recovery")
         }

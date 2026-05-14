@@ -22,6 +22,8 @@ extension StreamController {
     /// Minimum spacing between hard recoveries to avoid repeated full pipeline resets.
     static let hardRecoveryMinimumInterval: CFAbsoluteTime = 2.5
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
+    static let renderCadenceMissLogCooldown: CFAbsoluteTime = 5.0
+    static let renderCadenceMissSampleThreshold = 3
     static let metricsDispatchInterval: Duration = .milliseconds(500)
 
     enum RecoveryReason: Equatable {
@@ -111,6 +113,7 @@ extension StreamController {
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
+        let smoothestQueueDrops: UInt64
         let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64

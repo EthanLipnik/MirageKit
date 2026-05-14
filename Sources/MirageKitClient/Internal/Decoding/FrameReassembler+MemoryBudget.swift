@@ -37,7 +37,7 @@ extension FrameReassembler {
         }
 
         if evictedCount > 0 {
-            enterKeyframeOnlyModeLocked()
+            beginKeyframeWaitLocked()
             MirageLogger.client(
                 "Frame reassembler memory budget evicted \(evictedCount) pending frame(s) for stream \(streamID); " +
                     "pendingBytes=\(pendingFrameBytesLocked()), pendingFrames=\(pendingFrames.count)"
@@ -110,7 +110,7 @@ extension FrameReassembler {
             .key
     }
 
-    private func keyframeProgressRatioLocked(_ frame: PendingFrame) -> Double {
+    func keyframeProgressRatioLocked(_ frame: PendingFrame) -> Double {
         guard frame.dataFragmentCount > 0 else { return 0 }
         return Double(frame.receivedCount) / Double(frame.dataFragmentCount)
     }

@@ -101,7 +101,7 @@ extension StreamPacketSender {
         case queueEviction = "queue-eviction"
     }
 
-    /// Optional bitrate/burst override for one frame.
+    /// Optional pacing override for one frame.
     struct PacingOverride: Equatable {
         let rateBps: Int
         let burstBytes: Int
@@ -312,11 +312,7 @@ extension StreamPacketSender {
         guard packetBytes > 0 else { return nil }
 
         let overrideRate = max(0, pacingOverride?.rateBps ?? 0)
-        let effectiveRateBps = if isKeyframeBurst {
-            max(targetRateBps, overrideRate)
-        } else {
-            max(targetRateBps, overrideRate)
-        }
+        let effectiveRateBps = overrideRate > 0 ? overrideRate : targetRateBps
         guard effectiveRateBps > 0 else { return nil }
 
         let bytesPerSecond = max(1.0, Double(effectiveRateBps) / 8.0)
@@ -389,6 +385,31 @@ extension StreamPacketSender {
             dataFragmentCount: dataFragmentCount,
             parityFragmentCount: parityFragmentCount
         )
+    }
+
+    /// Returns wire send order for data and FEC parity fragments.
+    nonisolated static func fragmentSendOrder(
+        dataFragmentCount: Int,
+        parityFragmentCount: Int,
+        fecBlockSize: Int
+    ) -> [Int] {
+        let dataFragmentCount = max(0, dataFragmentCount)
+        let parityFragmentCount = max(0, parityFragmentCount)
+        guard dataFragmentCount > 0 else { return [] }
+        guard parityFragmentCount > 0, fecBlockSize > 1 else {
+            return Array(0 ..< dataFragmentCount + parityFragmentCount)
+        }
+
+        var order: [Int] = []
+        order.reserveCapacity(dataFragmentCount + parityFragmentCount)
+        for parityIndex in 0 ..< parityFragmentCount {
+            let blockStart = parityIndex * fecBlockSize
+            let blockEnd = min(blockStart + fecBlockSize, dataFragmentCount)
+            guard blockStart < blockEnd else { break }
+            order.append(contentsOf: blockStart ..< blockEnd)
+            order.append(dataFragmentCount + parityIndex)
+        }
+        return order
     }
 
     nonisolated static func canRepresentFragmentPlan(

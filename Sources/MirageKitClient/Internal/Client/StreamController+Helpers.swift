@@ -56,6 +56,7 @@ extension StreamController {
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+                smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
                 lateFrameDrops: renderTelemetry.lateFrameDrops,
                 coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
                 duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
@@ -110,6 +111,50 @@ extension StreamController {
             Self.frameIntervalSeconds(targetFPS: streamCadenceTarget.sourceFPS) * 12.0
         )
         return currentTime - firstPresentationTime < sampleWindow
+    }
+
+    func evaluateRenderCadenceMissTelemetry(
+        renderTelemetry: RenderTelemetrySnapshot,
+        decodedFPS: Double,
+        receivedFPS: Double
+    ) {
+        guard presentationTier == .activeLive, hasPresentedFirstFrame else {
+            renderCadenceMissStreak = 0
+            return
+        }
+
+        let targetFPS = Double(max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.displayFPS))
+        let targetFloor = targetFPS * 0.90
+        let sourceFPS = max(decodedFPS, receivedFPS)
+        guard sourceFPS >= targetFPS * 0.70,
+              renderTelemetry.uniqueSubmittedFPS > 0,
+              renderTelemetry.uniqueSubmittedFPS < targetFloor else {
+            renderCadenceMissStreak = 0
+            return
+        }
+
+        renderCadenceMissStreak += 1
+        let now = currentTime
+        guard renderCadenceMissStreak >= Self.renderCadenceMissSampleThreshold,
+              now - lastRenderCadenceMissLogTime >= Self.renderCadenceMissLogCooldown else {
+            return
+        }
+
+        lastRenderCadenceMissLogTime = now
+        MirageLogger.client(
+            "Render cadence below target: stream=\(streamID) target=\(Int(targetFPS))fps " +
+                "received=\(String(format: "%.1f", receivedFPS))fps decoded=\(String(format: "%.1f", decodedFPS))fps " +
+                "displayTick=\(String(format: "%.1f", renderTelemetry.displayTickFPS))fps " +
+                "submitAttempt=\(String(format: "%.1f", renderTelemetry.submitAttemptFPS))fps " +
+                "layerAccepted=\(String(format: "%.1f", renderTelemetry.layerAcceptedFPS))fps " +
+                "uniqueSubmitted=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps " +
+                "pending=\(renderTelemetry.pendingFrameCount) pendingAge=\(Int(renderTelemetry.pendingFrameAgeMs.rounded()))ms " +
+                "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
+                "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +
+                "layerBackpressure=\(renderTelemetry.displayLayerNotReadyCount) " +
+                "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms " +
+                "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms"
+        )
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {

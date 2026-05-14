@@ -43,6 +43,8 @@ extension StreamController {
         latestHostMetricsMessage = nil
         latestHostCadencePressureSample = nil
         latestRenderTelemetrySnapshot = nil
+        renderCadenceMissStreak = 0
+        lastRenderCadenceMissLogTime = 0
         lastStreamingAnomalyDiagnosticSignature = nil
         lastStreamingAnomalyDiagnosticTime = 0
         lastBackgroundDecodeErrorSignature = nil
@@ -94,6 +96,11 @@ extension StreamController {
         let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
+        evaluateRenderCadenceMissTelemetry(
+            renderTelemetry: renderTelemetry,
+            decodedFPS: snapshot.decodedFPS,
+            receivedFPS: snapshot.receivedFPS
+        )
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(
             decodedFPS: snapshot.decodedFPS,
@@ -115,6 +122,7 @@ extension StreamController {
             pendingFrameCount: renderTelemetry.pendingFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+            smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
             lateFrameDrops: renderTelemetry.lateFrameDrops,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,

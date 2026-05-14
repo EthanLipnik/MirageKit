@@ -232,6 +232,7 @@ extension MirageClientService {
         videoStreamReceiveTasks.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         cancelRecoveryKeyframeRetry(for: streamID)
+        clearReceiverMediaFeedbackState(for: streamID)
     }
 
     private func handleObservedIncomingMediaStream(
@@ -274,10 +275,11 @@ extension MirageClientService {
     // MARK: - Keyframe Requests
 
     /// Request a keyframe from the host when decoder encounters errors.
-    func sendKeyframeRequest(for streamID: StreamID) {
+    @discardableResult
+    func sendKeyframeRequest(for streamID: StreamID) -> Bool {
         guard case .connected = connectionState else {
             MirageLogger.client("Cannot send keyframe request - not connected")
-            return
+            return false
         }
 
         let now = CFAbsoluteTimeGetCurrent()
@@ -293,20 +295,21 @@ extension MirageClientService {
                 .client(
                     "Keyframe request skipped (cooldown \(remaining)ms remaining of \(cooldownMs)ms) for stream \(streamID)"
                 )
-            return
+            return false
         }
-        lastKeyframeRequestTime[streamID] = now
 
         let request = KeyframeRequestMessage(streamID: streamID)
         guard sendControlMessageBestEffort(.keyframeRequest, content: request) else {
             MirageLogger.error(.client, "Failed to create keyframe request message")
-            return
+            return false
         }
+        lastKeyframeRequestTime[streamID] = now
 
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
         MirageLogger.client(
             "Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)"
         )
+        return true
     }
 
     func handleKeyframeRecoveryAck(_ message: ControlMessage) {

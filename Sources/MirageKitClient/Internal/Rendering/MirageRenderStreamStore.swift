@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/16/26.
 //
-//  Latest-frame render store with submission telemetry.
+//  Latency-mode render store with submission telemetry.
 //
 
 import CoreMedia
@@ -15,9 +15,9 @@ import MirageKit
 /// Thread-safe per-stream frame queue and presentation telemetry store.
 ///
 /// Decoders enqueue frames here from stream-specific tasks while SwiftUI/AppKit
-/// render surfaces consume frames on display ticks. The store also aggregates the
-/// submission, display, and smoothness counters that drive receiver health and
-/// runtime workload decisions.
+/// render surfaces consume frames on display ticks. Lowest latency coalesces to
+/// the newest decoded frame; Smoothest preserves ordered frames behind the
+/// display clock until the local playout queue exceeds bounded age or depth.
 final class MirageRenderStreamStore: @unchecked Sendable {
     /// Rolling window for per-stream render throughput samples.
     static let sampleWindowSeconds: CFAbsoluteTime = 1.0
@@ -27,6 +27,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     /// Presentation gap threshold counted as a render stall.
     static let presentationStallThresholdMs: Double = 500
+
+    private static let smoothestQueueCapacity = 4
+    private static let smoothestMinimumQueueAgeLimitMs: Double = 100
+    private static let smoothestQueueAgeLimitFrames: Double = 6
 
     /// Shared store used by all active client render streams.
     static let shared = MirageRenderStreamStore()
@@ -134,33 +138,41 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return result
     }
 
-    /// Returns the next frame that should be submitted after the given sequence.
+    /// Returns the next frame that should be submitted after the given generation-aware cursor.
     ///
-    /// Older frames are discarded and counted as late/coalesced when playout delay
-    /// requires keeping only a small amount of buffered presentation slack.
-    func frameForPresentation(for streamID: StreamID, after submittedSequence: UInt64) -> MirageRenderFrame? {
+    /// Lowest latency coalesces to the newest decoded frame. Smoothest returns
+    /// the next ordered frame unless the local queue has aged past a long-gap
+    /// recovery threshold.
+    func frameForPresentation(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
         state.lock.lock()
         defer { state.lock.unlock() }
 
         guard !state.pendingFrames.isEmpty else { return nil }
         var droppedLateFrames = 0
-        while let first = state.pendingFrames.first, first.sequence <= submittedSequence {
+        while let first = state.pendingFrames.first, !first.cursor.isAfter(submittedCursor) {
             state.pendingFrames.removeFirst()
         }
         guard !state.pendingFrames.isEmpty else {
             return nil
         }
 
-        let targetDelayFrames = min(max(state.playoutDelayFrames, 0), 2)
-        let desiredCandidateDepthAfterSelection = targetDelayFrames + 1
-        while state.pendingFrames.count > desiredCandidateDepthAfterSelection {
-            state.pendingFrames.removeFirst()
-            droppedLateFrames += 1
-        }
-        if droppedLateFrames > 0 {
-            state.lateFrameDropsSinceLastSnapshot &+= UInt64(droppedLateFrames)
-            state.coalescedFramesSinceLastSnapshot &+= UInt64(droppedLateFrames)
+        switch state.latencyMode {
+        case .lowestLatency:
+            while state.pendingFrames.count > 1 {
+                state.pendingFrames.removeFirst()
+                droppedLateFrames += 1
+            }
+            if droppedLateFrames > 0 {
+                state.lateFrameDropsSinceLastSnapshot &+= UInt64(droppedLateFrames)
+                state.coalescedFramesSinceLastSnapshot &+= UInt64(droppedLateFrames)
+            }
+        case .smoothest:
+            let smoothestDrops = removeSmoothestExpiredFramesLocked(
+                state: state,
+                now: CFAbsoluteTimeGetCurrent()
+            )
+            recordSmoothestQueueDropsLocked(smoothestDrops, state: state)
         }
 
         return state.pendingFrames.first
@@ -184,11 +196,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
-    /// Returns whether the stream has a queued frame newer than the submitted sequence.
-    func hasFrameForPresentation(for streamID: StreamID, after submittedSequence: UInt64) -> Bool {
+    /// Returns whether the stream has a queued frame newer than the submitted cursor.
+    func hasFrameForPresentation(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> Bool {
         guard let state = streamStateIfPresent(for: streamID) else { return false }
         state.lock.lock()
-        let hasFrame = state.pendingFrames.contains { $0.sequence > submittedSequence }
+        let hasFrame = state.pendingFrames.contains { $0.cursor.isAfter(submittedCursor) }
         state.lock.unlock()
         return hasFrame
     }
@@ -212,13 +224,13 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return count
     }
 
-    /// Returns the latest decoded-frame sequence number for the stream.
-    func latestSequence(for streamID: StreamID) -> UInt64 {
-        guard let state = streamStateIfPresent(for: streamID) else { return 0 }
+    /// Returns the latest decoded-frame cursor for the stream.
+    func latestCursor(for streamID: StreamID) -> MirageRenderCursor {
+        guard let state = streamStateIfPresent(for: streamID) else { return .zero }
         state.lock.lock()
-        let sequence = state.nextSequence
+        let cursor = MirageRenderCursor(generation: state.generation, sequence: state.nextSequence)
         state.lock.unlock()
-        return sequence
+        return cursor
     }
 
     func currentGeneration(for streamID: StreamID) -> UInt64 {
@@ -253,6 +265,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         state.sourceTargetFPS = target.sourceFPS
         state.displayTargetFPS = target.displayFPS
+        state.latencyMode = target.latencyMode
         state.playoutDelayFrames = target.playoutDelayFrames
         trimPendingFramesToCurrentCapacityLocked(state: state)
         state.lock.unlock()
@@ -268,6 +281,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func setLatencyMode(for streamID: StreamID, latencyMode: MirageStreamLatencyMode) {
         let state = streamState(for: streamID)
         state.lock.lock()
+        state.latencyMode = latencyMode
         state.playoutDelayFrames = MirageStreamCadenceTarget.playoutDelayFrames(for: latencyMode)
         trimPendingFramesToCurrentCapacityLocked(state: state)
         state.lock.unlock()
@@ -335,32 +349,88 @@ extension MirageRenderStreamStore {
     }
 
     private func trimPendingFramesToCurrentCapacityLocked(state: MirageRenderStreamState) {
-        recordOverwrittenPendingFramesLocked(
-            removePendingFramesOverCapacityLocked(state: state),
-            state: state
-        )
+        let result = removePendingFramesOverCapacityLocked(state: state)
+        recordPendingFrameTrimLocked(result, state: state)
     }
 
     private func trimPendingFramesToCapacityLocked(state: MirageRenderStreamState) -> Int {
-        let overwrittenPendingFrames = removePendingFramesOverCapacityLocked(state: state)
-        recordOverwrittenPendingFramesLocked(overwrittenPendingFrames, state: state)
-        return overwrittenPendingFrames
+        let result = removePendingFramesOverCapacityLocked(state: state)
+        recordPendingFrameTrimLocked(result, state: state)
+        return result.overwrittenPendingFrames
     }
 
-    private func removePendingFramesOverCapacityLocked(state: MirageRenderStreamState) -> Int {
-        var overwrittenPendingFrames = 0
-        let pendingFrameCapacity = max(1, state.playoutDelayFrames + 1)
+    private func removePendingFramesOverCapacityLocked(
+        state: MirageRenderStreamState
+    ) -> PendingFrameTrimResult {
+        var removedFrames = 0
+        let pendingFrameCapacity = pendingFrameCapacityLocked(state: state)
         while state.pendingFrames.count > pendingFrameCapacity {
             state.pendingFrames.removeFirst()
-            overwrittenPendingFrames += 1
+            removedFrames += 1
         }
-        return overwrittenPendingFrames
+
+        switch state.latencyMode {
+        case .lowestLatency:
+            return PendingFrameTrimResult(overwrittenPendingFrames: removedFrames, smoothestQueueDrops: 0)
+        case .smoothest:
+            return PendingFrameTrimResult(overwrittenPendingFrames: 0, smoothestQueueDrops: removedFrames)
+        }
+    }
+
+    private func pendingFrameCapacityLocked(state: MirageRenderStreamState) -> Int {
+        switch state.latencyMode {
+        case .lowestLatency:
+            1
+        case .smoothest:
+            Self.smoothestQueueCapacity
+        }
+    }
+
+    private func removeSmoothestExpiredFramesLocked(
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime
+    ) -> Int {
+        guard state.latencyMode == .smoothest else { return 0 }
+        var droppedFrames = 0
+        let maxAgeMs = smoothestQueueAgeLimitMsLocked(state: state)
+        while state.pendingFrames.count > 1,
+              let first = state.pendingFrames.first,
+              let ageMs = comparableFrameAgeMs(first, now: now),
+              ageMs > maxAgeMs {
+            state.pendingFrames.removeFirst()
+            droppedFrames += 1
+        }
+        return droppedFrames
+    }
+
+    private func smoothestQueueAgeLimitMsLocked(state: MirageRenderStreamState) -> Double {
+        let frameBudgetMs = 1000.0 / Double(max(1, state.sourceTargetFPS))
+        return max(Self.smoothestMinimumQueueAgeLimitMs, frameBudgetMs * Self.smoothestQueueAgeLimitFrames)
+    }
+
+    private func comparableFrameAgeMs(_ frame: MirageRenderFrame, now: CFAbsoluteTime) -> Double? {
+        let ageSeconds = now - frame.decodeTime
+        guard ageSeconds >= 0, ageSeconds < 60 else { return nil }
+        return ageSeconds * 1000
+    }
+
+    private func recordPendingFrameTrimLocked(
+        _ result: PendingFrameTrimResult,
+        state: MirageRenderStreamState
+    ) {
+        recordOverwrittenPendingFramesLocked(result.overwrittenPendingFrames, state: state)
+        recordSmoothestQueueDropsLocked(result.smoothestQueueDrops, state: state)
     }
 
     private func recordOverwrittenPendingFramesLocked(_ count: Int, state: MirageRenderStreamState) {
         guard count > 0 else { return }
         state.overwrittenPendingFramesSinceLastSnapshot &+= UInt64(count)
         state.coalescedFramesSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestQueueDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(count)
     }
 
     func activePresentationRecoveryHandlersLocked(state: MirageRenderStreamState) -> [@Sendable () -> Void] {
@@ -384,5 +454,9 @@ extension MirageRenderStreamStore {
 
         return callbacks
     }
+}
 
+private struct PendingFrameTrimResult {
+    let overwrittenPendingFrames: Int
+    let smoothestQueueDrops: Int
 }

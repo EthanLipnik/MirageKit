@@ -45,14 +45,14 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
     }
 
-    @Test("Taking pending frames preserves bounded playout delay")
-    func takePendingFramesPreservesBoundedPlayoutDelay() {
+    @Test("Smoothest takes pending frames in decode order")
+    func smoothestTakesPendingFramesInDecodeOrder() {
         let streamID: StreamID = 302
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
-        for index in 0 ..< 5 {
+        for index in 0 ..< 4 {
             _ = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
@@ -64,9 +64,36 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 4)
-        #expect(secondFrame?.sequence == 5)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(firstFrame?.sequence == 1)
+        #expect(secondFrame?.sequence == 2)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+    }
+
+    @Test("Smoothest queue overflow is tracked separately from overwritten frames")
+    func smoothestQueueOverflowIsTrackedSeparatelyFromOverwrittenFrames() {
+        let streamID: StreamID = 310
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
+        for index in 0 ..< 6 {
+            let overwritten = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
+                for: streamID
+            )
+            #expect(overwritten == 0)
+        }
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.overwrittenPendingFrames == 0)
+        #expect(telemetry.smoothestQueueDrops == 2)
+        #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 
     @Test("Submission snapshot does not regress on older sequence marks")
@@ -121,12 +148,14 @@ struct RenderFrameQueueSPSCTests {
         #expect(telemetry.presentedFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
-        #expect(telemetry.pendingFrameCount == 2)
-        #expect(telemetry.overwrittenPendingFrames == 1)
+        #expect(telemetry.pendingFrameCount == 3)
+        #expect(telemetry.overwrittenPendingFrames == 0)
+        #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.displayLayerNotReadyCount == 1)
 
         let secondSnapshot = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(secondSnapshot.overwrittenPendingFrames == 0)
+        #expect(secondSnapshot.smoothestQueueDrops == 0)
         #expect(secondSnapshot.displayLayerNotReadyCount == 0)
     }
 
@@ -244,7 +273,7 @@ struct RenderFrameQueueSPSCTests {
             for: streamID
         )
         let secondPresenterFrame = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)
-        let peerPresenterFrame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: 0)
+        let peerPresenterFrame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero)
 
         #expect(firstPresenterFrame?.sequence == 1)
         #expect(secondPresenterFrame?.sequence == 1)

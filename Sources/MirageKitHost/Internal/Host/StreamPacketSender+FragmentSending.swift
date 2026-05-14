@@ -66,7 +66,19 @@ extension StreamPacketSender {
         )
         var progress = FragmentSendProgress(remainingQueuedBytes: max(0, accountedBytes))
         var currentSequence = item.sequenceNumberStart
-        for fragmentIndex in 0 ..< totalFragments {
+        let interleavedFragmentOrder = if fragmentPlan.parityFragmentCount > 0 {
+            Self.fragmentSendOrder(
+                dataFragmentCount: dataFragmentCount,
+                parityFragmentCount: fragmentPlan.parityFragmentCount,
+                fecBlockSize: fecBlockSize
+            )
+        } else {
+            [Int]()
+        }
+        let sendIterationCount = interleavedFragmentOrder.isEmpty ? totalFragments : interleavedFragmentOrder.count
+
+        for sendIndex in 0 ..< sendIterationCount {
+            let fragmentIndex = interleavedFragmentOrder.isEmpty ? sendIndex : interleavedFragmentOrder[sendIndex]
             if item.generation != generation {
                 generationAbortDropCount &+= 1
                 MirageLogger

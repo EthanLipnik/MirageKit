@@ -74,6 +74,22 @@ extension StreamController {
         now: CFAbsoluteTime,
         pendingFrameCount: Int
     ) async -> Bool {
+        let metricsSnapshot = metricsTracker.snapshot(now: now)
+        let decodeIsBehind = metricsSnapshot.receivedFPS > 0 &&
+            metricsSnapshot.decodedFPS < max(1.0, metricsSnapshot.receivedFPS * 0.5)
+        guard !decodeIsBehind else {
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-decode-bound-render-pending",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
+            MirageLogger.client(
+                "Presentation recovery skipped for stream \(streamID) because decode is not keeping up " +
+                    "(pendingFrames=\(pendingFrameCount), decoded=\(metricsSnapshot.decodedFPS), received=\(metricsSnapshot.receivedFPS))"
+            )
+            return true
+        }
+
         if lastFreezeRecoveryTime > 0,
            now - lastFreezeRecoveryTime < Self.freezeRecoveryCooldown {
             return true
@@ -85,7 +101,6 @@ extension StreamController {
             await self?.onStallEvent?(.presentationRecovery)
         }
 
-        let metricsSnapshot = metricsTracker.snapshot(now: now)
         await maybeLogStreamingAnomalyDiagnostic(
             trigger: "freeze-recovery-render-submission",
             decodedFPS: metricsSnapshot.decodedFPS,

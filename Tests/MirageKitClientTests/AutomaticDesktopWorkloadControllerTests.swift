@@ -219,18 +219,6 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(target.targetFrameRate == 60)
     }
 
-    @Test("Workload reconfiguration is atomic when resize is unavailable")
-    func workloadReconfigurationIsAtomicWhenResizeIsUnavailable() {
-        let decision = MirageClientService.automaticDesktopWorkloadReconfigurationDecision(
-            needsFrameRateChange: true,
-            needsResize: true,
-            allowsAutomaticResolutionResize: false
-        )
-
-        #expect(!decision.shouldChangeFrameRate)
-        #expect(!decision.shouldResize)
-    }
-
     func pipelineBoundSnapshot(
         width: Int,
         height: Int,

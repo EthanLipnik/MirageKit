@@ -52,8 +52,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 2)
     }
 
-    @Test("Keyframe-only mode admits dependent P-frames after recovery keyframe")
-    func keyframeOnlyModeAdmitsDependentPFramesAfterRecoveryKeyframe() {
+    @Test("Keyframe wait admits dependent P-frames after recovery keyframe")
+    func keyframeWaitAdmitsDependentPFramesAfterRecoveryKeyframe() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
 
@@ -62,7 +62,7 @@ struct FrameReassemblerStaleKeyframeTests {
             release()
         }
 
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
 
         let stalePFramePayload = Data([0x00, 0x00, 0x00, 0x02, 0x02, 0x03])
         reassembler.processPacket(

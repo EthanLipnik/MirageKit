@@ -211,13 +211,17 @@ public struct MirageReceiverHealthController: Sendable {
             promotionHealthySampleCount = 0
             stressSampleCount = 0
             pendingPromotion = nil
-        } else {
+        } else if sample.isTransportClean {
             healthySampleCount += 1
             if sample.allowsProbePromotion {
                 promotionHealthySampleCount += 1
             } else {
                 promotionHealthySampleCount = 0
             }
+            stressSampleCount = 0
+        } else {
+            healthySampleCount = 0
+            promotionHealthySampleCount = 0
             stressSampleCount = 0
         }
     }

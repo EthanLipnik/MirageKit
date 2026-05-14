@@ -269,7 +269,7 @@ extension StreamContext {
     }
 
     func shouldQueueScheduledKeyframe(queueBytes: Int) -> Bool {
-        guard !recoveryOnlyKeyframes else { return false }
+        guard scheduledKeyframesEnabled else { return false }
         guard shouldEncodeFrames else { return false }
         guard !isResizing else { return false }
         guard lastKeyframeTime > 0 else { return false }
@@ -345,8 +345,8 @@ extension StreamContext {
 
     nonisolated static func keyframePacingOverride() -> StreamPacketSender.PacingOverride {
         StreamPacketSender.PacingOverride(
-            rateBps: 120_000_000,
-            burstBytes: 64 * 1024
+            rateBps: 48_000_000,
+            burstBytes: 16 * 1024
         )
     }
 

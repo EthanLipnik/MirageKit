@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for latest-frame cadence behavior.
+//  Coverage for latency-mode render cadence behavior.
 //
 
 @testable import MirageKitClient
@@ -17,8 +17,8 @@ import Testing
 #if os(macOS)
 @Suite("Render Cadence Smoothing")
 struct RenderCadenceSmoothingTests {
-    @Test("Active render store keeps a tiny bounded playout queue")
-    func activeRenderStoreKeepsTinyBoundedPlayoutQueue() {
+    @Test("Smoothest render store keeps an ordered bounded playout queue")
+    func smoothestRenderStoreKeepsOrderedBoundedPlayoutQueue() {
         let streamID: StreamID = 401
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -34,13 +34,14 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 4)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 2)
-        #expect(telemetry.overwrittenPendingFrames == 3)
-        #expect(telemetry.coalescedBeforeSubmitCount == 3)
+        #expect(telemetry.pendingFrameCount == 4)
+        #expect(telemetry.overwrittenPendingFrames == 0)
+        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.coalescedBeforeSubmitCount == 0)
         #expect(telemetry.playoutDelayFrames == 1)
     }
 
@@ -68,6 +69,7 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 0)
         #expect(telemetry.overwrittenPendingFrames == 2)
+        #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.lateFrameDrops == 0)
     }
 

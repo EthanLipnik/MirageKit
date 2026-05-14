@@ -59,7 +59,7 @@ extension StreamContext {
             now: now,
             isDesktopDisplayStream: captureMode == .display && !isAppStream && virtualDisplayContext != nil,
             startupSettled: startupBaseTime == 0 || (startupRegistrationLogged && now - startupBaseTime >= 5.0),
-            receiverHasPresentedFrame: false,
+            receiverHasPresentedFrame: receiverHasPresentedFrame,
             isResizing: isResizing,
             isEncodingSuspendedForResize: encodingSuspendedForResize,
             targetFrameRate: currentFrameRate,
@@ -76,8 +76,21 @@ extension StreamContext {
             captureCadence: captureCadence
         )
         let action = captureCadenceRecoveryPolicy.evaluate(sample)
-        guard action != .none else { return }
+        guard action != .none else {
+            logSuppressedCaptureCadenceRecoveryIfNeeded()
+            return
+        }
         await performCaptureCadenceRecovery(action, captureCadence: captureCadence)
+    }
+
+    private func logSuppressedCaptureCadenceRecoveryIfNeeded() {
+        guard captureCadenceRecoveryPolicy.lastSuppressionReason == .receiverAlreadyPresented,
+              let action = captureCadenceRecoveryPolicy.lastSuppressedAction else {
+            return
+        }
+        MirageLogger.capture(
+            "event=capture_cadence_recovery action=\(action.logName) result=skipped_receiver_presented stream=\(streamID)"
+        )
     }
 
     func performCaptureCadenceRecovery(
@@ -173,5 +186,22 @@ extension StreamContext {
         }
     }
 
+}
+
+private extension HostCaptureCadenceRecoveryPolicy.Action {
+    var logName: String {
+        switch self {
+        case .none:
+            "none"
+        case .restartVirtualDisplayCadenceDriver:
+            "restart_virtual_display_cadence_driver"
+        case .restartCapture:
+            "restart_capture"
+        case .reassertVirtualDisplayMode:
+            "reassert_virtual_display"
+        case .recreateVirtualDisplay:
+            "recreate_virtual_display"
+        }
+    }
 }
 #endif

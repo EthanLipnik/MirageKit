@@ -42,6 +42,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
+        smoothestQueueDrops: UInt64 = 0,
         lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
@@ -70,6 +71,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.pendingFrameCount = max(0, pendingFrameCount)
             snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
             snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
+            snapshot.clientSmoothestQueueDrops = smoothestQueueDrops
             snapshot.clientLateFrameDrops = lateFrameDrops
             snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
             snapshot.clientRepeatedFrameCount = repeatedFrameCount

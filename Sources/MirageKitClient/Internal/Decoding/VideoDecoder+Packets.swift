@@ -149,7 +149,9 @@ extension FrameReassembler {
             }
         }
 
-        if awaitingKeyframe && !isKeyframePacket {
+        if awaitingKeyframe,
+           !isKeyframePacket,
+           !shouldBufferNonKeyframeWhileAwaitingKeyframeLocked(frameNumber: frameNumber) {
             lock.unlock()
             return
         }
@@ -294,7 +296,7 @@ extension FrameReassembler {
         // Clean up old pending frames
         let timeoutResult = cleanupOldFramesLocked()
         if timeoutResult.shouldEnterAwaitingKeyframe {
-            enterKeyframeOnlyModeLocked()
+            beginKeyframeWaitLocked()
             MirageLogger.log(
                 .frameAssembly,
                 "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), keyframe=\(timeoutResult.timedOutKeyframes), anchor=\(hasDeliveredKeyframeAnchor)"

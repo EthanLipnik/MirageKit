@@ -75,6 +75,23 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(policy.evaluate(pressured) == .none)
     }
 
+    @Test("Healthy capture ingress ignores low encode attempt FPS")
+    func healthyCaptureIngressIgnoresLowEncodeAttemptFPS() {
+        var policy = policy(consecutiveBadWindowsRequired: 1)
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                captureFPS: 24,
+                captureIngressFPS: 60,
+                encodeAttemptFPS: 24,
+                captureCadence: StreamCaptureCadenceMetrics()
+            )
+        )
+
+        #expect(action == .none)
+    }
+
     @Test("High refresh variable cadence above floor does not recover")
     func highRefreshVariableCadenceAboveFloorDoesNotRecover() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
@@ -145,6 +162,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         )
 
         #expect(action == .none)
+        #expect(policy.lastSuppressedAction == .reassertVirtualDisplayMode)
+        #expect(policy.lastSuppressionReason == .receiverAlreadyPresented)
     }
 
     @Test("Pre-presentation high refresh policy rate mismatch may reassert virtual display mode")
@@ -220,6 +239,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         isEncodingSuspendedForResize: Bool = false,
         targetFrameRate: Int = 60,
         captureFPS: Double = 58,
+        captureIngressFPS: Double? = nil,
+        encodeAttemptFPS: Double? = nil,
         captureCadence: StreamCaptureCadenceMetrics? = nil
     ) -> HostCaptureCadenceRecoveryPolicy.Sample {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFrameRate))
@@ -232,8 +253,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             isEncodingSuspendedForResize: isEncodingSuspendedForResize,
             targetFrameRate: targetFrameRate,
             captureFPS: captureFPS,
-            captureIngressFPS: captureFPS,
-            encodeAttemptFPS: captureFPS,
+            captureIngressFPS: captureIngressFPS ?? captureFPS,
+            encodeAttemptFPS: encodeAttemptFPS ?? captureFPS,
             averageEncodeMs: 7,
             frameBudgetMs: frameBudgetMs,
             sendQueueBytes: 0,

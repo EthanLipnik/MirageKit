@@ -326,5 +326,9 @@ extension VideoDecoder {
             releaseDecodeSubmissionSlot()
             throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
         }
+
+        if isKeyframe {
+            errorTracker?.recordKeyframeSubmittedForRecovery()
+        }
     }
 }

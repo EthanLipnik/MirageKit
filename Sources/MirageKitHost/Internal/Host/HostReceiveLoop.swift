@@ -40,15 +40,28 @@ final class HostReceiveLoop: @unchecked Sendable {
     /// Internal queue entry used to preserve ordering while coalescing noisy control updates.
     private enum QueueEntry {
         case direct(ControlMessage)
-        case coalesced(ControlMessageType)
+        case coalesced(CoalescedKey)
         case input(ControlMessage)
+    }
+
+    private struct CoalescedKey: Hashable, CustomStringConvertible {
+        let type: ControlMessageType
+        let streamID: StreamID?
+
+        var description: String {
+            if let streamID {
+                "\(type)(stream=\(streamID))"
+            } else {
+                "\(type)"
+            }
+        }
     }
 
     /// Mutable receive-loop state protected by `Locked`.
     private struct State {
         var receiveBuffer = Data()
         var entries: [QueueEntry] = []
-        var coalesced: [ControlMessageType: ControlMessage] = [:]
+        var coalesced: [CoalescedKey: ControlMessage] = [:]
         var controlInFlight = false
         var clipboardInputBarrierDepth = 0
         var stopped = false
@@ -60,6 +73,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         .streamScaleChange,
         .streamRefreshRateChange,
         .streamEncoderSettingsChange,
+        .receiverMediaFeedback,
     ]
 
     private let receiveChunk: @Sendable (
@@ -262,10 +276,11 @@ final class HostReceiveLoop: @unchecked Sendable {
     private func enqueueControl(_ message: ControlMessage, state: inout State) -> Bool {
         let type = message.type
         if Self.coalescedTypes.contains(type) {
-            if state.coalesced[type] == nil {
-                state.entries.append(.coalesced(type))
+            let key = Self.coalescedKey(for: message)
+            if state.coalesced[key] == nil {
+                state.entries.append(.coalesced(key))
             }
-            state.coalesced[type] = message
+            state.coalesced[key] = message
             trimCoalescedBacklog(state: &state)
             return true
         } else {
@@ -315,10 +330,10 @@ final class HostReceiveLoop: @unchecked Sendable {
             return false
         }) {
             let entry = state.entries.remove(at: index)
-            if case let .coalesced(coalescedType) = entry {
-                state.coalesced.removeValue(forKey: coalescedType)
+            if case let .coalesced(coalescedKey) = entry {
+                state.coalesced.removeValue(forKey: coalescedKey)
                 MirageLogger.host(
-                    "Client \(clientName) control backlog full; dropping stale \(coalescedType) to preserve input"
+                    "Client \(clientName) control backlog full; dropping stale \(coalescedKey) to preserve input"
                 )
             }
             return
@@ -362,8 +377,8 @@ final class HostReceiveLoop: @unchecked Sendable {
                 return false
             }) {
                 let entry = state.entries.remove(at: index)
-                if case let .coalesced(coalescedType) = entry {
-                    state.coalesced.removeValue(forKey: coalescedType)
+                if case let .coalesced(coalescedKey) = entry {
+                    state.coalesced.removeValue(forKey: coalescedKey)
                 }
                 continue
             }
@@ -388,8 +403,8 @@ final class HostReceiveLoop: @unchecked Sendable {
             switch next {
             case let .direct(message):
                 return .control(message)
-            case let .coalesced(type):
-                guard let message = state.coalesced.removeValue(forKey: type) else {
+            case let .coalesced(key):
+                guard let message = state.coalesced.removeValue(forKey: key) else {
                     state.controlInFlight = false
                     return nil
                 }
@@ -421,6 +436,14 @@ final class HostReceiveLoop: @unchecked Sendable {
             }
         }
         scheduleNextControlIfNeeded()
+    }
+
+    private static func coalescedKey(for message: ControlMessage) -> CoalescedKey {
+        guard message.type == .receiverMediaFeedback,
+              let feedback = try? message.decode(ReceiverMediaFeedbackMessage.self) else {
+            return CoalescedKey(type: message.type, streamID: nil)
+        }
+        return CoalescedKey(type: message.type, streamID: feedback.streamID)
     }
 }
 #endif

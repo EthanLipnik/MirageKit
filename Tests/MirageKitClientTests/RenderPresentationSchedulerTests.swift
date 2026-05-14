@@ -180,7 +180,13 @@ struct RenderPresentationSchedulerTests {
         #expect(scheduledCallbacks.isEmpty)
         #expect(submitReferences == [1])
 
-        wallTime += 0.006
+        wallTime += 0.010
+        scheduler.handleFrameAvailable(referenceTime: 2.5)
+
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(submitReferences == [1])
+
+        wallTime += 0.002
         scheduler.handleFrameAvailable(referenceTime: 3)
 
         #expect(scheduledCallbacks.count == 1)
@@ -531,8 +537,8 @@ struct RenderPresentationSchedulerTests {
         #expect(readinessRetryCount == 1)
     }
 
-    @Test("Display layer not-ready with active display clock suppresses timer retry")
-    func displayLayerNotReadyWithActiveDisplayClockSuppressesTimerRetry() {
+    @Test("Display layer not-ready with active display clock arms readiness recovery")
+    func displayLayerNotReadyWithActiveDisplayClockArmsReadinessRecovery() {
         let streamID: StreamID = 912
         var submitCount = 0
         var readinessRetryCount = 0
@@ -554,7 +560,7 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleDisplayTick(referenceTime: 1)
 
         #expect(submitCount == 1)
-        #expect(readinessRetryCount == 0)
+        #expect(readinessRetryCount == 1)
     }
 
     @Test("Renderer-ready recovery waits for display cadence unless ticks under-run")
@@ -586,6 +592,10 @@ struct RenderPresentationSchedulerTests {
         #expect(submitReferences.isEmpty)
 
         wallTime += 0.020
+        scheduler.requestRendererReadySubmission(referenceTime: 2.5)
+        #expect(submitReferences.isEmpty)
+
+        wallTime += 0.002
         scheduler.requestRendererReadySubmission(referenceTime: 3)
 
         #expect(submitReferences == [3])

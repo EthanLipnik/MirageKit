@@ -220,6 +220,14 @@ actor StreamContext {
     var senderFrameBudgetDelayOverrunCount: Int = 0
     let senderFrameBudgetDelayOverrunThreshold: Int = 2
     let senderFrameBudgetDelayRecoveryMultiplier: Double = 2.0
+    var transportController = HostStreamTransportController()
+    var receiverFrameAdmissionTargetFPS: Int?
+    var receiverFrameAdmissionDeadline: CFAbsoluteTime = 0
+    var receiverFrameAdmissionLastAdmitTime: CFAbsoluteTime = 0
+    var receiverFrameAdmissionLastLogTime: CFAbsoluteTime = 0
+    var receiverFrameAdmissionLastLoggedTargetFPS: Int?
+    var receiverFrameAdmissionLastLoggedTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
+    var receiverHasPresentedFrame = false
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -235,7 +243,7 @@ actor StreamContext {
     var keyframeIntervalSeconds: CFAbsoluteTime = 0
     var keyframeMaxIntervalSeconds: CFAbsoluteTime = 0
     var lastKeyframeTime: CFAbsoluteTime = 0
-    let recoveryOnlyKeyframes = true
+    let scheduledKeyframesEnabled = false
 
     /// Recovery request tracking.
     var softRecoveryCount: UInt64 = 0

@@ -30,6 +30,7 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.updatePresentationTier(.activeLive)
@@ -175,6 +176,7 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -194,6 +196,7 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -215,13 +218,14 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
         await controller.updatePresentationTier(.activeLive)
         await controller.markFirstFramePresented()
         let reassembler = await controller.reassembler
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
 
         await controller.startKeyframeRecoveryLoopIfNeeded()
         _ = await controller.requestKeyframeRecovery(reason: .frameLoss)
@@ -253,6 +257,7 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -278,12 +283,13 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
         await controller.markFirstFramePresented()
         let reassembler = await controller.reassembler
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
 
         await controller.handleFrameLossSignal()
         try await Task.sleep(for: .milliseconds(300))
@@ -302,6 +308,7 @@ struct StreamControllerHardRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             },
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
@@ -319,7 +326,7 @@ struct StreamControllerHardRecoveryTests {
 
         await controller.recordDecodedFrame()
         let reassembler = await controller.reassembler
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
 
         try await Task.sleep(for: .seconds(11))
         #expect(keyframeCounter.value == 1)

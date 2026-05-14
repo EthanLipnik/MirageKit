@@ -45,6 +45,9 @@ extension MirageHostService {
             .streamEncoderSettingsChange: .message { [weak self] message in
                 await self?.handleStreamEncoderSettingsChangeMessage(message)
             },
+            .receiverMediaFeedback: .messageAndClient { [weak self] message, clientContext in
+                await self?.handleReceiverMediaFeedbackMessage(message, from: clientContext)
+            },
             .desktopCursorPresentationChange: .message { [weak self] message in
                 await self?.handleDesktopCursorPresentationChangeMessage(message)
             },
@@ -204,9 +207,48 @@ extension MirageHostService {
             return
         }
 
-        guard let context = streamsByID[request.streamID] else { return }
+        guard clientContextOwnsStream(request.streamID, clientContext: clientContext),
+              let context = streamsByID[request.streamID] else {
+            let ack = KeyframeRecoveryAckMessage(
+                streamID: request.streamID,
+                deadlineMilliseconds: 500,
+                accepted: false,
+                state: .noStream
+            )
+            clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
+            return
+        }
         let ack = await context.requestKeyframe()
         clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
+    }
+
+    private func handleReceiverMediaFeedbackMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
+        let feedback: ReceiverMediaFeedbackMessage
+        do {
+            feedback = try message.decode(ReceiverMediaFeedbackMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle receiverMediaFeedback: ")
+            return
+        }
+
+        guard clientContextOwnsStream(feedback.streamID, clientContext: clientContext),
+              let context = streamsByID[feedback.streamID] else {
+            return
+        }
+        await context.applyReceiverMediaFeedback(feedback)
+    }
+
+    private func clientContextOwnsStream(_ streamID: StreamID, clientContext: ClientContext) -> Bool {
+        if let session = activeSessionByStreamID[streamID] {
+            return session.client.id == clientContext.client.id
+        }
+        if streamID == desktopStreamID {
+            return desktopStreamClientContext?.client.id == clientContext.client.id
+        }
+        if let ownerSessionID = customStreamClientSessionIDByStreamID[streamID] {
+            return ownerSessionID == clientContext.sessionID
+        }
+        return false
     }
 
     private func handleInputEventMessage(_ message: ControlMessage) async {

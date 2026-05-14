@@ -208,8 +208,8 @@ struct HostKeyframeRecoveryTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 4)
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: 10.0) == 0)
         #expect(StreamContext.keyframePacingOverride() == StreamPacketSender.PacingOverride(
-            rateBps: 120_000_000,
-            burstBytes: 64 * 1024
+            rateBps: 48_000_000,
+            burstBytes: 16 * 1024
         ))
 
         await context.disableStartupTransportProtection()
@@ -255,17 +255,15 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeReason == "Keyframe request")
     }
 
-    @Test("Keyframe packet pacing override raises send rate while capping burst budget")
+    @Test("Keyframe packet pacing override caps send rate and burst budget")
     func startupPacketPacingCapsKeyframeBurstBudget() {
+        let pacingOverride = StreamContext.keyframePacingOverride()
         let startupParameters = StreamPacketSender.packetPacingParameters(
             targetRateBps: 76_000_000,
             packetBytes: 1_500,
             isKeyframeBurst: true,
             totalFragments: 1_200,
-            pacingOverride: StreamPacketSender.PacingOverride(
-                rateBps: 120_000_000,
-                burstBytes: 64 * 1024
-            )
+            pacingOverride: pacingOverride
         )
         let steadyStateParameters = StreamPacketSender.packetPacingParameters(
             targetRateBps: 76_000_000,
@@ -277,8 +275,8 @@ struct HostKeyframeRecoveryTests {
 
         #expect(startupParameters != nil)
         #expect(steadyStateParameters != nil)
-        #expect(Int(startupParameters?.burstBytes ?? 0) == 64 * 1024)
-        #expect((startupParameters?.bytesPerSecond ?? 0) > (steadyStateParameters?.bytesPerSecond ?? 0))
+        #expect(Int(startupParameters?.burstBytes ?? 0) == pacingOverride.burstBytes)
+        #expect((startupParameters?.bytesPerSecond ?? 0) < (steadyStateParameters?.bytesPerSecond ?? 0))
         #expect((startupParameters?.burstBytes ?? 0) <
             (startupParameters?.bytesPerSecond ?? 0) / 1_000.0 * StreamPacketSender.packetPacerBurstWindowMs)
     }

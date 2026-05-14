@@ -14,7 +14,16 @@ import MirageKit
 extension FrameReassembler {
     /// Freshness marker for the best pending keyframe while recovering from keyframe starvation.
     struct PendingKeyframeProgress: Equatable {
+        let frameNumber: UInt32
+        let epoch: UInt16
+        let dimensionToken: UInt16
+        let receivedFragments: Int
+        let dataFragments: Int
+        let progressRatio: Double
+        let receivedBytes: Int
+        let expectedBytes: Int
         let lastProgressTime: CFAbsoluteTime
+        let age: CFAbsoluteTime
     }
 
     struct CompletedFrame {

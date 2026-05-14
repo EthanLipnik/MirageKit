@@ -153,14 +153,9 @@ extension StreamContext {
         let now = CFAbsoluteTimeGetCurrent()
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 
-        let averageEncodeMs = await encoder.averageEncodeTimeMs
-        if averageEncodeMs <= 0 { return }
-
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
-        let sourceCadenceDeficient = virtualDisplaySourceCadenceIsDeficient(queueBytes: queueBytes)
-        let allowsRaise = now >= qualityRaiseSuppressionUntil
-        let allowEncodeDrivenQualityRelief = true
+        let transportOverBudget = queueBytes > queuePressureBytes
+        let allowsRaise = now >= qualityRaiseSuppressionUntil && queueBytes <= minQueuedBytes
+        let allowTransportQualityRelief = true
         let baseDropThreshold = qualityDropThreshold
         let baseDropStep = qualityDropStep
 
@@ -172,10 +167,9 @@ extension StreamContext {
             ),
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
-            encodeOverBudget: encodeOverBudget,
-            sourceCadenceDeficient: sourceCadenceDeficient,
+            transportOverBudget: transportOverBudget,
             allowsRaise: allowsRaise,
-            allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
+            allowTransportQualityRelief: allowTransportQualityRelief,
             qualityDropThreshold: baseDropThreshold,
             qualityRaiseThreshold: qualityRaiseThreshold,
             qualityDropStep: baseDropStep,
@@ -197,9 +191,8 @@ extension StreamContext {
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
             MirageLogger.metrics(
-                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, reason=\(reason))"
+                "Quality down to \(qualityText) (queue \(queueBytes / 1024)KB, reason=\(reason))"
             )
 
         case .raise:
@@ -207,52 +200,10 @@ extension StreamContext {
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
             MirageLogger.metrics(
-                "Quality up to \(qualityText) (encode \(avgText)ms)"
+                "Quality up to \(qualityText) (queue \(queueBytes / 1024)KB)"
             )
         }
-    }
-
-    /// Returns true when virtual display capture cadence is too unstable to raise quality.
-    func virtualDisplaySourceCadenceIsDeficient(queueBytes: Int) -> Bool {
-        guard captureMode == .display,
-              !isAppStream,
-              virtualDisplayContext != nil,
-              currentFrameRate >= 90 else {
-            return false
-        }
-        guard queueBytes <= max(64 * 1024, queuePressureBytes / 2) else { return false }
-
-        let targetFPS = Double(max(1, currentFrameRate))
-        let cadenceFloor = targetFPS * 0.85
-        let lowCaptureCadence = [
-            lastCaptureIngressFPS,
-            lastCaptureFPS,
-            lastEncodeAttemptFPS,
-        ].contains { value in
-            guard let value, value > 0 else { return false }
-            return value < cadenceFloor
-        }
-        let cadence = lastCaptureCadenceMetrics
-        let frameBudgetMs = 1000.0 / targetFPS
-        let p99Gap = max(
-            cadence?.wallClockGapP99Ms ?? 0,
-            cadence?.displayTimeGapP99Ms ?? 0,
-            cadence?.deliveredFrameGapP99Ms ?? 0
-        )
-        let worstGap = max(
-            cadence?.wallClockGapWorstMs ?? 0,
-            cadence?.displayTimeGapWorstMs ?? 0,
-            cadence?.deliveredFrameGapWorstMs ?? 0
-        )
-        let unevenSourceCadence =
-            p99Gap >= max(35.0, frameBudgetMs * 2.0) ||
-            worstGap >= max(70.0, frameBudgetMs * 4.0) ||
-            (cadence?.longFrameGapCount ?? 0) > 0 ||
-            cadence?.virtualDisplayTimingSuspect == true
-
-        return lowCaptureCadence || unevenSourceCadence
     }
 }
 #endif

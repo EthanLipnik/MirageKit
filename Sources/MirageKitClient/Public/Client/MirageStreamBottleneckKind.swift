@@ -106,8 +106,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let fpsGapGrace = max(4.0, targetFPS * 0.08)
         let decodeGapGrace = max(5.0, targetFPS * 0.10)
         let presentationGapGrace = max(4.0, targetFPS * 0.10)
-        let presentationPendingAgeMsThreshold = max(20.0, (1_000.0 / targetFPS) * 1.5)
-        let targetFrameIntervalMs = 1_000.0 / targetFPS
+        let presentationPendingAgeMsThreshold = max(20.0, (1000.0 / targetFPS) * 1.5)
+        let targetFrameIntervalMs = 1000.0 / targetFPS
         let hostCaptureGapP99Ms = max(
             snapshot.hostCaptureDeliveredFrameGapP99Ms ?? 0,
             snapshot.hostCaptureWallClockGapP99Ms ?? 0,
@@ -132,29 +132,43 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.clientWorstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
             snapshot.clientFrameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
             snapshot.clientDisplayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
+        let rendererLoopStalled =
+            submittedFPS >= targetFPS * 0.75 &&
+            uniqueSubmittedFPS + presentationGapGrace < submittedFPS &&
+            snapshot.pendingFrameCount > 0
 
         let networkBound = transportAssessment.primaryStress && !transportAssessment.isPacerOnlyStress
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
-            (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)
+            (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS) ||
+            (!snapshot.decodeHealthy &&
+                !rendererLoopStalled &&
+                !networkBound &&
+                hostEncodedFPS >= targetFPS * 0.90 &&
+                max(receivedFPS, decodedFPS) < targetFPS * 0.85)
 
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
         let submissionLaggingDecode = (submittedFPS + presentationGapGrace < decodedFPS) ||
             (uniqueSubmittedFPS + presentationGapGrace < decodedFPS)
+        let visibleFPS = max(0, snapshot.clientPresentedFPS)
+        let visibleLaggingSubmission = visibleFPS > 0 &&
+            visibleFPS + presentationGapGrace < max(uniqueSubmittedFPS, submittedFPS)
         let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
-        let presentationBound = decodeKeepsUp && (
-            submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
-                unevenPresentationCadence && submittedFPS < targetFPS * 0.97 ||
-                severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
-        )
+        let presentationBound = rendererLoopStalled ||
+            decodeKeepsUp && (
+                submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
+                    visibleLaggingSubmission && (unevenPresentationCadence || snapshot.clientRepeatedFrameCount > 0) ||
+                    unevenPresentationCadence && submittedFPS < targetFPS * 0.97 ||
+                    severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
+            )
 
         let hostCadenceLimited = !networkBound && (
-                (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
+            (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
                 (captureFPS > 0 && captureFPS < targetFPS * 0.90) ||
                 (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90) ||
                 hostCaptureCadenceUneven
@@ -162,12 +176,13 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
 
         let captureBound = !hostCadenceLimited && (
             (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
-            (captureFPS > 0 && captureFPS < targetFPS * 0.90 && encodeAttemptFPS <= captureFPS + 3.0)
+                (captureFPS > 0 && captureFPS < targetFPS * 0.90 && encodeAttemptFPS <= captureFPS + 3.0)
         )
 
         let encodeHasWork = (encodeAttemptFPS > 0 && encodeAttemptFPS >= targetFPS * 0.90) ||
             (captureFPS > 0 && captureFPS >= targetFPS * 0.90)
-        let encodeBound = (encodeAttemptFPS > 0 && hostEncodedFPS + fpsGapGrace < encodeAttemptFPS) ||
+        let encodeThroughputFloor = min(encodeAttemptFPS, targetFPS)
+        let encodeBound = (encodeAttemptFPS > 0 && hostEncodedFPS + fpsGapGrace < encodeThroughputFloor) ||
             (encodeHasWork && frameBudgetMs > 0 && averageEncodeMs > frameBudgetMs * 1.05)
 
         let activeKinds = [
@@ -178,7 +193,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             decodeBound ? .decodeBound : nil,
             presentationBound ? .presentationBound : nil,
         ]
-        .compactMap { $0 }
+            .compactMap(\.self)
 
         if activeKinds.count > 1 {
             return .mixed

@@ -198,8 +198,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Presentation-bound samples block promotion without transport backoff")
-    func presentationBoundSamplesBlockPromotionWithoutTransportBackoff() {
+    @Test("Presentation-bound samples do not block transport probing")
+    func presentationBoundSamplesDoNotBlockTransportProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = presentationBoundButTransportHealthySnapshot()
 
@@ -216,7 +216,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 32_000_000))
         #expect(controller.state == .stable)
     }
 
@@ -272,8 +272,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .backingOff)
     }
 
-    @Test("Severe delivery collapse backs off only when host and client are otherwise healthy")
-    func severeDeliveryCollapseRequiresVerifiableTransport() {
+    @Test("Delivery collapse without transport evidence does not back off")
+    func deliveryCollapseWithoutTransportEvidenceDoesNotBackOff() {
         var controller = MirageReceiverHealthController()
         var networkSnapshot = healthySnapshot(activeQuality: 0.62)
         networkSnapshot.hostEncodedFPS = 60
@@ -311,8 +311,8 @@ struct ReceiverHealthControllerTests {
             now: 12
         )
 
-        #expect(networkBackoff == .backoff(targetBitrateBps: 40_800_000))
-        #expect(decodeAction == .none)
+        #expect(networkBackoff == .probe(targetBitrateBps: 60_000_000))
+        #expect(decodeAction == .probe(targetBitrateBps: 60_000_000))
     }
 
     @Test("Missing host metrics hold")

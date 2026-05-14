@@ -262,10 +262,7 @@ extension MirageClientService {
         }
 
         let failedDesktopSessionID = desktopSessionID
-        var restartRequest = StartDesktopStreamMessage(copying: previousRequest, startupRequestID: UUID())
-        if controlPathSnapshot?.kind == .vpn {
-            restartRequest = remoteStartupRecoveryRestartRequest(from: restartRequest)
-        }
+        let restartRequest = StartDesktopStreamMessage(copying: previousRequest, startupRequestID: UUID())
         desktopStreamRestartAttempts += 1
         MirageLogger.client(
             "Restarting desktop stream in-session after terminal startup failure: " +
@@ -315,41 +312,10 @@ extension MirageClientService {
             return false
         }
     }
-}
-
-public extension MirageClientService {
-    package func remoteStartupRecoveryRestartRequest(
-        from request: StartDesktopStreamMessage
-    ) -> StartDesktopStreamMessage {
-        var lowered = StartDesktopStreamMessage(
-            copying: request,
-            startupRequestID: request.startupRequestID,
-            targetFrameRate: min(max(1, request.targetFrameRate), 60)
-        )
-        lowered.disableResolutionCap = false
-        lowered.encoderMaxWidth = min(request.encoderMaxWidth ?? 1920, 1920)
-        lowered.encoderMaxHeight = min(request.encoderMaxHeight ?? 1080, 1080)
-        if let bitrate = request.bitrate {
-            lowered.bitrate = min(bitrate, 24_000_000)
-        }
-        if let enteredBitrate = request.enteredBitrate {
-            lowered.enteredBitrate = min(enteredBitrate, 24_000_000)
-        }
-        if let bitrateAdaptationCeiling = request.bitrateAdaptationCeiling {
-            lowered.bitrateAdaptationCeiling = min(bitrateAdaptationCeiling, 80_000_000)
-        }
-        MirageLogger.client(
-            "Lowered remote desktop restart tier after startup recovery: " +
-                "fps=\(lowered.targetFrameRate), bitrate=\(lowered.bitrate ?? 0), " +
-                "ceiling=\(lowered.bitrateAdaptationCeiling ?? 0), " +
-                "encoderMax=\(lowered.encoderMaxWidth ?? 0)x\(lowered.encoderMaxHeight ?? 0)"
-        )
-        return lowered
-    }
 
     /// Cancel any in-progress stream setup on the host.
     /// Used when the user cancels during loading before a stream ID is established.
-    func cancelStreamSetup() {
+    public func cancelStreamSetup() {
         guard case .connected = connectionState else { return }
         queueControlMessageBestEffort(
             .cancelStreamSetup,

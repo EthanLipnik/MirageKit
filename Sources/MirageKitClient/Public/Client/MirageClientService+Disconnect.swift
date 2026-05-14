@@ -149,6 +149,9 @@ extension MirageClientService {
         customStreamStartedContinuations.removeAll()
         customStreamDescriptorsByStreamID.removeAll()
         registeredStreamIDs.removeAll()
+        lastKeyframeRequestTime.removeAll()
+        receiverMediaFeedbackLastSendTime.removeAll()
+        receiverMediaFeedbackSequence = 0
         cancelDesktopStreamStopTimeout()
         retiredDesktopSessionIDs.removeAll()
         pendingApplicationActivationRecoveryStreamIDs.removeAll()

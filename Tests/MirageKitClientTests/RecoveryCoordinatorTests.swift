@@ -48,6 +48,59 @@ struct RecoveryCoordinatorTests {
         #expect(deadline >= 10.80)
     }
 
+    @Test("Rejected host ack waits without consuming a recovery attempt")
+    func rejectedHostAckWaitsWithoutConsumingRecoveryAttempt() {
+        var coordinator = RecoveryCoordinator()
+        let first = coordinator.requestAction(now: 10, reason: "frame-loss", targetFPS: 120)
+
+        guard case let .dispatch(_, firstAttempt) = first else {
+            Issue.record("Expected first recovery action to dispatch")
+            return
+        }
+        #expect(firstAttempt == 1)
+
+        coordinator.recordHostAck(
+            KeyframeRecoveryAckMessage(
+                streamID: 1,
+                deadlineMilliseconds: 750,
+                accepted: false,
+                state: .inFlight
+            ),
+            now: 10.05
+        )
+
+        let retry = coordinator.requestAction(now: 10.81, reason: "frame-loss", targetFPS: 120)
+        guard case let .dispatch(_, retryAttempt) = retry else {
+            Issue.record("Expected retry after host in-flight deadline")
+            return
+        }
+        #expect(retryAttempt == 1)
+    }
+
+    @Test("No-stream host ack clears recovery episode")
+    func noStreamHostAckClearsRecoveryEpisode() {
+        var coordinator = RecoveryCoordinator()
+        _ = coordinator.requestAction(now: 10, reason: "frame-loss", targetFPS: 120)
+        coordinator.recordHostAck(
+            KeyframeRecoveryAckMessage(
+                streamID: 1,
+                deadlineMilliseconds: 0,
+                accepted: false,
+                state: .noStream
+            ),
+            now: 10.05
+        )
+
+        let decision = coordinator.requestAction(now: 10.1, reason: "frame-loss", targetFPS: 120)
+        guard case let .dispatch(episodeID, attempt) = decision else {
+            Issue.record("Expected new episode after no-stream ack")
+            return
+        }
+
+        #expect(episodeID == 2)
+        #expect(attempt == 1)
+    }
+
     @Test("Recovery coordinator clears episode on progress")
     func clearsEpisodeOnProgress() {
         var coordinator = RecoveryCoordinator()

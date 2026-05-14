@@ -7,6 +7,7 @@
 //  StreamController callback wiring.
 //
 
+import CoreFoundation
 import Foundation
 import MirageKit
 
@@ -19,7 +20,7 @@ extension MirageClientService {
     ) async {
         await controller.setCallbacks(
             onKeyframeNeeded: { [weak self] in
-                self?.sendKeyframeRequest(for: streamID)
+                self?.sendKeyframeRequest(for: streamID) ?? false
             },
             onResizeStateChanged: nil,
             onFrameDecoded: { [weak self] metrics in
@@ -46,6 +47,7 @@ extension MirageClientService {
                     pendingFrameCount: metrics.pendingFrameCount,
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
+                    smoothestQueueDrops: metrics.smoothestQueueDrops,
                     lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
                     repeatedFrameCount: metrics.repeatedFrameCount,
@@ -67,6 +69,7 @@ extension MirageClientService {
                 if activeJitterHoldMs != metrics.activeJitterHoldMs {
                     activeJitterHoldMs = metrics.activeJitterHoldMs
                 }
+                sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
                 logAwdlExperimentTelemetryIfNeeded()
             },
             onFirstFrameDecoded: { [weak self] in
@@ -97,5 +100,84 @@ extension MirageClientService {
                 }
             }
         )
+    }
+
+    private func sendReceiverMediaFeedback(
+        streamID: StreamID,
+        metrics: StreamController.ClientFrameMetrics
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let lastSendTime = receiverMediaFeedbackLastSendTime[streamID],
+           now - lastSendTime < receiverMediaFeedbackInterval {
+            return
+        }
+        receiverMediaFeedbackLastSendTime[streamID] = now
+
+        receiverMediaFeedbackSequence &+= 1
+        let recoveryStatus = sessionStore.sessionByStreamID(streamID)?.clientRecoveryStatus ?? .idle
+        let feedback = Self.makeReceiverMediaFeedback(
+            streamID: streamID,
+            sequence: receiverMediaFeedbackSequence,
+            sentAtUptime: now,
+            targetFPS: max(1, metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 60),
+            recoveryState: MirageMediaFeedbackRecoveryState(recoveryStatus),
+            metrics: metrics
+        )
+        queueControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
+    }
+
+    nonisolated static func makeReceiverMediaFeedback(
+        streamID: StreamID,
+        sequence: UInt64,
+        sentAtUptime: Double,
+        targetFPS: Int,
+        recoveryState: MirageMediaFeedbackRecoveryState,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> ReceiverMediaFeedbackMessage {
+        ReceiverMediaFeedbackMessage(
+            streamID: streamID,
+            sequence: sequence,
+            sentAtUptime: sentAtUptime,
+            targetFPS: targetFPS,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: metrics.receivedFrameIntervalP95Ms,
+            jitterP99Ms: metrics.receivedFrameIntervalP99Ms,
+            queueEstimateFrames: metrics.pendingFrameCount,
+            reassemblyBacklogFrames: metrics.reassemblerPendingFrameCount,
+            reassemblyBacklogKeyframes: metrics.reassemblerPendingKeyframeCount,
+            reassemblyBacklogBytes: metrics.reassemblerPendingBytes,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: metrics.pendingFrameCount,
+            decodedFPS: metrics.decodedFPS,
+            receivedFPS: metrics.receivedFPS,
+            rendererAcceptedFPS: metrics.layerAcceptedFPS,
+            rendererPresentedFPS: metrics.presentedFPS,
+            recoveryState: recoveryState
+        )
+    }
+
+    func clearReceiverMediaFeedbackState(for streamID: StreamID) {
+        receiverMediaFeedbackLastSendTime.removeValue(forKey: streamID)
+    }
+}
+
+private extension MirageMediaFeedbackRecoveryState {
+    init(_ status: MirageStreamClientRecoveryStatus) {
+        self = switch status {
+        case .idle:
+            .idle
+        case .startup:
+            .startup
+        case .tierPromotionProbe:
+            .tierPromotionProbe
+        case .keyframeRecovery:
+            .keyframeRecovery
+        case .hardRecovery:
+            .hardRecovery
+        case .postResizeAwaitingFirstFrame:
+            .postResizeAwaitingFirstFrame
+        }
     }
 }

@@ -32,17 +32,16 @@ enum MirageRuntimeQualityAdjustmentPolicy {
         state: MirageRuntimeQualityAdjustmentState,
         qualityFloor: Float,
         qualityCeiling: Float,
-        encodeOverBudget: Bool,
-        sourceCadenceDeficient: Bool = false,
+        transportOverBudget: Bool,
         allowsRaise: Bool,
-        allowEncodeDrivenQualityRelief: Bool,
+        allowTransportQualityRelief: Bool,
         qualityDropThreshold: Int,
         qualityRaiseThreshold: Int,
         qualityDropStep: Float,
         qualityRaiseStep: Float
     ) -> MirageRuntimeQualityAdjustmentDecision {
         var nextState = state
-        let qualityDropSignal = allowEncodeDrivenQualityRelief && encodeOverBudget && !sourceCadenceDeficient
+        let qualityDropSignal = allowTransportQualityRelief && transportOverBudget
 
         if !qualityDropSignal {
             nextState.qualityOverBudgetCount = 0
@@ -57,7 +56,7 @@ enum MirageRuntimeQualityAdjustmentPolicy {
                     nextState.qualityOverBudgetCount = 0
                     return MirageRuntimeQualityAdjustmentDecision(
                         state: nextState,
-                        action: .drop(reason: "encode")
+                        action: .drop(reason: "transport")
                     )
                 }
             }

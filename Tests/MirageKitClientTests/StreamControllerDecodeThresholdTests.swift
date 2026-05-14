@@ -22,6 +22,7 @@ extension StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -46,6 +47,7 @@ extension StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
 
@@ -74,6 +76,7 @@ extension StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.updatePresentationTier(.activeLive)
@@ -107,6 +110,7 @@ extension StreamControllerRecoveryTests {
         await controller.setCallbacks(
             onKeyframeNeeded: {
                 keyframeCounter.increment()
+                return true
             }
         )
         await controller.updatePresentationTier(.activeLive)

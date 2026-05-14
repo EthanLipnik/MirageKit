@@ -124,5 +124,28 @@ struct StreamPacketSenderPacingTests {
             frameByteCount: Int(UInt32.max) + 1
         ))
     }
+
+    @Test("FEC parity is interleaved after each protected data block")
+    func fecParityIsInterleavedAfterEachProtectedDataBlock() {
+        let order = StreamPacketSender.fragmentSendOrder(
+            dataFragmentCount: 10,
+            parityFragmentCount: 3,
+            fecBlockSize: 4
+        )
+
+        #expect(order == [0, 1, 2, 3, 10, 4, 5, 6, 7, 11, 8, 9, 12])
+        #expect(order.last == 12)
+    }
+
+    @Test("Fragment send order stays sequential when FEC is disabled")
+    func fragmentSendOrderStaysSequentialWhenFECIsDisabled() {
+        let order = StreamPacketSender.fragmentSendOrder(
+            dataFragmentCount: 5,
+            parityFragmentCount: 0,
+            fecBlockSize: 0
+        )
+
+        #expect(order == [0, 1, 2, 3, 4])
+    }
 }
 #endif

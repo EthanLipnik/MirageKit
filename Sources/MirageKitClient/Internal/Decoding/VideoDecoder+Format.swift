@@ -307,7 +307,7 @@ extension VideoDecoder {
                         if dimensionsMismatch {
                             // A keyframe carrying the new dimensions is already in-flight and
                             // being processed here. Triggering another threshold-based keyframe
-                            // recovery causes an avoidable keyframe-only stall loop during resize.
+                            // recovery causes an avoidable keyframe-wait stall loop during resize.
                             self.onDimensionChange?()
                             self.errorTracker?.clearForDimensionChange()
                         } else if shouldRecreateForErrors {

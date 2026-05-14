@@ -122,6 +122,8 @@ actor StreamController {
     var latestHostMetricsMessage: StreamMetricsMessage?
     var latestHostCadencePressureSample: HostCadencePressureDiagnosticSample?
     var latestRenderTelemetrySnapshot: RenderTelemetrySnapshot?
+    var renderCadenceMissStreak: Int = 0
+    var lastRenderCadenceMissLogTime: CFAbsoluteTime = 0
     var lastStreamingAnomalyDiagnosticSignature: String?
     var lastStreamingAnomalyDiagnosticTime: CFAbsoluteTime = 0
     var presentationTier: StreamPresentationTier = .activeLive
@@ -153,7 +155,7 @@ actor StreamController {
     var onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)?
 
     /// Called when a keyframe should be requested from host
-    var onKeyframeNeeded: (@MainActor @Sendable () -> Void)?
+    var onKeyframeNeeded: (@MainActor @Sendable () -> Bool)?
 
     /// Called when a frame is decoded (for delegate notification)
     /// This callback notifies AppState that a frame was decoded for UI state tracking.
@@ -178,7 +180,7 @@ actor StreamController {
 
     /// Set callbacks for stream events
     func setCallbacks(
-        onKeyframeNeeded: (@MainActor @Sendable () -> Void)?,
+        onKeyframeNeeded: (@MainActor @Sendable () -> Bool)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,

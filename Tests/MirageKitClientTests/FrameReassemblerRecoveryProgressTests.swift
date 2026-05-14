@@ -190,6 +190,90 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("Pending keyframe progress preserves dependent P-frames for post-keyframe drain")
+    func pendingKeyframeProgressPreservesDependentPFramesForPostKeyframeDrain() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+
+        reassembler.beginKeyframeWait()
+
+        let keyframe30Fragment0 = Data([0x00, 0x00, 0x00, 0x1E])
+        reassembler.processPacket(
+            keyframe30Fragment0,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 30,
+                payload: keyframe30Fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 8,
+                frameByteCount: 32
+            )
+        )
+
+        let pFrame31 = Data([0x1F, 0x00, 0x00, 0x00])
+        reassembler.processPacket(
+            pFrame31,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 31,
+                payload: pFrame31,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+
+        var metrics = reassembler.snapshotMetrics
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(metrics.pendingKeyframeCount == 1)
+        #expect(metrics.pendingFrameCount == 2)
+
+        for fragmentIndex in UInt16(1) ..< UInt16(8) {
+            let payload = Data([UInt8(fragmentIndex), 0x30, 0x30, 0x30])
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                    flags: fragmentIndex == 7 ? [.keyframe, .endOfFrame] : [.keyframe],
+                    frameNumber: 30,
+                    payload: payload,
+                    fragmentIndex: fragmentIndex,
+                    fragmentCount: 8,
+                    frameByteCount: 32
+                )
+            )
+        }
+
+        metrics = reassembler.snapshotMetrics
+        #expect(deliveredCounter.value == 3)
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == false)
+        #expect(metrics.pendingFrameCount == 0)
+    }
+
     @Test("Old incomplete keyframes are capped by memory budget")
     func oldIncompleteKeyframesAreCappedByMemoryBudget() {
         let reassembler = FrameReassembler(

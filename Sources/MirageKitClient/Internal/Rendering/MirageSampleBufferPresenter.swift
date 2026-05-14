@@ -37,7 +37,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     private var cachedFormatKey: PixelBufferFormatKey?
     private var cachedFormatDescription: CMVideoFormatDescription?
-    private var lastSubmittedSequence: UInt64 = 0
+    private var lastSubmittedCursor: MirageRenderCursor = .zero
     private var lastMappedPresentationTime: CMTime = .invalid
     var loggedLayerFailure = false
     var lastFrameSubmissionTime: CFTimeInterval = 0
@@ -61,7 +61,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard let streamID else { return false }
         return MirageRenderStreamStore.shared.hasFrameForPresentation(
             for: streamID,
-            after: lastSubmittedSequence
+            after: lastSubmittedCursor
         )
     }
 
@@ -130,7 +130,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         #if os(iOS) || os(visionOS)
         currentContentReferenceSize = nil
         #endif
-        lastSubmittedSequence = 0
+        lastSubmittedCursor = .zero
         displayLayerNotReadyStartTime = 0
     }
 
@@ -142,7 +142,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         let now = CACurrentMediaTime()
         rebaseSequenceTrackingIfNeeded(for: streamID)
-        guard MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: lastSubmittedSequence) else {
+        guard MirageRenderStreamStore.shared.hasFrameForPresentation(for: streamID, after: lastSubmittedCursor) else {
             return .noPendingFrame
         }
 
@@ -156,21 +156,21 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         guard let frame = MirageRenderStreamStore.shared.frameForPresentation(
             for: streamID,
-            after: lastSubmittedSequence
+            after: lastSubmittedCursor
         ) else {
             return .noPendingFrame
         }
 
-        if frame.sequence <= lastSubmittedSequence {
-            let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
-            if latestSequence > 0, latestSequence <= lastSubmittedSequence {
+        if !frame.cursor.isAfter(lastSubmittedCursor) {
+            let latestCursor = MirageRenderStreamStore.shared.latestCursor(for: streamID)
+            if shouldRebaseSequenceTracking(latestCursor: latestCursor) {
                 MirageLogger.renderer(
-                    "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
+                    "Detected render sequence regression for stream \(streamID) (\(lastSubmittedCursor) -> \(latestCursor)); rebasing presenter state"
                 )
                 resetSequenceTrackingState()
                 refreshFrameListener(for: streamID)
             }
-            guard frame.sequence > lastSubmittedSequence else { return .noPendingFrame }
+            guard frame.cursor.isAfter(lastSubmittedCursor) else { return .noPendingFrame }
         }
 
         let pixelBuffer = presentationPixelBuffer(for: frame)
@@ -184,11 +184,11 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
 
         displayLayer.enqueue(sampleBuffer)
-        lastSubmittedSequence = frame.sequence
+        lastSubmittedCursor = frame.cursor
         lastFrameSubmissionTime = CACurrentMediaTime()
         displayLayerNotReadyStartTime = 0
         MirageRenderStreamStore.shared.markSubmitted(
-            sequence: frame.sequence,
+            cursor: frame.cursor,
             remotePresentationTime: frame.remotePresentationTime.isValid ? frame.remotePresentationTime : frame.presentationTime,
             for: streamID
         )
@@ -196,18 +196,26 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func rebaseSequenceTrackingIfNeeded(for streamID: StreamID) {
-        guard lastSubmittedSequence > 0 else { return }
-        let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
-        guard latestSequence > 0,
-              latestSequence <= lastSubmittedSequence,
+        guard lastSubmittedCursor.hasSubmittedFrame else { return }
+        let latestCursor = MirageRenderStreamStore.shared.latestCursor(for: streamID)
+        guard shouldRebaseSequenceTracking(latestCursor: latestCursor),
               MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) > 0 else {
             return
         }
         MirageLogger.renderer(
-            "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
+            "Detected render sequence regression for stream \(streamID) (\(lastSubmittedCursor) -> \(latestCursor)); rebasing presenter state"
         )
         resetSequenceTrackingState()
         refreshFrameListener(for: streamID)
+    }
+
+    private func shouldRebaseSequenceTracking(latestCursor: MirageRenderCursor) -> Bool {
+        guard latestCursor.hasSubmittedFrame else { return false }
+        if latestCursor.generation > lastSubmittedCursor.generation {
+            return true
+        }
+        guard latestCursor.generation == lastSubmittedCursor.generation else { return false }
+        return latestCursor.sequence < lastSubmittedCursor.sequence
     }
 
     private func presentationPixelBuffer(for frame: MirageRenderFrame) -> CVPixelBuffer {
@@ -226,7 +234,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     private func resetSequenceTrackingState() {
-        lastSubmittedSequence = 0
+        lastSubmittedCursor = .zero
         lastMappedPresentationTime = .invalid
         lastFrameSubmissionTime = 0
         displayLayerNotReadyStartTime = 0

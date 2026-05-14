@@ -195,6 +195,7 @@ extension MirageRenderStreamStore {
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
+                smoothestQueueDrops: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
                 duplicateRemoteTimestampCount: 0,
@@ -256,6 +257,7 @@ extension MirageRenderStreamStore {
         let pendingFrameCount = state.pendingFrames.count
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
+        let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
         let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
@@ -281,6 +283,7 @@ extension MirageRenderStreamStore {
         let displayTickIntervalP99Ms = percentile(displayTickIntervalSamples, percentile: 0.99)
         let playoutDelayFrames = state.playoutDelayFrames
         state.overwrittenPendingFramesSinceLastSnapshot = 0
+        state.smoothestQueueDropsSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
         state.coalescedFramesSinceLastSnapshot = 0
         state.duplicateRemoteTimestampsSinceLastSnapshot = 0
@@ -312,6 +315,7 @@ extension MirageRenderStreamStore {
             pendingFrameCount: pendingFrameCount,
             pendingFrameAgeMs: pendingFrameAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
+            smoothestQueueDrops: smoothestQueueDrops,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
             duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,

@@ -92,13 +92,13 @@ extension FrameReassembler {
         }
     }
 
-    func enterKeyframeOnlyMode() {
+    func beginKeyframeWait() {
         lock.lock()
         do {
             defer { lock.unlock() }
-            enterKeyframeOnlyModeLocked()
+            beginKeyframeWaitLocked()
         }
-        MirageLogger.log(.frameAssembly, "Entering keyframe-only mode for stream \(streamID)")
+        MirageLogger.log(.frameAssembly, "Entering keyframe wait for stream \(streamID)")
     }
 
     func setStartupKeyframeTimeoutOverrideEnabled(_ enabled: Bool) {
@@ -122,9 +122,25 @@ extension FrameReassembler {
     var latestPendingKeyframeProgress: PendingKeyframeProgress? {
         lock.lock()
         defer { lock.unlock() }
-        return bestPendingKeyframeNumberLocked()
-            .flatMap { pendingFrames[$0]?.lastProgressAt.timeIntervalSinceReferenceDate }
-            .map { PendingKeyframeProgress(lastProgressTime: $0) }
+        guard let frameNumber = bestPendingKeyframeNumberLocked(),
+              let frame = pendingFrames[frameNumber] else {
+            return nil
+        }
+        let lastProgressTime = frame.lastProgressAt.timeIntervalSinceReferenceDate
+        let dataFragments = max(1, frame.dataFragmentCount)
+        let progressRatio = min(1.0, Double(frame.receivedCount) / Double(dataFragments))
+        return PendingKeyframeProgress(
+            frameNumber: frameNumber,
+            epoch: frame.epoch,
+            dimensionToken: frame.dimensionToken,
+            receivedFragments: frame.receivedCount,
+            dataFragments: frame.dataFragmentCount,
+            progressRatio: progressRatio,
+            receivedBytes: min(frame.expectedTotalBytes, frame.receivedCount * maxPayloadSize),
+            expectedBytes: frame.expectedTotalBytes,
+            lastProgressTime: lastProgressTime,
+            age: max(0, CFAbsoluteTimeGetCurrent() - frame.receivedAt.timeIntervalSinceReferenceDate)
+        )
     }
 
     var hasKeyframeAnchor: Bool {

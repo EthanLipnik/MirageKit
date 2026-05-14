@@ -25,6 +25,7 @@ struct ClientStreamingAnomalySample {
     let pendingFrameCount: Int
     let pendingFrameAgeMs: Double
     let overwrittenPendingFrames: UInt64
+    let smoothestQueueDrops: UInt64
     let lateFrameDrops: UInt64
     let coalescedBeforeSubmitCount: UInt64
     let duplicateRemoteTimestampCount: UInt64
@@ -75,6 +76,7 @@ struct ClientStreamingAnomalySample {
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
+        smoothestQueueDrops: UInt64 = 0,
         lateFrameDrops: UInt64 = 0,
         coalescedBeforeSubmitCount: UInt64 = 0,
         duplicateRemoteTimestampCount: UInt64 = 0,
@@ -121,6 +123,7 @@ struct ClientStreamingAnomalySample {
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
+        self.smoothestQueueDrops = smoothestQueueDrops
         self.lateFrameDrops = lateFrameDrops
         self.coalescedBeforeSubmitCount = coalescedBeforeSubmitCount
         self.duplicateRemoteTimestampCount = duplicateRemoteTimestampCount
@@ -167,6 +170,7 @@ struct ClientStreamingAnomalySample {
             pendingFrameCount: pendingFrameCount,
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
+            clientSmoothestQueueDrops: smoothestQueueDrops,
             clientLateFrameDrops: lateFrameDrops,
             clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
             clientRepeatedFrameCount: repeatedFrameCount,
@@ -288,13 +292,17 @@ func clientStreamingAnomalyDiagnostic(
         "displayTick=\(formattedFPS(sample.displayTickFPS))fps tickP95=\(formattedMs(sample.displayTickIntervalP95Ms))ms " +
         "tickP99=\(formattedMs(sample.displayTickIntervalP99Ms))ms missedVSync=\(sample.missedVSyncCount) " +
         "submitAttempt=\(formattedFPS(sample.submitAttemptFPS))fps layerAccepted=\(formattedFPS(sample.layerAcceptedFPS))fps " +
+        "layerEnqueueFPS=\(formattedFPS(sample.submittedFPS))fps " +
+        "uniqueLayerEnqueueFPS=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
+        "visibleFrameFPS=\(formattedFPS(sample.presentedFPS))fps " +
         "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
-        "overwritten=\(sample.overwrittenPendingFrames) lateDrops=\(sample.lateFrameDrops) " +
+        "overwritten=\(sample.overwrittenPendingFrames) smoothestDrops=\(sample.smoothestQueueDrops) " +
+        "lateDrops=\(sample.lateFrameDrops) " +
         "coalesced=\(sample.coalescedBeforeSubmitCount) duplicateCapturePTS=\(sample.duplicateRemoteTimestampCount) " +
         "correctedStreamPTS=\(sample.correctedStreamTimestampCount) " +
         "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
@@ -362,6 +370,10 @@ private func resolvedAnomalyBottleneckKind(
     let submissionLaggingDecode =
         sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
         sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
+    let rendererLoopStalled =
+        sample.submittedFPS >= targetFPS * 0.75 &&
+        sample.uniqueSubmittedFPS + presentationGapGrace < sample.submittedFPS &&
+        sample.pendingFrameCount > 0
     let presentationBackpressure = sample.overwrittenPendingFrames > 0 ||
         sample.lateFrameDrops > 0 ||
         sample.displayLayerNotReadyCount > 0 ||
@@ -371,9 +383,10 @@ private func resolvedAnomalyBottleneckKind(
         sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
         sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
         sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
-    if decodeKeepsUp,
-       submissionLaggingDecode && presentationBackpressure ||
-       severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90 {
+    if rendererLoopStalled ||
+        decodeKeepsUp &&
+        (submissionLaggingDecode && presentationBackpressure ||
+            severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90) {
         return .presentationBound
     }
 

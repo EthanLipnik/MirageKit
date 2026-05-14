@@ -27,5 +27,19 @@ extension StreamController {
         }
         lastPresentedProgressTime = referenceNow - Self.freezeTimeout - 0.5
     }
+
+    func testSeedFrameRates(
+        decodedFPS: Int,
+        receivedFPS: Int,
+        now: CFAbsoluteTime
+    ) {
+        metricsTracker.reset()
+        for _ in 0 ..< max(0, decodedFPS) {
+            _ = metricsTracker.recordDecodedFrame(now: now)
+        }
+        for _ in 0 ..< max(0, receivedFPS) {
+            metricsTracker.recordReceivedFrame(now: now)
+        }
+    }
 }
 #endif

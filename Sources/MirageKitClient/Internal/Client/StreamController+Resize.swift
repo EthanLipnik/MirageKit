@@ -59,7 +59,7 @@ extension StreamController {
                     "Hard recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
                 )
             if reason == .decodeErrorThreshold {
-                reassembler.enterKeyframeOnlyMode()
+                reassembler.beginKeyframeWait()
             }
             if restartRecoveryLoop, presentationTier == .activeLive {
                 await startKeyframeRecoveryLoopIfNeeded()
@@ -97,7 +97,7 @@ extension StreamController {
             hasDecodedFirstFrame = false
             hasPresentedFirstFrame = false
         }
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
         if restartRecoveryLoop, presentationTier == .activeLive {
             await startKeyframeRecoveryLoopIfNeeded()
         } else {

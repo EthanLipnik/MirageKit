@@ -69,8 +69,8 @@ extension StreamContext {
 
     /// Request a keyframe from the encoder.
     func requestKeyframe() async -> KeyframeRecoveryAckMessage {
-        _ = await requestKeyframeRecovery()
-        return keyframeRecoveryAck()
+        let accepted = await requestKeyframeRecovery()
+        return keyframeRecoveryAck(accepted: accepted)
     }
 
     func requestKeyframeRecoveryIfPossible() async {
@@ -114,17 +114,22 @@ extension StreamContext {
             )
     }
 
-    private func keyframeRecoveryAck() -> KeyframeRecoveryAckMessage {
+    private func keyframeRecoveryAck(accepted: Bool) -> KeyframeRecoveryAckMessage {
         let now = CFAbsoluteTimeGetCurrent()
         let deadlineMs: Int
+        let state: KeyframeRecoveryAckState
         if keyframeSendDeadline > now {
             deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
+            state = accepted ? .accepted : .inFlight
         } else {
             deadlineMs = Int((keyframeRequestCooldown * 1000).rounded(.up))
+            state = accepted ? .accepted : .cooldown
         }
         return KeyframeRecoveryAckMessage(
             streamID: streamID,
-            deadlineMilliseconds: deadlineMs
+            deadlineMilliseconds: deadlineMs,
+            accepted: accepted,
+            state: state
         )
     }
 }

@@ -208,7 +208,9 @@ extension StreamController {
 
         if reassembler.isAwaitingKeyframe,
            let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress,
-           now - pendingKeyframeProgress.lastProgressTime < Self.keyframeProgressFreshThreshold(
+           Self.shouldDeferForPendingKeyframeProgress(
+               pendingKeyframeProgress,
+               now: now,
                targetFPS: decodeSchedulerTargetFPS
            ) {
             return

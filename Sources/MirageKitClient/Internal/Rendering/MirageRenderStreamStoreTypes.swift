@@ -20,10 +20,9 @@ struct SubmissionSnapshot {
 
     /// Host-provided presentation timestamp for the submitted frame, when available.
     let remotePresentationTime: CMTime
-
 }
 
-struct MirageRenderEnqueueResult: Sendable {
+struct MirageRenderEnqueueResult {
     let cursor: MirageRenderCursor
     let didEnqueue: Bool
     let pendingFrameCount: Int
@@ -59,6 +58,9 @@ struct RenderTelemetrySnapshot {
 
     /// Pending frames overwritten because the local playout queue was full.
     let overwrittenPendingFrames: UInt64
+
+    /// Smoothest-mode frames dropped by local playout queue bounds.
+    let smoothestQueueDrops: UInt64
 
     /// Queued frames dropped because newer frames had already superseded them.
     let lateFrameDrops: UInt64
@@ -145,6 +147,7 @@ final class MirageRenderStreamState {
     var lastDisplayTickTime: CFAbsoluteTime = 0
     var sourceTargetFPS: Int = 60
     var displayTargetFPS: Int = 60
+    var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var playoutDelayFrames: Int = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
@@ -165,6 +168,7 @@ final class MirageRenderStreamState {
     var displayTickIntervalSampleStartIndex: Int = 0
 
     var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
+    var smoothestQueueDropsSinceLastSnapshot: UInt64 = 0
     var lateFrameDropsSinceLastSnapshot: UInt64 = 0
     var coalescedFramesSinceLastSnapshot: UInt64 = 0
     var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
@@ -207,6 +211,7 @@ final class MirageRenderStreamState {
         displayTickIntervalSamples.removeAll(keepingCapacity: false)
         displayTickIntervalSampleStartIndex = 0
         overwrittenPendingFramesSinceLastSnapshot = 0
+        smoothestQueueDropsSinceLastSnapshot = 0
         lateFrameDropsSinceLastSnapshot = 0
         coalescedFramesSinceLastSnapshot = 0
         duplicateRemoteTimestampsSinceLastSnapshot = 0

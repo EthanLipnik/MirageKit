@@ -44,7 +44,21 @@ struct RecoveryCoordinator: Equatable {
     mutating func recordHostAck(_ ack: KeyframeRecoveryAckMessage, now: CFAbsoluteTime) {
         guard activeReason != nil else { return }
         let ackDelay = CFAbsoluteTime(ack.deadlineMilliseconds) / 1000.0
-        retryDeadline = max(retryDeadline, now + ackDelay)
+        switch ack.state {
+        case .accepted:
+            retryDeadline = max(retryDeadline, now + ackDelay)
+        case .inFlight, .cooldown:
+            attemptCount = max(0, attemptCount - 1)
+            retryDeadline = max(retryDeadline, now + ackDelay)
+        case .noStream:
+            recordProgress()
+        }
+    }
+
+    mutating func recordDispatchNotSent() {
+        guard activeReason != nil else { return }
+        attemptCount = max(0, attemptCount - 1)
+        retryDeadline = 0
     }
 
     mutating func recordProgress() {

@@ -34,7 +34,7 @@ extension StreamController {
         if let dimensionToken {
             reassembler.updateExpectedDimensionToken(dimensionToken)
         }
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
         await decoder.prepareForDimensionChange(
             expectedWidth: streamDimensions?.width,
             expectedHeight: streamDimensions?.height
@@ -107,13 +107,13 @@ extension StreamController {
         await startFrameProcessingPipeline()
     }
 
-    /// Enter post-resize recovery, re-arming keyframe-only decode admission for each resize episode.
+    /// Enter post-resize recovery, re-arming keyframe-gated decode admission for each resize episode.
     func beginPostResizeTransition() async {
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         discardQueuedFramesForRecovery()
-        reassembler.enterKeyframeOnlyMode()
+        reassembler.beginKeyframeWait()
         await armPostResizeRecoveryWindow(reason: "post-resize")
-        MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
+        MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-gated decode admission)")
     }
 
     func updateCadenceTarget(
@@ -225,7 +225,7 @@ extension StreamController {
 
         if let forcedKeyframeReason {
             await stopTierPromotionProbe()
-            reassembler.enterKeyframeOnlyMode()
+            reassembler.beginKeyframeWait()
             await setClientRecoveryStatus(.keyframeRecovery)
             await startKeyframeRecoveryLoopIfNeeded()
             MirageLogger.client(
@@ -278,9 +278,9 @@ extension StreamController {
         let keyframeStarved = reassembler.isAwaitingKeyframe || !reassembler.hasKeyframeAnchor
         if keyframeStarved {
             MirageLogger.client(
-                "Tier promotion probe requesting keyframe-only recovery for stream \(streamID) (no progress)"
+                "Tier promotion probe requesting keyframe recovery for stream \(streamID) (no progress)"
             )
-            reassembler.enterKeyframeOnlyMode()
+            reassembler.beginKeyframeWait()
             await setClientRecoveryStatus(.keyframeRecovery)
             await startKeyframeRecoveryLoopIfNeeded()
             await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)

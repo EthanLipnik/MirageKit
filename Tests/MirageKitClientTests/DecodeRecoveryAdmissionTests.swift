@@ -27,8 +27,8 @@ struct DecodeRecoveryAdmissionTests {
         #expect(afterInterval == DecodeCallbackFailureLogLimiter.Decision(shouldLog: true, suppressedCount: 2))
     }
 
-    @Test("Session reset blocks P-frame admission until a recovery keyframe decodes")
-    func sessionResetBlocksPFrameAdmissionUntilRecoveryKeyframeDecodes() {
+    @Test("Session reset admits dependent P-frames after recovery keyframe submission")
+    func sessionResetAdmitsDependentPFramesAfterRecoveryKeyframeSubmission() {
         let tracker = DecodeErrorTracker(maxErrors: 2, onThresholdReached: {})
 
         tracker.clearForSessionReset()
@@ -36,13 +36,17 @@ struct DecodeRecoveryAdmissionTests {
         #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
         #expect(tracker.shouldDecodeFrame(isKeyframe: true))
 
+        tracker.recordKeyframeSubmittedForRecovery()
+
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+
         tracker.recordSuccess(isKeyframe: true)
 
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
     }
 
-    @Test("Decode error threshold blocks P-frame admission until a keyframe decodes")
-    func decodeErrorThresholdBlocksPFrameAdmissionUntilKeyframeDecodes() {
+    @Test("Decode error threshold admits dependent P-frames after keyframe submission")
+    func decodeErrorThresholdAdmitsDependentPFramesAfterKeyframeSubmission() {
         let thresholdRequests = TestCounter()
         let tracker = DecodeErrorTracker(maxErrors: 2) {
             thresholdRequests.increment()
@@ -55,13 +59,17 @@ struct DecodeRecoveryAdmissionTests {
         #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
         #expect(tracker.shouldDecodeFrame(isKeyframe: true))
 
+        tracker.recordKeyframeSubmittedForRecovery()
+
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+
         tracker.recordSuccess(isKeyframe: true)
 
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))
     }
 
-    @Test("First decode error fences P-frame admission")
-    func firstDecodeErrorFencesPFrameAdmission() {
+    @Test("Single decode error does not fence P-frame admission before threshold")
+    func singleDecodeErrorDoesNotFencePFrameAdmissionBeforeThreshold() {
         let thresholdRequests = TestCounter()
         let tracker = DecodeErrorTracker(maxErrors: 5) {
             thresholdRequests.increment()
@@ -69,7 +77,26 @@ struct DecodeRecoveryAdmissionTests {
 
         tracker.recordError(isKeyframe: false)
 
-        #expect(thresholdRequests.value == 1)
+        #expect(thresholdRequests.value == 0)
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+        #expect(tracker.shouldDecodeFrame(isKeyframe: true))
+    }
+
+    @Test("Recovery keyframe callback failure refences P-frame admission")
+    func recoveryKeyframeCallbackFailureRefencesPFrameAdmission() {
+        let thresholdRequests = TestCounter()
+        let tracker = DecodeErrorTracker(maxErrors: 2) {
+            thresholdRequests.increment()
+        }
+
+        tracker.recordError(isKeyframe: false)
+        tracker.recordError(isKeyframe: false)
+        tracker.recordKeyframeSubmittedForRecovery()
+
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
+
+        tracker.recordError(isKeyframe: true)
+
         #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
         #expect(tracker.shouldDecodeFrame(isKeyframe: true))
     }
@@ -89,6 +116,9 @@ struct DecodeRecoveryAdmissionTests {
 
         tracker.clearForSessionReset()
         #expect(!tracker.shouldDecodeFrame(isKeyframe: false))
+
+        tracker.recordKeyframeSubmittedForRecovery()
+        #expect(tracker.shouldDecodeFrame(isKeyframe: false))
 
         tracker.recordSuccess(isKeyframe: true)
         #expect(tracker.shouldDecodeFrame(isKeyframe: false))

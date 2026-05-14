@@ -42,15 +42,29 @@ extension FrameReassembler {
 
             if hasForwardGap {
                 let gapFrames = frameNumber &- expectedNextFrame
+                if pendingKeyframeContaminatesGapLocked(
+                    expectedFrameNumber: expectedNextFrame,
+                    now: Date()
+                ) {
+                    MirageLogger.log(
+                        .frameAssembly,
+                        "Holding dependent P-frame behind pending keyframe: expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
+                    )
+                    return FrameCompletionResult(
+                        frame: nil,
+                        frameLossReason: nil,
+                        retainedForInOrderDelivery: true
+                    )
+                }
                 let severeForwardGapFrameThreshold = severeForwardGapFrameThresholdLocked()
                 if gapFrames >= severeForwardGapFrameThreshold {
                     shouldDeliver = false
-                    enterKeyframeOnlyModeLocked()
+                    beginKeyframeWaitLocked()
                     hasSignaledGapFrameLoss = true
                     MirageLogger.log(
                         .frameAssembly,
                         "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) " +
-                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold); entering keyframe-only mode"
+                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold); entering keyframe wait"
                     )
                     return FrameCompletionResult(
                         frame: nil,
@@ -268,6 +282,10 @@ extension FrameReassembler {
         }
         let missingExpectedPFrameGapTimedOut = hasDeliveredKeyframeAnchor &&
             timedOutExpectedPFrame == false &&
+            !pendingKeyframeContaminatesGapLocked(
+                expectedFrameNumber: lastCompletedFrame &+ 1,
+                now: now
+            ) &&
             hasTimedOutBufferedForwardGapLocked(now: now, timeout: pFrameTimeout)
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
@@ -304,7 +322,7 @@ extension FrameReassembler {
         )
     }
 
-    func enterKeyframeOnlyModeLocked() {
+    func beginKeyframeWaitLocked() {
         beginAwaitingKeyframe()
         let framesToRelease = pendingFrames.filter { entry in
             let frame = entry.value
@@ -339,6 +357,66 @@ extension FrameReassembler {
 
         guard isFrameNewer(earliestBufferedForwardFrame.key, than: expectedFrame) else { return false }
         return now.timeIntervalSince(earliestBufferedForwardFrame.value.receivedAt) >= timeout
+    }
+
+    private func pendingKeyframeContaminatesGapLocked(
+        expectedFrameNumber: UInt32,
+        now: Date
+    ) -> Bool {
+        guard let pendingKeyframe = pendingFrames
+            .filter({ entry in
+                let frameNumber = entry.key
+                let frame = entry.value
+                guard frame.isKeyframe, !isStaleKeyframeLocked(frameNumber) else { return false }
+                return frameNumber == expectedFrameNumber || isFrameNewer(frameNumber, than: expectedFrameNumber)
+            })
+            .max(by: { lhs, rhs in
+                let lhsProgress = keyframeProgressRatioLocked(lhs.value)
+                let rhsProgress = keyframeProgressRatioLocked(rhs.value)
+                if lhsProgress != rhsProgress {
+                    return lhsProgress < rhsProgress
+                }
+                if lhs.value.lastProgressAt != rhs.value.lastProgressAt {
+                    return lhs.value.lastProgressAt < rhs.value.lastProgressAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            })?
+            .value else {
+            return false
+        }
+        guard pendingKeyframe.receivedCount > 0 else { return false }
+
+        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
+        let freshProgressWindow = min(0.50, max(0.15, frameInterval * 18.0))
+        if now.timeIntervalSince(pendingKeyframe.lastProgressAt) < freshProgressWindow {
+            return true
+        }
+
+        let progressRatio = keyframeProgressRatioLocked(pendingKeyframe)
+        let baseAssemblyWindow = min(3.0, max(0.75, frameInterval * 90.0))
+        let progressBonus: TimeInterval
+        if progressRatio >= 0.75 {
+            progressBonus = 2.0
+        } else if progressRatio >= 0.25 {
+            progressBonus = 1.0
+        } else {
+            progressBonus = 0
+        }
+        return now.timeIntervalSince(pendingKeyframe.receivedAt) < baseAssemblyWindow + progressBonus
+    }
+
+    func shouldBufferNonKeyframeWhileAwaitingKeyframeLocked(frameNumber: UInt32) -> Bool {
+        guard awaitingKeyframe else { return true }
+        return pendingFrames.contains { entry in
+            let pendingFrameNumber = entry.key
+            let pendingFrame = entry.value
+            guard pendingFrame.isKeyframe,
+                  !isStaleKeyframeLocked(pendingFrameNumber),
+                  pendingFrame.receivedCount > 0 else {
+                return false
+            }
+            return frameNumber == pendingFrameNumber || isFrameNewer(frameNumber, than: pendingFrameNumber)
+        }
     }
 
     private func pFrameTimeoutLocked() -> TimeInterval {
