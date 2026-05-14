@@ -253,7 +253,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         runningPass = false
         if submissionResult == .submitted {
             displayClockFramePending = false
-        } else if isDisplayTick, submissionResult == .noPendingFrame, !displayClockFramePending {
+        } else if isDisplayTick, submissionResult == .noPendingFrame {
             MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
             MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
             displayClockFramePending = true

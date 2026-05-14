@@ -95,6 +95,7 @@ public class MirageSampleBufferView: UIView {
     var presentationPipeline: MirageSampleBufferPresentationPipeline!
     private var presentationDisplayLink: CADisplayLink?
     private var presentationDisplayTickHandler: MirageSampleBufferPresentationPipeline.DisplayTickHandler?
+    private var lastPresentationDisplayLinkRange: (minimum: Int, maximum: Int, preferred: Int)?
 
     var displayLayer: AVSampleBufferDisplayLayer {
         guard let layer = layer as? AVSampleBufferDisplayLayer else {
@@ -272,16 +273,31 @@ public class MirageSampleBufferView: UIView {
     func updatePresentationDisplayLinkFrameRate(targetFPS: Int) {
         guard let presentationDisplayLink else { return }
         let localFPS = max(1, targetFPS)
+        let minimumFPS = Self.minimumPresentationDisplayLinkFPS(for: localFPS)
         presentationDisplayLink.preferredFrameRateRange = CAFrameRateRange(
-            minimum: Float(localFPS),
+            minimum: Float(minimumFPS),
             maximum: Float(localFPS),
             preferred: Float(localFPS)
         )
+        let nextRange = (minimum: minimumFPS, maximum: localFPS, preferred: localFPS)
+        if lastPresentationDisplayLinkRange?.minimum != nextRange.minimum ||
+            lastPresentationDisplayLinkRange?.maximum != nextRange.maximum ||
+            lastPresentationDisplayLinkRange?.preferred != nextRange.preferred {
+            lastPresentationDisplayLinkRange = nextRange
+            MirageLogger.renderer(
+                "Applied iOS local display cadence range: min=\(minimumFPS)Hz max=\(localFPS)Hz preferred=\(localFPS)Hz"
+            )
+        }
     }
 
     @objc private func handlePresentationDisplayLinkTick(_ displayLink: CADisplayLink) {
         let referenceTime = displayLink.targetTimestamp > 0 ? displayLink.targetTimestamp : CACurrentMediaTime()
         presentationDisplayTickHandler?(referenceTime)
+    }
+
+    private static func minimumPresentationDisplayLinkFPS(for targetFPS: Int) -> Int {
+        if targetFPS >= 90 { return 60 }
+        return targetFPS
     }
 }
 #endif

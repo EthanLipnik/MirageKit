@@ -38,6 +38,8 @@ extension MirageClientService {
                     reassemblerPendingBytes: metrics.reassemblerPendingBytes,
                     frameBufferPoolRetainedBytes: metrics.frameBufferPoolRetainedBytes,
                     reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
+                    reassemblerIncompleteFrameTimeouts: metrics.reassemblerIncompleteFrameTimeouts,
+                    reassemblerMissingFragmentTimeouts: metrics.reassemblerMissingFragmentTimeouts,
                     displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerAcceptedFPS: metrics.layerAcceptedFPS,
@@ -115,12 +117,20 @@ extension MirageClientService {
 
         receiverMediaFeedbackSequence &+= 1
         let recoveryStatus = sessionStore.sessionByStreamID(streamID)?.clientRecoveryStatus ?? .idle
+        let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
+        let transportLoss = receiverTransportLossFeedback(
+            for: streamID,
+            metrics: metrics,
+            recoveryState: recoveryState
+        )
         let feedback = Self.makeReceiverMediaFeedback(
             streamID: streamID,
             sequence: receiverMediaFeedbackSequence,
             sentAtUptime: now,
             targetFPS: max(1, metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 60),
-            recoveryState: MirageMediaFeedbackRecoveryState(recoveryStatus),
+            recoveryState: recoveryState,
+            transportLostFrameCount: transportLoss.lostFrameCount,
+            transportDiscardedPacketCount: transportLoss.discardedPacketCount,
             metrics: metrics
         )
         queueControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
@@ -132,6 +142,8 @@ extension MirageClientService {
         sentAtUptime: Double,
         targetFPS: Int,
         recoveryState: MirageMediaFeedbackRecoveryState,
+        transportLostFrameCount: UInt64 = 0,
+        transportDiscardedPacketCount: UInt64 = 0,
         metrics: StreamController.ClientFrameMetrics
     ) -> ReceiverMediaFeedbackMessage {
         ReceiverMediaFeedbackMessage(
@@ -140,8 +152,8 @@ extension MirageClientService {
             sentAtUptime: sentAtUptime,
             targetFPS: targetFPS,
             ackRanges: [],
-            lostFrameCount: 0,
-            discardedPacketCount: 0,
+            lostFrameCount: transportLostFrameCount,
+            discardedPacketCount: transportDiscardedPacketCount,
             jitterP95Ms: metrics.receivedFrameIntervalP95Ms,
             jitterP99Ms: metrics.receivedFrameIntervalP99Ms,
             queueEstimateFrames: metrics.pendingFrameCount,
@@ -160,7 +172,46 @@ extension MirageClientService {
 
     func clearReceiverMediaFeedbackState(for streamID: StreamID) {
         receiverMediaFeedbackLastSendTime.removeValue(forKey: streamID)
+        receiverMediaFeedbackLastIncompleteFrameTimeouts.removeValue(forKey: streamID)
+        receiverMediaFeedbackLastMissingFragmentTimeouts.removeValue(forKey: streamID)
     }
+
+    private func receiverTransportLossFeedback(
+        for streamID: StreamID,
+        metrics: StreamController.ClientFrameMetrics,
+        recoveryState: MirageMediaFeedbackRecoveryState
+    ) -> ReceiverTransportLossFeedback {
+        let currentIncompleteTimeouts = metrics.reassemblerIncompleteFrameTimeouts
+        let currentMissingFragments = metrics.reassemblerMissingFragmentTimeouts
+        let previousIncompleteTimeouts = receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] ??
+            currentIncompleteTimeouts
+        let previousMissingFragments = receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] ??
+            currentMissingFragments
+
+        receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] = currentIncompleteTimeouts
+        receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] = currentMissingFragments
+
+        let contaminatedByRecovery = recoveryState != .idle || metrics.reassemblerPendingKeyframeCount > 0
+        guard !contaminatedByRecovery else {
+            return ReceiverTransportLossFeedback(lostFrameCount: 0, discardedPacketCount: 0)
+        }
+
+        let incompleteDelta = currentIncompleteTimeouts >= previousIncompleteTimeouts
+            ? currentIncompleteTimeouts - previousIncompleteTimeouts
+            : 0
+        let missingFragmentDelta = currentMissingFragments >= previousMissingFragments
+            ? currentMissingFragments - previousMissingFragments
+            : 0
+        return ReceiverTransportLossFeedback(
+            lostFrameCount: incompleteDelta,
+            discardedPacketCount: missingFragmentDelta
+        )
+    }
+}
+
+private struct ReceiverTransportLossFeedback {
+    let lostFrameCount: UInt64
+    let discardedPacketCount: UInt64
 }
 
 private extension MirageMediaFeedbackRecoveryState {

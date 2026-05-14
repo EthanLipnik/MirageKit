@@ -26,7 +26,9 @@ extension FrameReassembler {
             pendingKeyframeCount: pendingKeyframeCountLocked(),
             pendingFrameBytes: pendingFrameBytesLocked(),
             frameBufferPoolRetainedBytes: bufferPool.retainedByteCount,
-            budgetEvictions: memoryBudgetEvictionCount
+            budgetEvictions: memoryBudgetEvictionCount,
+            incompleteFrameTimeouts: incompleteFrameTimeoutCount,
+            missingFragmentTimeouts: missingFragmentTimeoutCount
         )
     }
 
@@ -164,6 +166,8 @@ extension FrameReassembler {
             clearAwaitingKeyframe()
             droppedFrameCount = 0
             memoryBudgetEvictionCount = 0
+            incompleteFrameTimeoutCount = 0
+            missingFragmentTimeoutCount = 0
             lastPacketReceivedTime = 0
             startupKeyframeTimeoutOverrideEnabled = false
         }

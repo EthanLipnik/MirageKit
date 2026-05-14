@@ -347,7 +347,7 @@ final class MirageSampleBufferPresentationPipeline {
         guard changed else { return }
         let streamLabel = configuration.mediaStreamID.map { "\($0)" } ?? "none"
         MirageLogger.renderer(
-            "Applied \(platformName) render refresh lock: stream=\(streamLabel) host=\(clamped)Hz local=\(localFPS)Hz tier=\(configuration.presentationTier.rawValue)"
+            "Applied \(platformName) render cadence target: stream=\(streamLabel) host=\(clamped)Hz local=\(localFPS)Hz tier=\(configuration.presentationTier.rawValue)"
         )
     }
 

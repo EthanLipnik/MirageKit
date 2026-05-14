@@ -299,7 +299,11 @@ extension FrameReassembler {
             beginKeyframeWaitLocked()
             MirageLogger.log(
                 .frameAssembly,
-                "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), keyframe=\(timeoutResult.timedOutKeyframes), anchor=\(hasDeliveredKeyframeAnchor)"
+                "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), " +
+                    "keyframe=\(timeoutResult.timedOutKeyframes), " +
+                    "incomplete=\(timeoutResult.incompleteFrameTimeouts), " +
+                    "missingFragments=\(timeoutResult.missingFragmentTimeouts), " +
+                    "anchor=\(hasDeliveredKeyframeAnchor)"
             )
         }
         if timeoutResult.timedOutPFrames + timeoutResult.timedOutKeyframes > 0 {

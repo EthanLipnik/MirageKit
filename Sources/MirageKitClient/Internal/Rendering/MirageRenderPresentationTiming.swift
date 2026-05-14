@@ -22,10 +22,6 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
         )
     }
 
-    var frameDurationSeconds: CFTimeInterval {
-        1 / CFTimeInterval(targetFPS)
-    }
-
     var frameDuration: CMTime {
         CMTime(value: 1, timescale: CMTimeScale(targetFPS))
     }
@@ -34,9 +30,8 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
         referenceTime: CFTimeInterval,
         timescale: CMTimeScale
     ) -> CMTime {
-        let playoutDelay = frameDurationSeconds * CFTimeInterval(playoutDelayFrames)
         return CMTime(
-            seconds: referenceTime + playoutDelay,
+            seconds: referenceTime,
             preferredTimescale: timescale
         )
     }

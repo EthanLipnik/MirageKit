@@ -39,6 +39,30 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.recoveryState == .keyframeRecovery)
     }
 
+    @Test("Transport-proven receiver fragment loss is reported separately from local drops")
+    func transportProvenFragmentLossIsReported() {
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 8,
+            sentAtUptime: 101,
+            targetFPS: 120,
+            recoveryState: .idle,
+            transportLostFrameCount: 1,
+            transportDiscardedPacketCount: 12,
+            metrics: metrics(
+                droppedFrames: 50,
+                smoothestQueueDrops: 20,
+                reassemblerPendingFrameCount: 0,
+                reassemblerPendingKeyframeCount: 0,
+                reassemblerPendingBytes: 0
+            )
+        )
+
+        #expect(feedback.lostFrameCount == 1)
+        #expect(feedback.discardedPacketCount == 12)
+        #expect(feedback.recoveryState == .idle)
+    }
+
     private func metrics(
         droppedFrames: UInt64 = 0,
         pendingFrameCount: Int = 0,
@@ -84,6 +108,8 @@ struct ReceiverMediaFeedbackPolicyTests {
             reassemblerPendingBytes: reassemblerPendingBytes,
             frameBufferPoolRetainedBytes: 2_000_000,
             reassemblerBudgetEvictions: reassemblerBudgetEvictions,
+            reassemblerIncompleteFrameTimeouts: 0,
+            reassemblerMissingFragmentTimeouts: 0,
             decoderOutputPixelFormat: "420v",
             usingHardwareDecoder: true
         )

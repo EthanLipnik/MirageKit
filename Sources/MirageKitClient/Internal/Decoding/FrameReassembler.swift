@@ -62,6 +62,8 @@ final class FrameReassembler: @unchecked Sendable {
         let pendingFrameBytes: Int
         let frameBufferPoolRetainedBytes: Int
         let budgetEvictions: UInt64
+        let incompleteFrameTimeouts: UInt64
+        let missingFragmentTimeouts: UInt64
     }
 
     struct MemoryTrimResult: Sendable, Equatable {
@@ -85,6 +87,8 @@ final class FrameReassembler: @unchecked Sendable {
     var hasDeliveredKeyframeAnchor: Bool = false
     var droppedFrameCount: UInt64 = 0
     var memoryBudgetEvictionCount: UInt64 = 0
+    var incompleteFrameTimeoutCount: UInt64 = 0
+    var missingFragmentTimeoutCount: UInt64 = 0
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0

@@ -14,6 +14,11 @@ import Foundation
 import MirageKit
 
 final class MirageSampleBufferPresenter: @unchecked Sendable {
+    private struct PreparedSampleBuffer {
+        let sampleBuffer: CMSampleBuffer
+        let mappedPresentationTime: CMTime
+    }
+
     private struct PixelBufferFormatKey: Equatable {
         let width: Int
         let height: Int
@@ -175,7 +180,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         let pixelBuffer = presentationPixelBuffer(for: frame)
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
-        guard let sampleBuffer = makeSampleBuffer(
+        guard let preparedSampleBuffer = makeSampleBuffer(
             from: pixelBuffer,
             timing: timing,
             referenceTime: referenceTime
@@ -183,13 +188,14 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return .blocked
         }
 
-        displayLayer.enqueue(sampleBuffer)
+        displayLayer.enqueue(preparedSampleBuffer.sampleBuffer)
         lastSubmittedCursor = frame.cursor
         lastFrameSubmissionTime = CACurrentMediaTime()
         displayLayerNotReadyStartTime = 0
         MirageRenderStreamStore.shared.markSubmitted(
             cursor: frame.cursor,
             remotePresentationTime: frame.remotePresentationTime.isValid ? frame.remotePresentationTime : frame.presentationTime,
+            mappedPresentationTime: preparedSampleBuffer.mappedPresentationTime,
             for: streamID
         )
         return .submitted
@@ -283,7 +289,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         from pixelBuffer: CVPixelBuffer,
         timing: MirageRenderPresentationTiming,
         referenceTime: CFTimeInterval
-    ) -> CMSampleBuffer? {
+    ) -> PreparedSampleBuffer? {
         guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
 
         let samplePresentationTime = mappedPresentationTime(
@@ -310,7 +316,17 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return nil
         }
 
-        return sampleBuffer
+        CMSetAttachment(
+            sampleBuffer,
+            key: kCMSampleAttachmentKey_DisplayImmediately,
+            value: kCFBooleanTrue,
+            attachmentMode: kCMAttachmentMode_ShouldNotPropagate
+        )
+
+        return PreparedSampleBuffer(
+            sampleBuffer: sampleBuffer,
+            mappedPresentationTime: samplePresentationTime
+        )
     }
 
     private func mappedPresentationTime(

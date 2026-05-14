@@ -492,6 +492,12 @@ public final class MirageClientService {
     /// Last receiver feedback send timestamp by stream.
     var receiverMediaFeedbackLastSendTime: [StreamID: CFAbsoluteTime] = [:]
 
+    /// Last cumulative incomplete-frame timeout counter included in receiver feedback.
+    var receiverMediaFeedbackLastIncompleteFrameTimeouts: [StreamID: UInt64] = [:]
+
+    /// Last cumulative missing-fragment timeout counter included in receiver feedback.
+    var receiverMediaFeedbackLastMissingFragmentTimeouts: [StreamID: UInt64] = [:]
+
     /// Monotonic sequence for receiver media feedback messages.
     var receiverMediaFeedbackSequence: UInt64 = 0
 

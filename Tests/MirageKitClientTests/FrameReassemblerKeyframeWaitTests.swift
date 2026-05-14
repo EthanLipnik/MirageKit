@@ -81,6 +81,9 @@ extension FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value >= 1)
         #expect(reassembler.isAwaitingKeyframe == true)
+        let timeoutMetrics = reassembler.snapshotMetrics
+        #expect(timeoutMetrics.incompleteFrameTimeouts == 1)
+        #expect(timeoutMetrics.missingFragmentTimeouts == 1)
 
         let keyframe4 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x04])
         reassembler.processPacket(

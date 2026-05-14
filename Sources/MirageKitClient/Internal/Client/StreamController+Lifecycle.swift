@@ -141,6 +141,8 @@ extension StreamController {
             reassemblerPendingBytes: reassemblerMetrics.pendingFrameBytes,
             frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
             reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
+            reassemblerIncompleteFrameTimeouts: reassemblerMetrics.incompleteFrameTimeouts,
+            reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
             decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
             usingHardwareDecoder: decoder.currentHardwareDecoderStatus
         )

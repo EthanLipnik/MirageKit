@@ -52,12 +52,30 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.maxInFlightFrames == 4)
     }
 
+    @Test("120 Hz desktop smoothest keeps enough host pipeline depth")
+    func desktopSmoothest120HzKeepsEnoughHostPipelineDepth() async {
+        let context = makeContext(
+            latencyMode: .smoothest,
+            targetFrameRate: 120
+        )
+
+        #expect(await context.minInFlightFrames == 6)
+        #expect(await context.maxInFlightFrames == 6)
+        #expect(await context.maxInFlightFramesCap == 8)
+        #expect(await context.frameBufferDepth == 12)
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 7)
+    }
+
     private func makeContext(
         streamKind: VideoEncoder.StreamKind = .desktop,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        targetFrameRate: Int = 60
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
-            targetFrameRate: 60,
+            targetFrameRate: targetFrameRate,
             keyFrameInterval: 1800,
             colorDepth: .pro,
             colorSpace: .displayP3,

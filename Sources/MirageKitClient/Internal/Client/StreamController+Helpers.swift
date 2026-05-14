@@ -79,6 +79,8 @@ extension StreamController {
                 reassemblerPendingBytes: reassemblerMetrics.pendingFrameBytes,
                 frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
                 reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
+                reassemblerIncompleteFrameTimeouts: reassemblerMetrics.incompleteFrameTimeouts,
+                reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
                 decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
                 usingHardwareDecoder: decoder.currentHardwareDecoderStatus,
                 targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS),
@@ -141,6 +143,9 @@ extension StreamController {
         }
 
         lastRenderCadenceMissLogTime = now
+        let renderedFrameTelemetry = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
+        let selectedFrameText = renderedFrameTelemetry.selectedFrameNumber.map(String.init) ?? "none"
+        let renderedFrameText = renderedFrameTelemetry.renderedFrameNumber.map(String.init) ?? "none"
         MirageLogger.client(
             "Render cadence below target: stream=\(streamID) target=\(Int(targetFPS))fps " +
                 "received=\(String(format: "%.1f", receivedFPS))fps decoded=\(String(format: "%.1f", decodedFPS))fps " +
@@ -151,6 +156,9 @@ extension StreamController {
                 "pending=\(renderTelemetry.pendingFrameCount) pendingAge=\(Int(renderTelemetry.pendingFrameAgeMs.rounded()))ms " +
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
                 "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +
+                "selectedFrame=\(selectedFrameText) renderedFrame=\(renderedFrameText) " +
+                "repeatedTicks=\(renderedFrameTelemetry.repeatedDisplayTicks) " +
+                "latencyDrops=\(renderedFrameTelemetry.droppedForLatency) " +
                 "layerBackpressure=\(renderTelemetry.displayLayerNotReadyCount) " +
                 "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms " +
                 "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms"

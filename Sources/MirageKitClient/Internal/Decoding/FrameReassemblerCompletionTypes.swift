@@ -72,6 +72,12 @@ extension FrameReassembler {
         /// Whether the decoder should wait for a fresh keyframe after cleanup.
         let shouldEnterAwaitingKeyframe: Bool
 
+        /// Timed-out non-keyframes that were missing one or more data fragments.
+        let incompleteFrameTimeouts: UInt64
+
+        /// Total missing data fragments across timed-out incomplete non-keyframes.
+        let missingFragmentTimeouts: UInt64
+
         /// Frame-loss reason represented by this timeout cleanup.
         var frameLossReason: FrameLossReason? {
             if missingExpectedPFrameGapTimedOut {

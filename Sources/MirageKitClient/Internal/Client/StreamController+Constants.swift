@@ -15,6 +15,8 @@ extension StreamController {
 
     /// Duration without decoded frame presentation progress before recovery is requested.
     static let freezeTimeout: CFAbsoluteTime = 1.25
+    /// Pending render frame age after which keyframe-starved streams should stop trying presenter recovery.
+    static let stalePendingRenderFrameRecoveryAgeMs: Double = 250
     /// Delay before memory-pressure recovery asks for a replacement keyframe.
     static let memoryBudgetRecoveryDelay: Duration = .milliseconds(500)
 
@@ -85,4 +87,3 @@ extension StreamController {
     /// Milliseconds removed when adaptive jitter relaxes.
     static let adaptiveJitterStepDownMs: Int = 1
 }
-

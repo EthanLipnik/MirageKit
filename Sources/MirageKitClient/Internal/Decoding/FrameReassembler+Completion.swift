@@ -241,6 +241,8 @@ extension FrameReassembler {
         var timedOutPFrameCount: UInt64 = 0
         var timedOutKeyframeCount: UInt64 = 0
         var staleKeyframeCount: UInt64 = 0
+        var incompleteFrameTimeouts: UInt64 = 0
+        var missingFragmentTimeouts: UInt64 = 0
         var timedOutExpectedPFrame = false
         var framesToRemove: [UInt32] = []
         for (frameNumber, frame) in pendingFrames {
@@ -260,11 +262,16 @@ extension FrameReassembler {
                 // Log timeout with fragment completion info for debugging
                 let receivedCount = frame.receivedCount
                 let totalCount = frame.dataFragmentCount
+                let missingDataFragments = max(0, totalCount - min(receivedCount, totalCount))
                 let isKeyframe = frame.isKeyframe
                 MirageLogger.log(
                     .frameAssembly,
                     "Frame \(frameNumber) timed out: \(receivedCount)/\(totalCount) fragments\(isKeyframe ? " (KEYFRAME)" : "")"
                 )
+                if missingDataFragments > 0, !isKeyframe {
+                    incompleteFrameTimeouts += 1
+                    missingFragmentTimeouts += UInt64(missingDataFragments)
+                }
                 if isKeyframe {
                     timedOutKeyframeCount += 1
                     MirageLogger.client(
@@ -291,6 +298,8 @@ extension FrameReassembler {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
+        incompleteFrameTimeoutCount += incompleteFrameTimeouts
+        missingFragmentTimeoutCount += missingFragmentTimeouts
 
         // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
         // times out, or when a buffered forward gap persists without the expected frame ever arriving.
@@ -318,7 +327,9 @@ extension FrameReassembler {
             timedOutPFrames: timedOutPFrameCount,
             timedOutKeyframes: timedOutKeyframeCount,
             missingExpectedPFrameGapTimedOut: missingExpectedPFrameGapTimedOut,
-            shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe
+            shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe,
+            incompleteFrameTimeouts: incompleteFrameTimeouts,
+            missingFragmentTimeouts: missingFragmentTimeouts
         )
     }
 

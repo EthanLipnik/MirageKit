@@ -81,6 +81,7 @@ extension MirageRenderStreamStore {
         }
 
         state.lastSubmittedSequence = sequence
+        state.lastSubmittedGeneration = state.generation
         state.lastSubmittedTime = now
         state.lastSubmittedRemotePresentationTime = remotePresentationTime
         appendSampleLocked(
@@ -127,12 +128,16 @@ extension MirageRenderStreamStore {
         }
 
         state.lastSubmittedSequence = cursor.sequence
+        state.lastSubmittedGeneration = cursor.generation
         state.lastSubmittedTime = now
         state.lastSubmittedRemotePresentationTime = remotePresentationTime
         state.lastSubmittedMappedPresentationTime = mappedPresentationTime
         if let index = state.pendingFrames.firstIndex(where: { $0.cursor == cursor }),
            let timeline = state.pendingFrames[index].timeline {
             state.lastAcceptedFrameTimeline = timeline.markingDisplayAccepted(at: now)
+        }
+        if let index = state.pendingFrames.firstIndex(where: { $0.cursor == cursor }) {
+            state.lastSubmittedFrameNumber = state.pendingFrames[index].frameNumber
         }
         appendSampleLocked(
             now,
@@ -160,6 +165,42 @@ extension MirageRenderStreamStore {
         )
         state.lock.unlock()
         return snapshot
+    }
+
+    func renderedFrameTelemetry(for streamID: StreamID) -> MirageRenderedFrameTelemetry {
+        guard let state = streamStateIfPresent(for: streamID) else {
+            return MirageRenderedFrameTelemetry(
+                streamID: streamID,
+                selectedCursor: nil,
+                selectedFrameNumber: nil,
+                renderedCursor: nil,
+                renderedFrameNumber: nil,
+                repeatedDisplayTicks: 0,
+                droppedForLatency: 0
+            )
+        }
+
+        state.lock.lock()
+        let renderedCursor: MirageRenderCursor? = state.lastSubmittedSequence > 0
+            ? MirageRenderCursor(
+                generation: state.lastSubmittedGeneration,
+                sequence: state.lastSubmittedSequence
+            )
+            : nil
+        let selectedCursor = state.pendingFrames.first { frame in
+            frame.frameNumber == state.lastSelectedFrameNumber
+        }?.cursor
+        let telemetry = MirageRenderedFrameTelemetry(
+            streamID: streamID,
+            selectedCursor: selectedCursor,
+            selectedFrameNumber: state.lastSelectedFrameNumber,
+            renderedCursor: renderedCursor,
+            renderedFrameNumber: state.lastSubmittedFrameNumber,
+            repeatedDisplayTicks: state.repeatedFrameCountSinceLastSnapshot,
+            droppedForLatency: state.smoothestQueueDropsSinceLastSnapshot + state.lateFrameDropsSinceLastSnapshot
+        )
+        state.lock.unlock()
+        return telemetry
     }
 
     /// Records an attempted frame submission before display-layer admission.
@@ -371,6 +412,15 @@ extension MirageRenderStreamStore {
         state.lock.lock()
         state.frameArrivalFallbackSubmittedCountSinceLastSnapshot &+= 1
         state.lock.unlock()
+    }
+
+    func pendingFrameAgeMs(for streamID: StreamID) -> Double {
+        guard let state = streamStateIfPresent(for: streamID) else { return 0 }
+        let now = CFAbsoluteTimeGetCurrent()
+        state.lock.lock()
+        let ageMs = pendingFrameAgeMsLocked(state: state, now: now)
+        state.lock.unlock()
+        return ageMs
     }
 
     func appendSampleLocked(

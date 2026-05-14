@@ -132,6 +132,8 @@ extension StreamController {
         let reassemblerPendingBytes: Int
         let frameBufferPoolRetainedBytes: Int
         let reassemblerBudgetEvictions: UInt64
+        let reassemblerIncompleteFrameTimeouts: UInt64
+        let reassemblerMissingFragmentTimeouts: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
     }

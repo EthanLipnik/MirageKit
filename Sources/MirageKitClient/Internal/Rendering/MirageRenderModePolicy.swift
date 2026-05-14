@@ -24,7 +24,7 @@ enum MirageRenderModePolicy {
         case .lowestLatency:
             0
         case .smoothest:
-            maximumSmoothestPlayoutDelayFrames
+            1
         }
     }
 }

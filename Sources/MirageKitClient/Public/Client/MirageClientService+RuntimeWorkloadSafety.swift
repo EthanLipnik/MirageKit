@@ -48,15 +48,10 @@ extension MirageClientService {
 
         /// Repeated memory pressure escalated the reduction.
         case repeatedMemoryPressure = "repeated_memory_pressure"
-
-        /// Repeated high-refresh presentation stalls triggered a frame-rate cap.
-        case promotionStall = "promotion_stall"
     }
 
     nonisolated static let runtimeWorkloadSafetyMinimumFrameRate = 30
     nonisolated static let runtimeWorkloadSafetyMemoryPressureRepeatWindow: CFAbsoluteTime = 600
-    nonisolated static let runtimeWorkloadSafetyProMotionStallWindow: CFAbsoluteTime = 300
-    nonisolated static let runtimeWorkloadSafetyProMotionStallThreshold = 2
     nonisolated static let runtimeWorkloadSafetyFrameRateCapDuration: CFAbsoluteTime = 120
 
     /// Current runtime frame-rate cap applied across active streams, if workload safety has clamped one.
@@ -131,35 +126,10 @@ extension MirageClientService {
         streamID: StreamID,
         event: RuntimeWorkloadSafetyStallEvent
     ) {
-        guard Self.runtimeWorkloadSafetyShouldUseIPadProMotionFallback() else { return }
-        guard Self.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(event) else { return }
-        guard runtimeWorkloadSafetyTransportIsClean(for: streamID) else { return }
-        guard runtimeWorkloadSafetyHostSourceIsHealthy(for: streamID) else { return }
-
-        let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
-        guard currentFrameRate >= 90 else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let recentStalls = (runtimeWorkloadSafetyStallTimesByStream[streamID] ?? [])
-            .filter { now - $0 <= Self.runtimeWorkloadSafetyProMotionStallWindow } + [now]
-        runtimeWorkloadSafetyStallTimesByStream[streamID] = recentStalls
-
-        guard let targetFrameRate = Self.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: currentFrameRate,
-            recentStallCount: recentStalls.count
-        ) else {
-            return
-        }
-
-        runtimeWorkloadSafetyStallTimesByStream[streamID] = []
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await applyRuntimeWorkloadSafetyCap(
-                targetFrameRate: targetFrameRate,
-                reason: .promotionStall,
-                triggerStreamID: streamID
-            )
-        }
+        MirageLogger.client(
+            "Runtime workload safety observed stall event \(event) for stream \(streamID); " +
+                "leaving host cadence unchanged"
+        )
     }
 
     func applyRuntimeWorkloadSafetyCap(
@@ -331,23 +301,14 @@ extension MirageClientService {
         return nil
     }
 
-    nonisolated static func runtimeWorkloadSafetyProMotionStallTarget(
-        currentFrameRate: Int,
-        recentStallCount: Int
-    ) -> Int? {
-        guard recentStallCount >= runtimeWorkloadSafetyProMotionStallThreshold else { return nil }
-        let currentFrameRate = max(0, currentFrameRate)
-        if currentFrameRate >= 90 { return 60 }
-        return nil
-    }
-
     nonisolated static func runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(
         _ event: RuntimeWorkloadSafetyStallEvent
     ) -> Bool {
         switch event {
-        case .clientRenderCapacity, .presentationRecovery:
-            true
-        case .keyframeStarved, .packetStarved:
+        case .clientRenderCapacity,
+             .presentationRecovery,
+             .keyframeStarved,
+             .packetStarved:
             false
         }
     }
@@ -371,11 +332,4 @@ extension MirageClientService {
         )
     }
 
-    nonisolated static func runtimeWorkloadSafetyShouldUseIPadProMotionFallback() -> Bool {
-        #if os(iOS) && canImport(UIKit)
-        return UIDevice.current.userInterfaceIdiom == .pad
-        #else
-        return false
-        #endif
-    }
 }

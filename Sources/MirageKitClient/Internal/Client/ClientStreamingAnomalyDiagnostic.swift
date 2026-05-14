@@ -48,6 +48,8 @@ struct ClientStreamingAnomalySample {
     let reassemblerPendingBytes: Int
     let frameBufferPoolRetainedBytes: Int
     let reassemblerBudgetEvictions: UInt64
+    let reassemblerIncompleteFrameTimeouts: UInt64
+    let reassemblerMissingFragmentTimeouts: UInt64
     let decoderOutputPixelFormat: String?
     let usingHardwareDecoder: Bool?
     let targetFrameRate: Int
@@ -99,6 +101,8 @@ struct ClientStreamingAnomalySample {
         reassemblerPendingBytes: Int = 0,
         frameBufferPoolRetainedBytes: Int = 0,
         reassemblerBudgetEvictions: UInt64 = 0,
+        reassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        reassemblerMissingFragmentTimeouts: UInt64 = 0,
         decoderOutputPixelFormat: String?,
         usingHardwareDecoder: Bool?,
         targetFrameRate: Int,
@@ -146,6 +150,8 @@ struct ClientStreamingAnomalySample {
         self.reassemblerPendingBytes = reassemblerPendingBytes
         self.frameBufferPoolRetainedBytes = frameBufferPoolRetainedBytes
         self.reassemblerBudgetEvictions = reassemblerBudgetEvictions
+        self.reassemblerIncompleteFrameTimeouts = reassemblerIncompleteFrameTimeouts
+        self.reassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
         self.decoderOutputPixelFormat = decoderOutputPixelFormat
         self.usingHardwareDecoder = usingHardwareDecoder
         self.targetFrameRate = targetFrameRate
@@ -188,6 +194,8 @@ struct ClientStreamingAnomalySample {
             clientReassemblerPendingBytes: reassemblerPendingBytes,
             clientFrameBufferPoolRetainedBytes: frameBufferPoolRetainedBytes,
             clientReassemblerBudgetEvictions: reassemblerBudgetEvictions,
+            clientReassemblerIncompleteFrameTimeouts: reassemblerIncompleteFrameTimeouts,
+            clientReassemblerMissingFragmentTimeouts: reassemblerMissingFragmentTimeouts,
             hostEncodedFPS: hostMetrics?.encodedFPS ?? 0,
             hostIdleFPS: hostMetrics?.idleEncodedFPS ?? 0,
             hostDroppedFrames: hostMetrics?.droppedFrames ?? 0,
@@ -301,6 +309,8 @@ func clientStreamingAnomalyDiagnostic(
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
+        "fragmentLossFrames=\(sample.reassemblerIncompleteFrameTimeouts) " +
+        "fragmentLossMissing=\(sample.reassemblerMissingFragmentTimeouts) " +
         "overwritten=\(sample.overwrittenPendingFrames) smoothestDrops=\(sample.smoothestQueueDrops) " +
         "lateDrops=\(sample.lateFrameDrops) " +
         "coalesced=\(sample.coalescedBeforeSubmitCount) duplicateCapturePTS=\(sample.duplicateRemoteTimestampCount) " +

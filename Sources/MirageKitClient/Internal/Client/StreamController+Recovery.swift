@@ -127,10 +127,21 @@ extension StreamController {
         if reason == .timeout, reassembler.isAwaitingKeyframe {
             guard !hasPresentedFirstFrame else {
                 startFreezeMonitorIfNeeded()
+                let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+                let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
+                let clearedRenderFrames = pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs
+                    ? MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+                    : 0
+                discardQueuedFramesForRecovery()
                 MirageLogger.client(
                     "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                        "reassembler is awaiting keyframe after presentation progress, waiting for freeze recovery"
+                        "reassembler is awaiting keyframe after presentation progress, " +
+                        "requesting bounded recovery keyframe " +
+                        "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
+                        "clearedRenderFrames=\(clearedRenderFrames))"
                 )
+                await startKeyframeRecoveryLoopIfNeeded()
+                await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
                 return
             }
             MirageLogger.client(

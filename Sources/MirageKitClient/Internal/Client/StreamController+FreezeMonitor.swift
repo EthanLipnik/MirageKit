@@ -48,6 +48,28 @@ extension StreamController {
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
 
         let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        if reassembler.isAwaitingKeyframe {
+            let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
+            if pendingFrameCount == 0 || pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs {
+                let clearedFrames = pendingFrameCount > 0
+                    ? MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+                    : 0
+                MirageLogger.client(
+                    "Presentation stalled while awaiting keyframe for stream \(streamID); " +
+                        "prioritizing keyframe recovery over presenter recovery " +
+                        "(pendingFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, cleared=\(clearedFrames))"
+                )
+                let lastPacketTime = reassembler.latestPacketReceivedTime
+                let packetStarved = lastPacketTime <= 0 || now - lastPacketTime >= Self.freezeTimeout
+                await maybeTriggerFreezeRecovery(
+                    now: now,
+                    keyframeStarved: true,
+                    packetStarved: packetStarved
+                )
+                return
+            }
+        }
+
         if pendingFrameCount > 0,
            await maybeTriggerRenderSubmissionRecovery(
                now: now,

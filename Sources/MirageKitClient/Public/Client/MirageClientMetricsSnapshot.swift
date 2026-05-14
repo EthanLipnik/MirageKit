@@ -77,6 +77,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientFrameBufferPoolRetainedBytes: Int
     /// Number of packet reassembler evictions caused by memory budget pressure.
     public var clientReassemblerBudgetEvictions: UInt64
+    /// Number of timed-out non-keyframes that were missing one or more media fragments.
+    public var clientReassemblerIncompleteFrameTimeouts: UInt64
+    /// Number of media fragments missing from timed-out incomplete non-keyframes.
+    public var clientReassemblerMissingFragmentTimeouts: UInt64
     private var clientDecodeBacklogFrameCountStorage: Int
     /// Frames encoded per second by the host encoder.
     public var hostEncodedFPS: Double
@@ -247,6 +251,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReassemblerPendingBytes: Int = 0,
         clientFrameBufferPoolRetainedBytes: Int = 0,
         clientReassemblerBudgetEvictions: UInt64 = 0,
+        clientReassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        clientReassemblerMissingFragmentTimeouts: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
@@ -316,6 +322,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReassemblerPendingBytes = clientReassemblerPendingBytes
         self.clientFrameBufferPoolRetainedBytes = clientFrameBufferPoolRetainedBytes
         self.clientReassemblerBudgetEvictions = clientReassemblerBudgetEvictions
+        self.clientReassemblerIncompleteFrameTimeouts = clientReassemblerIncompleteFrameTimeouts
+        self.clientReassemblerMissingFragmentTimeouts = clientReassemblerMissingFragmentTimeouts
         clientDecodeBacklogFrameCountStorage = 0
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS

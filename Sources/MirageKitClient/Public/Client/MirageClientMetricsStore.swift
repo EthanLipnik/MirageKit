@@ -33,6 +33,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         reassemblerPendingBytes: Int = 0,
         frameBufferPoolRetainedBytes: Int = 0,
         reassemblerBudgetEvictions: UInt64 = 0,
+        reassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        reassemblerMissingFragmentTimeouts: UInt64 = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
@@ -90,6 +92,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientReassemblerPendingBytes = max(0, reassemblerPendingBytes)
             snapshot.clientFrameBufferPoolRetainedBytes = max(0, frameBufferPoolRetainedBytes)
             snapshot.clientReassemblerBudgetEvictions = reassemblerBudgetEvictions
+            snapshot.clientReassemblerIncompleteFrameTimeouts = reassemblerIncompleteFrameTimeouts
+            snapshot.clientReassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
         }
     }
 

@@ -52,36 +52,12 @@ struct RuntimeWorkloadSafetyTests {
         ) == nil)
     }
 
-    @Test("ProMotion stall heuristic only applies to high frame-rate streams")
-    func proMotionStallTargets() {
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 120,
-            recentStallCount: 1
-        ) == nil)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 120,
-            recentStallCount: 2
-        ) == 60)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 90,
-            recentStallCount: 2
-        ) == 60)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 60,
-            recentStallCount: 2
-        ) == nil)
-        #expect(MirageClientService.runtimeWorkloadSafetyProMotionStallTarget(
-            currentFrameRate: 30,
-            recentStallCount: 2
-        ) == nil)
-    }
-
-    @Test("Presenter recovery allows FPS fallback while starvation alone does not")
+    @Test("Presentation and recovery stalls never allow host FPS fallback")
     func recoveryEventsDoNotAllowFrameRateFallback() {
-        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.presentationRecovery))
         #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.keyframeStarved))
         #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.packetStarved))
-        #expect(MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.clientRenderCapacity))
+        #expect(!MirageClientService.runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(.clientRenderCapacity))
     }
 
     @Test("Runtime caps clamp frame rates without forcing streams below their current target")

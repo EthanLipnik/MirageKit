@@ -62,6 +62,10 @@ extension MirageClientService {
                 .map { LoomDiagnosticsValue.int($0.clientFrameBufferPoolRetainedBytes) } ?? .null,
             "client.primaryStream.reassemblerBudgetEvictions": primarySnapshot
                 .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientReassemblerBudgetEvictions)) } ?? .null,
+            "client.primaryStream.reassemblerIncompleteFrameTimeouts": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientReassemblerIncompleteFrameTimeouts)) } ?? .null,
+            "client.primaryStream.reassemblerMissingFragmentTimeouts": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientReassemblerMissingFragmentTimeouts)) } ?? .null,
             "client.process.physicalFootprintBytes": processPhysicalFootprintBytes
                 .map { LoomDiagnosticsValue.int(Int(clamping: $0)) } ?? .null,
             "client.primaryStream.hostEncoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
