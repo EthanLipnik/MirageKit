@@ -414,6 +414,15 @@ public final class MirageClientService {
     /// Per-video-stream receive loops.
     var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
 
+    /// Per-video-stream hot-path packet ingress processors.
+    var videoPacketIngressProcessors: [StreamID: ClientVideoPacketIngressProcessor] = [:]
+
+    /// Thread-safe latest ingress telemetry readable from stream-controller actors.
+    nonisolated let videoIngressTelemetryStore = ClientVideoIngressTelemetryStore()
+
+    /// Last cumulative ingress drop count observed per stream for per-window health decisions.
+    var videoIngressLastDropCountByStream: [StreamID: UInt64] = [:]
+
     /// Receive loop for the current audio media stream.
     var audioStreamReceiveTask: Task<Void, Never>?
 

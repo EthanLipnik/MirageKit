@@ -162,6 +162,7 @@ actor StreamController {
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
     /// The delegate should read from MirageRenderStreamStore if it needs the actual frame.
     var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)?
+    var videoIngressMetricsProvider: (@Sendable (StreamID) -> ClientVideoIngressMetricsSnapshot?)?
 
     /// Called when the first frame is decoded for a stream.
     var onFirstFrameDecoded: (@MainActor @Sendable () -> Void)?
@@ -183,6 +184,7 @@ actor StreamController {
         onKeyframeNeeded: (@MainActor @Sendable () -> Bool)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
+        videoIngressMetricsProvider: (@Sendable (StreamID) -> ClientVideoIngressMetricsSnapshot?)? = nil,
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)? = nil,
@@ -192,6 +194,7 @@ actor StreamController {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeStateChanged = onResizeStateChanged
         self.onFrameDecoded = onFrameDecoded
+        self.videoIngressMetricsProvider = videoIngressMetricsProvider
         self.onFirstFrameDecoded = onFirstFrameDecoded
         self.onFirstFramePresented = onFirstFramePresented
         self.onStallEvent = onStallEvent

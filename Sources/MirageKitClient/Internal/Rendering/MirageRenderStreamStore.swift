@@ -16,9 +16,8 @@ import MirageKit
 ///
 /// Decoders enqueue frames here from stream-specific tasks while SwiftUI/AppKit
 /// render surfaces consume frames on display ticks. Lowest latency coalesces to
-/// the newest decoded frame; Smoothest presents ordered frames with a small
-/// timed playout buffer, dropping stale backlog when age or depth bounds are
-/// exceeded.
+/// the newest decoded frame; Smoothest normally follows the live edge and
+/// temporarily adds a one-frame timed cushion after local presentation jitter.
 final class MirageRenderStreamStore: @unchecked Sendable {
     /// Rolling window for per-stream render throughput samples.
     static let sampleWindowSeconds: CFAbsoluteTime = 1.0
@@ -137,20 +136,27 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     /// Returns the next frame that should be submitted after the given generation-aware cursor.
     ///
-    /// Lowest latency coalesces to the newest decoded frame. Smoothest returns
-    /// the next ordered frame unless the local queue has aged past the stale
-    /// backlog recovery threshold.
+    /// Lowest latency coalesces to the newest decoded frame. Smoothest follows
+    /// the live edge when healthy and keeps one future frame while cushioned.
     func frameForPresentation(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
         state.lock.lock()
         defer { state.lock.unlock() }
 
         guard !state.pendingFrames.isEmpty else { return nil }
+        let now = CFAbsoluteTimeGetCurrent()
+        let policy = presentationLatencyPolicyLocked(state: state)
+        let presentationDecision = updatePresentationDecisionLocked(
+            state: state,
+            policy: policy,
+            now: now
+        )
         let selection = state.presentationController.nextFrame(
             frames: &state.pendingFrames,
             after: submittedCursor,
-            policy: presentationLatencyPolicyLocked(state: state),
-            now: CFAbsoluteTimeGetCurrent()
+            policy: policy,
+            presentationDecision: presentationDecision,
+            now: now
         )
         recordPendingFrameTrimLocked(selection.trimResult, state: state)
         state.lastSelectedFrameNumber = selection.selectedFrameNumber
@@ -234,7 +240,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let timing = MirageRenderPresentationTiming(
             targetFPS: state.sourceTargetFPS,
             playoutDelayFrames: state.playoutDelayFrames,
-            latencyMode: state.latencyMode
+            displaysImmediately: state.displaysImmediately
         )
         state.lock.unlock()
         return timing
@@ -246,7 +252,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.sourceTargetFPS = target.sourceFPS
         state.displayTargetFPS = target.displayFPS
         state.latencyMode = target.latencyMode
-        state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        resetEffectivePresentationDecisionLocked(state: state)
         trimPendingFramesToCurrentCapacityLocked(state: state)
         state.lock.unlock()
     }
@@ -262,8 +268,28 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.latencyMode = latencyMode
-        state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        resetEffectivePresentationDecisionLocked(state: state)
         trimPendingFramesToCurrentCapacityLocked(state: state)
+        state.lock.unlock()
+    }
+
+    func recordSmoothestStreamHealth(
+        for streamID: StreamID,
+        healthyForLiveEdge: Bool,
+        now: CFTimeInterval = CFAbsoluteTimeGetCurrent()
+    ) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.smoothestPlayoutController.recordHealthSample(
+            healthyForLiveEdge: healthyForLiveEdge,
+            at: now
+        )
+        let policy = presentationLatencyPolicyLocked(state: state)
+        _ = updatePresentationDecisionLocked(
+            state: state,
+            policy: policy,
+            now: now
+        )
         state.lock.unlock()
     }
 
@@ -382,12 +408,42 @@ extension MirageRenderStreamStore {
         state.coalescedFramesSinceLastSnapshot &+= UInt64(count)
     }
 
-    private func presentationLatencyPolicyLocked(state: MirageRenderStreamState) -> MiragePresentationLatencyPolicy {
+    func presentationLatencyPolicyLocked(state: MirageRenderStreamState) -> MiragePresentationLatencyPolicy {
         MiragePresentationLatencyPolicy(
             latencyMode: state.latencyMode,
             sourceFPS: state.sourceTargetFPS,
             displayFPS: state.displayTargetFPS
         )
+    }
+
+    func updatePresentationDecisionLocked(
+        state: MirageRenderStreamState,
+        policy: MiragePresentationLatencyPolicy,
+        now: CFTimeInterval
+    ) -> MiragePresentationDecision {
+        let decision = state.smoothestPlayoutController.presentationDecision(
+            policy: policy,
+            now: now
+        )
+        state.playoutDelayFrames = decision.playoutDelayFrames
+        state.displaysImmediately = decision.displaysImmediately
+        state.queueTargetDepth = decision.queueTargetDepth
+        state.presentationMode = decision.mode
+        return decision
+    }
+
+    func resetEffectivePresentationDecisionLocked(state: MirageRenderStreamState) {
+        state.smoothestPlayoutController.reset()
+        let policy = presentationLatencyPolicyLocked(state: state)
+        _ = updatePresentationDecisionLocked(
+            state: state,
+            policy: policy,
+            now: CFAbsoluteTimeGetCurrent()
+        )
+    }
+
+    func noteSmoothestPresentationJitterLocked(state: MirageRenderStreamState, now: CFTimeInterval) {
+        state.smoothestPlayoutController.noteJitter(at: now)
     }
 
     func activePresentationRecoveryHandlersLocked(state: MirageRenderStreamState) -> [@Sendable () -> Void] {

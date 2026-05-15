@@ -24,6 +24,7 @@ extension StreamController {
         onKeyframeNeeded = nil
         onResizeStateChanged = nil
         onFrameDecoded = nil
+        videoIngressMetricsProvider = nil
         onFirstFrameDecoded = nil
         onFirstFramePresented = nil
         onStallEvent = nil
@@ -95,6 +96,7 @@ extension StreamController {
         let reassemblerMetrics = reassembler.snapshotMetrics
         let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let videoIngressMetrics = videoIngressMetricsProvider?(streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
         evaluateRenderCadenceMissTelemetry(
             renderTelemetry: renderTelemetry,
@@ -126,10 +128,16 @@ extension StreamController {
             lateFrameDrops: renderTelemetry.lateFrameDrops,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
+            displayTickNoFrameCount: renderTelemetry.displayTickNoFrameCount,
+            frameArrivedAfterNoFrameTickCount: renderTelemetry.frameArrivedAfterNoFrameTickCount,
+            frameArrivalFallbackSubmittedCount: renderTelemetry.frameArrivalFallbackSubmittedCount,
             missedVSyncCount: renderTelemetry.missedVSyncCount,
             displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,
             playoutDelayFrames: renderTelemetry.playoutDelayFrames,
+            displaysImmediately: renderTelemetry.displaysImmediately,
+            queueTargetDepth: renderTelemetry.queueTargetDepth,
+            presentationMode: renderTelemetry.presentationMode,
             presentationStallCount: renderTelemetry.presentationStallCount,
             worstPresentationGapMs: renderTelemetry.worstPresentationGapMs,
             frameIntervalP95Ms: renderTelemetry.frameIntervalP95Ms,
@@ -144,7 +152,8 @@ extension StreamController {
             reassemblerIncompleteFrameTimeouts: reassemblerMetrics.incompleteFrameTimeouts,
             reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
             decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
-            usingHardwareDecoder: decoder.currentHardwareDecoderStatus
+            usingHardwareDecoder: decoder.currentHardwareDecoderStatus,
+            videoIngressMetrics: videoIngressMetrics
         )
         let callback = onFrameDecoded
         await MainActor.run {

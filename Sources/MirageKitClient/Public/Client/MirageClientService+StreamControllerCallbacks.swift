@@ -18,6 +18,7 @@ extension MirageClientService {
         for controller: StreamController,
         streamID: StreamID
     ) async {
+        let videoIngressStore = videoIngressTelemetryStore
         await controller.setCallbacks(
             onKeyframeNeeded: { [weak self] in
                 self?.sendKeyframeRequest(for: streamID) ?? false
@@ -25,6 +26,7 @@ extension MirageClientService {
             onResizeStateChanged: nil,
             onFrameDecoded: { [weak self] metrics in
                 guard let self else { return }
+                recordVideoIngressMetricsSample(for: streamID, metrics: metrics)
                 metricsStore.updateClientMetrics(
                     streamID: streamID,
                     decodedFPS: metrics.decodedFPS,
@@ -74,6 +76,9 @@ extension MirageClientService {
                 sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
                 logAwdlExperimentTelemetryIfNeeded()
             },
+            videoIngressMetricsProvider: { streamID in
+                videoIngressStore.snapshot(for: streamID)
+            },
             onFirstFrameDecoded: { [weak self] in
                 self?.sessionStore.markFirstFrameDecoded(for: streamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(streamID)")
@@ -102,6 +107,84 @@ extension MirageClientService {
                 }
             }
         )
+    }
+
+    private func recordVideoIngressMetricsSample(
+        for streamID: StreamID,
+        metrics: StreamController.ClientFrameMetrics
+    ) {
+        guard let processor = videoPacketIngressProcessors[streamID] else {
+            videoIngressTelemetryStore.clear(streamID: streamID)
+            MirageRenderStreamStore.shared.recordSmoothestStreamHealth(
+                for: streamID,
+                healthyForLiveEdge: false
+            )
+            return
+        }
+
+        let snapshot = processor.snapshot()
+        videoIngressTelemetryStore.update(snapshot, for: streamID)
+        let currentDropCount = snapshot.stalePacketDropCount + snapshot.overloadPacketDropCount
+        let previousDropCount = videoIngressLastDropCountByStream[streamID] ?? currentDropCount
+        let ingressDropDelta = currentDropCount >= previousDropCount
+            ? currentDropCount - previousDropCount
+            : 0
+        videoIngressLastDropCountByStream[streamID] = currentDropCount
+        let hostTargetFPS = metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 0
+        let displayTargetFPS = Int(metrics.displayTickFPS.rounded())
+        let targetFPS = hostTargetFPS > 0 ? hostTargetFPS : max(1, displayTargetFPS)
+        MirageRenderStreamStore.shared.recordSmoothestStreamHealth(
+            for: streamID,
+            healthyForLiveEdge: Self.smoothestLiveEdgeHealth(
+                metrics: metrics,
+                ingressMetrics: snapshot,
+                ingressDropDelta: ingressDropDelta,
+                targetFPS: targetFPS
+            )
+        )
+    }
+
+    private nonisolated static func smoothestLiveEdgeHealth(
+        metrics: StreamController.ClientFrameMetrics,
+        ingressMetrics: ClientVideoIngressMetricsSnapshot,
+        ingressDropDelta: UInt64,
+        targetFPS: Int
+    ) -> Bool {
+        let targetFPS = max(1, targetFPS)
+        let frameBudgetMs = 1000.0 / Double(targetFPS)
+        let reassembledP99LimitMs = max(frameBudgetMs * 2.25, targetFPS >= 90 ? 24.0 : 37.0)
+        let batchP99LimitMs = max(frameBudgetMs * 2.0, targetFPS >= 90 ? 20.0 : 34.0)
+        let loomGapLimitMs = max(frameBudgetMs * 3.0, targetFPS >= 90 ? 28.0 : 50.0)
+        let workerWakeLimitMs = max(frameBudgetMs * 1.25, targetFPS >= 90 ? 12.0 : 22.0)
+        let minimumFrameCadence = Double(targetFPS) * 0.85
+
+        let presentationJitterClean = metrics.displayTickNoFrameCount == 0 &&
+            metrics.frameArrivedAfterNoFrameTickCount == 0 &&
+            metrics.frameArrivalFallbackSubmittedCount == 0 &&
+            metrics.missedVSyncCount == 0
+        let renderPolicyClean = metrics.smoothestQueueDrops == 0 &&
+            metrics.lateFrameDrops == 0 &&
+            metrics.displayLayerNotReadyCount == 0
+        let reassembledCadenceClean = metrics.receivedFPS >= minimumFrameCadence &&
+            (metrics.receivedFrameIntervalP99Ms == 0 ||
+                metrics.receivedFrameIntervalP99Ms <= reassembledP99LimitMs)
+        let decodeCadenceClean = metrics.decodeHealthy &&
+            metrics.decodedFPS >= minimumFrameCadence
+        let ingressClean = ingressMetrics.rawPacketIngressPPS > 0 &&
+            ingressMetrics.queuedPacketCount == 0 &&
+            ingressMetrics.queueAgeMaxMs <= frameBudgetMs &&
+            ingressDropDelta == 0 &&
+            ingressMetrics.processorWakeDelayMaxMs <= workerWakeLimitMs &&
+            (ingressMetrics.incomingBatchIntervalP99Ms == 0 ||
+                ingressMetrics.incomingBatchIntervalP99Ms <= batchP99LimitMs) &&
+            (ingressMetrics.loomStreamDeliveryIntervalMaxMs == 0 ||
+                ingressMetrics.loomStreamDeliveryIntervalMaxMs <= loomGapLimitMs)
+
+        return presentationJitterClean &&
+            renderPolicyClean &&
+            reassembledCadenceClean &&
+            decodeCadenceClean &&
+            ingressClean
     }
 
     private func sendReceiverMediaFeedback(

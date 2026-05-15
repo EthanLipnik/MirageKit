@@ -99,6 +99,15 @@ struct RenderTelemetrySnapshot {
     /// Current playout delay target in frames.
     let playoutDelayFrames: Int
 
+    /// Whether submitted sample buffers are marked for immediate display.
+    let displaysImmediately: Bool
+
+    /// Current target depth used by smoothest live-edge/cushion decisions.
+    let queueTargetDepth: Int
+
+    /// Current effective presentation mode.
+    let presentationMode: MiragePresentationDecisionMode
+
     /// Presentation gaps counted as stalls since the previous snapshot.
     let presentationStallCount: UInt64
 
@@ -153,6 +162,10 @@ final class MirageRenderStreamState {
     var displayTargetFPS: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var playoutDelayFrames: Int = 0
+    var displaysImmediately: Bool = true
+    var queueTargetDepth: Int = 1
+    var presentationMode: MiragePresentationDecisionMode = .lowestLatency
+    var smoothestPlayoutController = MirageSmoothestPlayoutController()
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
 
@@ -203,6 +216,11 @@ final class MirageRenderStreamState {
         lastSubmittedMappedPresentationTime = .invalid
         lastAcceptedFrameTimeline = nil
         lastDisplayTickTime = 0
+        playoutDelayFrames = 0
+        displaysImmediately = true
+        queueTargetDepth = 1
+        presentationMode = .lowestLatency
+        smoothestPlayoutController.reset()
         decodeSamples.removeAll(keepingCapacity: false)
         decodeSampleStartIndex = 0
         displayTickSamples.removeAll(keepingCapacity: false)

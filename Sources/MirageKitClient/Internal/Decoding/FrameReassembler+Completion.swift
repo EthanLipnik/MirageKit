@@ -42,9 +42,10 @@ extension FrameReassembler {
 
             if hasForwardGap {
                 let gapFrames = frameNumber &- expectedNextFrame
+                let now = Date()
                 if pendingKeyframeContaminatesGapLocked(
                     expectedFrameNumber: expectedNextFrame,
-                    now: Date()
+                    now: now
                 ) {
                     MirageLogger.log(
                         .frameAssembly,
@@ -58,26 +59,44 @@ extension FrameReassembler {
                 }
                 let severeForwardGapFrameThreshold = severeForwardGapFrameThresholdLocked()
                 if gapFrames >= severeForwardGapFrameThreshold {
-                    shouldDeliver = false
-                    beginKeyframeWaitLocked()
-                    hasSignaledGapFrameLoss = true
+                    let severeGapAge = bufferedForwardGapAgeLocked(
+                        expectedFrameNumber: expectedNextFrame,
+                        currentFrameNumber: frameNumber,
+                        currentFrame: frame,
+                        now: now
+                    )
+                    let severeGapGrace = severeForwardGapGraceLocked()
+                    if severeGapAge >= severeGapGrace {
+                        beginKeyframeWaitLocked()
+                        hasSignaledGapFrameLoss = true
+                        MirageLogger.log(
+                            .frameAssembly,
+                            "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) " +
+                                "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
+                                "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
+                                "graceMs=\(Int((severeGapGrace * 1000).rounded())); entering keyframe wait"
+                        )
+                        return FrameCompletionResult(
+                            frame: nil,
+                            frameLossReason: .severeForwardGap,
+                            retainedForInOrderDelivery: false
+                        )
+                    }
                     MirageLogger.log(
                         .frameAssembly,
-                        "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) " +
-                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold); entering keyframe wait"
+                        "severe_forward_gap_buffered expected=\(expectedNextFrame) received=\(frameNumber) " +
+                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
+                            "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
+                            "graceMs=\(Int((severeGapGrace * 1000).rounded()))"
                     )
-                    return FrameCompletionResult(
-                        frame: nil,
-                        frameLossReason: .severeForwardGap,
-                        retainedForInOrderDelivery: false
+                } else {
+                    MirageLogger.log(
+                        .frameAssembly,
+                        "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
                     )
                 }
                 shouldDeliver = false
                 retainedForInOrderDelivery = true
-                MirageLogger.log(
-                    .frameAssembly,
-                    "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
-                )
             } else {
                 shouldDeliver = isForwardFrame && isAfterKeyframeAnchor
             }
@@ -446,6 +465,35 @@ extension FrameReassembler {
             max(pFrameTimeoutMinimum, frameInterval * severeForwardGapFrameIntervalBudget)
         )
         return max(3, UInt32(ceil(timeout / frameInterval)))
+    }
+
+    private func severeForwardGapGraceLocked() -> TimeInterval {
+        let frameRate = max(1, targetFrameRate)
+        let frameInterval = 1.0 / Double(frameRate)
+        let cadenceGrace = max(frameInterval * 3.0, frameRate >= 90 ? 0.025 : 0.050)
+        return min(pFrameTimeoutLocked(), cadenceGrace)
+    }
+
+    private func bufferedForwardGapAgeLocked(
+        expectedFrameNumber: UInt32,
+        currentFrameNumber: UInt32,
+        currentFrame: PendingFrame,
+        now: Date
+    ) -> TimeInterval {
+        let earliestBufferedForwardFrame = pendingFrames
+            .filter { entry in
+                let frameNumber = entry.key
+                return frameNumber == currentFrameNumber ||
+                    isFrameNewer(frameNumber, than: expectedFrameNumber)
+            }
+            .min { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.value.receivedAt < rhs.value.receivedAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            }?
+            .value ?? currentFrame
+        return max(0, now.timeIntervalSince(earliestBufferedForwardFrame.receivedAt))
     }
 
     func shouldPromotePendingKeyframeLocked(now: Date) -> Bool {

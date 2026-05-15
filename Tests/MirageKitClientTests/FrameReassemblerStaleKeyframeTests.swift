@@ -253,8 +253,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
-    @Test("Severe forward gap immediately enters keyframe wait")
-    func severeForwardGapImmediatelyEntersKeyframeWait() {
+    @Test("Severe forward gap buffers inside grace window")
+    func severeForwardGapBuffersInsideGraceWindow() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -289,6 +289,69 @@ struct FrameReassemblerStaleKeyframeTests {
                 flags: [.endOfFrame],
                 frameNumber: 40,
                 payload: severeGapPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(lossReason.value == nil)
+        #expect(reassembler.isAwaitingKeyframe == false)
+        #expect(reassembler.snapshotMetrics.pendingFrameCount == 1)
+    }
+
+    @Test("Severe forward gap enters keyframe wait after grace expires")
+    func severeForwardGapEntersKeyframeWaitAfterGraceExpires() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+        let lossReason = FrameReassemblerLockedValue<FrameReassembler.FrameLossReason?>(nil)
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, reason in
+            lossCounter.increment()
+            lossReason.value = reason
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let severeGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x28])
+        reassembler.processPacket(
+            severeGapPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 40,
+                payload: severeGapPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(lossCounter.value == 0)
+
+        Thread.sleep(forTimeInterval: 0.070)
+
+        let laterSevereGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x29])
+        reassembler.processPacket(
+            laterSevereGapPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 41,
+                payload: laterSevereGapPFrame,
                 fragmentIndex: 0,
                 fragmentCount: 1
             )

@@ -7,6 +7,7 @@
 
 @testable import MirageKitClient
 import Foundation
+import Loom
 @testable import MirageKit
 import Testing
 
@@ -32,11 +33,13 @@ struct ClientVideoPacketIngressProcessorTests {
 
         let snapshot = processor.snapshot()
         #expect(snapshot.processedPacketCount == UInt64(expected.count))
-        #expect(snapshot.loomStreamDeliveryFPS >= Double(expected.count))
+        #expect(snapshot.loomStreamDeliveryPPS >= Double(expected.count))
         #expect(snapshot.loomStreamDeliveryIntervalMaxMs < 100)
-        #expect(snapshot.rawPacketIngressFPS >= Double(expected.count))
-        #expect(snapshot.incomingBatchFPS >= 2)
+        #expect(snapshot.rawPacketIngressPPS >= Double(expected.count))
+        #expect(snapshot.incomingBatchRate >= 2)
         #expect(snapshot.incomingBatchMaxSize == 3)
+        #expect(snapshot.stalePacketDropCount == 0)
+        #expect(snapshot.overloadPacketDropCount == 0)
         #expect(snapshot.processorWakeDelayMaxMs < 100)
     }
 
@@ -67,7 +70,8 @@ struct ClientVideoPacketIngressProcessorTests {
         processor.enqueue([Data([5])])
 
         snapshot = processor.snapshot()
-        #expect(snapshot.stalePacketDropCount > 0)
+        #expect(snapshot.stalePacketDropCount == 0)
+        #expect(snapshot.overloadPacketDropCount > 0)
         #expect(snapshot.queuedPacketCount <= 2)
 
         gate.unblock()
@@ -76,14 +80,13 @@ struct ClientVideoPacketIngressProcessorTests {
         #expect(snapshot.queueAgeMaxMs >= 0)
     }
 
-    @Test("Processor drops stale P-frame batches while preserving recovery packets")
-    func processorDropsStalePFrameBatchesWhilePreservingRecoveryPackets() async throws {
+    @Test("Processor does not age-drop delayed P-frame batches")
+    func processorDoesNotAgeDropDelayedPFrameBatches() async throws {
         let gate = PacketProcessingGate()
         let processor = ClientVideoPacketIngressProcessor(
             streamID: 7,
             maxQueuedBatches: 8,
-            maxQueuedPackets: 64,
-            maxQueueAgeMilliseconds: 5
+            maxQueuedPackets: 64
         ) { data, streamID in
             gate.record(data, streamID: streamID)
         }
@@ -99,17 +102,116 @@ struct ClientVideoPacketIngressProcessorTests {
         gate.block()
         processor.enqueue([blocker])
         processor.enqueue([stalePFrame])
-        try await Task.sleep(for: .milliseconds(20))
+        try await Task.sleep(for: .milliseconds(150))
         processor.enqueue([keyframe])
 
         let snapshot = processor.snapshot()
-        #expect(snapshot.stalePacketDropCount >= 1)
+        #expect(snapshot.stalePacketDropCount == 0)
+        #expect(snapshot.overloadPacketDropCount == 0)
 
         gate.unblock()
         let received = await gate.payloads(containing: keyframe, timeoutSeconds: 1.0)
         #expect(received.map(\.data).contains(keyframe))
-        #expect(!received.map(\.data).contains(stalePFrame))
+        #expect(received.map(\.data).contains(stalePFrame))
     }
+
+    @Test("Processor only hard-drops under explicit overload")
+    func processorOnlyHardDropsUnderExplicitOverload() async throws {
+        let gate = PacketProcessingGate()
+        let processor = ClientVideoPacketIngressProcessor(
+            streamID: 7,
+            maxQueuedBatches: 2,
+            maxQueuedPackets: 2
+        ) { data, streamID in
+            gate.record(data, streamID: streamID)
+        }
+        defer {
+            gate.unblock()
+            processor.finish()
+        }
+
+        let blocker = Data([0])
+        let pFrame = makeVideoPacket(streamID: 7, frameNumber: 1, flags: [])
+        let keyframe = makeVideoPacket(streamID: 7, frameNumber: 2, flags: [.keyframe])
+        let laterPFrame = makeVideoPacket(streamID: 7, frameNumber: 3, flags: [])
+
+        gate.block()
+        processor.enqueue([blocker])
+        processor.enqueue([pFrame])
+        processor.enqueue([keyframe])
+        processor.enqueue([laterPFrame])
+
+        let snapshot = processor.snapshot()
+        #expect(snapshot.stalePacketDropCount == 0)
+        #expect(snapshot.overloadPacketDropCount > 0)
+
+        gate.unblock()
+        let received = await gate.payloads(containing: keyframe, timeoutSeconds: 1.0)
+        #expect(received.map(\.data).contains(keyframe))
+    }
+
+    @MainActor
+    @Test("Video stream listener installs one-packet immediate ingress handler")
+    func videoStreamListenerInstallsOnePacketImmediateIngressHandler() async throws {
+        let pair = try await makeLoopbackControlPair()
+        try await pair.startAuthenticatedSessions()
+        let service = MirageClientService(deviceName: "Client Ingress Test")
+        service.loomSession = pair.client
+        service.startMediaStreamListener()
+
+        let videoStream = try await pair.server.openStream(label: "video/77")
+        do {
+            let processor = try #require(await waitForProcessor(service: service, streamID: 77))
+            for index in 0 ..< 3 {
+                try await videoStream.sendUnreliable(Data([UInt8(index)]))
+            }
+
+            try #require(await waitForProcessedPackets(processor: processor, count: 3))
+            let snapshot = processor.snapshot()
+            #expect(snapshot.incomingBatchMaxSize == 1)
+            #expect(snapshot.processedPacketCount >= 3)
+
+            service.stopMediaStreamListener()
+            #expect(service.videoPacketIngressProcessors[77] == nil)
+            #expect(service.activeMediaStreams["video/77"] == nil)
+            try? await videoStream.close()
+            await pair.stop()
+        } catch {
+            service.stopMediaStreamListener()
+            try? await videoStream.close()
+            await pair.stop()
+            throw error
+        }
+    }
+}
+
+@MainActor
+private func waitForProcessor(
+    service: MirageClientService,
+    streamID: StreamID
+) async -> ClientVideoPacketIngressProcessor? {
+    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    while CFAbsoluteTimeGetCurrent() < deadline {
+        if let processor = service.videoPacketIngressProcessors[streamID] {
+            return processor
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return nil
+}
+
+private func waitForProcessedPackets(
+    processor: ClientVideoPacketIngressProcessor,
+    count: UInt64
+) async -> Bool {
+    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    while CFAbsoluteTimeGetCurrent() < deadline {
+        if processor.snapshot().processedPacketCount >= count {
+            return true
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return false
 }
 
 private func makeVideoPacket(

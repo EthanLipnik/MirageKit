@@ -8,24 +8,57 @@
 import Foundation
 import MirageKit
 
-final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
-    struct Snapshot: Sendable, Equatable {
-        let loomStreamDeliveryFPS: Double
-        let loomStreamDeliveryIntervalMaxMs: Double
-        let rawPacketIngressFPS: Double
-        let incomingBatchFPS: Double
-        let incomingBatchIntervalP95Ms: Double
-        let incomingBatchIntervalP99Ms: Double
-        let incomingBatchIntervalMaxMs: Double
-        let incomingBatchMaxSize: Int
-        let incomingBatchAverageSize: Double
-        let queuedBatchCount: Int
-        let queuedPacketCount: Int
-        let queueAgeMaxMs: Double
-        let stalePacketDropCount: UInt64
-        let processedPacketCount: UInt64
-        let processorWakeDelayMaxMs: Double
+struct ClientVideoIngressMetricsSnapshot: Sendable, Equatable {
+    let loomStreamDeliveryPPS: Double
+    let loomStreamDeliveryIntervalMaxMs: Double
+    let rawPacketIngressPPS: Double
+    let incomingBatchRate: Double
+    let incomingBatchIntervalP95Ms: Double
+    let incomingBatchIntervalP99Ms: Double
+    let incomingBatchIntervalMaxMs: Double
+    let incomingBatchMaxSize: Int
+    let incomingBatchAverageSize: Double
+    let queuedBatchCount: Int
+    let queuedPacketCount: Int
+    let queueAgeMaxMs: Double
+    let stalePacketDropCount: UInt64
+    let overloadPacketDropCount: UInt64
+    let processedPacketCount: UInt64
+    let processorWakeDelayMaxMs: Double
+}
+
+final class ClientVideoIngressTelemetryStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshotsByStream: [StreamID: ClientVideoIngressMetricsSnapshot] = [:]
+
+    func update(_ snapshot: ClientVideoIngressMetricsSnapshot, for streamID: StreamID) {
+        lock.lock()
+        snapshotsByStream[streamID] = snapshot
+        lock.unlock()
     }
+
+    func snapshot(for streamID: StreamID) -> ClientVideoIngressMetricsSnapshot? {
+        lock.lock()
+        let snapshot = snapshotsByStream[streamID]
+        lock.unlock()
+        return snapshot
+    }
+
+    func clear(streamID: StreamID) {
+        lock.lock()
+        snapshotsByStream.removeValue(forKey: streamID)
+        lock.unlock()
+    }
+
+    func clearAll() {
+        lock.lock()
+        snapshotsByStream.removeAll()
+        lock.unlock()
+    }
+}
+
+final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
+    typealias Snapshot = ClientVideoIngressMetricsSnapshot
 
     private struct IngressBatch {
         let payloads: [Data]
@@ -55,25 +88,23 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     private var incomingBatchCount: UInt64 = 0
     private var queueAgeMaxMs: Double = 0
     private var stalePacketDropCount: UInt64 = 0
+    private var overloadPacketDropCount: UInt64 = 0
     private var processedPacketCount: UInt64 = 0
-    private var processorWakeDelayMaxMs: Double = 0
+    private var processorWakeDelaySampler = IngressMaximumSampler()
 
     private let maxQueuedBatches: Int
     private let maxQueuedPackets: Int
-    private let maxQueueAgeSeconds: CFAbsoluteTime
 
     init(
         streamID: StreamID,
-        maxQueuedBatches: Int = 64,
-        maxQueuedPackets: Int = 1024,
-        maxQueueAgeMilliseconds: Double = 24,
+        maxQueuedBatches: Int = 4096,
+        maxQueuedPackets: Int = 4096,
         processPacket: @escaping @Sendable (Data, StreamID) -> Void
     ) {
         self.streamID = streamID
         self.processPacket = processPacket
         self.maxQueuedBatches = max(1, maxQueuedBatches)
         self.maxQueuedPackets = max(1, maxQueuedPackets)
-        self.maxQueueAgeSeconds = max(0.001, maxQueueAgeMilliseconds / 1000)
         let thread = Thread { [weak self] in
             self?.runWorker()
         }
@@ -130,10 +161,10 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
 
     func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Snapshot {
         condition.lock()
-        let loomStreamDeliveryFPS = loomStreamDeliverySampler.snapshot(now: now)
+        let loomStreamDeliveryPPS = loomStreamDeliverySampler.snapshot(now: now)
         let loomDeliveryIntervals = loomStreamDeliveryIntervalSampler.snapshot(now: now)
-        let rawPacketIngressFPS = rawPacketSampler.snapshot(now: now)
-        let incomingBatchFPS = incomingBatchSampler.snapshot(now: now)
+        let rawPacketIngressPPS = rawPacketSampler.snapshot(now: now)
+        let incomingBatchRate = incomingBatchSampler.snapshot(now: now)
         let batchIntervals = incomingBatchIntervalSampler.snapshot(now: now)
         let activeQueuedBatches = max(0, queuedBatches.count - queuedBatchStartIndex)
         let queuedPacketCount = queuedPacketCount
@@ -144,14 +175,15 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             ? Double(incomingBatchTotalSize) / Double(incomingBatchCount)
             : 0
         let stalePacketDropCount = stalePacketDropCount
+        let overloadPacketDropCount = overloadPacketDropCount
         let processedPacketCount = processedPacketCount
-        let processorWakeDelayMaxMs = processorWakeDelayMaxMs
+        let processorWakeDelayMaxMs = processorWakeDelaySampler.snapshot(now: now)
         condition.unlock()
         return Snapshot(
-            loomStreamDeliveryFPS: loomStreamDeliveryFPS,
+            loomStreamDeliveryPPS: loomStreamDeliveryPPS,
             loomStreamDeliveryIntervalMaxMs: loomDeliveryIntervals.maxMs,
-            rawPacketIngressFPS: rawPacketIngressFPS,
-            incomingBatchFPS: incomingBatchFPS,
+            rawPacketIngressPPS: rawPacketIngressPPS,
+            incomingBatchRate: incomingBatchRate,
             incomingBatchIntervalP95Ms: batchIntervals.p95Ms,
             incomingBatchIntervalP99Ms: batchIntervals.p99Ms,
             incomingBatchIntervalMaxMs: batchIntervals.maxMs,
@@ -161,6 +193,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             queuedPacketCount: queuedPacketCount,
             queueAgeMaxMs: queueAgeMaxMs,
             stalePacketDropCount: stalePacketDropCount,
+            overloadPacketDropCount: overloadPacketDropCount,
             processedPacketCount: processedPacketCount,
             processorWakeDelayMaxMs: processorWakeDelayMaxMs
         )
@@ -192,15 +225,9 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             }
 
             let now = CFAbsoluteTimeGetCurrent()
-            if shouldDropStaleBatch(batch, now: now) {
-                stalePacketDropCount &+= UInt64(batch.payloads.count)
-                updateQueueAgeLocked(now: now)
-                continue
-            }
-
-            processorWakeDelayMaxMs = max(
-                processorWakeDelayMaxMs,
-                max(0, now - batch.enqueuedAt) * 1000
+            processorWakeDelaySampler.record(
+                max(0, now - batch.enqueuedAt) * 1000,
+                now: now
             )
             condition.unlock()
             return batch
@@ -217,25 +244,12 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     }
 
     private func trimQueueIfNeededLocked(now: CFAbsoluteTime) {
-        dropStaleBatchesLocked(now: now)
-
         while queuedBatches.count - queuedBatchStartIndex > maxQueuedBatches ||
             queuedPacketCount > maxQueuedPackets {
             if dropOldestDroppableBatchLocked() { continue }
             _ = dropBatchLocked(at: queuedBatchStartIndex)
         }
         updateQueueAgeLocked(now: now)
-    }
-
-    private func dropStaleBatchesLocked(now: CFAbsoluteTime) {
-        var index = queuedBatchStartIndex
-        while index < queuedBatches.count {
-            if shouldDropStaleBatch(queuedBatches[index], now: now) {
-                _ = dropBatchLocked(at: index)
-            } else {
-                index += 1
-            }
-        }
     }
 
     private func dropOldestDroppableBatchLocked() -> Bool {
@@ -258,7 +272,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         let dropped = queuedBatches[index].payloads.count
         queuedBatches.remove(at: index)
         queuedPacketCount = max(0, queuedPacketCount - dropped)
-        stalePacketDropCount &+= UInt64(dropped)
+        overloadPacketDropCount &+= UInt64(dropped)
         return dropped
     }
 
@@ -268,10 +282,6 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             return
         }
         queueAgeMaxMs = max(0, (now - queuedBatches[queuedBatchStartIndex].enqueuedAt) * 1000)
-    }
-
-    private func shouldDropStaleBatch(_ batch: IngressBatch, now: CFAbsoluteTime) -> Bool {
-        batch.isDropCandidate && now - batch.enqueuedAt > maxQueueAgeSeconds
     }
 
     private static func isRecoveryPacket(_ data: Data) -> Bool {
@@ -379,5 +389,38 @@ private struct IngressIntervalSampler {
         let clamped = max(0, min(1, percentile))
         let index = Int(ceil(clamped * Double(sorted.count))) - 1
         return sorted[max(0, min(sorted.count - 1, index))]
+    }
+}
+
+private struct IngressMaximumSampler {
+    private struct Sample {
+        let timestamp: CFAbsoluteTime
+        let value: Double
+    }
+
+    private var samples: [Sample] = []
+    private var startIndex = 0
+    private let windowSeconds: CFAbsoluteTime = 2.0
+
+    mutating func record(_ value: Double, now: CFAbsoluteTime) {
+        samples.append(Sample(timestamp: now, value: max(0, value)))
+        trim(now: now)
+    }
+
+    mutating func snapshot(now: CFAbsoluteTime) -> Double {
+        trim(now: now)
+        guard startIndex < samples.count else { return 0 }
+        return samples[startIndex ..< samples.count].map(\.value).max() ?? 0
+    }
+
+    private mutating func trim(now: CFAbsoluteTime) {
+        let cutoff = now - windowSeconds
+        while startIndex < samples.count, samples[startIndex].timestamp < cutoff {
+            startIndex += 1
+        }
+        if startIndex > 256 {
+            samples.removeFirst(startIndex)
+            startIndex = 0
+        }
     }
 }

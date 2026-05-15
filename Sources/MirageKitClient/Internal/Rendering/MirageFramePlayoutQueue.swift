@@ -60,6 +60,7 @@ struct MirageFramePlayoutQueue {
         frames: inout [MirageRenderFrame],
         after submittedCursor: MirageRenderCursor,
         policy: MiragePresentationLatencyPolicy,
+        presentationDecision: MiragePresentationDecision,
         now: CFAbsoluteTime
     ) -> Selection {
         var trimResult = removeSubmittedFrames(
@@ -85,6 +86,11 @@ struct MirageFramePlayoutQueue {
                 now: now
             )
             trimResult.smoothestQueueDrops += expired
+            let catchUpDrops = removeSmoothestFramesOverTargetDepth(
+                from: &frames,
+                targetDepth: presentationDecision.queueTargetDepth
+            )
+            trimResult.smoothestQueueDrops += catchUpDrops
         }
 
         let frame = frames.first
@@ -114,6 +120,18 @@ struct MirageFramePlayoutQueue {
         while frames.count > 1,
               let first = frames.first,
               comparableFrameAgeMs(first, now: now) > policy.maximumQueueAgeMs {
+            frames.removeFirst()
+            removed += 1
+        }
+        return removed
+    }
+
+    private static func removeSmoothestFramesOverTargetDepth(
+        from frames: inout [MirageRenderFrame],
+        targetDepth: Int
+    ) -> Int {
+        var removed = 0
+        while frames.count > max(1, targetDepth) {
             frames.removeFirst()
             removed += 1
         }

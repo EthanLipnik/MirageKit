@@ -117,6 +117,9 @@ struct RenderPresentationSchedulerTests {
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 10
 
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
         let scheduler = MirageRenderPresentationScheduler(
             referenceTimeProvider: { wallTime },
             enqueueCoalescedPass: { action in
@@ -144,6 +147,9 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleDisplayTick(referenceTime: 3)
 
         #expect(submitReferences == [1, 3])
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.frameArrivedAfterNoFrameTickCount == 0)
     }
 
     @Test("Active live frame arrival suppresses immediate fallback but recovers after a missed-tick interval")
@@ -171,6 +177,7 @@ struct RenderPresentationSchedulerTests {
         scheduler.setTargetFPS(60)
         scheduler.setDisplayClockActive(true)
 
+        pendingFrames.enqueue()
         scheduler.handleDisplayTick(referenceTime: 1)
         #expect(submitReferences == [1])
         pendingFrames.enqueue()
@@ -192,7 +199,7 @@ struct RenderPresentationSchedulerTests {
         #expect(scheduledCallbacks.count == 1)
         scheduledCallbacks.removeFirst()()
         #expect(submitReferences == [1, 3])
-        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.submittedCount == 2)
 
         pendingFrames.enqueue()
         scheduler.handleDisplayTick(referenceTime: 4)
@@ -224,7 +231,7 @@ struct RenderPresentationSchedulerTests {
 
         scheduler.handleDisplayTick(referenceTime: 1)
         pendingFrames.enqueue()
-        wallTime = 1.05
+        wallTime = 1.004
         scheduler.handleFrameAvailable(referenceTime: 1.001)
 
         #expect(scheduledCallbacks.count == 1)
@@ -238,7 +245,7 @@ struct RenderPresentationSchedulerTests {
         #expect(telemetry.frameArrivalFallbackScheduledCount == 1)
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
         #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
-        #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 40)
+        #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 3)
     }
 
     @Test("Active live frame arrival drains backlog but preserves a lone pending frame")
@@ -286,6 +293,10 @@ struct RenderPresentationSchedulerTests {
         var scheduledCallbacks: [@Sendable () -> Void] = []
         let wallTime: CFTimeInterval = 20
 
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+
         let scheduler = MirageRenderPresentationScheduler(
             referenceTimeProvider: { wallTime },
             enqueueCoalescedPass: { action in
@@ -308,6 +319,10 @@ struct RenderPresentationSchedulerTests {
         let callback = scheduledCallbacks.removeFirst()
         callback()
         #expect(submitReferences == [2])
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
+        #expect(telemetry.playoutDelayFrames == 1)
     }
 
     @Test("Immediate submission seeds presentation before first display tick")

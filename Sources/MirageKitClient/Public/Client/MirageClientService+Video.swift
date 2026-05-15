@@ -48,10 +48,19 @@ extension MirageClientService {
         mediaStreamListenerTask?.cancel()
         mediaStreamListenerTask = nil
         cancelRecoveryKeyframeRetries()
+        for (label, stream) in activeMediaStreams where label.hasPrefix("video/") {
+            stream.clearIncomingBytesBatchHandler()
+        }
         for task in videoStreamReceiveTasks.values {
             task.cancel()
         }
         videoStreamReceiveTasks.removeAll()
+        for processor in videoPacketIngressProcessors.values {
+            processor.finish()
+        }
+        videoPacketIngressProcessors.removeAll()
+        videoIngressTelemetryStore.clearAll()
+        videoIngressLastDropCountByStream.removeAll(keepingCapacity: false)
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
         for task in qualityTestStreamReceiveTasks.values {
@@ -66,19 +75,23 @@ extension MirageClientService {
     /// Start receiving video packets from a Loom multiplexed stream.
     private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
+        videoPacketIngressProcessors[streamID]?.finish()
         let serviceBox = WeakSendableBox(self)
-        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) {
-            [stream, streamID, serviceBox] in
-            for await data in stream.incomingBytes {
+        let ingressProcessor = ClientVideoPacketIngressProcessor(streamID: streamID) { data, streamID in
+            serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
+        }
+        videoPacketIngressProcessors[streamID] = ingressProcessor
+        videoIngressLastDropCountByStream[streamID] = 0
+        videoIngressTelemetryStore.clear(streamID: streamID)
+        stream.setIncomingBytesImmediateBatchHandler(maxBatchSize: 1) { [ingressProcessor] batch in
+            ingressProcessor.enqueue(batch)
+        }
+        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
+            for await _ in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
-                serviceBox.value?.handleIncomingVideoData(data, expectedStreamID: streamID)
             }
             guard let service = serviceBox.value else { return }
-            await MainActor.run {
-                service.videoStreamReceiveTasks.removeValue(forKey: streamID)
-                service.activeMediaStreams.removeValue(forKey: "video/\(streamID)")
-                MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
-            }
+            await service.finishVideoStreamReceiveLoop(streamID: streamID)
         }
     }
 
@@ -105,7 +118,7 @@ extension MirageClientService {
     }
 
     /// Process a single video packet received from a Loom stream.
-    private nonisolated func handleIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
+    nonisolated func processIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
         guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
             return
         }
@@ -230,6 +243,10 @@ extension MirageClientService {
     func stopVideoStreamReceive(for streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
+        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
+        videoIngressTelemetryStore.clear(streamID: streamID)
+        videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         cancelRecoveryKeyframeRetry(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
@@ -270,6 +287,16 @@ extension MirageClientService {
         case .unknown:
             MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
         }
+    }
+
+    private func finishVideoStreamReceiveLoop(streamID: StreamID) {
+        videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
+        videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
+        videoIngressTelemetryStore.clear(streamID: streamID)
+        videoIngressLastDropCountByStream.removeValue(forKey: streamID)
+        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
     }
 
     // MARK: - Keyframe Requests

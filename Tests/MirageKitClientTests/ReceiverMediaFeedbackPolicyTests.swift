@@ -93,10 +93,16 @@ struct ReceiverMediaFeedbackPolicyTests {
             lateFrameDrops: 2,
             displayLayerNotReadyCount: 8,
             repeatedFrameCount: 0,
+            displayTickNoFrameCount: 0,
+            frameArrivedAfterNoFrameTickCount: 0,
+            frameArrivalFallbackSubmittedCount: 0,
             missedVSyncCount: 4,
             displayTickIntervalP95Ms: 17,
             displayTickIntervalP99Ms: 20,
             playoutDelayFrames: 3,
+            displaysImmediately: false,
+            queueTargetDepth: 4,
+            presentationMode: .cushioned,
             presentationStallCount: presentationStallCount,
             worstPresentationGapMs: 120,
             frameIntervalP95Ms: 20,
@@ -111,7 +117,8 @@ struct ReceiverMediaFeedbackPolicyTests {
             reassemblerIncompleteFrameTimeouts: 0,
             reassemblerMissingFragmentTimeouts: 0,
             decoderOutputPixelFormat: "420v",
-            usingHardwareDecoder: true
+            usingHardwareDecoder: true,
+            videoIngressMetrics: nil
         )
     }
 }
