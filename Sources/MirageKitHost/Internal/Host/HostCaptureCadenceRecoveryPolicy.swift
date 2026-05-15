@@ -32,8 +32,8 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         var virtualDisplayReassertsBeforeRecreate: Int = 2
         var actionCooldownSeconds: CFAbsoluteTime = 8.0
         var captureFPSFloorRatio: Double = 0.90
-        var captureGapP99MinimumMs: Double = 35.0
-        var captureGapP99FrameMultiplier: Double = 2.0
+        var captureGapP99MinimumMs: Double = 30.0
+        var captureGapP99FrameMultiplier: Double = 1.8
         var captureGapWorstMinimumMs: Double = 70.0
         var captureGapWorstFrameMultiplier: Double = 4.0
         var displayTimeDriftCountThreshold: UInt64 = 2
@@ -177,18 +177,9 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         _ action: Action,
         receiverHasPresentedFrame: Bool
     ) -> Bool {
-        guard receiverHasPresentedFrame else { return true }
-        switch action {
-        case .none,
-             .restartCapture:
-            return true
-        case .restartVirtualDisplayCadenceDriver,
-             .reassertVirtualDisplayMode,
-             .recreateVirtualDisplay:
-            lastSuppressedAction = action
-            lastSuppressionReason = .receiverAlreadyPresented
-            return false
-        }
+        _ = action
+        _ = receiverHasPresentedFrame
+        return true
     }
 
     private static func captureCadenceIsBad(

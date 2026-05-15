@@ -129,9 +129,18 @@ extension StreamController {
                 startFreezeMonitorIfNeeded()
                 let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
                 let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
-                let clearedRenderFrames = pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs
-                    ? MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
-                    : 0
+                guard pendingFrameCount > 0,
+                      pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs else {
+                    discardQueuedFramesForRecovery()
+                    MirageLogger.client(
+                        "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
+                            "reassembler is awaiting keyframe after presentation progress, " +
+                            "waiting for freeze recovery or natural keyframe " +
+                            "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms)"
+                    )
+                    return
+                }
+                let clearedRenderFrames = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
                 discardQueuedFramesForRecovery()
                 MirageLogger.client(
                     "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +

@@ -45,8 +45,8 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
     }
 
-    @Test("Smoothest takes pending frames in decode order")
-    func smoothestTakesPendingFramesInDecodeOrder() {
+    @Test("Smoothest takes retained pending frames in decode order")
+    func smoothestTakesRetainedPendingFramesInDecodeOrder() {
         let streamID: StreamID = 302
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -64,9 +64,9 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 1)
-        #expect(secondFrame?.sequence == 2)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(firstFrame?.sequence == 3)
+        #expect(secondFrame?.sequence == 4)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
     @Test("Smoothest queue overflow is tracked separately from overwritten frames")
@@ -87,12 +87,12 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 8)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 9)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 2)
+        #expect(telemetry.smoothestQueueDrops == 8)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 
@@ -148,9 +148,9 @@ struct RenderFrameQueueSPSCTests {
         #expect(telemetry.presentedFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
-        #expect(telemetry.pendingFrameCount == 3)
+        #expect(telemetry.pendingFrameCount == 2)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 0)
+        #expect(telemetry.smoothestQueueDrops == 1)
         #expect(telemetry.displayLayerNotReadyCount == 1)
 
         let secondSnapshot = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)

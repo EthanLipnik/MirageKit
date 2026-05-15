@@ -54,7 +54,19 @@ extension MirageHostService {
             MirageLogger
                 .host(
                     "Client requested refresh rate override for stream \(request.streamID): \(request.maxRefreshRate)Hz"
-                )
+            )
+            let adaptiveFloorFPS = request.maxRefreshRate >= 90 ? 60 : request.maxRefreshRate
+            let latencyMode = if let context = streamsByID[request.streamID] {
+                context.latencyMode
+            } else {
+                MirageStreamLatencyMode.lowestLatency
+            }
+            MirageLogger.host(
+                "event=cadence_contract phase=host_refresh_request stream=\(request.streamID) " +
+                    "requested=\(request.maxRefreshRate) source=\(request.maxRefreshRate) " +
+                    "display=\(request.maxRefreshRate) adaptiveFloor=\(adaptiveFloorFPS) " +
+                    "latency=\(latencyMode.rawValue) force=\(request.forceDisplayRefresh)"
+            )
             await handleStreamRefreshRateChange(
                 streamID: request.streamID,
                 maxRefreshRate: request.maxRefreshRate,

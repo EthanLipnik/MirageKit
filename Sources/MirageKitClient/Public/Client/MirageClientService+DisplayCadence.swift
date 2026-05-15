@@ -106,7 +106,15 @@ extension MirageClientService {
             maxRefreshRate: clamped,
             forceDisplayRefresh: forceDisplayRefresh
         )
+        let adaptiveFloorFPS = clamped >= 90 ? 60 : clamped
+        let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
         MirageLogger.client("Sending refresh rate override for stream \(streamID): \(clamped)Hz")
+        MirageLogger.client(
+            "event=cadence_contract phase=refresh_change stream=\(streamID) requested=\(clamped) " +
+                "source=\(clamped) display=\(clamped) adaptiveFloor=\(adaptiveFloorFPS) " +
+                "path=\(controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue) " +
+                "latency=\(latencyMode.rawValue) force=\(forceDisplayRefresh)"
+        )
         try await sendControlMessage(.streamRefreshRateChange, content: request)
     }
 

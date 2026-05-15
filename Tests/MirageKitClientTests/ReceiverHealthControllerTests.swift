@@ -76,6 +76,25 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
+    @Test("Startup queue spikes suppress backoff without transport loss")
+    func startupQueueSpikesSuppressBackoffWithoutTransportLoss() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = startupQueueSpikeSnapshot()
+
+        for time in [0.0, 2.0, 4.0] {
+            let action = controller.advance(
+                snapshots: [snapshot],
+                currentBitrateBps: 20_000_000,
+                ceilingBps: 300_000_000,
+                now: time
+            )
+            #expect(action == .none)
+        }
+
+        #expect(controller.state == .stable)
+        #expect(controller.lastTransportPressureReason != nil)
+    }
+
     @Test("Healthy fast-start windows probe upward after two clean samples")
     func healthyFastStartWindowsProbeUpwardAfterTwoCleanSamples() {
         var controller = MirageReceiverHealthController()
@@ -375,6 +394,17 @@ struct ReceiverHealthControllerTests {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendStartDelayAverageMs = 4.5
         snapshot.hostSendCompletionAverageMs = 20
+        return snapshot
+    }
+
+    private func startupQueueSpikeSnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostSendQueueBytes = 2_500_000
+        snapshot.hostSendStartDelayAverageMs = 9
+        snapshot.hostSendCompletionAverageMs = 35
+        snapshot.hostPacketPacerAverageSleepMs = 2.5
+        snapshot.hostStalePacketDrops = 0
+        snapshot.hostSenderLocalDeadlineDrops = 0
         return snapshot
     }
 

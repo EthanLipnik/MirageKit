@@ -56,6 +56,13 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
             let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let adaptiveFloorFPS = targetFrameRate >= 90 ? 60 : targetFrameRate
+            MirageLogger.host(
+                "event=cadence_contract phase=host_accept requested=\(request.targetFrameRate) " +
+                    "accepted=\(targetFrameRate) source=\(targetFrameRate) display=\(targetFrameRate) " +
+                    "adaptiveFloor=\(adaptiveFloorFPS) path=\(pathKind?.rawValue ?? MirageNetworkPathKind.unknown.rawValue) " +
+                    "latency=\(latencyMode.rawValue)"
+            )
             let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
                 requested: request.mediaMaxPacketSize,
                 pathKind: pathKind

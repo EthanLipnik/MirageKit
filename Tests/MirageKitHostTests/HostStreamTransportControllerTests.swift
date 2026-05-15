@@ -44,7 +44,7 @@ struct HostStreamTransportControllerTests {
             now: 20.5
         )
 
-        #expect(pressure?.frameAdmissionTargetFPS == 60)
+        #expect(pressure?.frameAdmissionTargetFPS == 90)
         #expect(pressure?.frameAdmissionDeadline == 22.5)
         #expect(pressure?.frameAdmissionTrigger == .clientReassemblyBacklog)
 
@@ -64,6 +64,36 @@ struct HostStreamTransportControllerTests {
         #expect(cleared?.frameAdmissionTargetFPS == nil)
         #expect(cleared?.frameAdmissionDeadline == 0)
         #expect(cleared?.frameAdmissionTrigger == .clear)
+    }
+
+    @Test("Sustained 120 Hz receiver pressure escalates admission relief to sixty")
+    func sustainedOneTwentyReceiverPressureEscalatesAdmissionReliefToSixty() {
+        var controller = HostStreamTransportController()
+
+        _ = controller.update(
+            with: feedback(sequence: 1, targetFPS: 120, reassemblyBacklogFrames: 8),
+            currentFrameRate: 120,
+            now: 20
+        )
+        let firstRelief = controller.update(
+            with: feedback(sequence: 2, targetFPS: 120, reassemblyBacklogFrames: 8),
+            currentFrameRate: 120,
+            now: 20.5
+        )
+        _ = controller.update(
+            with: feedback(sequence: 3, targetFPS: 120, reassemblyBacklogFrames: 8),
+            currentFrameRate: 120,
+            now: 21
+        )
+        let persistentRelief = controller.update(
+            with: feedback(sequence: 4, targetFPS: 120, reassemblyBacklogFrames: 8),
+            currentFrameRate: 120,
+            now: 21.5
+        )
+
+        #expect(firstRelief?.frameAdmissionTargetFPS == 90)
+        #expect(persistentRelief?.frameAdmissionTargetFPS == 60)
+        #expect(persistentRelief?.frameAdmissionTrigger == .clientReassemblyBacklog)
     }
 
     @Test("Receiver jitter alone does not enable frame admission")

@@ -101,11 +101,14 @@ package struct MirageStreamGeometry: Sendable, Equatable {
             resolvedScale = min(clampedRequestedScale, maxScale)
         }
 
-        let encodedPixelSize = alignedEncodedSize(
-            CGSize(
+        let encodedPixelSize = aspectPreservingAlignedEncodedSize(
+            scaledSize: CGSize(
                 width: normalizedBasePixelSize.width * resolvedScale,
                 height: normalizedBasePixelSize.height * resolvedScale
-            )
+            ),
+            basePixelSize: normalizedBasePixelSize,
+            widthLimit: widthLimit,
+            heightLimit: heightLimit
         )
 
         return MirageStreamGeometry(
@@ -154,6 +157,43 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     private static func positiveEncoderLimit(_ value: Int?) -> CGFloat? {
         guard let value, value > 0 else { return nil }
         return CGFloat(value)
+    }
+
+    private static func aspectPreservingAlignedEncodedSize(
+        scaledSize: CGSize,
+        basePixelSize: CGSize,
+        widthLimit: CGFloat,
+        heightLimit: CGFloat
+    ) -> CGSize {
+        let alignedSize = alignedEncodedSize(scaledSize)
+        guard basePixelSize.width > 0,
+              basePixelSize.height > 0,
+              alignedSize.width > 0,
+              alignedSize.height > 0 else {
+            return alignedSize
+        }
+
+        let aspectRatio = basePixelSize.width / basePixelSize.height
+        var candidates = [alignedSize]
+
+        let widthFromHeight = CGFloat(alignedEncodedDimension(alignedSize.height * aspectRatio))
+        if widthFromHeight <= alignedSize.width, widthFromHeight <= widthLimit {
+            candidates.append(CGSize(width: widthFromHeight, height: alignedSize.height))
+        }
+
+        let heightFromWidth = CGFloat(alignedEncodedDimension(alignedSize.width / aspectRatio))
+        if heightFromWidth <= alignedSize.height, heightFromWidth <= heightLimit {
+            candidates.append(CGSize(width: alignedSize.width, height: heightFromWidth))
+        }
+
+        return candidates.min { lhs, rhs in
+            let lhsAspectError = abs((lhs.width / lhs.height) - aspectRatio)
+            let rhsAspectError = abs((rhs.width / rhs.height) - aspectRatio)
+            if abs(lhsAspectError - rhsAspectError) > 0.0001 {
+                return lhsAspectError < rhsAspectError
+            }
+            return lhs.width * lhs.height > rhs.width * rhs.height
+        } ?? alignedSize
     }
 
     private static func inferredDisplayScaleFactor(

@@ -42,9 +42,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 1
         case .smoothest:
-            if displayFPS >= 100 { return 12 }
-            if displayFPS >= 80 { return 10 }
-            return 8
+            return 2
         }
     }
 
@@ -53,7 +51,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return frameIntervalMs
         case .smoothest:
-            return 300
+            return max(frameIntervalMs * 2.0, 24.0)
         }
     }
 

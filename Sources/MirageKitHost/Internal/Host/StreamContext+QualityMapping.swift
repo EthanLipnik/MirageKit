@@ -22,8 +22,8 @@ extension StreamContext {
 
     private static let lowLatencyHighResolutionBoostStartPixels: Double = 4_096_000 // ~2560x1600
     private static let lowLatencyHighResolutionBoostFullPixels: Double = 10_500_000 // ~5K and above
-    private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.22
-    private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.56
+    private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.06
+    private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
     private static let mapperMinimumQuality: Float = 0.05
 
     /// Returns the runtime quality floor for the active bitrate policy.

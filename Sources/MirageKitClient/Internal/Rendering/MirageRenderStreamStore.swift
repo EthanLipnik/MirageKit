@@ -364,7 +364,6 @@ extension MirageRenderStreamStore {
     private func recordOverwrittenPendingFramesLocked(_ count: Int, state: MirageRenderStreamState) {
         guard count > 0 else { return }
         state.overwrittenPendingFramesSinceLastSnapshot &+= UInt64(count)
-        state.coalescedFramesSinceLastSnapshot &+= UInt64(count)
     }
 
     private func recordSmoothestQueueDropsLocked(_ count: Int, state: MirageRenderStreamState) {

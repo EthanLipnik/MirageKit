@@ -142,9 +142,18 @@ public extension MirageClientService {
         let enteredBitrateText = request.enteredBitrate.map(mirageFormattedMegabitRate) ?? "n/a"
         let requestedBitrateText = request.bitrate.map(mirageFormattedMegabitRate) ?? "auto"
         let ceilingText = request.bitrateAdaptationCeiling.map(mirageFormattedMegabitRate) ?? "none"
+        let requestedCadence = max(1, request.targetFrameRate)
+        let adaptiveFloorFPS = requestedCadence >= 90 ? 60 : requestedCadence
+        let pathKind = controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue
+        let requestLatencyMode = request.latencyMode ?? .lowestLatency
         MirageLogger.client(
             "Desktop bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText) " +
                 "scale=\(String(format: "%.3f", bitrateSemantics.geometryScaleFactor)) display=\(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height))"
+        )
+        MirageLogger.client(
+            "event=cadence_contract phase=desktop_start requested=\(requestedCadence) " +
+                "source=\(requestedCadence) display=\(requestedCadence) adaptiveFloor=\(adaptiveFloorFPS) " +
+                "path=\(pathKind) latency=\(requestLatencyMode.rawValue)"
         )
 
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()

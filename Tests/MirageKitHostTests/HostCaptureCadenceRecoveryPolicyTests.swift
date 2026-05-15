@@ -140,8 +140,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(action == .restartCapture)
     }
 
-    @Test("Established high refresh policy rate mismatch does not mutate topology")
-    func establishedHighRefreshPolicyRateMismatchDoesNotMutateTopology() {
+    @Test("Established high refresh policy rate mismatch reasserts virtual display mode")
+    func establishedHighRefreshPolicyRateMismatchReassertsVirtualDisplayMode() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         let action = policy.evaluate(
@@ -161,9 +161,9 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             )
         )
 
-        #expect(action == .none)
-        #expect(policy.lastSuppressedAction == .reassertVirtualDisplayMode)
-        #expect(policy.lastSuppressionReason == .receiverAlreadyPresented)
+        #expect(action == .reassertVirtualDisplayMode)
+        #expect(policy.lastSuppressedAction == nil)
+        #expect(policy.lastSuppressionReason == nil)
     }
 
     @Test("Pre-presentation high refresh policy rate mismatch may reassert virtual display mode")
@@ -213,6 +213,54 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         )
 
         #expect(action == .none)
+    }
+
+    @Test("Presented high refresh stream recovers repeated thirty millisecond capture gaps")
+    func presentedHighRefreshStreamRecoversRepeatedThirtyMillisecondCaptureGaps() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+        let cadence = StreamCaptureCadenceMetrics(
+            deliveredFrameGapWorstMs: 38,
+            deliveredFrameGapP99Ms: 31,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 120,
+            displayRefreshRate: 120,
+            virtualDisplayRefreshRate: 120
+        )
+
+        let first = policy.evaluate(
+            sample(now: 1, targetFrameRate: 120, captureFPS: 120, captureCadence: cadence)
+        )
+        let second = policy.evaluate(
+            sample(now: 3, targetFrameRate: 120, captureFPS: 120, captureCadence: cadence)
+        )
+
+        #expect(first == .none)
+        #expect(second == .restartCapture)
+    }
+
+    @Test("Presented sixty hertz stream recovers repeated thirty millisecond capture gaps")
+    func presentedSixtyHertzStreamRecoversRepeatedThirtyMillisecondCaptureGaps() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+        let cadence = StreamCaptureCadenceMetrics(
+            deliveredFrameGapWorstMs: 38,
+            deliveredFrameGapP99Ms: 31,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 60,
+            displayRefreshRate: 60,
+            virtualDisplayRefreshRate: 60
+        )
+
+        let first = policy.evaluate(
+            sample(now: 1, targetFrameRate: 60, captureFPS: 60, captureCadence: cadence)
+        )
+        let second = policy.evaluate(
+            sample(now: 3, targetFrameRate: 60, captureFPS: 60, captureCadence: cadence)
+        )
+
+        #expect(first == .none)
+        #expect(second == .restartCapture)
     }
 
     private func policy(

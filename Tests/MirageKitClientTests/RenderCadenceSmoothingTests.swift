@@ -34,19 +34,19 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 8)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 8)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 8)
+        #expect(telemetry.pendingFrameCount == 2)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.smoothestQueueDrops == 7)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
         #expect(telemetry.playoutDelayFrames == 0)
     }
 
-    @Test("Smoothest ProMotion render store keeps a deeper time-bounded queue")
-    func smoothestProMotionRenderStoreKeepsDeeperQueue() {
+    @Test("Smoothest ProMotion render store keeps a tight time-bounded queue")
+    func smoothestProMotionRenderStoreKeepsTightQueue() {
         let streamID: StreamID = 406
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -69,12 +69,12 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 12)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 12)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 12)
-        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.smoothestQueueDrops == 11)
         #expect(telemetry.playoutDelayFrames == 0)
     }
 
@@ -182,6 +182,7 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.overwrittenPendingFrames == 2)
         #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.lateFrameDrops == 0)
+        #expect(telemetry.coalescedBeforeSubmitCount == 2)
     }
 
     @Test("Repeated submission marks do not create unique forward progress")

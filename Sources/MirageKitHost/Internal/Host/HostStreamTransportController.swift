@@ -77,7 +77,11 @@ struct HostStreamTransportController: Equatable {
         if let pressureTrigger {
             consecutivePressureSamples += 1
             guard consecutivePressureSamples >= Self.pressureSamplesRequired else { return nil }
-            let reliefFPS = Self.reliefFrameRate(currentFrameRate: currentFrameRate)
+            let reliefFPS = Self.reliefFrameRate(
+                currentFrameRate: currentFrameRate,
+                activeTargetFPS: frameAdmissionTargetFPS,
+                pressureSampleCount: consecutivePressureSamples
+            )
             frameAdmissionTargetFPS = reliefFPS
             frameAdmissionDeadline = now + Self.frameAdmissionHoldSeconds
             return Decision(
@@ -103,10 +107,21 @@ struct HostStreamTransportController: Equatable {
         return nil
     }
 
-    private static func reliefFrameRate(currentFrameRate: Int) -> Int {
+    private static func reliefFrameRate(
+        currentFrameRate: Int,
+        activeTargetFPS: Int?,
+        pressureSampleCount: Int
+    ) -> Int {
         let current = max(1, currentFrameRate)
-        if current > 90 { return 60 }
-        if current > 60 { return 45 }
+        if current > 90 {
+            if let activeTargetFPS,
+               activeTargetFPS <= 90,
+               pressureSampleCount >= pressureSamplesRequired * 2 {
+                return 60
+            }
+            return 90
+        }
+        if current > 60 { return 60 }
         if current > 30 { return 30 }
         return max(15, current)
     }

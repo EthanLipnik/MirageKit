@@ -135,13 +135,15 @@ public struct MirageReceiverHealthController: Sendable {
             minimumHealthyFrameRate: minimumHealthyFrameRate
         )
         lastTransportPressureReason = sample.transportPressureReason
-        updateSampleCounters(sample: sample, now: now, allowsBackoff: allowsBackoff)
+        let effectiveAllowsBackoff = allowsBackoff &&
+            (!isFastStartActive(now: now) || sample.hasProvenTransportLoss)
+        updateSampleCounters(sample: sample, now: now, allowsBackoff: effectiveAllowsBackoff)
 
         if let promotionAction = advancePendingPromotion(
             sample: sample,
             currentBitrateBps: currentBitrateBps,
             now: now,
-            allowsBackoff: allowsBackoff
+            allowsBackoff: effectiveAllowsBackoff
         ) {
             return promotionAction
         }
@@ -151,7 +153,7 @@ public struct MirageReceiverHealthController: Sendable {
 
         switch state {
         case .stable:
-            if allowsBackoff, shouldBackOff(sample: sample, now: now) {
+            if effectiveAllowsBackoff, shouldBackOff(sample: sample, now: now) {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
@@ -167,7 +169,7 @@ public struct MirageReceiverHealthController: Sendable {
             )
 
         case .backingOff:
-            if allowsBackoff, shouldBackOff(sample: sample, now: now) {
+            if effectiveAllowsBackoff, shouldBackOff(sample: sample, now: now) {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
