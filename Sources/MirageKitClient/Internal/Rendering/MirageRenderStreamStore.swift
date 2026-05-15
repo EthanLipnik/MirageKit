@@ -16,8 +16,9 @@ import MirageKit
 ///
 /// Decoders enqueue frames here from stream-specific tasks while SwiftUI/AppKit
 /// render surfaces consume frames on display ticks. Lowest latency coalesces to
-/// the newest decoded frame; Smoothest preserves ordered frames behind the
-/// display clock until the local playout queue exceeds bounded age or depth.
+/// the newest decoded frame; Smoothest presents ordered frames without
+/// intentional playout delay, dropping stale backlog when age or depth bounds
+/// are exceeded.
 final class MirageRenderStreamStore: @unchecked Sendable {
     /// Rolling window for per-stream render throughput samples.
     static let sampleWindowSeconds: CFAbsoluteTime = 1.0
@@ -137,8 +138,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     /// Returns the next frame that should be submitted after the given generation-aware cursor.
     ///
     /// Lowest latency coalesces to the newest decoded frame. Smoothest returns
-    /// the next ordered frame unless the local queue has aged past a long-gap
-    /// recovery threshold.
+    /// the next ordered frame unless the local queue has aged past the stale
+    /// backlog recovery threshold.
     func frameForPresentation(for streamID: StreamID, after submittedCursor: MirageRenderCursor) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
         state.lock.lock()

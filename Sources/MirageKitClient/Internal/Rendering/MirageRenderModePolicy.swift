@@ -13,7 +13,7 @@ import MirageKit
 enum MirageRenderModePolicy {
     static let healthyDecodeRatio = 0.95
     static let stressedDecodeRatio = 0.80
-    static let maximumSmoothestPlayoutDelayFrames = 1
+    static let maximumSmoothestPlayoutDelayFrames = 0
 
     static func normalizedTargetFPS(_ fps: Int) -> Int {
         max(1, min(120, fps))
@@ -24,7 +24,7 @@ enum MirageRenderModePolicy {
         case .lowestLatency:
             0
         case .smoothest:
-            1
+            0
         }
     }
 }

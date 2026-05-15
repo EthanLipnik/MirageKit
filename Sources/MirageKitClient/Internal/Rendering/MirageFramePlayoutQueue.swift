@@ -85,14 +85,6 @@ struct MirageFramePlayoutQueue {
                 now: now
             )
             trimResult.smoothestQueueDrops += expired
-            if shouldHoldSmoothestFrameForPlayoutDelay(
-                frames: frames,
-                submittedCursor: submittedCursor,
-                policy: policy,
-                now: now
-            ) {
-                return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
-            }
         }
 
         let frame = frames.first
@@ -126,19 +118,6 @@ struct MirageFramePlayoutQueue {
             removed += 1
         }
         return removed
-    }
-
-    private static func shouldHoldSmoothestFrameForPlayoutDelay(
-        frames: [MirageRenderFrame],
-        submittedCursor: MirageRenderCursor,
-        policy: MiragePresentationLatencyPolicy,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        guard policy.latencyMode == .smoothest else { return false }
-        guard submittedCursor.hasSubmittedFrame else { return false }
-        guard frames.count <= policy.targetPlayoutDelayFrames else { return false }
-        guard let first = frames.first else { return false }
-        return comparableFrameAgeMs(first, now: now) <= policy.maximumQueueAgeMs
     }
 
     private static func comparableFrameAgeMs(_ frame: MirageRenderFrame, now: CFAbsoluteTime) -> Double {

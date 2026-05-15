@@ -33,7 +33,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             0
         case .smoothest:
-            1
+            0
         }
     }
 
@@ -53,8 +53,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return frameIntervalMs
         case .smoothest:
-            let baseAgeMs: Double = displayFPS >= 100 ? 125 : 150
-            return max(baseAgeMs, frameIntervalMs * Double(targetPlayoutDelayFrames + 4))
+            return 300
         }
     }
 

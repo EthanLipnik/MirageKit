@@ -249,7 +249,7 @@ extension VideoEncoder {
         // Real-time encoding.
         _ = setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
-        // Disable B-frames for predictable latency (smoothest relies on buffering only).
+        // Disable B-frames so both latency modes keep predictable frame dependencies.
         _ = setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
         // Configure encoder buffering policy from the active latency profile.

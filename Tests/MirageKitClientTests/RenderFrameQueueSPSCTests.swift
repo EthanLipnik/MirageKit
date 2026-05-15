@@ -76,7 +76,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
-        for index in 0 ..< 6 {
+        for index in 0 ..< 10 {
             let overwritten = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
@@ -87,7 +87,7 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 8)
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)

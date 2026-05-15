@@ -42,7 +42,7 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.overwrittenPendingFrames == 0)
         #expect(telemetry.smoothestQueueDrops == 1)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Smoothest ProMotion render store keeps a deeper time-bounded queue")
@@ -75,11 +75,11 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 12)
         #expect(telemetry.smoothestQueueDrops == 1)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
-    @Test("Smoothest holds one decoded frame as queue-level playout delay")
-    func smoothestHoldsOneDecodedFrameAsQueueLevelPlayoutDelay() {
+    @Test("Smoothest presents one pending frame without queue-level playout delay")
+    func smoothestPresentsOnePendingFrameWithoutQueueLevelPlayoutDelay() {
         let streamID: StreamID = 407
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -112,24 +112,48 @@ struct RenderCadenceSmoothingTests {
             presentationTime: CMTime(value: 1, timescale: 60),
             for: streamID
         )
-        let held = MirageRenderStreamStore.shared.frameForPresentation(
-            for: streamID,
-            after: first?.cursor ?? .zero
-        )
-        #expect(held?.sequence == nil)
-
-        _ = MirageRenderStreamStore.shared.enqueue(
-            pixelBuffer: makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent(),
-            presentationTime: CMTime(value: 2, timescale: 60),
-            for: streamID
-        )
         let next = MirageRenderStreamStore.shared.frameForPresentation(
             for: streamID,
             after: first?.cursor ?? .zero
         )
         #expect(next?.sequence == 2)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.playoutDelayFrames == 0)
+    }
+
+    @Test("Smoothest drops stale backlog before presenting a fresh frame")
+    func smoothestDropsStaleBacklogBeforePresentingFreshFrame() {
+        let streamID: StreamID = 408
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .smoothest
+            )
+        )
+
+        let now = CFAbsoluteTimeGetCurrent()
+        for index in 0 ..< 3 {
+            let age: CFAbsoluteTime = index < 2 ? 0.350 : 0.050
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now - age,
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                for: streamID
+            )
+        }
+
+        let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero)
+        #expect(frame?.sequence == 3)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.smoothestQueueDrops == 2)
+        #expect(telemetry.pendingFrameCount == 1)
     }
 
     @Test("Lowest latency display tick takes the newest decoded frame")

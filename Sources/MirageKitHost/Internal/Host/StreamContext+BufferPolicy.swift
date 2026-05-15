@@ -84,7 +84,7 @@ extension StreamContext {
         switch latencyMode {
         case .smoothest:
             if frameRate >= 120 { return 12 }
-            if frameRate >= 60 { return 5 }
+            if frameRate >= 60 { return 3 }
             return 3
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -104,7 +104,7 @@ extension StreamContext {
         switch latencyMode {
         case .smoothest:
             if frameRate >= 120 { return 8 }
-            if frameRate >= 60 { return 4 }
+            if frameRate >= 60 { return 3 }
             return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -123,7 +123,7 @@ extension StreamContext {
         switch latencyMode {
         case .smoothest:
             if frameRate >= 120 { return 6 }
-            if frameRate >= 60 { return 3 }
+            if frameRate >= 60 { return 2 }
             return 1
         case .lowestLatency:
             return 1

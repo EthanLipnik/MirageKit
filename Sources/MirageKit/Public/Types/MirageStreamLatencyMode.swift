@@ -26,7 +26,7 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
     public var detailDescription: String {
         switch self {
         case .smoothest:
-            "Targets 60Hz continuously, prioritizing visual cadence over interaction latency with deeper buffering and frame hold/repeat when needed."
+            "Targets steady visual cadence by presenting frames in order and dropping stale backlog when needed."
         case .lowestLatency:
             "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
         }
