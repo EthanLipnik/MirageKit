@@ -296,7 +296,6 @@ public class MirageSampleBufferView: UIView {
     }
 
     private static func minimumPresentationDisplayLinkFPS(for targetFPS: Int) -> Int {
-        if targetFPS >= 90 { return 60 }
         return targetFPS
     }
 }

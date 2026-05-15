@@ -316,12 +316,14 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             return nil
         }
 
-        CMSetAttachment(
-            sampleBuffer,
-            key: kCMSampleAttachmentKey_DisplayImmediately,
-            value: kCFBooleanTrue,
-            attachmentMode: kCMAttachmentMode_ShouldNotPropagate
-        )
+        if timing.displaysImmediately {
+            CMSetAttachment(
+                sampleBuffer,
+                key: kCMSampleAttachmentKey_DisplayImmediately,
+                value: kCFBooleanTrue,
+                attachmentMode: kCMAttachmentMode_ShouldNotPropagate
+            )
+        }
 
         return PreparedSampleBuffer(
             sampleBuffer: sampleBuffer,

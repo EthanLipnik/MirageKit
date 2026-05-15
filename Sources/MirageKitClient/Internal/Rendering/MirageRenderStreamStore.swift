@@ -16,9 +16,9 @@ import MirageKit
 ///
 /// Decoders enqueue frames here from stream-specific tasks while SwiftUI/AppKit
 /// render surfaces consume frames on display ticks. Lowest latency coalesces to
-/// the newest decoded frame; Smoothest presents ordered frames without
-/// intentional playout delay, dropping stale backlog when age or depth bounds
-/// are exceeded.
+/// the newest decoded frame; Smoothest presents ordered frames with a small
+/// timed playout buffer, dropping stale backlog when age or depth bounds are
+/// exceeded.
 final class MirageRenderStreamStore: @unchecked Sendable {
     /// Rolling window for per-stream render throughput samples.
     static let sampleWindowSeconds: CFAbsoluteTime = 1.0
@@ -233,7 +233,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         let timing = MirageRenderPresentationTiming(
             targetFPS: state.sourceTargetFPS,
-            playoutDelayFrames: state.playoutDelayFrames
+            playoutDelayFrames: state.playoutDelayFrames,
+            latencyMode: state.latencyMode
         )
         state.lock.unlock()
         return timing

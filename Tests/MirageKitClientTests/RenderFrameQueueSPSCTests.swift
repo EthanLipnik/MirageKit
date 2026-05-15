@@ -64,8 +64,12 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 3)
-        #expect(secondFrame?.sequence == 4)
+        let thirdFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        let fourthFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        #expect(firstFrame?.sequence == 1)
+        #expect(secondFrame?.sequence == 2)
+        #expect(thirdFrame?.sequence == 3)
+        #expect(fourthFrame?.sequence == 4)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
@@ -87,12 +91,12 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 9)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 7)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 8)
+        #expect(telemetry.smoothestQueueDrops == 6)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 
@@ -148,9 +152,9 @@ struct RenderFrameQueueSPSCTests {
         #expect(telemetry.presentedFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
-        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.pendingFrameCount == 3)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.displayLayerNotReadyCount == 1)
 
         let secondSnapshot = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)

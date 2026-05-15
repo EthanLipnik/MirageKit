@@ -48,7 +48,7 @@ package struct MirageStreamCadenceTarget: Sendable, Equatable {
         case .lowestLatency:
             0
         case .smoothest:
-            0
+            1
         }
     }
 
