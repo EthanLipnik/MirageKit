@@ -57,7 +57,6 @@ public extension MirageHostService {
         await WindowSpaceManager.shared.restoreAllWindowsOwned(by: session.id)
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
-        streamRegistry.unregisterPointerCoalescingRoute(streamID: session.id)
         removeActiveStreamSession(streamID: session.id)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: session.id)

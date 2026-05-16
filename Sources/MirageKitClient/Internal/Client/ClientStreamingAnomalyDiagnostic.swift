@@ -55,7 +55,6 @@ struct ClientStreamingAnomalySample {
     let targetFrameRate: Int
     let sourceTargetFrameRate: Int
     let displayTargetFrameRate: Int
-    let videoIngressMetrics: ClientVideoIngressMetricsSnapshot?
     let hostMetrics: StreamMetricsMessage?
 
     init(
@@ -109,7 +108,6 @@ struct ClientStreamingAnomalySample {
         targetFrameRate: Int,
         sourceTargetFrameRate: Int? = nil,
         displayTargetFrameRate: Int? = nil,
-        videoIngressMetrics: ClientVideoIngressMetricsSnapshot? = nil,
         hostMetrics: StreamMetricsMessage?
     ) {
         self.streamID = streamID
@@ -159,7 +157,6 @@ struct ClientStreamingAnomalySample {
         self.targetFrameRate = targetFrameRate
         self.sourceTargetFrameRate = sourceTargetFrameRate ?? targetFrameRate
         self.displayTargetFrameRate = displayTargetFrameRate ?? targetFrameRate
-        self.videoIngressMetrics = videoIngressMetrics
         self.hostMetrics = hostMetrics
     }
 
@@ -294,12 +291,9 @@ func clientStreamingAnomalyDiagnostic(
     let captureAdmissionDropsText = sample.hostMetrics?.captureAdmissionDrops.map(String.init) ?? "--"
     let decoderFormat = sample.decoderOutputPixelFormat ?? "unknown"
     let hardwareDecoderText = sample.usingHardwareDecoder.map { $0 ? "true" : "false" } ?? "unknown"
-    let clientIngressClassification = clientIngressClassification(sample: sample)
-    let clientIngressTelemetryText = clientIngressTelemetryText(sample.videoIngressMetrics)
     let message =
         "Streaming anomaly (\(sample.trigger)): " +
         "stream=\(sample.streamID) classification=\(label) " +
-        "clientIngress=\(clientIngressClassification) " +
         "decoded=\(formattedFPS(sample.decodedFPS))fps received=\(formattedFPS(sample.receivedFPS))fps " +
         "receivedWorstGap=\(formattedMs(sample.receivedWorstGapMs))ms " +
         "receivedP95=\(formattedMs(sample.receivedFrameIntervalP95Ms))ms receivedP99=\(formattedMs(sample.receivedFrameIntervalP99Ms))ms " +
@@ -327,7 +321,6 @@ func clientStreamingAnomalyDiagnostic(
         "tier=\(sample.presentationTier.rawValue) sourceTarget=\(sample.sourceTargetFrameRate) " +
         "displayTarget=\(sample.displayTargetFrameRate) target=\(sample.targetFrameRate) " +
         "decoderFormat=\(decoderFormat) hardwareDecoder=\(hardwareDecoderText) " +
-        "\(clientIngressTelemetryText) " +
         "hostEncoded=\(hostEncodedText)fps hostCapture=\(hostCaptureText)fps " +
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
         "hostCaptureGapP99=\(hostCaptureGapP99Text)ms hostCaptureWorstGap=\(hostCaptureWorstGapText)ms " +
@@ -408,56 +401,6 @@ private func resolvedAnomalyBottleneckKind(
     }
 
     return .unknown
-}
-
-private func clientIngressClassification(sample: ClientStreamingAnomalySample) -> String {
-    guard let ingress = sample.videoIngressMetrics else { return "unavailable" }
-    let targetFPS = Double(max(1, sample.targetFrameRate))
-    let frameBudgetMs = 1000.0 / targetFPS
-    let burstGapMs = max(frameBudgetMs * 4.0, targetFPS >= 90 ? 32.0 : 50.0)
-    let workerStallMs = max(frameBudgetMs * 1.5, targetFPS >= 90 ? 16.0 : 24.0)
-
-    if ingress.rawPacketIngressPPS <= 0 {
-        return "no-raw-packets"
-    }
-    if ingress.overloadPacketDropCount > 0 {
-        return "ingress-overload-drop"
-    }
-    if ingress.loomStreamDeliveryIntervalMaxMs >= burstGapMs ||
-        ingress.incomingBatchIntervalP99Ms >= burstGapMs {
-        return "raw-loom-burst"
-    }
-    if ingress.queuedPacketCount > 0 ||
-        ingress.queueAgeMaxMs >= workerStallMs ||
-        ingress.processorWakeDelayMaxMs >= workerStallMs {
-        return "ingress-worker-stall"
-    }
-    if sample.receivedFrameIntervalP99Ms >= burstGapMs {
-        return "reassembler-gap"
-    }
-    if sample.receivedFPS > 0, sample.receivedFPS - sample.decodedFPS >= max(5.0, targetFPS * 0.10) {
-        return "decode-gap"
-    }
-    if sample.smoothestQueueDrops > 0 || sample.lateFrameDrops > 0 || sample.coalescedBeforeSubmitCount > 0 {
-        return "render-policy-drop"
-    }
-    return "healthy"
-}
-
-private func clientIngressTelemetryText(_ metrics: ClientVideoIngressMetricsSnapshot?) -> String {
-    guard let metrics else { return "ingress=unavailable" }
-    return "ingressLoom=\(formattedFPS(metrics.loomStreamDeliveryPPS))pps " +
-        "ingressLoomGapMax=\(formattedMs(metrics.loomStreamDeliveryIntervalMaxMs))ms " +
-        "rawPacketIngress=\(formattedFPS(metrics.rawPacketIngressPPS))pps " +
-        "batch=\(formattedFPS(metrics.incomingBatchRate))/s " +
-        "batchP99=\(formattedMs(metrics.incomingBatchIntervalP99Ms))ms " +
-        "batchMax=\(formattedMs(metrics.incomingBatchIntervalMaxMs))ms " +
-        "batchSizeMax=\(metrics.incomingBatchMaxSize) " +
-        "ingressQueuedPackets=\(metrics.queuedPacketCount) " +
-        "ingressQueueAge=\(formattedMs(metrics.queueAgeMaxMs))ms " +
-        "ingressStaleDrops=\(metrics.stalePacketDropCount) " +
-        "ingressOverloadDrops=\(metrics.overloadPacketDropCount) " +
-        "ingressWakeMax=\(formattedMs(metrics.processorWakeDelayMaxMs))ms"
 }
 
 private func anomalyLabel(

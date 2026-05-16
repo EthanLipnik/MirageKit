@@ -121,6 +121,28 @@ struct HostInputMessageSchedulerScrollTests {
         }
         #expect(deliveredKeyboardEvents.contains { $0.keyCode == keyCode })
     }
+
+    @Test("Queued mouse movement samples preserve order")
+    func queuedMouseMovementSamplesPreserveOrder() async throws {
+        let streamID: StreamID = 704
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-mouse-sequenced", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+
+        for timestamp in 0 ..< 5 {
+            scheduler.enqueue(try inputMessage(
+                .mouseMoved(makeMouseEvent(timestamp: TimeInterval(timestamp))),
+                streamID: streamID
+            ))
+        }
+
+        queue.activate()
+        try await waitForEvents(events, count: 5)
+
+        #expect(events.read { $0.map(\.timestamp) } == [0, 1, 2, 3, 4])
+    }
 }
 
 private func inputMessage(_ event: MirageInputEvent, streamID: StreamID) throws -> ControlMessage {

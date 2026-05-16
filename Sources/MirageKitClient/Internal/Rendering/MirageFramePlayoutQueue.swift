@@ -12,9 +12,6 @@ struct MirageFramePlayoutQueue {
     struct TrimResult: Equatable, Sendable {
         var overwrittenPendingFrames: Int = 0
         var smoothestQueueDrops: Int = 0
-        var smoothestAgeDrops: Int = 0
-        var smoothestCatchUpDrops: Int = 0
-        var smoothestCapacityDrops: Int = 0
         var lateFrameDrops: Int = 0
         var coalescedFrames: Int = 0
 
@@ -53,9 +50,6 @@ struct MirageFramePlayoutQueue {
             return TrimResult(
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: removed,
-                smoothestAgeDrops: 0,
-                smoothestCatchUpDrops: 0,
-                smoothestCapacityDrops: removed,
                 lateFrameDrops: 0,
                 coalescedFrames: 0
             )
@@ -66,7 +60,6 @@ struct MirageFramePlayoutQueue {
         frames: inout [MirageRenderFrame],
         after submittedCursor: MirageRenderCursor,
         policy: MiragePresentationLatencyPolicy,
-        presentationDecision: MiragePresentationDecision,
         now: CFAbsoluteTime
     ) -> Selection {
         var trimResult = removeSubmittedFrames(
@@ -92,13 +85,6 @@ struct MirageFramePlayoutQueue {
                 now: now
             )
             trimResult.smoothestQueueDrops += expired
-            trimResult.smoothestAgeDrops += expired
-            let catchUpDrops = removeSmoothestFramesOverTargetDepth(
-                from: &frames,
-                targetDepth: presentationDecision.queueTargetDepth
-            )
-            trimResult.smoothestQueueDrops += catchUpDrops
-            trimResult.smoothestCatchUpDrops += catchUpDrops
         }
 
         let frame = frames.first
@@ -128,18 +114,6 @@ struct MirageFramePlayoutQueue {
         while frames.count > 1,
               let first = frames.first,
               comparableFrameAgeMs(first, now: now) > policy.maximumQueueAgeMs {
-            frames.removeFirst()
-            removed += 1
-        }
-        return removed
-    }
-
-    private static func removeSmoothestFramesOverTargetDepth(
-        from frames: inout [MirageRenderFrame],
-        targetDepth: Int
-    ) -> Int {
-        var removed = 0
-        while frames.count > max(1, targetDepth) {
             frames.removeFirst()
             removed += 1
         }

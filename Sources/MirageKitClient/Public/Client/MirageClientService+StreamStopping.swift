@@ -178,7 +178,6 @@ public extension MirageClientService {
         stopVideoStreamReceive(for: streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
-        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
         clearDecoderColorDepthState(for: streamID)
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         clearStartupAttempt(for: streamID)
@@ -256,7 +255,6 @@ public extension MirageClientService {
         cancelStartupRegistrationRetry(streamID: streamID)
         cancelRecoveryKeyframeRetry(for: streamID)
         clearDecoderColorDepthState(for: streamID)
-        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
         pendingDesktopRequestedColorDepth = nil
         pendingDesktopRequestedLatencyMode = nil
         activeJitterHoldMs = 0

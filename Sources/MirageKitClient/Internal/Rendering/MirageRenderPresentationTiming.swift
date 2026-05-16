@@ -9,23 +9,28 @@
 
 import CoreMedia
 import Foundation
+import MirageKit
 
 struct MirageRenderPresentationTiming: Equatable, Sendable {
     let targetFPS: Int
     let playoutDelayFrames: Int
-    let displaysImmediately: Bool
+    let latencyMode: MirageStreamLatencyMode
 
     init(
         targetFPS: Int,
         playoutDelayFrames: Int,
-        displaysImmediately: Bool
+        latencyMode: MirageStreamLatencyMode
     ) {
         self.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
         self.playoutDelayFrames = max(
             0,
             min(MirageRenderModePolicy.maximumSmoothestPlayoutDelayFrames, playoutDelayFrames)
         )
-        self.displaysImmediately = displaysImmediately
+        self.latencyMode = latencyMode
+    }
+
+    var displaysImmediately: Bool {
+        latencyMode == .lowestLatency
     }
 
     var frameDurationSeconds: CFTimeInterval {

@@ -50,7 +50,6 @@ extension MirageHostService {
         cancelPendingStartupAttempt(streamID: mediaStreamID)
         await coordinator.stop()
         streamsByID.removeValue(forKey: mediaStreamID)
-        streamRegistry.unregisterPointerCoalescingRoute(streamID: mediaStreamID)
         await deactivateAudioSourceIfNeeded(streamID: mediaStreamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: mediaStreamID) {
             closeRemovedMediaStream(videoStream, streamID: mediaStreamID, kind: "video")

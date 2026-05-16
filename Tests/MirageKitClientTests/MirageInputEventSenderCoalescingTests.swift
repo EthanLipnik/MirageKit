@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 3/4/26.
 //
-//  Coverage for temporary stall-window pointer coalescing on client input send path.
+//  Coverage for client input queue coalescing and interaction tracking.
 //
 
 #if os(macOS)
@@ -15,52 +15,6 @@ import Testing
 
 @Suite("Input Sender Coalescing")
 struct MirageInputEventSenderCoalescingTests {
-    @Test("Move and drag events are coalesced only while temporary window is active")
-    func moveAndDragEventsCoalesceOnlyWithinTemporaryWindow() {
-        let sender = MirageInputEventSender()
-        let streamID: StreamID = 901
-        let moveEvent = MirageInputEvent.mouseMoved(makeMouseEvent())
-
-        sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 100)
-
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.004))
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 100.020))
-
-        // Window expires after 1.2s.
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(moveEvent, streamID: streamID, now: 101.250))
-    }
-
-    @Test("Non-pointer events bypass temporary coalescing")
-    func nonPointerEventsBypassTemporaryCoalescing() {
-        let sender = MirageInputEventSender()
-        let streamID: StreamID = 902
-        let keyEvent = MirageInputEvent.scrollWheel(
-            MirageScrollEvent(deltaX: 0, deltaY: 1, location: CGPoint(x: 0.5, y: 0.5))
-        )
-
-        sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 200)
-
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(keyEvent, streamID: streamID, now: 200.001))
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(keyEvent, streamID: streamID, now: 200.004))
-    }
-
-    @Test("Temporary coalescing is scoped per stream")
-    func temporaryCoalescingIsPerStream() {
-        let sender = MirageInputEventSender()
-        let throttledStreamID: StreamID = 903
-        let bypassedStreamID: StreamID = 904
-        let dragEvent = MirageInputEvent.mouseDragged(makeMouseEvent())
-
-        sender.activateTemporaryPointerCoalescing(for: throttledStreamID, duration: 1.2, now: 300)
-
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: throttledStreamID, now: 300.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: throttledStreamID, now: 300.005))
-
-        // No coalescing window was opened for bypassedStreamID.
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(dragEvent, streamID: bypassedStreamID, now: 300.005))
-    }
-
     @Test("Input sender tracks probe-gating interaction")
     func inputSenderTracksProbeGatingInteraction() {
         let sender = MirageInputEventSender()
@@ -83,22 +37,8 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(!sender.hasRecentInteraction(within: 3, now: 501))
     }
 
-    @Test("Temporary pointer coalescing drops hover but not Pencil contact batches")
-    func temporaryPointerCoalescingKeepsPencilContactBatches() {
-        let sender = MirageInputEventSender()
-        let streamID: StreamID = 906
-        let hoverEvent = MirageInputEvent.pointerSampleBatch(makePointerBatch(phase: .hover, isHovering: true))
-        let contactEvent = MirageInputEvent.pointerSampleBatch(makePointerBatch(phase: .moved, isHovering: false))
-
-        sender.activateTemporaryPointerCoalescing(for: streamID, duration: 1.2, now: 600)
-
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(hoverEvent, streamID: streamID, now: 600.000))
-        #expect(sender.shouldDropInputForTemporaryCoalescing(hoverEvent, streamID: streamID, now: 600.004))
-        #expect(!sender.shouldDropInputForTemporaryCoalescing(contactEvent, streamID: streamID, now: 600.005))
-    }
-
-    @Test("Slow best-effort sends replace hover while preserving Pencil contact order")
-    func slowBestEffortSendsReplaceHoverAndPreserveContactOrder() async throws {
+    @Test("Slow best-effort sends preserve hover and Pencil contact order")
+    func slowBestEffortSendsPreserveHoverAndContactOrder() async throws {
         let sender = MirageInputEventSender()
         let recorder = PointerBatchRecorder()
         let streamID: StreamID = 907
@@ -145,12 +85,43 @@ struct MirageInputEventSenderCoalescingTests {
         let batches = await recorder.snapshot()
         #expect(batches.first?.phase == .began)
         #expect(batches.last?.phase == .ended)
-        #expect(batches.filter { $0.phase == .hover }.count < 80)
+        #expect(batches.filter { $0.phase == .hover }.count == 80)
         #expect(batches.filter { $0.phase == .moved }.count == 6)
         let movedXValues = batches.filter { $0.phase == .moved }.compactMap { $0.samples.first?.location.x }
         #expect(movedXValues == [
             CGFloat(0), CGFloat(1), CGFloat(2), CGFloat(3), CGFloat(4), CGFloat(5),
         ])
+    }
+
+    @Test("Slow best-effort sends preserve mouse movement samples")
+    func slowBestEffortSendsPreserveMouseMovementSamples() async throws {
+        let sender = MirageInputEventSender()
+        let recorder = InputEventRecorder()
+        let streamID: StreamID = 911
+
+        sender.updateSendHandler { data, _ in
+            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+                Issue.record("Expected a serialized control message")
+                return
+            }
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            await recorder.append(inputMessage.event)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        for index in 0 ..< 5 {
+            sender.sendInputFireAndForget(
+                .mouseMoved(MirageMouseEvent(
+                    location: CGPoint(x: CGFloat(index) / 10, y: 0.5),
+                    timestamp: TimeInterval(index)
+                )),
+                streamID: streamID
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(await recorder.mouseTimestamps() == [0, 1, 2, 3, 4])
     }
 
     @Test("Native continuous scroll events merge by summing deltas")
@@ -325,6 +296,13 @@ private actor InputEventRecorder {
         events.compactMap { event in
             guard case let .scrollWheel(scrollEvent) = event else { return nil }
             return scrollEvent
+        }
+    }
+
+    func mouseTimestamps() -> [TimeInterval] {
+        events.compactMap { event in
+            guard case let .mouseMoved(mouseEvent) = event else { return nil }
+            return mouseEvent.timestamp
         }
     }
 }

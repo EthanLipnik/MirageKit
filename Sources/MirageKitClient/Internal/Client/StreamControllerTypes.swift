@@ -114,22 +114,13 @@ extension StreamController {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let smoothestQueueDrops: UInt64
-        let smoothestAgeDrops: UInt64
-        let smoothestCatchUpDrops: UInt64
-        let smoothestCapacityDrops: UInt64
         let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
-        let displayTickNoFrameCount: UInt64
-        let frameArrivedAfterNoFrameTickCount: UInt64
-        let frameArrivalFallbackSubmittedCount: UInt64
         let missedVSyncCount: UInt64
         let displayTickIntervalP95Ms: Double
         let displayTickIntervalP99Ms: Double
         let playoutDelayFrames: Int
-        let displaysImmediately: Bool
-        let queueTargetDepth: Int
-        let presentationMode: MiragePresentationDecisionMode
         let presentationStallCount: UInt64
         let worstPresentationGapMs: Double
         let frameIntervalP95Ms: Double
@@ -145,7 +136,6 @@ extension StreamController {
         let reassemblerMissingFragmentTimeouts: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
-        let videoIngressMetrics: ClientVideoIngressMetricsSnapshot?
     }
 
     nonisolated static func freezeRecoveryDecision(

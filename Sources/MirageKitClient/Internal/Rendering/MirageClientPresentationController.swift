@@ -23,14 +23,12 @@ struct MirageClientPresentationController {
         frames: inout [MirageRenderFrame],
         after submittedCursor: MirageRenderCursor,
         policy: MiragePresentationLatencyPolicy,
-        presentationDecision: MiragePresentationDecision,
         now: CFAbsoluteTime
     ) -> MirageFramePlayoutQueue.Selection {
         MirageFramePlayoutQueue.selectFrame(
             frames: &frames,
             after: submittedCursor,
             policy: policy,
-            presentationDecision: presentationDecision,
             now: now
         )
     }

@@ -136,7 +136,6 @@ extension MirageHostService {
         if let failedStreamID {
             cancelPendingStartupAttempt(streamID: failedStreamID)
             streamsByID.removeValue(forKey: failedStreamID)
-            streamRegistry.unregisterPointerCoalescingRoute(streamID: failedStreamID)
             streamStartupBaseTimes.removeValue(forKey: failedStreamID)
             streamStartupRegistrationLogged.remove(failedStreamID)
             transportSendErrorReported.remove(failedStreamID)
@@ -293,7 +292,6 @@ extension MirageHostService {
         desktopStreamClientContext = nil
         notifyActiveStreamActivityChanged()
         streamsByID.removeValue(forKey: streamID)
-        streamRegistry.unregisterPointerCoalescingRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
         transportSendErrorReported.remove(streamID)

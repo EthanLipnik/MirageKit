@@ -101,18 +101,6 @@ extension MirageHostService {
         route?.stop()
     }
 
-    /// Registers pointer coalescing state for a stream and forwards capture-stall diagnostics.
-    @MainActor
-    func registerStallWindowPointerRoute(streamID: StreamID, context: StreamContext) async {
-        streamRegistry.registerPointerCoalescingRoute(streamID: streamID)
-        await context.setCaptureStallStageHandler { [weak self] stage in
-            self?.streamRegistry.noteCaptureStallStage(
-                streamID: streamID,
-                stage: stage
-            )
-        }
-    }
-
 }
 
 #endif

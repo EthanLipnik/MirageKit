@@ -38,7 +38,6 @@ extension StreamController {
             MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         let frameMetrics = metricsTracker.snapshot(now: currentTime)
         let reassemblerMetrics = reassembler.snapshotMetrics
-        let videoIngressMetrics = videoIngressMetricsProvider?(streamID)
         let diagnostic = await clientStreamingAnomalyDiagnostic(
             sample: ClientStreamingAnomalySample(
                 streamID: streamID,
@@ -87,7 +86,6 @@ extension StreamController {
                 targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS),
                 sourceTargetFrameRate: max(1, streamCadenceTarget.sourceFPS),
                 displayTargetFrameRate: max(1, streamCadenceTarget.displayFPS),
-                videoIngressMetrics: videoIngressMetrics,
                 hostMetrics: latestHostMetricsMessage
             )
         )
@@ -146,7 +144,6 @@ extension StreamController {
 
         lastRenderCadenceMissLogTime = now
         let renderedFrameTelemetry = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
-        let videoIngressMetrics = videoIngressMetricsProvider?(streamID)
         let selectedFrameText = renderedFrameTelemetry.selectedFrameNumber.map(String.init) ?? "none"
         let renderedFrameText = renderedFrameTelemetry.renderedFrameNumber.map(String.init) ?? "none"
         MirageLogger.client(
@@ -158,40 +155,14 @@ extension StreamController {
                 "uniqueSubmitted=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps " +
                 "pending=\(renderTelemetry.pendingFrameCount) pendingAge=\(Int(renderTelemetry.pendingFrameAgeMs.rounded()))ms " +
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
-                "smoothestAgeDrops=\(renderTelemetry.smoothestAgeDrops) " +
-                "smoothestCatchUpDrops=\(renderTelemetry.smoothestCatchUpDrops) " +
-                "smoothestCapacityDrops=\(renderTelemetry.smoothestCapacityDrops) " +
                 "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +
-                "presentationMode=\(renderTelemetry.presentationMode.rawValue) " +
-                "playoutDelay=\(renderTelemetry.playoutDelayFrames) " +
-                "displayImmediate=\(renderTelemetry.displaysImmediately) " +
-                "queueTarget=\(renderTelemetry.queueTargetDepth) " +
                 "selectedFrame=\(selectedFrameText) renderedFrame=\(renderedFrameText) " +
                 "repeatedTicks=\(renderedFrameTelemetry.repeatedDisplayTicks) " +
                 "latencyDrops=\(renderedFrameTelemetry.droppedForLatency) " +
                 "layerBackpressure=\(renderTelemetry.displayLayerNotReadyCount) " +
                 "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms " +
-                "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms " +
-                Self.videoIngressTelemetryLogText(videoIngressMetrics)
+                "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms"
         )
-    }
-
-    nonisolated static func videoIngressTelemetryLogText(
-        _ metrics: ClientVideoIngressMetricsSnapshot?
-    ) -> String {
-        guard let metrics else { return "ingress=unavailable" }
-        return "ingressLoom=\(String(format: "%.1f", metrics.loomStreamDeliveryPPS))pps " +
-            "ingressLoomGapMax=\(Int(metrics.loomStreamDeliveryIntervalMaxMs.rounded()))ms " +
-            "rawPacketIngress=\(String(format: "%.1f", metrics.rawPacketIngressPPS))pps " +
-            "batch=\(String(format: "%.1f", metrics.incomingBatchRate))/s " +
-            "batchP99=\(Int(metrics.incomingBatchIntervalP99Ms.rounded()))ms " +
-            "batchMax=\(Int(metrics.incomingBatchIntervalMaxMs.rounded()))ms " +
-            "batchSizeMax=\(metrics.incomingBatchMaxSize) " +
-            "ingressQueuedPackets=\(metrics.queuedPacketCount) " +
-            "ingressQueueAge=\(Int(metrics.queueAgeMaxMs.rounded()))ms " +
-            "ingressStaleDrops=\(metrics.stalePacketDropCount) " +
-            "ingressOverloadDrops=\(metrics.overloadPacketDropCount) " +
-            "ingressWakeMax=\(Int(metrics.processorWakeDelayMaxMs.rounded()))ms"
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {

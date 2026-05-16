@@ -62,15 +62,6 @@ struct RenderTelemetrySnapshot {
     /// Smoothest-mode frames dropped by local playout queue bounds.
     let smoothestQueueDrops: UInt64
 
-    /// Smoothest frames expired because they were older than the playout age bound.
-    let smoothestAgeDrops: UInt64
-
-    /// Smoothest frames trimmed intentionally to return toward the active queue target.
-    let smoothestCatchUpDrops: UInt64
-
-    /// Smoothest frames dropped only because the burst absorption capacity was exceeded.
-    let smoothestCapacityDrops: UInt64
-
     /// Queued frames dropped because newer frames had already superseded them.
     let lateFrameDrops: UInt64
 
@@ -107,15 +98,6 @@ struct RenderTelemetrySnapshot {
 
     /// Current playout delay target in frames.
     let playoutDelayFrames: Int
-
-    /// Whether submitted sample buffers are marked for immediate display.
-    let displaysImmediately: Bool
-
-    /// Current target depth used by smoothest live-edge/cushion decisions.
-    let queueTargetDepth: Int
-
-    /// Current effective presentation mode.
-    let presentationMode: MiragePresentationDecisionMode
 
     /// Presentation gaps counted as stalls since the previous snapshot.
     let presentationStallCount: UInt64
@@ -171,10 +153,6 @@ final class MirageRenderStreamState {
     var displayTargetFPS: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var playoutDelayFrames: Int = 0
-    var displaysImmediately: Bool = true
-    var queueTargetDepth: Int = 1
-    var presentationMode: MiragePresentationDecisionMode = .lowestLatency
-    var smoothestPlayoutController = MirageSmoothestPlayoutController()
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
 
@@ -195,9 +173,6 @@ final class MirageRenderStreamState {
 
     var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
     var smoothestQueueDropsSinceLastSnapshot: UInt64 = 0
-    var smoothestAgeDropsSinceLastSnapshot: UInt64 = 0
-    var smoothestCatchUpDropsSinceLastSnapshot: UInt64 = 0
-    var smoothestCapacityDropsSinceLastSnapshot: UInt64 = 0
     var lateFrameDropsSinceLastSnapshot: UInt64 = 0
     var coalescedFramesSinceLastSnapshot: UInt64 = 0
     var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
@@ -228,11 +203,6 @@ final class MirageRenderStreamState {
         lastSubmittedMappedPresentationTime = .invalid
         lastAcceptedFrameTimeline = nil
         lastDisplayTickTime = 0
-        playoutDelayFrames = 0
-        displaysImmediately = true
-        queueTargetDepth = 1
-        presentationMode = .lowestLatency
-        smoothestPlayoutController.reset()
         decodeSamples.removeAll(keepingCapacity: false)
         decodeSampleStartIndex = 0
         displayTickSamples.removeAll(keepingCapacity: false)
@@ -249,9 +219,6 @@ final class MirageRenderStreamState {
         displayTickIntervalSampleStartIndex = 0
         overwrittenPendingFramesSinceLastSnapshot = 0
         smoothestQueueDropsSinceLastSnapshot = 0
-        smoothestAgeDropsSinceLastSnapshot = 0
-        smoothestCatchUpDropsSinceLastSnapshot = 0
-        smoothestCapacityDropsSinceLastSnapshot = 0
         lateFrameDropsSinceLastSnapshot = 0
         coalescedFramesSinceLastSnapshot = 0
         duplicateRemoteTimestampsSinceLastSnapshot = 0

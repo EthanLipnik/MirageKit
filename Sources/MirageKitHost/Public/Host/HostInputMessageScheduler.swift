@@ -33,6 +33,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     /// How aggressively a pending input message may be coalesced or dropped under backlog pressure.
     private enum Priority: Equatable {
         case protected
+        case pointerMove
         case contactMove
         case replaceable(ReplaceableKind)
 
@@ -44,16 +45,12 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
     /// Input event families where only the latest sample of a stream is needed.
     private enum ReplaceableKind: Hashable {
-        case mouseMoved
-        case mouseDragged
-        case rightMouseDragged
-        case otherMouseDragged
         case scrollWheel
-        case stylusHover
     }
 
     private static let maxPendingMessages = 256
     private static let maxPendingContactSamples = 4096
+    private static let maxMessagesPerDrain = 16
 
     private let inputQueue: DispatchQueue
     private let handler: @Sendable (ControlMessage) -> Void
@@ -91,30 +88,34 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
-    /// Schedules one pending message to drain on the input queue.
+    /// Schedules a bounded pending-message drain on the input queue.
     private func scheduleDrain() {
         inputQueue.async { [weak self] in
-            self?.drainOne()
+            self?.drainBatch()
         }
     }
 
-    /// Emits at most one queued message, then reschedules itself if backlog remains.
-    private func drainOne() {
-        lock.lock()
-        let pending: PendingMessage?
-        if pendingMessages.isEmpty {
-            drainScheduled = false
-            pending = nil
-        } else {
-            pending = pendingMessages.removeFirst()
-        }
-        let shouldDrop = pending.map(shouldDropStaleReplaceableInput) ?? false
-        lock.unlock()
+    /// Emits a bounded burst of queued messages, then reschedules itself if backlog remains.
+    private func drainBatch() {
+        var drainedMessages = 0
+        while drainedMessages < Self.maxMessagesPerDrain {
+            lock.lock()
+            let pending: PendingMessage?
+            if pendingMessages.isEmpty {
+                drainScheduled = false
+                pending = nil
+            } else {
+                pending = pendingMessages.removeFirst()
+            }
+            let shouldDrop = pending.map(shouldDropStaleReplaceableInput) ?? false
+            lock.unlock()
 
-        guard let pending else { return }
+            guard let pending else { return }
 
-        if !shouldDrop {
-            handler(pending.message)
+            if !shouldDrop {
+                handler(pending.message)
+            }
+            drainedMessages += 1
         }
 
         lock.lock()
@@ -129,7 +130,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
-    /// Adds `pending`, merging adjacent scroll packets and replacing superseded pointer packets.
+    /// Adds `pending`, merging adjacent scroll packets and preserving pointer movement order.
     private func append(_ pending: PendingMessage) {
         if let last = pendingMessages.last,
            last.streamID == pending.streamID,
@@ -165,6 +166,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     private func trimPendingMessages() {
         while pendingMessages.count > Self.maxPendingMessages {
             if removeFirstPendingMessage(where: { $0.priority.isReplaceable }) { continue }
+            if removeFirstPendingMessage(where: { $0.priority == .pointerMove }) { continue }
             if removeFirstPendingMessage(where: { $0.priority == .contactMove }) { continue }
             break
         }
@@ -220,18 +222,18 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
         switch inputMessage.event {
         case .mouseMoved:
-            return (inputMessage.streamID, .replaceable(.mouseMoved))
+            return (inputMessage.streamID, .pointerMove)
         case .mouseDragged:
-            return (inputMessage.streamID, .replaceable(.mouseDragged))
+            return (inputMessage.streamID, .pointerMove)
         case .rightMouseDragged:
-            return (inputMessage.streamID, .replaceable(.rightMouseDragged))
+            return (inputMessage.streamID, .pointerMove)
         case .otherMouseDragged:
-            return (inputMessage.streamID, .replaceable(.otherMouseDragged))
+            return (inputMessage.streamID, .pointerMove)
         case let .scrollWheel(event):
             return (inputMessage.streamID, event.isBoundaryScrollEvent ? .protected : .replaceable(.scrollWheel))
         case let .pointerSampleBatch(batch):
             if batch.phase == .hover {
-                return (inputMessage.streamID, .replaceable(.stylusHover))
+                return (inputMessage.streamID, .pointerMove)
             }
             if batch.phase == .moved {
                 return (inputMessage.streamID, .contactMove)

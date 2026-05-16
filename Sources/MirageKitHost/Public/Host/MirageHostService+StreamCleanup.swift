@@ -45,7 +45,6 @@ extension MirageHostService {
         stopWindowVisibleFrameMonitor(streamID: streamID)
         streamsByID.removeValue(forKey: streamID)
         transportSendErrorReported.remove(streamID)
-        streamRegistry.unregisterPointerCoalescingRoute(streamID: streamID)
         removeActiveStreamSession(streamID: streamID)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: streamID)

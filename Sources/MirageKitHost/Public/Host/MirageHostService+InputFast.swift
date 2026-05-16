@@ -89,12 +89,6 @@ extension MirageHostService {
                 }
             }
 
-            if inputTarget.window.id == 0,
-               Self.shouldThrottlePointerEventForStallWindow(inputTarget.event),
-               streamRegistry.shouldCoalesceDesktopPointerEvent(streamID: inputMessage.streamID) {
-                return
-            }
-
             if let handler = onInputEvent { handler(inputTarget.event, inputTarget.window, inputTarget.client) } else {
                 inputController.handleInputEvent(
                     inputTarget.event,
@@ -113,18 +107,5 @@ extension MirageHostService {
         }
     }
 
-    nonisolated static func shouldThrottlePointerEventForStallWindow(_ event: MirageInputEvent) -> Bool {
-        switch event {
-        case .mouseMoved,
-             .mouseDragged,
-             .rightMouseDragged,
-             .otherMouseDragged:
-            true
-        case let .pointerSampleBatch(batch):
-            batch.phase == .hover || batch.phase == .moved
-        default:
-            false
-        }
-    }
 }
 #endif

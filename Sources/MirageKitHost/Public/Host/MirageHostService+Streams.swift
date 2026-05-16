@@ -161,7 +161,6 @@ public extension MirageHostService {
         // This closes a startup race where concurrent starts could otherwise bind the same
         // resolved live window before either stream reached registration.
         streamsByID[streamID] = context
-        await registerStallWindowPointerRoute(streamID: streamID, context: context)
         registerActiveStreamSession(session)
         await syncAppListRequestDeferralForInteractiveWorkload()
         let startupSessionID = startupClientContext.sessionID

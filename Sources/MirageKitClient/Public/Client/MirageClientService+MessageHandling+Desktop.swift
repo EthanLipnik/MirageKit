@@ -308,7 +308,6 @@ extension MirageClientService {
             cancelRecoveryKeyframeRetry(for: streamID)
             pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
             clearDecoderColorDepthState(for: streamID)
-            inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopRequestedColorDepth = nil
             pendingDesktopRequestedLatencyMode = nil
             renderLatencyModeByStream.removeValue(forKey: streamID)

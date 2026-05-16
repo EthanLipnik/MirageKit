@@ -23,8 +23,6 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         let first = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
@@ -47,14 +45,12 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
     }
 
-    @Test("Cushioned smoothest drains retained FIFO backlog")
-    func cushionedSmoothestDrainsRetainedFIFOBacklog() {
+    @Test("Smoothest takes retained pending frames in decode order")
+    func smoothestTakesRetainedPendingFramesInDecodeOrder() {
         let streamID: StreamID = 302
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         for index in 0 ..< 4 {
             _ = MirageRenderStreamStore.shared.enqueue(
@@ -68,47 +64,13 @@ struct RenderFrameQueueSPSCTests {
 
         let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        let thirdFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        let fourthFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
         #expect(firstFrame?.sequence == 1)
         #expect(secondFrame?.sequence == 2)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 2)
-
-        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.playoutDelayFrames == 0)
-        #expect(telemetry.displaysImmediately)
-        #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .hardCushion)
-    }
-
-    @Test("Cushioned smoothest preserves FIFO after jitter")
-    func cushionedSmoothestPreservesFIFOAfterJitter() {
-        let streamID: StreamID = 311
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
-
-        for index in 0 ..< 4 {
-            _ = MirageRenderStreamStore.shared.enqueue(
-                pixelBuffer: makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: Double(index),
-                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
-                for: streamID
-            )
-        }
-
-        let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 1)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 3)
-
-        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.playoutDelayFrames == 0)
-        #expect(telemetry.displaysImmediately)
-        #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .hardCushion)
+        #expect(thirdFrame?.sequence == 3)
+        #expect(fourthFrame?.sequence == 4)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
     @Test("Smoothest queue overflow is tracked separately from overwritten frames")
@@ -117,8 +79,6 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
-        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         for index in 0 ..< 10 {
             let overwritten = MirageRenderStreamStore.shared.enqueue(
@@ -137,12 +97,7 @@ struct RenderFrameQueueSPSCTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
         #expect(telemetry.smoothestQueueDrops == 6)
-        #expect(telemetry.smoothestCapacityDrops == 6)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 0)
-        #expect(telemetry.displaysImmediately)
-        #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .hardCushion)
     }
 
     @Test("Submission snapshot does not regress on older sequence marks")

@@ -61,12 +61,11 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     typealias Snapshot = ClientVideoIngressMetricsSnapshot
 
     private struct IngressBatch {
-        let payloads: [Data]
+        var payloads: [Data]
         let enqueuedAt: CFAbsoluteTime
-        let containsRecoveryPacket: Bool
 
         var isDropCandidate: Bool {
-            !containsRecoveryPacket
+            !payloads.contains(where: ClientVideoPacketIngressProcessor.isRecoveryPacket)
         }
     }
 
@@ -94,17 +93,20 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
 
     private let maxQueuedBatches: Int
     private let maxQueuedPackets: Int
+    private let staleNonRecoveryPacketAge: CFTimeInterval
 
     init(
         streamID: StreamID,
         maxQueuedBatches: Int = 4096,
         maxQueuedPackets: Int = 4096,
+        staleNonRecoveryPacketAge: CFTimeInterval = 0.120,
         processPacket: @escaping @Sendable (Data, StreamID) -> Void
     ) {
         self.streamID = streamID
         self.processPacket = processPacket
         self.maxQueuedBatches = max(1, maxQueuedBatches)
         self.maxQueuedPackets = max(1, maxQueuedPackets)
+        self.staleNonRecoveryPacketAge = max(0.001, staleNonRecoveryPacketAge)
         let thread = Thread { [weak self] in
             self?.runWorker()
         }
@@ -138,10 +140,10 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
 
         queuedBatches.append(IngressBatch(
             payloads: payloads,
-            enqueuedAt: now,
-            containsRecoveryPacket: payloads.contains(where: Self.isRecoveryPacket)
+            enqueuedAt: now
         ))
         queuedPacketCount += payloads.count
+        trimStaleNonRecoveryPacketsLocked(now: now)
         trimQueueIfNeededLocked(now: now)
         updateQueueAgeLocked(now: now)
         condition.signal()
@@ -161,6 +163,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
 
     func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Snapshot {
         condition.lock()
+        trimStaleNonRecoveryPacketsLocked(now: now)
         let loomStreamDeliveryPPS = loomStreamDeliverySampler.snapshot(now: now)
         let loomDeliveryIntervals = loomStreamDeliveryIntervalSampler.snapshot(now: now)
         let rawPacketIngressPPS = rawPacketSampler.snapshot(now: now)
@@ -211,9 +214,13 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             while queuedBatchStartIndex >= queuedBatches.count, !isFinishing {
                 condition.wait()
             }
+            trimStaleNonRecoveryPacketsLocked(now: CFAbsoluteTimeGetCurrent())
             guard queuedBatchStartIndex < queuedBatches.count else {
-                condition.unlock()
-                return nil
+                if isFinishing {
+                    condition.unlock()
+                    return nil
+                }
+                continue
             }
 
             let batch = queuedBatches[queuedBatchStartIndex]
@@ -248,6 +255,39 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
             queuedPacketCount > maxQueuedPackets {
             if dropOldestDroppableBatchLocked() { continue }
             _ = dropBatchLocked(at: queuedBatchStartIndex)
+        }
+        updateQueueAgeLocked(now: now)
+    }
+
+    private func trimStaleNonRecoveryPacketsLocked(now: CFAbsoluteTime) {
+        guard queuedBatchStartIndex < queuedBatches.count else {
+            updateQueueAgeLocked(now: now)
+            return
+        }
+
+        let cutoff = now - staleNonRecoveryPacketAge
+        var index = queuedBatchStartIndex
+        var droppedCount = 0
+        while index < queuedBatches.count {
+            guard queuedBatches[index].enqueuedAt <= cutoff else {
+                index += 1
+                continue
+            }
+
+            let originalCount = queuedBatches[index].payloads.count
+            queuedBatches[index].payloads.removeAll { !Self.isRecoveryPacket($0) }
+            let removedCount = originalCount - queuedBatches[index].payloads.count
+            if queuedBatches[index].payloads.isEmpty {
+                queuedBatches.remove(at: index)
+            } else {
+                index += 1
+            }
+            droppedCount += removedCount
+        }
+
+        if droppedCount > 0 {
+            queuedPacketCount = max(0, queuedPacketCount - droppedCount)
+            stalePacketDropCount &+= UInt64(droppedCount)
         }
         updateQueueAgeLocked(now: now)
     }

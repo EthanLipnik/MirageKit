@@ -28,7 +28,6 @@ extension MirageRenderStreamStore {
             let targetFrameMs = 1000 / Double(max(1, state.displayTargetFPS))
             if intervalMs > targetFrameMs * 1.5 {
                 state.missedVSyncCountSinceLastSnapshot &+= 1
-                noteSmoothestPresentationJitterLocked(state: state, now: now)
             }
         }
         state.lastDisplayTickTime = now
@@ -238,9 +237,6 @@ extension MirageRenderStreamStore {
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: 0,
-                smoothestAgeDrops: 0,
-                smoothestCatchUpDrops: 0,
-                smoothestCapacityDrops: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
                 duplicateRemoteTimestampCount: 0,
@@ -257,9 +253,6 @@ extension MirageRenderStreamStore {
                 displayTickIntervalP95Ms: 0,
                 displayTickIntervalP99Ms: 0,
                 playoutDelayFrames: 0,
-                displaysImmediately: true,
-                queueTargetDepth: 1,
-                presentationMode: .lowestLatency,
                 presentationStallCount: 0,
                 worstPresentationGapMs: 0,
                 frameIntervalP95Ms: 0,
@@ -306,9 +299,6 @@ extension MirageRenderStreamStore {
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
-        let smoothestAgeDrops = state.smoothestAgeDropsSinceLastSnapshot
-        let smoothestCatchUpDrops = state.smoothestCatchUpDropsSinceLastSnapshot
-        let smoothestCapacityDrops = state.smoothestCapacityDropsSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
         let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
@@ -332,20 +322,9 @@ extension MirageRenderStreamStore {
         )
         let displayTickIntervalP95Ms = percentile(displayTickIntervalSamples, percentile: 0.95)
         let displayTickIntervalP99Ms = percentile(displayTickIntervalSamples, percentile: 0.99)
-        let presentationDecision = updatePresentationDecisionLocked(
-            state: state,
-            policy: presentationLatencyPolicyLocked(state: state),
-            now: now
-        )
-        let playoutDelayFrames = presentationDecision.playoutDelayFrames
-        let displaysImmediately = presentationDecision.displaysImmediately
-        let queueTargetDepth = presentationDecision.queueTargetDepth
-        let presentationMode = presentationDecision.mode
+        let playoutDelayFrames = state.playoutDelayFrames
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.smoothestQueueDropsSinceLastSnapshot = 0
-        state.smoothestAgeDropsSinceLastSnapshot = 0
-        state.smoothestCatchUpDropsSinceLastSnapshot = 0
-        state.smoothestCapacityDropsSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
         state.coalescedFramesSinceLastSnapshot = 0
         state.duplicateRemoteTimestampsSinceLastSnapshot = 0
@@ -378,9 +357,6 @@ extension MirageRenderStreamStore {
             pendingFrameAgeMs: pendingFrameAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             smoothestQueueDrops: smoothestQueueDrops,
-            smoothestAgeDrops: smoothestAgeDrops,
-            smoothestCatchUpDrops: smoothestCatchUpDrops,
-            smoothestCapacityDrops: smoothestCapacityDrops,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
             duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,
@@ -397,9 +373,6 @@ extension MirageRenderStreamStore {
             displayTickIntervalP95Ms: displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: displayTickIntervalP99Ms,
             playoutDelayFrames: playoutDelayFrames,
-            displaysImmediately: displaysImmediately,
-            queueTargetDepth: queueTargetDepth,
-            presentationMode: presentationMode,
             presentationStallCount: presentationStallCount,
             worstPresentationGapMs: worstPresentationGapMs,
             frameIntervalP95Ms: frameIntervalP95Ms,
@@ -410,19 +383,15 @@ extension MirageRenderStreamStore {
 
     func noteDisplayTickWithoutFrame(for streamID: StreamID) {
         let state = streamState(for: streamID)
-        let now = CFAbsoluteTimeGetCurrent()
         state.lock.lock()
         state.displayTickNoFrameCountSinceLastSnapshot &+= 1
-        noteSmoothestPresentationJitterLocked(state: state, now: now)
         state.lock.unlock()
     }
 
     func noteFrameArrivedAfterNoFrameTick(for streamID: StreamID, delayMs: Double) {
         let state = streamState(for: streamID)
-        let now = CFAbsoluteTimeGetCurrent()
         state.lock.lock()
         state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot &+= 1
-        noteSmoothestPresentationJitterLocked(state: state, now: now)
         state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot = max(
             state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot,
             delayMs
@@ -438,17 +407,10 @@ extension MirageRenderStreamStore {
         state.lock.unlock()
     }
 
-    func noteFrameArrivalFallbackSubmitted(
-        for streamID: StreamID,
-        indicatesPresentationJitter: Bool
-    ) {
+    func noteFrameArrivalFallbackSubmitted(for streamID: StreamID) {
         let state = streamState(for: streamID)
-        let now = CFAbsoluteTimeGetCurrent()
         state.lock.lock()
         state.frameArrivalFallbackSubmittedCountSinceLastSnapshot &+= 1
-        if indicatesPresentationJitter {
-            noteSmoothestPresentationJitterLocked(state: state, now: now)
-        }
         state.lock.unlock()
     }
 

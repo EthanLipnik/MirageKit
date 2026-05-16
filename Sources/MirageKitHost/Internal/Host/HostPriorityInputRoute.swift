@@ -23,11 +23,28 @@ struct HostPriorityInputMetricsSnapshot: Equatable, Sendable {
 /// the host input scheduler; control-channel envelopes use the same dedupe path
 /// as the priority lane.
 final class HostPriorityInputRoute: @unchecked Sendable {
+    private struct RealtimeInputKey: Hashable {
+        let streamID: StreamID
+        let kind: RealtimeInputKind
+    }
+
+    private enum RealtimeInputKind: Hashable {
+        case mouseMoved
+        case mouseDragged
+        case rightMouseDragged
+        case otherMouseDragged
+        case scrollWheel
+        case stylusHover
+    }
+
     private struct State {
         var endpoint: LoomPriorityInputEndpoint?
         var receiveTask: Task<Void, Never>?
         var seenProtectedEventIDs: Set<UInt64> = []
         var protectedEventIDOrder: [UInt64] = []
+        var seenRealtimeEventIDs: Set<UInt64> = []
+        var realtimeEventIDOrder: [UInt64] = []
+        var latestRealtimeInputTimestampByKey: [RealtimeInputKey: TimeInterval] = [:]
         var lastRealtimeAckAt: CFAbsoluteTime = 0
         var priorityReceiveCount: UInt64 = 0
         var realtimeAckCount: UInt64 = 0
@@ -39,11 +56,12 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     }
 
     private static let maxSeenProtectedEventIDs = 2048
+    private static let maxSeenRealtimeEventIDs = 2048
     private static let realtimeAckIntervalSeconds: CFAbsoluteTime = 0.100
 
     private let sessionID: UUID
     private let clientName: String
-    private let controlChannel: MirageControlChannel
+    private let controlChannel: MirageControlChannel?
     private let inputScheduler: HostInputMessageScheduler
     private let lock = NSLock()
     private var state = State()
@@ -60,11 +78,23 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         self.inputScheduler = inputScheduler
     }
 
+    init(
+        sessionID: UUID = UUID(),
+        clientName: String = "test",
+        inputScheduler: HostInputMessageScheduler
+    ) {
+        self.sessionID = sessionID
+        self.clientName = clientName
+        controlChannel = nil
+        self.inputScheduler = inputScheduler
+    }
+
     deinit {
         stop()
     }
 
     func startIfAvailable(clientContext: ClientContext) {
+        guard let controlChannel else { return }
         let pathSnapshot = clientContext.pathSnapshot
         let session = controlChannel.session
         Task.detached(priority: .high) { [weak self, session, pathSnapshot] in
@@ -100,6 +130,9 @@ final class HostPriorityInputRoute: @unchecked Sendable {
             state.endpoint = nil
             state.seenProtectedEventIDs.removeAll(keepingCapacity: false)
             state.protectedEventIDOrder.removeAll(keepingCapacity: false)
+            state.seenRealtimeEventIDs.removeAll(keepingCapacity: false)
+            state.realtimeEventIDOrder.removeAll(keepingCapacity: false)
+            state.latestRealtimeInputTimestampByKey.removeAll(keepingCapacity: false)
             return task
         }
         receiveTask?.cancel()
@@ -205,10 +238,15 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     }
 
     private func shouldAccept(_ envelope: MiragePriorityInputEnvelope) -> Bool {
-        guard envelope.deliveryClass == .protected else {
-            return true
+        switch envelope.deliveryClass {
+        case .realtime:
+            return shouldAcceptRealtime(envelope)
+        case .protected:
+            return shouldAcceptProtected(envelope)
         }
+    }
 
+    private func shouldAcceptProtected(_ envelope: MiragePriorityInputEnvelope) -> Bool {
         return withState { state in
             if state.seenProtectedEventIDs.contains(envelope.eventID) {
                 state.dedupeCount &+= 1
@@ -221,6 +259,64 @@ final class HostPriorityInputRoute: @unchecked Sendable {
                 state.seenProtectedEventIDs.remove(removed)
             }
             return true
+        }
+    }
+
+    private func shouldAcceptRealtime(_ envelope: MiragePriorityInputEnvelope) -> Bool {
+        let timestampIdentity = Self.realtimeTimestampIdentity(for: envelope)
+        return withState { state in
+            if state.seenRealtimeEventIDs.contains(envelope.eventID) {
+                state.dedupeCount &+= 1
+                return false
+            }
+            state.seenRealtimeEventIDs.insert(envelope.eventID)
+            state.realtimeEventIDOrder.append(envelope.eventID)
+            while state.realtimeEventIDOrder.count > Self.maxSeenRealtimeEventIDs {
+                let removed = state.realtimeEventIDOrder.removeFirst()
+                state.seenRealtimeEventIDs.remove(removed)
+            }
+
+            guard let timestampIdentity else { return true }
+            let previousTimestamp = state.latestRealtimeInputTimestampByKey[timestampIdentity.key]
+            if let previousTimestamp, timestampIdentity.timestamp < previousTimestamp {
+                state.dedupeCount &+= 1
+                return false
+            }
+            state.latestRealtimeInputTimestampByKey[timestampIdentity.key] = timestampIdentity.timestamp
+            return true
+        }
+    }
+
+    private static func realtimeTimestampIdentity(
+        for envelope: MiragePriorityInputEnvelope
+    ) -> (key: RealtimeInputKey, timestamp: TimeInterval)? {
+        guard envelope.kind == .input,
+              let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload),
+              let kind = realtimeInputKind(for: inputMessage.event) else {
+            return nil
+        }
+        return (
+            RealtimeInputKey(streamID: inputMessage.streamID, kind: kind),
+            inputMessage.event.timestamp
+        )
+    }
+
+    private static func realtimeInputKind(for event: MirageInputEvent) -> RealtimeInputKind? {
+        switch event {
+        case .mouseMoved:
+            .mouseMoved
+        case .mouseDragged:
+            .mouseDragged
+        case .rightMouseDragged:
+            .rightMouseDragged
+        case .otherMouseDragged:
+            .otherMouseDragged
+        case let .scrollWheel(event):
+            event.isBoundaryScrollEvent ? nil : .scrollWheel
+        case let .pointerSampleBatch(batch):
+            batch.phase == .hover ? .stylusHover : nil
+        default:
+            nil
         }
     }
 

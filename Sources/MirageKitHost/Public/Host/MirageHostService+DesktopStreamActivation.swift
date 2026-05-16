@@ -29,7 +29,6 @@ extension MirageHostService {
         desktopRequestedScaleFactor = activation.requestedScaleFactor
         streamsByID[streamID] = streamContext
         notifyActiveStreamActivityChanged()
-        await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
 
         var effectiveAudioConfiguration = await activateDesktopAudioIfPossible(

@@ -59,7 +59,6 @@ extension InputCapturingView {
         directDoubleTapDragGesture.delegate = self
         addGestureRecognizer(directDoubleTapDragGesture)
 
-        scrollPhysicsView?.directTouchPanGestureRecognizer.require(toFail: directDoubleTapDragGesture)
         directTapGesture.require(toFail: directLongPressGesture)
 
         directTwoFingerTapGesture = UITapGestureRecognizer(target: self, action: #selector(handleDirectTwoFingerTap(_:)))

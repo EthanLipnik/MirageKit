@@ -239,7 +239,6 @@ extension MirageClientService {
         stopVideoStreamReceive(for: streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
-        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
         clearDecoderColorDepthState(for: streamID)
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         clearStartupAttempt(for: streamID)

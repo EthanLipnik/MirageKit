@@ -80,13 +80,14 @@ struct ClientVideoPacketIngressProcessorTests {
         #expect(snapshot.queueAgeMaxMs >= 0)
     }
 
-    @Test("Processor does not age-drop delayed P-frame batches")
-    func processorDoesNotAgeDropDelayedPFrameBatches() async throws {
+    @Test("Processor trims stale non-recovery packets")
+    func processorTrimsStaleNonRecoveryPackets() async throws {
         let gate = PacketProcessingGate()
         let processor = ClientVideoPacketIngressProcessor(
             streamID: 7,
             maxQueuedBatches: 8,
-            maxQueuedPackets: 64
+            maxQueuedPackets: 64,
+            staleNonRecoveryPacketAge: 0.025
         ) { data, streamID in
             gate.record(data, streamID: streamID)
         }
@@ -101,18 +102,66 @@ struct ClientVideoPacketIngressProcessorTests {
 
         gate.block()
         processor.enqueue([blocker])
+        try #require(await gate.startedPayloads(containing: blocker, timeoutSeconds: 1.0).contains {
+            $0.data == blocker
+        })
         processor.enqueue([stalePFrame])
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(50))
         processor.enqueue([keyframe])
 
         let snapshot = processor.snapshot()
-        #expect(snapshot.stalePacketDropCount == 0)
+        #expect(snapshot.stalePacketDropCount == 1)
         #expect(snapshot.overloadPacketDropCount == 0)
 
         gate.unblock()
         let received = await gate.payloads(containing: keyframe, timeoutSeconds: 1.0)
         #expect(received.map(\.data).contains(keyframe))
-        #expect(received.map(\.data).contains(stalePFrame))
+        #expect(!received.map(\.data).contains(stalePFrame))
+    }
+
+    @Test("Processor preserves stale recovery packets while trimming stale P-frames")
+    func processorPreservesStaleRecoveryPacketsWhileTrimmingStalePFrames() async throws {
+        let gate = PacketProcessingGate()
+        let processor = ClientVideoPacketIngressProcessor(
+            streamID: 7,
+            maxQueuedBatches: 8,
+            maxQueuedPackets: 64,
+            staleNonRecoveryPacketAge: 0.025
+        ) { data, streamID in
+            gate.record(data, streamID: streamID)
+        }
+        defer {
+            gate.unblock()
+            processor.finish()
+        }
+
+        let blocker = Data([0])
+        let stalePFrame = makeVideoPacket(streamID: 7, frameNumber: 10, flags: [])
+        let keyframe = makeVideoPacket(streamID: 7, frameNumber: 11, flags: [.keyframe])
+        let parameterSet = makeVideoPacket(streamID: 7, frameNumber: 12, flags: [.parameterSet])
+        let discontinuity = makeVideoPacket(streamID: 7, frameNumber: 13, flags: [.discontinuity])
+        let priority = makeVideoPacket(streamID: 7, frameNumber: 14, flags: [.priority])
+        let recoveryPackets = [keyframe, parameterSet, discontinuity, priority]
+
+        gate.block()
+        processor.enqueue([blocker])
+        try #require(await gate.startedPayloads(containing: blocker, timeoutSeconds: 1.0).contains {
+            $0.data == blocker
+        })
+        processor.enqueue([stalePFrame] + recoveryPackets)
+        try await Task.sleep(for: .milliseconds(50))
+
+        let snapshot = processor.snapshot()
+        #expect(snapshot.stalePacketDropCount == 1)
+        #expect(snapshot.queuedPacketCount == recoveryPackets.count)
+
+        gate.unblock()
+        let received = await gate.payloads(target: recoveryPackets.count + 1, timeoutSeconds: 1.0) ?? []
+        let receivedPayloads = received.map(\.data)
+        #expect(!receivedPayloads.contains(stalePFrame))
+        for packet in recoveryPackets {
+            #expect(receivedPayloads.contains(packet))
+        }
     }
 
     @Test("Processor only hard-drops under explicit overload")
@@ -241,6 +290,7 @@ private struct ReceivedPacket: Sendable, Equatable {
 private final class PacketProcessingGate: @unchecked Sendable {
     private let lock = NSLock()
     private var isBlocked = false
+    private var started: [ReceivedPacket] = []
     private var received: [ReceivedPacket] = []
 
     func block() {
@@ -256,6 +306,10 @@ private final class PacketProcessingGate: @unchecked Sendable {
     }
 
     func record(_ data: Data, streamID: StreamID) {
+        lock.lock()
+        started.append(ReceivedPacket(data: data, streamID: streamID))
+        lock.unlock()
+
         while true {
             lock.lock()
             let blocked = isBlocked
@@ -299,9 +353,26 @@ private final class PacketProcessingGate: @unchecked Sendable {
         return snapshot()
     }
 
+    func startedPayloads(containing data: Data, timeoutSeconds: TimeInterval) async -> [ReceivedPacket] {
+        let deadline = CFAbsoluteTimeGetCurrent() + timeoutSeconds
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let snapshot = startedSnapshot()
+            if snapshot.contains(where: { $0.data == data }) { return snapshot }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return startedSnapshot()
+    }
+
     private func snapshot() -> [ReceivedPacket] {
         lock.lock()
         let snapshot = received
+        lock.unlock()
+        return snapshot
+    }
+
+    private func startedSnapshot() -> [ReceivedPacket] {
+        lock.lock()
+        let snapshot = started
         lock.unlock()
         return snapshot
     }

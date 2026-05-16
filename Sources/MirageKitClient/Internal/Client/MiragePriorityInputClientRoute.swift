@@ -8,9 +8,15 @@
 import Foundation
 import Loom
 import MirageKit
+import Network
 
 protocol MiragePriorityInputEndpointProtocol: AnyObject, Sendable {
     func sendRealtime(
+        _ payload: Data,
+        onComplete: @escaping @Sendable (Error?) -> Void
+    )
+
+    func sendRealtimeSequenced(
         _ payload: Data,
         onComplete: @escaping @Sendable (Error?) -> Void
     )
@@ -53,6 +59,11 @@ struct MiragePriorityInputClientMetricsSnapshot: Equatable, Sendable {
 
 /// Client-side priority input route with control-channel fallback.
 final class MiragePriorityInputClientRoute: @unchecked Sendable {
+    private enum RealtimeTransportMode {
+        case latest
+        case sequenced
+    }
+
     private struct PendingProtectedAck {
         let continuation: CheckedContinuation<Bool, Never>
         let sentAt: CFAbsoluteTime
@@ -84,12 +95,15 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         var protectedAckLatencySamplesMs: [Double] = []
         var protectedAckMaxMs: Double = 0
         var malformedAckCount: UInt64 = 0
+        var lastRouteStateLogAt: CFAbsoluteTime = 0
+        var lastLoggedRouteState: MiragePriorityInputClientRouteState?
         var closed = false
     }
 
     private static let priorityAckFreshnessSeconds: CFAbsoluteTime = 0.150
     private static let protectedFallbackDelay: Duration = .milliseconds(50)
-    private static let realtimeFallbackThrottle: Duration = .milliseconds(50)
+    private static let realtimeFallbackThrottle: Duration = .milliseconds(16)
+    private static let routeStateLogIntervalSeconds: CFAbsoluteTime = 1
     private static let maxProtectedAckLatencySamples = 128
 
     private let endpoint: MiragePriorityInputEndpointProtocol
@@ -146,7 +160,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
         switch deliveryClass {
         case .realtime:
-            try sendRealtime(envelope: envelope, deliveryMode: deliveryMode)
+            try sendRealtime(
+                envelope: envelope,
+                deliveryMode: deliveryMode,
+                transportMode: Self.realtimeTransportMode(for: event)
+            )
         case .protected:
             try await sendProtected(envelope: envelope)
         }
@@ -165,7 +183,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             sentAtUptime: ProcessInfo.processInfo.systemUptime,
             inputPayload: inputPayload
         )
-        try sendRealtime(envelope: envelope, deliveryMode: .droppableRealtime)
+        try sendRealtime(
+            envelope: envelope,
+            deliveryMode: .droppableRealtime,
+            transportMode: Self.realtimeTransportMode(for: event)
+        )
     }
 
     func snapshot(
@@ -197,16 +219,25 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private func sendRealtime(
         envelope: MiragePriorityInputEnvelope,
-        deliveryMode: MirageInputEventSender.DeliveryMode
+        deliveryMode: MirageInputEventSender.DeliveryMode,
+        transportMode: RealtimeTransportMode
     ) throws {
         let payload = try envelope.serialize()
         recordRealtimeSent()
-        endpoint.sendRealtime(payload) { [weak self] error in
+        let completion: @Sendable (Error?) -> Void = { [weak self] error in
             guard let self else { return }
-            if error != nil {
-                self.recordPrioritySendError()
+            if let error {
                 self.recordRealtimeCoalesced()
+                if !Self.isExpectedRealtimeQueueDrop(error) {
+                    self.recordPrioritySendError()
+                }
             }
+        }
+        switch transportMode {
+        case .latest:
+            endpoint.sendRealtime(payload, onComplete: completion)
+        case .sequenced:
+            endpoint.sendRealtimeSequenced(payload, onComplete: completion)
         }
 
         if shouldShadowRealtimeFallback() {
@@ -408,25 +439,50 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         state.lastPriorityAckAt > 0 && now - state.lastPriorityAckAt <= priorityAckFreshnessSeconds
     }
 
+    private static func isExpectedRealtimeQueueDrop(_ error: Error) -> Bool {
+        if let networkError = error as? NWError,
+           case .posix(.ECANCELED) = networkError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSPOSIXErrorDomain && nsError.code == 89
+    }
+
     private func notePriorityAck() {
-        withState { state in
-            let previousState = state.routeState
+        let shouldLog = withState { state in
             state.lastPriorityAckAt = ProcessInfo.processInfo.systemUptime
             state.routeState = .priority
-            if previousState != .priority {
-                MirageLogger.client("Priority input route recovered on input ack")
-            }
+            return shouldLogRouteStateLocked(&state, routeState: .priority)
+        }
+        if shouldLog {
+            MirageLogger.client("Priority input route recovered on input ack")
         }
     }
 
     private func markRouteState(_ routeState: MiragePriorityInputClientRouteState) {
-        withState { state in
-            let previousState = state.routeState
+        let shouldLog = withState { state in
             state.routeState = routeState
-            if previousState != routeState {
-                MirageLogger.client("Priority input route state=\(routeState.rawValue)")
-            }
+            return shouldLogRouteStateLocked(&state, routeState: routeState)
         }
+        if shouldLog {
+            MirageLogger.client("Priority input route state=\(routeState.rawValue)")
+        }
+    }
+
+    private func shouldLogRouteStateLocked(
+        _ state: inout State,
+        routeState: MiragePriorityInputClientRouteState,
+        now: CFAbsoluteTime = ProcessInfo.processInfo.systemUptime
+    ) -> Bool {
+        guard state.lastLoggedRouteState != routeState else { return false }
+        guard state.lastRouteStateLogAt == 0 ||
+            now - state.lastRouteStateLogAt >= Self.routeStateLogIntervalSeconds else {
+            return false
+        }
+        state.lastLoggedRouteState = routeState
+        state.lastRouteStateLogAt = now
+        return true
     }
 
     private func recordRealtimeSent() {
@@ -503,6 +559,20 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             .realtime
         case .reliable, .orderedBestEffort:
             .protected
+        }
+    }
+
+    private static func realtimeTransportMode(for event: MirageInputEvent) -> RealtimeTransportMode {
+        switch event {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            .sequenced
+        case let .pointerSampleBatch(batch) where batch.phase == .hover:
+            .sequenced
+        default:
+            .latest
         }
     }
 

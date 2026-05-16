@@ -29,14 +29,12 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     private var renderingSuspended = false
     private var displayClockActive = false
     private var displayClockFramePending = false
-    private var awaitingFrameAfterNoFrameTick = false
     private var lastDisplayTickWallTime: CFTimeInterval = 0
 
     private var scheduledPassPending = false
     private var scheduledPassGeneration: UInt64 = 0
     private var scheduledReferenceTime: CFTimeInterval?
     private var scheduledPassIsFrameArrivalFallback = false
-    private var scheduledPassFallbackIndicatesJitter = false
     private var runningPass = false
     private var pendingScheduledPass = false
     private var targetFPS: Int = 60
@@ -93,14 +91,11 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard displayClockActive != active else { return }
         displayClockActive = active
         displayClockFramePending = false
-        awaitingFrameAfterNoFrameTick = false
         lastDisplayTickWallTime = 0
         if active {
             scheduledPassPending = false
             scheduledPassGeneration &+= 1
             scheduledReferenceTime = nil
-            scheduledPassIsFrameArrivalFallback = false
-            scheduledPassFallbackIndicatesJitter = false
         }
     }
 
@@ -113,11 +108,9 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         scheduledPassGeneration &+= 1
         scheduledReferenceTime = nil
         scheduledPassIsFrameArrivalFallback = false
-        scheduledPassFallbackIndicatesJitter = false
         runningPass = false
         pendingScheduledPass = false
         displayClockFramePending = false
-        awaitingFrameAfterNoFrameTick = false
         lastDisplayTickWallTime = 0
     }
 
@@ -172,18 +165,10 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard !renderingSuspended else { return }
 
         if presentationTier == .activeLive {
-            let arrivedAfterNoFrameTick = awaitingFrameAfterNoFrameTick
+            let arrivedAfterNoFrameTick = displayClockFramePending
             displayClockFramePending = true
             if arrivedAfterNoFrameTick {
-                awaitingFrameAfterNoFrameTick = false
                 noteFrameArrivedAfterNoFrameTick(delayMs: max(0, referenceTimeProvider() - lastDisplayTickWallTime) * 1000)
-                noteFrameArrivalFallback()
-                schedulePass(
-                    referenceTime: referenceTime,
-                    isFrameArrivalFallback: true,
-                    fallbackIndicatesJitter: true
-                )
-                return
             }
             scheduleActiveLiveFallbackIfNeeded(referenceTime: referenceTime)
             return
@@ -217,25 +202,16 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             return
         }
         noteFrameArrivalFallback()
-        schedulePass(
-            referenceTime: referenceTime,
-            isFrameArrivalFallback: true,
-            fallbackIndicatesJitter: lastDisplayTickWallTime != 0
-        )
+        schedulePass(referenceTime: referenceTime, isFrameArrivalFallback: true)
     }
 
-    private func schedulePass(
-        referenceTime: CFTimeInterval,
-        isFrameArrivalFallback: Bool = false,
-        fallbackIndicatesJitter: Bool = false
-    ) {
+    private func schedulePass(referenceTime: CFTimeInterval, isFrameArrivalFallback: Bool = false) {
         if let scheduledReferenceTime {
             self.scheduledReferenceTime = max(scheduledReferenceTime, referenceTime)
         } else {
             scheduledReferenceTime = referenceTime
         }
         scheduledPassIsFrameArrivalFallback = scheduledPassIsFrameArrivalFallback || isFrameArrivalFallback
-        scheduledPassFallbackIndicatesJitter = scheduledPassFallbackIndicatesJitter || fallbackIndicatesJitter
 
         guard !scheduledPassPending else { return }
         scheduledPassPending = true
@@ -246,13 +222,11 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             scheduledPassPending = false
             let referenceTime = scheduledReferenceTime ?? referenceTimeProvider()
             let isFrameArrivalFallback = scheduledPassIsFrameArrivalFallback
-            let fallbackIndicatesJitter = scheduledPassFallbackIndicatesJitter
             scheduledReferenceTime = nil
             scheduledPassIsFrameArrivalFallback = false
-            scheduledPassFallbackIndicatesJitter = false
             let result = performPass(referenceTime: referenceTime)
             if isFrameArrivalFallback, result == .submitted {
-                noteFrameArrivalFallbackSubmitted(indicatesPresentationJitter: fallbackIndicatesJitter)
+                noteFrameArrivalFallbackSubmitted()
             }
         }
     }
@@ -279,12 +253,10 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         runningPass = false
         if submissionResult == .submitted {
             displayClockFramePending = false
-            awaitingFrameAfterNoFrameTick = false
         } else if isDisplayTick, submissionResult == .noPendingFrame {
             MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
             MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
             displayClockFramePending = true
-            awaitingFrameAfterNoFrameTick = true
         }
         if submissionResult == .displayLayerNotReady {
             onDisplayLayerNotReady()
@@ -302,12 +274,9 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         MirageRenderStreamStore.shared.noteFrameArrivalFallback(for: streamID)
     }
 
-    private func noteFrameArrivalFallbackSubmitted(indicatesPresentationJitter: Bool) {
+    private func noteFrameArrivalFallbackSubmitted() {
         guard let streamID else { return }
-        MirageRenderStreamStore.shared.noteFrameArrivalFallbackSubmitted(
-            for: streamID,
-            indicatesPresentationJitter: indicatesPresentationJitter
-        )
+        MirageRenderStreamStore.shared.noteFrameArrivalFallbackSubmitted(for: streamID)
     }
 
     private func noteFrameArrivedAfterNoFrameTick(delayMs: Double) {
