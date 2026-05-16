@@ -56,6 +56,7 @@ struct ClientStreamingAnomalySample {
     let sourceTargetFrameRate: Int
     let displayTargetFrameRate: Int
     let hostMetrics: StreamMetricsMessage?
+    let videoIngressMetrics: ClientVideoIngressMetricsSnapshot?
 
     init(
         streamID: StreamID,
@@ -108,7 +109,8 @@ struct ClientStreamingAnomalySample {
         targetFrameRate: Int,
         sourceTargetFrameRate: Int? = nil,
         displayTargetFrameRate: Int? = nil,
-        hostMetrics: StreamMetricsMessage?
+        hostMetrics: StreamMetricsMessage?,
+        videoIngressMetrics: ClientVideoIngressMetricsSnapshot? = nil
     ) {
         self.streamID = streamID
         self.trigger = trigger
@@ -158,6 +160,7 @@ struct ClientStreamingAnomalySample {
         self.sourceTargetFrameRate = sourceTargetFrameRate ?? targetFrameRate
         self.displayTargetFrameRate = displayTargetFrameRate ?? targetFrameRate
         self.hostMetrics = hostMetrics
+        self.videoIngressMetrics = videoIngressMetrics
     }
 
     fileprivate var metricsSnapshot: MirageClientMetricsSnapshot {
@@ -289,6 +292,7 @@ func clientStreamingAnomalyDiagnostic(
     let hostCaptureDriftText = (sample.hostMetrics?.captureCadence?.displayTimeDriftCount).map(String.init) ?? "--"
     let virtualTimingText = (sample.hostMetrics?.captureCadence?.virtualDisplayTimingSuspect).map { $0 ? "true" : "false" } ?? "--"
     let captureAdmissionDropsText = sample.hostMetrics?.captureAdmissionDrops.map(String.init) ?? "--"
+    let videoIngress = sample.videoIngressMetrics
     let decoderFormat = sample.decoderOutputPixelFormat ?? "unknown"
     let hardwareDecoderText = sample.usingHardwareDecoder.map { $0 ? "true" : "false" } ?? "unknown"
     let message =
@@ -317,6 +321,15 @@ func clientStreamingAnomalyDiagnostic(
         "correctedStreamPTS=\(sample.correctedStreamTimestampCount) " +
         "repeated=\(sample.repeatedFrameCount) playoutDelay=\(sample.playoutDelayFrames) " +
         "layerBackpressure=\(sample.displayLayerNotReadyCount) " +
+        "clientPacketArrivalP95=\(formattedMs(videoIngress?.incomingBatchIntervalP95Ms))ms " +
+        "clientPacketArrivalP99=\(formattedMs(videoIngress?.incomingBatchIntervalP99Ms))ms " +
+        "clientPacketArrivalMax=\(formattedMs(videoIngress?.incomingBatchIntervalMaxMs))ms " +
+        "ingressQueueAgeMax=\(formattedMs(videoIngress?.queueAgeMaxMs))ms " +
+        "ingressWakeDelayMax=\(formattedMs(videoIngress?.processorWakeDelayMaxMs))ms " +
+        "ingressRawPPS=\(formattedFPS(videoIngress?.rawPacketIngressPPS)) " +
+        "ingressProcessed=\(videoIngress?.processedPacketCount ?? 0) " +
+        "ingressStaleDrops=\(videoIngress?.stalePacketDropCount ?? 0) " +
+        "ingressOverloadDrops=\(videoIngress?.overloadPacketDropCount ?? 0) " +
         "decodeHealthy=\(sample.decodeHealthy) limit=\(sample.decodeSubmissionLimit) " +
         "tier=\(sample.presentationTier.rawValue) sourceTarget=\(sample.sourceTargetFrameRate) " +
         "displayTarget=\(sample.displayTargetFrameRate) target=\(sample.targetFrameRate) " +

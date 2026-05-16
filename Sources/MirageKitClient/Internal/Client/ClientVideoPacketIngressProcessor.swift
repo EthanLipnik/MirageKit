@@ -57,6 +57,54 @@ final class ClientVideoIngressTelemetryStore: @unchecked Sendable {
     }
 }
 
+final class ClientVideoDirectIngressTelemetryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var loomStreamDeliverySampler = CountRateSampler()
+    private var loomStreamDeliveryIntervalSampler = IngressIntervalSampler()
+    private var rawPacketSampler = CountRateSampler()
+    private var processedPacketCount: UInt64 = 0
+
+    func recordPacket(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> ClientVideoIngressMetricsSnapshot {
+        lock.lock()
+        loomStreamDeliverySampler.record(now: now)
+        loomStreamDeliveryIntervalSampler.record(now: now)
+        rawPacketSampler.record(now: now)
+        processedPacketCount &+= 1
+        let snapshot = snapshotLocked(now: now)
+        lock.unlock()
+        return snapshot
+    }
+
+    func snapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> ClientVideoIngressMetricsSnapshot {
+        lock.lock()
+        let snapshot = snapshotLocked(now: now)
+        lock.unlock()
+        return snapshot
+    }
+
+    private func snapshotLocked(now: CFAbsoluteTime) -> ClientVideoIngressMetricsSnapshot {
+        let loomDeliveryIntervals = loomStreamDeliveryIntervalSampler.snapshot(now: now)
+        return ClientVideoIngressMetricsSnapshot(
+            loomStreamDeliveryPPS: loomStreamDeliverySampler.snapshot(now: now),
+            loomStreamDeliveryIntervalMaxMs: loomDeliveryIntervals.maxMs,
+            rawPacketIngressPPS: rawPacketSampler.snapshot(now: now),
+            incomingBatchRate: rawPacketSampler.snapshot(now: now),
+            incomingBatchIntervalP95Ms: loomDeliveryIntervals.p95Ms,
+            incomingBatchIntervalP99Ms: loomDeliveryIntervals.p99Ms,
+            incomingBatchIntervalMaxMs: loomDeliveryIntervals.maxMs,
+            incomingBatchMaxSize: 1,
+            incomingBatchAverageSize: processedPacketCount > 0 ? 1.0 : 0.0,
+            queuedBatchCount: 0,
+            queuedPacketCount: 0,
+            queueAgeMaxMs: 0,
+            stalePacketDropCount: 0,
+            overloadPacketDropCount: 0,
+            processedPacketCount: processedPacketCount,
+            processorWakeDelayMaxMs: 0
+        )
+    }
+}
+
 final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
     typealias Snapshot = ClientVideoIngressMetricsSnapshot
 
@@ -99,7 +147,7 @@ final class ClientVideoPacketIngressProcessor: @unchecked Sendable {
         streamID: StreamID,
         maxQueuedBatches: Int = 4096,
         maxQueuedPackets: Int = 4096,
-        staleNonRecoveryPacketAge: CFTimeInterval = 0.120,
+        staleNonRecoveryPacketAge: CFTimeInterval = 0.025,
         processPacket: @escaping @Sendable (Data, StreamID) -> Void
     ) {
         self.streamID = streamID

@@ -74,6 +74,9 @@ extension MirageClientService {
                 sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
                 logAwdlExperimentTelemetryIfNeeded()
             },
+            videoIngressMetricsProvider: { [videoIngressTelemetryStore] streamID in
+                videoIngressTelemetryStore.snapshot(for: streamID)
+            },
             onFirstFrameDecoded: { [weak self] in
                 self?.sessionStore.markFirstFrameDecoded(for: streamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(streamID)")

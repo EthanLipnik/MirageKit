@@ -210,7 +210,9 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         let accepted = shouldAccept(envelope)
         switch envelope.deliveryClass {
         case .realtime:
-            sendRealtimeAcknowledgementIfNeeded(for: envelope)
+            if accepted {
+                sendRealtimeAcknowledgementIfNeeded(for: envelope)
+            }
         case .protected:
             sendAcknowledgement(for: envelope, kind: .ack)
         }

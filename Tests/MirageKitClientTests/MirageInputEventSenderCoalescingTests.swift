@@ -37,8 +37,8 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(!sender.hasRecentInteraction(within: 3, now: 501))
     }
 
-    @Test("Slow best-effort sends preserve hover and Pencil contact order")
-    func slowBestEffortSendsPreserveHoverAndContactOrder() async throws {
+    @Test("Slow best-effort sends coalesce hover and preserve Pencil contact order")
+    func slowBestEffortSendsCoalesceHoverAndPreserveContactOrder() async throws {
         let sender = MirageInputEventSender()
         let recorder = PointerBatchRecorder()
         let streamID: StreamID = 907
@@ -85,7 +85,8 @@ struct MirageInputEventSenderCoalescingTests {
         let batches = await recorder.snapshot()
         #expect(batches.first?.phase == .began)
         #expect(batches.last?.phase == .ended)
-        #expect(batches.filter { $0.phase == .hover }.count == 80)
+        #expect(batches.filter { $0.phase == .hover }.count == 1)
+        #expect(batches.first(where: { $0.phase == .hover })?.samples.first?.location.x == CGFloat(79))
         #expect(batches.filter { $0.phase == .moved }.count == 6)
         let movedXValues = batches.filter { $0.phase == .moved }.compactMap { $0.samples.first?.location.x }
         #expect(movedXValues == [
@@ -93,8 +94,8 @@ struct MirageInputEventSenderCoalescingTests {
         ])
     }
 
-    @Test("Slow best-effort sends preserve mouse movement samples")
-    func slowBestEffortSendsPreserveMouseMovementSamples() async throws {
+    @Test("Slow best-effort sends coalesce mouse movement to latest pending sample")
+    func slowBestEffortSendsCoalesceMouseMovementToLatestPendingSample() async throws {
         let sender = MirageInputEventSender()
         let recorder = InputEventRecorder()
         let streamID: StreamID = 911
@@ -121,7 +122,7 @@ struct MirageInputEventSenderCoalescingTests {
 
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(await recorder.mouseTimestamps() == [0, 1, 2, 3, 4])
+        #expect(await recorder.mouseTimestamps() == [0, 4])
     }
 
     @Test("Native continuous scroll events merge by summing deltas")

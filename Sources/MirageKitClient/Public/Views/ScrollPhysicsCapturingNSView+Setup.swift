@@ -38,6 +38,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        syncFullscreenTransitionObservers()
         handleInputActivityStateChange()
         reportContainerSizeIfChanged(force: true)
         if let window, isInputProcessingActive {
@@ -109,6 +110,11 @@ extension ScrollPhysicsCapturingNSView {
     }
 
     func reportContainerSizeIfChanged(force: Bool = false) {
+        if fullscreenGeometryDeferralActive {
+            pendingContainerSizeReportDuringFullscreenDeferral = true
+            return
+        }
+
         let size = resolvedContainerSize
         guard size.width > 0, size.height > 0 else { return }
         guard force || size != lastReportedContainerSize else { return }
@@ -122,6 +128,94 @@ extension ScrollPhysicsCapturingNSView {
             contentLayoutSize: window?.contentLayoutRect.size,
             mode: containerSizingMode
         )
+    }
+
+    func syncFullscreenTransitionObservers() {
+        guard observedFullscreenWindow !== window else { return }
+        removeFullscreenTransitionObservers()
+        guard let window else { return }
+
+        observedFullscreenWindow = window
+        let notificationCenter = NotificationCenter.default
+
+        let willEnter = notificationCenter.addObserver(
+            forName: NSWindow.willEnterFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.beginFullscreenGeometryDeferral()
+            }
+        }
+
+        let willExit = notificationCenter.addObserver(
+            forName: NSWindow.willExitFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.beginFullscreenGeometryDeferral()
+            }
+        }
+
+        let didEnter = notificationCenter.addObserver(
+            forName: NSWindow.didEnterFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.finishFullscreenGeometryDeferralAfterDelay()
+            }
+        }
+
+        let didExit = notificationCenter.addObserver(
+            forName: NSWindow.didExitFullScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.finishFullscreenGeometryDeferralAfterDelay()
+            }
+        }
+
+        fullscreenTransitionObservers = [willEnter, willExit, didEnter, didExit]
+    }
+
+    func removeFullscreenTransitionObservers() {
+        for observer in fullscreenTransitionObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        fullscreenTransitionObservers.removeAll()
+        observedFullscreenWindow = nil
+        fullscreenGeometryDeferralTask?.cancel()
+        fullscreenGeometryDeferralTask = nil
+        fullscreenGeometryDeferralActive = false
+        pendingContainerSizeReportDuringFullscreenDeferral = false
+    }
+
+    func beginFullscreenGeometryDeferral() {
+        fullscreenGeometryDeferralTask?.cancel()
+        fullscreenGeometryDeferralTask = nil
+        fullscreenGeometryDeferralActive = true
+    }
+
+    func finishFullscreenGeometryDeferralAfterDelay() {
+        fullscreenGeometryDeferralTask?.cancel()
+        fullscreenGeometryDeferralTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: Self.fullscreenGeometrySettleDelay)
+            } catch {
+                return
+            }
+
+            guard let self else { return }
+            fullscreenGeometryDeferralTask = nil
+            fullscreenGeometryDeferralActive = false
+            let shouldForceReport = pendingContainerSizeReportDuringFullscreenDeferral
+            pendingContainerSizeReportDuringFullscreenDeferral = false
+            guard shouldForceReport || resolvedContainerSize != lastReportedContainerSize else { return }
+            reportContainerSizeIfChanged(force: true)
+        }
     }
 
     func startModifierPollingIfNeeded() {

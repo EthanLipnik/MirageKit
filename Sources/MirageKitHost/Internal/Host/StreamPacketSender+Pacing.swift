@@ -64,7 +64,10 @@ extension StreamPacketSender {
             )
             guard sleepMs > 0 else { break }
             if let sendDeadline, beforeSleep + (Double(sleepMs) / 1000.0) >= sendDeadline {
-                break
+                return PacketPacingResult(
+                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs),
+                    didMissDeadline: true
+                )
             }
 
             do {

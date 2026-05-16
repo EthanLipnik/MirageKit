@@ -43,9 +43,9 @@ struct PriorityInputClientRouteTests {
             fallbackRecorder.modes.contains(.orderedBestEffort)
         }
         try await waitUntil("realtime priority send") {
-            endpoint.sequencedRealtimePayloadCount > 0
+            endpoint.realtimePayloadCount > 0
         }
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstSequencedRealtimePayload))
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstRealtimePayload))
         endpoint.yield(
             MiragePriorityInputEnvelope(
                 kind: .ack,
@@ -61,8 +61,8 @@ struct PriorityInputClientRouteTests {
         try await Task.sleep(for: .milliseconds(40))
 
         #expect(endpoint.protectedPayloadCount == 0)
-        #expect(endpoint.realtimePayloadCount == 0)
-        #expect(endpoint.sequencedRealtimePayloadCount == 1)
+        #expect(endpoint.realtimePayloadCount == 1)
+        #expect(endpoint.sequencedRealtimePayloadCount == 0)
         #expect(fallbackRecorder.modes.contains(.orderedBestEffort))
         #expect(!fallbackRecorder.modes.contains(.reliable))
     }
@@ -126,6 +126,46 @@ struct PriorityInputClientRouteTests {
         #expect(route.snapshot().realtimeFallbackSuppressedCount == 1)
     }
 
+    @Test("Proven realtime route does not shadow fallback on normal ACK jitter")
+    func provenRealtimeRouteDoesNotShadowFallbackOnNormalAckJitter() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        try route.sendRealtime(
+            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.3), timestamp: 1)),
+            streamID: 12
+        )
+        let sentPayload = try await waitForPayload(endpoint: endpoint)
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(sentPayload)
+        endpoint.yield(
+            MiragePriorityInputEnvelope(
+                kind: .ack,
+                eventID: sentEnvelope.eventID,
+                streamID: sentEnvelope.streamID,
+                deliveryClass: .realtime,
+                sentAtUptime: ProcessInfo.processInfo.systemUptime
+            )
+        )
+
+        try await waitUntil("realtime route proof") {
+            route.snapshot().realtimeAckCount == 1
+        }
+        try await Task.sleep(for: .milliseconds(650))
+
+        try route.sendRealtime(
+            event: .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 2)),
+            streamID: 12
+        )
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(await fallbackRecorder.count == 0)
+        #expect(route.snapshot().realtimeFallbackCount == 0)
+    }
+
     @Test("Cold realtime input falls back within one frame while priority health is unproven")
     func coldRealtimeInputFallsBackWithinOneFrameWhilePriorityHealthIsUnproven() async throws {
         let endpoint = FakePriorityInputEndpoint()
@@ -144,7 +184,7 @@ struct PriorityInputClientRouteTests {
             await fallbackRecorder.count == 1
         }
 
-        #expect(endpoint.sequencedRealtimePayloadCount == 1)
+        #expect(endpoint.realtimePayloadCount == 1)
         #expect(route.snapshot().realtimeFallbackCount == 1)
         #expect(await fallbackRecorder.modes == [.droppableRealtime])
     }
@@ -174,7 +214,7 @@ struct PriorityInputClientRouteTests {
 
         let fallbackEnvelope = try await fallbackRecorder.firstEnvelope()
         let inputMessage = try InputEventMessage.deserializePayload(fallbackEnvelope.inputPayload)
-        #expect(endpoint.sequencedRealtimePayloadCount == 3)
+        #expect(endpoint.realtimePayloadCount == 3)
         #expect(route.snapshot().realtimeFallbackCount == 1)
         #expect(route.snapshot().realtimeCoalescedCount == 0)
         #expect(inputMessage.event.timestamp == 2)
@@ -201,10 +241,30 @@ struct PriorityInputClientRouteTests {
         #expect(route.snapshot().protectedRetryCount == 1)
     }
 
-    @Test("Expected sequenced realtime queue drops do not mark priority unhealthy")
-    func expectedSequencedRealtimeQueueDropsDoNotMarkPriorityUnhealthy() async throws {
+    @Test("Protected ordered input preserves ordered fallback mode")
+    func protectedOrderedInputPreservesOrderedFallbackMode() async throws {
         let endpoint = FakePriorityInputEndpoint()
-        endpoint.sequencedRealtimeCompletionError = NWError.posix(.ECANCELED)
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        try await route.send(
+            event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+            streamID: 13,
+            deliveryMode: .orderedBestEffort
+        )
+
+        #expect(endpoint.protectedPayloadCount == 1)
+        #expect(await fallbackRecorder.count == 1)
+        #expect(await fallbackRecorder.modes == [.orderedBestEffort])
+    }
+
+    @Test("Expected realtime queue drops do not mark priority unhealthy")
+    func expectedRealtimeQueueDropsDoNotMarkPriorityUnhealthy() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        endpoint.realtimeCompletionError = NWError.posix(.ECANCELED)
         let fallbackRecorder = PriorityFallbackRecorder()
         let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
             await fallbackRecorder.append(data, mode: mode)
@@ -216,7 +276,7 @@ struct PriorityInputClientRouteTests {
             streamID: 16
         )
 
-        try await waitUntil("sequenced realtime queue drop") {
+        try await waitUntil("realtime queue drop") {
             route.snapshot().realtimeCoalescedCount == 1
         }
 
@@ -225,9 +285,9 @@ struct PriorityInputClientRouteTests {
 
     private func waitForPayload(endpoint: FakePriorityInputEndpoint) async throws -> Data {
         try await waitUntil("priority payload") {
-            endpoint.firstSequencedRealtimePayload != nil
+            endpoint.firstRealtimePayload != nil
         }
-        return try #require(endpoint.firstSequencedRealtimePayload)
+        return try #require(endpoint.firstRealtimePayload)
     }
 
     private func waitUntil(
@@ -253,6 +313,7 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
     private var protectedPayloads: [Data] = []
     private let stream: AsyncStream<Data>
     private let continuation: AsyncStream<Data>.Continuation
+    private var realtimeError: Error?
     private var sequencedRealtimeError: Error?
 
     init() {
@@ -284,10 +345,29 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
         return sequencedRealtimePayloads.count
     }
 
+    var firstRealtimePayload: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return realtimePayloads.first
+    }
+
     var firstSequencedRealtimePayload: Data? {
         lock.lock()
         defer { lock.unlock() }
         return sequencedRealtimePayloads.first
+    }
+
+    var realtimeCompletionError: Error? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return realtimeError
+        }
+        set {
+            lock.lock()
+            realtimeError = newValue
+            lock.unlock()
+        }
     }
 
     var sequencedRealtimeCompletionError: Error? {
@@ -309,8 +389,9 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
     ) {
         lock.lock()
         realtimePayloads.append(payload)
+        let error = realtimeError
         lock.unlock()
-        onComplete(nil)
+        onComplete(error)
     }
 
     func sendRealtimeSequenced(

@@ -27,7 +27,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     /// Continuous event categories that can be replaced by newer work without changing user intent.
     private enum ReplaceableContinuousInputKind: Equatable {
+        case mouseMoved
+        case mouseDragged
+        case rightMouseDragged
+        case otherMouseDragged
         case scrollWheel
+        case stylusHover
     }
 
     private static let keyboardDiagnosticRateLimiter = MirageKeyboardInputDiagnosticRateLimiter()
@@ -79,6 +84,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
         recordInteractionIfNeeded(event)
+        MirageInputLatencyTelemetry.shared.recordClientCapture(event: event, streamID: streamID)
         Self.logKeyboardDiagnosticIfNeeded(
             event,
             streamID: streamID,
@@ -87,6 +93,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         )
         let data = try makeInputMessageData(event: event, streamID: streamID)
         if let sendHandler = currentSendHandler {
+            MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: streamID)
             try await sendHandler(data, .reliable)
             return
         }
@@ -96,6 +103,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Enqueues an input event for best-effort delivery without blocking the caller.
     public func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
         recordInteractionIfNeeded(event)
+        MirageInputLatencyTelemetry.shared.recordClientCapture(event: event, streamID: streamID)
         Self.logKeyboardDiagnosticIfNeeded(
             event,
             streamID: streamID,
@@ -108,6 +116,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
            let route = currentPriorityRoute {
             realtimeInputQueue.async {
                 do {
+                    MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: streamID)
                     try route.sendRealtime(event: event, streamID: streamID)
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to send realtime priority input: ")
@@ -175,6 +184,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
             do {
                 let deliveryMode = Self.deliveryMode(for: pending.event)
                 let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
+                MirageInputLatencyTelemetry.shared.recordClientSend(event: pending.event, streamID: pending.streamID)
                 try await handler(data, deliveryMode)
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {
@@ -272,8 +282,18 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     private func replaceableContinuousKind(for event: MirageInputEvent) -> ReplaceableContinuousInputKind? {
         switch event {
+        case .mouseMoved:
+            .mouseMoved
+        case .mouseDragged:
+            .mouseDragged
+        case .rightMouseDragged:
+            .rightMouseDragged
+        case .otherMouseDragged:
+            .otherMouseDragged
         case let .scrollWheel(e):
             e.isBoundaryScrollEvent ? nil : .scrollWheel
+        case let .pointerSampleBatch(batch) where batch.phase == .hover:
+            .stylusHover
         default:
             nil
         }

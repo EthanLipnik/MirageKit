@@ -122,10 +122,10 @@ struct HostInputMessageSchedulerScrollTests {
         #expect(deliveredKeyboardEvents.contains { $0.keyCode == keyCode })
     }
 
-    @Test("Queued mouse movement samples preserve order")
-    func queuedMouseMovementSamplesPreserveOrder() async throws {
+    @Test("Queued mouse movement samples coalesce to latest pending sample")
+    func queuedMouseMovementSamplesCoalesceToLatestPendingSample() async throws {
         let streamID: StreamID = 704
-        let queue = DispatchQueue(label: "com.mirage.tests.host-input-mouse-sequenced", attributes: .initiallyInactive)
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-mouse-latest", attributes: .initiallyInactive)
         let events = Locked<[MirageInputEvent]>([])
         let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
             recordInputEvent(from: message, into: events)
@@ -139,9 +139,55 @@ struct HostInputMessageSchedulerScrollTests {
         }
 
         queue.activate()
-        try await waitForEvents(events, count: 5)
+        try await waitForEvents(events, count: 1)
 
-        #expect(events.read { $0.map(\.timestamp) } == [0, 1, 2, 3, 4])
+        #expect(events.read { $0.map(\.timestamp) } == [4])
+    }
+
+    @Test("Pointer boundary drops delayed stale movement")
+    func pointerBoundaryDropsDelayedStaleMovement() async throws {
+        let streamID: StreamID = 705
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-pointer-boundary", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+
+        scheduler.enqueue(try inputMessage(.mouseUp(makeMouseEvent(timestamp: 10)), streamID: streamID))
+        scheduler.enqueue(try inputMessage(.mouseDragged(makeMouseEvent(timestamp: 9)), streamID: streamID))
+
+        queue.activate()
+        try await waitForEvents(events, count: 1)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(events.read { $0.count } == 1)
+        #expect(events.read { events in
+            guard case .mouseUp? = events.first else { return false }
+            return events.first?.timestamp == 10
+        })
+    }
+
+    @Test("Pointer boundary at enqueue drops older pending movement")
+    func pointerBoundaryAtEnqueueDropsOlderPendingMovement() async throws {
+        let streamID: StreamID = 706
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-pointer-enqueue-boundary", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+
+        scheduler.enqueue(try inputMessage(.mouseDragged(makeMouseEvent(timestamp: 9)), streamID: streamID))
+        scheduler.enqueue(try inputMessage(.mouseUp(makeMouseEvent(timestamp: 10)), streamID: streamID))
+
+        queue.activate()
+        try await waitForEvents(events, count: 1)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(events.read { $0.count } == 1)
+        #expect(events.read { events in
+            guard case .mouseUp? = events.first else { return false }
+            return events.first?.timestamp == 10
+        })
     }
 }
 

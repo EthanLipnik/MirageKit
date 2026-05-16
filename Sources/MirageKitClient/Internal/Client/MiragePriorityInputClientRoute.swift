@@ -72,11 +72,20 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     private struct PendingRealtimeFallback {
         let envelope: MiragePriorityInputEnvelope
         let deliveryMode: MirageInputEventSender.DeliveryMode
+        let reason: RealtimeFallbackReason
+    }
+
+    private enum RealtimeFallbackReason {
+        case unprovenRoute
+        case routeLoss
+        case sendError
     }
 
     private struct State {
         var nextEventID: UInt64 = 1
         var lastPriorityAckAt: CFAbsoluteTime = 0
+        var hasProvenRealtimeRoute = false
+        var lastRealtimeAckedEventID: UInt64 = 0
         var routeState: MiragePriorityInputClientRouteState = .recovering
         var pendingProtectedAcks: [UInt64: PendingProtectedAck] = [:]
         var completedProtectedAcks: Set<UInt64> = []
@@ -100,7 +109,8 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         var closed = false
     }
 
-    private static let priorityAckFreshnessSeconds: CFAbsoluteTime = 0.150
+    private static let priorityAckFreshnessSeconds: CFAbsoluteTime = 0.500
+    private static let realtimeRouteLossSeconds: CFAbsoluteTime = 2.000
     private static let protectedFallbackDelay: Duration = .milliseconds(50)
     private static let realtimeFallbackThrottle: Duration = .milliseconds(16)
     private static let routeStateLogIntervalSeconds: CFAbsoluteTime = 1
@@ -166,7 +176,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
                 transportMode: Self.realtimeTransportMode(for: event)
             )
         case .protected:
-            try await sendProtected(envelope: envelope)
+            try await sendProtected(envelope: envelope, deliveryMode: deliveryMode)
         }
     }
 
@@ -230,6 +240,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
                 self.recordRealtimeCoalesced()
                 if !Self.isExpectedRealtimeQueueDrop(error) {
                     self.recordPrioritySendError()
+                    self.scheduleRealtimeFallback(
+                        envelope: envelope,
+                        deliveryMode: deliveryMode,
+                        reason: .sendError
+                    )
                 }
             }
         }
@@ -240,12 +255,19 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             endpoint.sendRealtimeSequenced(payload, onComplete: completion)
         }
 
-        if shouldShadowRealtimeFallback() {
-            scheduleRealtimeFallback(envelope: envelope, deliveryMode: deliveryMode)
+        if let fallbackReason = realtimeFallbackReason() {
+            scheduleRealtimeFallback(
+                envelope: envelope,
+                deliveryMode: deliveryMode,
+                reason: fallbackReason
+            )
         }
     }
 
-    private func sendProtected(envelope: MiragePriorityInputEnvelope) async throws {
+    private func sendProtected(
+        envelope: MiragePriorityInputEnvelope,
+        deliveryMode: MirageInputEventSender.DeliveryMode
+    ) async throws {
         let payload = try envelope.serialize()
         recordProtectedSent()
         endpoint.sendProtected(payload) { [weak self] error in
@@ -260,7 +282,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         if acked { return }
         recordProtectedRetry()
         do {
-            try await sendFallback(envelope: envelope, deliveryMode: .reliable)
+            try await sendFallback(envelope: envelope, deliveryMode: deliveryMode)
         } catch {
             markRouteState(.fallback)
             throw error
@@ -282,11 +304,12 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
         switch envelope.kind {
         case .ack:
-            notePriorityAck()
             switch envelope.deliveryClass {
             case .realtime:
+                notePriorityAck(envelope)
                 recordRealtimeAck()
             case .protected:
+                notePriorityAck(envelope)
                 completeProtectedAck(eventID: envelope.eventID, acked: true)
             }
         case .input:
@@ -372,13 +395,15 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private func scheduleRealtimeFallback(
         envelope: MiragePriorityInputEnvelope,
-        deliveryMode: MirageInputEventSender.DeliveryMode
+        deliveryMode: MirageInputEventSender.DeliveryMode,
+        reason: RealtimeFallbackReason
     ) {
         let shouldStartTask = withState { state in
             guard !state.closed else { return false }
             state.pendingRealtimeFallback = PendingRealtimeFallback(
                 envelope: envelope,
-                deliveryMode: deliveryMode
+                deliveryMode: deliveryMode,
+                reason: reason
             )
             guard !state.realtimeFallbackTaskScheduled else { return false }
             state.realtimeFallbackTaskScheduled = true
@@ -397,7 +422,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             guard !state.closed else { return nil }
             guard let pending = state.pendingRealtimeFallback else { return nil }
             state.pendingRealtimeFallback = nil
-            guard !Self.isPriorityHealthyLocked(state: state) else {
+            guard !Self.shouldSuppressRealtimeFallbackLocked(state: state, pending: pending) else {
                 state.realtimeFallbackSuppressedCount &+= 1
                 return nil
             }
@@ -419,17 +444,24 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) async throws {
         recordFallback(for: envelope.deliveryClass)
+        MirageInputLatencyTelemetry.shared.recordClientFallback(envelope: envelope)
         let controlMessage = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
         try await fallbackSender(controlMessage.serialize(), deliveryMode)
     }
 
-    private func shouldShadowRealtimeFallback(
+    private func realtimeFallbackReason(
         now: CFAbsoluteTime = ProcessInfo.processInfo.systemUptime
-    ) -> Bool {
+    ) -> RealtimeFallbackReason? {
         lock.lock()
         defer { lock.unlock() }
-        guard !state.closed else { return false }
-        return !Self.isPriorityHealthyLocked(state: state, now: now)
+        guard !state.closed else { return nil }
+        if !state.hasProvenRealtimeRoute {
+            return .unprovenRoute
+        }
+        guard state.lastPriorityAckAt > 0 else {
+            return .routeLoss
+        }
+        return now - state.lastPriorityAckAt > Self.realtimeRouteLossSeconds ? .routeLoss : nil
     }
 
     private static func isPriorityHealthyLocked(
@@ -437,6 +469,24 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         now: CFAbsoluteTime = ProcessInfo.processInfo.systemUptime
     ) -> Bool {
         state.lastPriorityAckAt > 0 && now - state.lastPriorityAckAt <= priorityAckFreshnessSeconds
+    }
+
+    private static func shouldSuppressRealtimeFallbackLocked(
+        state: State,
+        pending: PendingRealtimeFallback,
+        now: CFAbsoluteTime = ProcessInfo.processInfo.systemUptime
+    ) -> Bool {
+        switch pending.reason {
+        case .sendError:
+            return false
+        case .unprovenRoute:
+            return state.hasProvenRealtimeRoute && isPriorityHealthyLocked(state: state, now: now)
+        case .routeLoss:
+            guard state.lastRealtimeAckedEventID >= pending.envelope.eventID else {
+                return false
+            }
+            return isPriorityHealthyLocked(state: state, now: now)
+        }
     }
 
     private static func isExpectedRealtimeQueueDrop(_ error: Error) -> Bool {
@@ -449,9 +499,13 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         return nsError.domain == NSPOSIXErrorDomain && nsError.code == 89
     }
 
-    private func notePriorityAck() {
+    private func notePriorityAck(_ envelope: MiragePriorityInputEnvelope) {
         let shouldLog = withState { state in
             state.lastPriorityAckAt = ProcessInfo.processInfo.systemUptime
+            if envelope.deliveryClass == .realtime {
+                state.hasProvenRealtimeRoute = true
+                state.lastRealtimeAckedEventID = max(state.lastRealtimeAckedEventID, envelope.eventID)
+            }
             state.routeState = .priority
             return shouldLogRouteStateLocked(&state, routeState: .priority)
         }
@@ -568,9 +622,9 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
              .mouseDragged,
              .rightMouseDragged,
              .otherMouseDragged:
-            .sequenced
+            .latest
         case let .pointerSampleBatch(batch) where batch.phase == .hover:
-            .sequenced
+            .latest
         default:
             .latest
         }

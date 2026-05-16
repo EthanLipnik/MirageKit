@@ -86,7 +86,8 @@ extension StreamController {
                 targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS),
                 sourceTargetFrameRate: max(1, streamCadenceTarget.sourceFPS),
                 displayTargetFrameRate: max(1, streamCadenceTarget.displayFPS),
-                hostMetrics: latestHostMetricsMessage
+                hostMetrics: latestHostMetricsMessage,
+                videoIngressMetrics: videoIngressMetricsProvider?(streamID)
             )
         )
         let signature = "\(trigger)|\(diagnostic.signature)"
@@ -146,6 +147,7 @@ extension StreamController {
         let renderedFrameTelemetry = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
         let selectedFrameText = renderedFrameTelemetry.selectedFrameNumber.map(String.init) ?? "none"
         let renderedFrameText = renderedFrameTelemetry.renderedFrameNumber.map(String.init) ?? "none"
+        let ingressMetrics = videoIngressMetricsProvider?(streamID)
         MirageLogger.client(
             "Render cadence below target: stream=\(streamID) target=\(Int(targetFPS))fps " +
                 "received=\(String(format: "%.1f", receivedFPS))fps decoded=\(String(format: "%.1f", decodedFPS))fps " +
@@ -160,6 +162,12 @@ extension StreamController {
                 "repeatedTicks=\(renderedFrameTelemetry.repeatedDisplayTicks) " +
                 "latencyDrops=\(renderedFrameTelemetry.droppedForLatency) " +
                 "layerBackpressure=\(renderTelemetry.displayLayerNotReadyCount) " +
+                "noFrameTicks=\(renderTelemetry.displayTickNoFrameCount) " +
+                "afterNoFrame=\(renderTelemetry.frameArrivedAfterNoFrameTickCount) " +
+                "noFrameToArrivalMax=\(Int(renderTelemetry.noFrameTickToFrameArrivalMaxMs.rounded()))ms " +
+                "arrivalP99=\(Int((ingressMetrics?.incomingBatchIntervalP99Ms ?? 0).rounded()))ms " +
+                "ingressQueueAge=\(Int((ingressMetrics?.queueAgeMaxMs ?? 0).rounded()))ms " +
+                "ingressWakeDelay=\(Int((ingressMetrics?.processorWakeDelayMaxMs ?? 0).rounded()))ms " +
                 "frameP99=\(Int(renderTelemetry.frameIntervalP99Ms.rounded()))ms " +
                 "tickP99=\(Int(renderTelemetry.displayTickIntervalP99Ms.rounded()))ms"
         )

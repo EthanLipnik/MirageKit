@@ -6,6 +6,7 @@
 //
 
 #if os(iOS) || os(visionOS)
+import Foundation
 import UIKit
 
 /// UIResponder endpoint that should own stream input at the current moment.
@@ -158,6 +159,7 @@ final class InputCapturingResponderRecoveryController {
     typealias ContextProvider =
         () -> (target: InputCapturingResponderTarget, context: InputCapturingResponderRecoveryContext)
     typealias AttemptHandler = (_ target: InputCapturingResponderTarget) -> Bool
+    typealias NowProvider = () -> CFAbsoluteTime
     typealias LogHandler = (
         _ trigger: InputCapturingResponderRecoveryTrigger,
         _ target: InputCapturingResponderTarget,
@@ -169,33 +171,61 @@ final class InputCapturingResponderRecoveryController {
 
     var scheduler: InputCapturingResponderRecoveryScheduler
 
+    private static let interactionThrottleSeconds: CFAbsoluteTime = 0.250
+
     private let retryDelay: Duration
+    private let nowProvider: NowProvider
     private let contextProvider: ContextProvider
     private let attemptHandler: AttemptHandler
     private let logHandler: LogHandler
     private var scheduledRecoveryTask: Task<Void, Never>?
+    private var scheduledTrigger: InputCapturingResponderRecoveryTrigger?
+    private var lastInteractionRecoveryRequestAt: CFAbsoluteTime = 0
 
     init(
         scheduler: InputCapturingResponderRecoveryScheduler = .live,
         retryDelay: Duration = .milliseconds(150),
+        nowProvider: @escaping NowProvider = CFAbsoluteTimeGetCurrent,
         contextProvider: @escaping ContextProvider,
         attemptHandler: @escaping AttemptHandler,
         logHandler: @escaping LogHandler
     ) {
         self.scheduler = scheduler
         self.retryDelay = retryDelay
+        self.nowProvider = nowProvider
         self.contextProvider = contextProvider
         self.attemptHandler = attemptHandler
         self.logHandler = logHandler
     }
 
     func requestRecovery(_ trigger: InputCapturingResponderRecoveryTrigger) {
+        if trigger == .interaction {
+            guard shouldScheduleInteractionRecovery() else { return }
+        }
         scheduleRecovery(trigger, attempt: 0, delay: .zero)
     }
 
     func cancel() {
         scheduledRecoveryTask?.cancel()
         scheduledRecoveryTask = nil
+        scheduledTrigger = nil
+    }
+
+    private func shouldScheduleInteractionRecovery() -> Bool {
+        let snapshot = contextProvider()
+        guard !snapshot.context.targetIsFirstResponder else {
+            return false
+        }
+        guard scheduledRecoveryTask == nil || scheduledTrigger == .interaction else {
+            return false
+        }
+        let now = nowProvider()
+        guard lastInteractionRecoveryRequestAt == 0 ||
+              now - lastInteractionRecoveryRequestAt >= Self.interactionThrottleSeconds else {
+            return false
+        }
+        lastInteractionRecoveryRequestAt = now
+        return true
     }
 
     private func scheduleRecovery(
@@ -203,7 +233,13 @@ final class InputCapturingResponderRecoveryController {
         attempt: Int,
         delay: Duration
     ) {
+        if trigger == .interaction,
+           scheduledRecoveryTask != nil,
+           scheduledTrigger != .interaction {
+            return
+        }
         scheduledRecoveryTask?.cancel()
+        scheduledTrigger = trigger
         scheduledRecoveryTask = scheduler.schedule(delay) { [weak self] in
             self?.runRecovery(trigger, attempt: attempt)
         }
@@ -233,6 +269,7 @@ final class InputCapturingResponderRecoveryController {
 
             guard !didBecomeFirstResponder, attempt == 0 else {
                 scheduledRecoveryTask = nil
+                scheduledTrigger = nil
                 return
             }
             scheduleRecovery(trigger, attempt: attempt + 1, delay: retryDelay)
@@ -252,6 +289,7 @@ final class InputCapturingResponderRecoveryController {
                 attempt: attempt
             ) else {
                 scheduledRecoveryTask = nil
+                scheduledTrigger = nil
                 return
             }
             scheduleRecovery(trigger, attempt: attempt + 1, delay: retryDelay)

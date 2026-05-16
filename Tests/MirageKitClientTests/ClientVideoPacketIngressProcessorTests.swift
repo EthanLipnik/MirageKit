@@ -11,7 +11,7 @@ import Loom
 @testable import MirageKit
 import Testing
 
-@Suite("Client Video Packet Ingress Processor")
+@Suite("Client Video Packet Ingress Processor", .serialized)
 struct ClientVideoPacketIngressProcessorTests {
     @Test("Processor drains enqueued batches in order")
     func processorDrainsEnqueuedBatchesInOrder() async throws {
@@ -200,8 +200,9 @@ struct ClientVideoPacketIngressProcessorTests {
     }
 
     @MainActor
-    @Test("Video stream listener installs one-packet immediate ingress handler")
-    func videoStreamListenerInstallsOnePacketImmediateIngressHandler() async throws {
+    @Test("Video stream listener defaults to direct incoming bytes")
+    func videoStreamListenerDefaultsToDirectIncomingBytes() async throws {
+        UserDefaults.standard.removeObject(forKey: "MirageVideoIngressMode")
         let pair = try await makeLoopbackControlPair()
         try await pair.startAuthenticatedSessions()
         let service = MirageClientService(deviceName: "Client Ingress Test")
@@ -210,7 +211,44 @@ struct ClientVideoPacketIngressProcessorTests {
 
         let videoStream = try await pair.server.openStream(label: "video/77")
         do {
-            let processor = try #require(await waitForProcessor(service: service, streamID: 77))
+            for index in 0 ..< 3 {
+                try await videoStream.sendUnreliable(Data([UInt8(index)]))
+            }
+
+            let snapshot = try #require(await waitForIngressSnapshot(service: service, streamID: 77, count: 3))
+            #expect(service.videoPacketIngressProcessors[77] == nil)
+            #expect(snapshot.processedPacketCount >= 3)
+
+            service.stopMediaStreamListener()
+            #expect(service.videoPacketIngressProcessors[77] == nil)
+            #expect(service.activeMediaStreams["video/77"] == nil)
+            try? await videoStream.close()
+            await pair.stop()
+        } catch {
+            service.stopMediaStreamListener()
+            try? await videoStream.close()
+            await pair.stop()
+            throw error
+        }
+    }
+
+    @MainActor
+    @Test("Video stream listener keeps processor mode selectable")
+    func videoStreamListenerKeepsProcessorModeSelectable() async throws {
+        UserDefaults.standard.set("processor", forKey: "MirageVideoIngressMode")
+        defer {
+            UserDefaults.standard.removeObject(forKey: "MirageVideoIngressMode")
+        }
+
+        let pair = try await makeLoopbackControlPair()
+        try await pair.startAuthenticatedSessions()
+        let service = MirageClientService(deviceName: "Client Ingress Test")
+        service.loomSession = pair.client
+        service.startMediaStreamListener()
+
+        let videoStream = try await pair.server.openStream(label: "video/78")
+        do {
+            let processor = try #require(await waitForProcessor(service: service, streamID: 78))
             for index in 0 ..< 3 {
                 try await videoStream.sendUnreliable(Data([UInt8(index)]))
             }
@@ -221,8 +259,8 @@ struct ClientVideoPacketIngressProcessorTests {
             #expect(snapshot.processedPacketCount >= 3)
 
             service.stopMediaStreamListener()
-            #expect(service.videoPacketIngressProcessors[77] == nil)
-            #expect(service.activeMediaStreams["video/77"] == nil)
+            #expect(service.videoPacketIngressProcessors[78] == nil)
+            #expect(service.activeMediaStreams["video/78"] == nil)
             try? await videoStream.close()
             await pair.stop()
         } catch {
@@ -261,6 +299,23 @@ private func waitForProcessedPackets(
         try? await Task.sleep(for: .milliseconds(10))
     }
     return false
+}
+
+@MainActor
+private func waitForIngressSnapshot(
+    service: MirageClientService,
+    streamID: StreamID,
+    count: UInt64
+) async -> ClientVideoIngressMetricsSnapshot? {
+    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    while CFAbsoluteTimeGetCurrent() < deadline {
+        if let snapshot = service.videoIngressTelemetryStore.snapshot(for: streamID),
+           snapshot.processedPacketCount >= count {
+            return snapshot
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return service.videoIngressTelemetryStore.snapshot(for: streamID)
 }
 
 private func makeVideoPacket(

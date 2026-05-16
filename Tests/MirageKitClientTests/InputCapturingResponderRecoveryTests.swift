@@ -101,6 +101,116 @@ struct InputCapturingResponderRecoveryTests {
         #expect(attemptedTargets == [.captureView])
     }
 
+    @Test("Interaction recovery is skipped when the target is already first responder")
+    func interactionRecoverySkippedWhenTargetAlreadyFirstResponder() {
+        var scheduledDelays: [Duration] = []
+        let controller = InputCapturingResponderRecoveryController(
+            scheduler: InputCapturingResponderRecoveryScheduler(
+                schedule: { delay, _ in
+                    scheduledDelays.append(delay)
+                    return Task {}
+                }
+            ),
+            contextProvider: {
+                (
+                    target: .captureView,
+                    context: makeContext(targetIsFirstResponder: true)
+                )
+            },
+            attemptHandler: { _ in true },
+            logHandler: { _, _, _, _, _, _ in }
+        )
+
+        controller.requestRecovery(.interaction)
+        controller.requestRecovery(.interaction)
+
+        #expect(scheduledDelays.isEmpty)
+    }
+
+    @Test("Interaction recovery is throttled")
+    func interactionRecoveryIsThrottled() {
+        var now: CFAbsoluteTime = 100
+        var scheduledDelays: [Duration] = []
+        let controller = InputCapturingResponderRecoveryController(
+            scheduler: InputCapturingResponderRecoveryScheduler(
+                schedule: { delay, _ in
+                    scheduledDelays.append(delay)
+                    return Task {}
+                }
+            ),
+            nowProvider: { now },
+            contextProvider: {
+                (
+                    target: .captureView,
+                    context: makeContext(targetIsFirstResponder: false)
+                )
+            },
+            attemptHandler: { _ in true },
+            logHandler: { _, _, _, _, _, _ in }
+        )
+
+        controller.requestRecovery(.interaction)
+        now += 0.100
+        controller.requestRecovery(.interaction)
+        now += 0.250
+        controller.requestRecovery(.interaction)
+
+        #expect(scheduledDelays == [.zero, .zero])
+    }
+
+    @Test("Interaction recovery does not replace a pending lifecycle retry")
+    func interactionRecoveryDoesNotReplacePendingLifecycleRetry() {
+        var scheduledDelays: [Duration] = []
+        var scheduledOperations: [ScheduledOperation] = []
+        var snapshots: [
+            (
+                target: InputCapturingResponderTarget,
+                context: InputCapturingResponderRecoveryContext
+            )
+        ] = [
+            (
+                target: .captureView,
+                context: makeContext(isKeyWindow: false)
+            ),
+            (
+                target: .captureView,
+                context: makeContext(targetIsFirstResponder: false)
+            ),
+        ]
+        var attemptedTargets: [InputCapturingResponderTarget] = []
+
+        let controller = InputCapturingResponderRecoveryController(
+            scheduler: InputCapturingResponderRecoveryScheduler(
+                schedule: { delay, operation in
+                    scheduledDelays.append(delay)
+                    scheduledOperations.append(operation)
+                    return Task {}
+                }
+            ),
+            contextProvider: {
+                if snapshots.count > 1 {
+                    return snapshots.removeFirst()
+                }
+                return snapshots[0]
+            },
+            attemptHandler: { target in
+                attemptedTargets.append(target)
+                return true
+            },
+            logHandler: { _, _, _, _, _, _ in }
+        )
+
+        controller.requestRecovery(.didMoveToWindow)
+        scheduledOperations.removeFirst()()
+
+        #expect(scheduledDelays == [.zero, .milliseconds(150)])
+        controller.requestRecovery(.interaction)
+        #expect(scheduledDelays == [.zero, .milliseconds(150)])
+
+        scheduledOperations.removeFirst()()
+        #expect(attemptedTargets == [.captureView])
+    }
+
     @Test("Activation recovery waits for foreground-active scene")
     func activationRecoveryWaitsForForegroundActiveScene() {
         #expect(

@@ -77,22 +77,47 @@ extension MirageClientService {
     private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoPacketIngressProcessors[streamID]?.finish()
+        stream.clearIncomingBytesBatchHandler()
+        videoPacketIngressProcessors.removeValue(forKey: streamID)
         let serviceBox = WeakSendableBox(self)
-        let ingressProcessor = ClientVideoPacketIngressProcessor(streamID: streamID) { data, streamID in
-            serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
-        }
-        videoPacketIngressProcessors[streamID] = ingressProcessor
         videoIngressLastDropCountByStream[streamID] = 0
         videoIngressTelemetryStore.clear(streamID: streamID)
-        stream.setIncomingBytesImmediateBatchHandler(maxBatchSize: 1) { [ingressProcessor] batch in
-            ingressProcessor.enqueue(batch)
-        }
-        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
-            for await _ in stream.incomingBytes {
-                guard !Task.isCancelled else { break }
+
+        switch MirageLatencyOptions.videoIngressMode() {
+        case .direct:
+            let telemetryStore = videoIngressTelemetryStore
+            let telemetryRecorder = ClientVideoDirectIngressTelemetryRecorder()
+            videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) {
+                [stream, streamID, serviceBox, telemetryStore, telemetryRecorder] in
+                for await data in stream.incomingBytes {
+                    guard !Task.isCancelled else { break }
+                    telemetryStore.update(
+                        telemetryRecorder.recordPacket(),
+                        for: streamID
+                    )
+                    serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
+                }
+                guard let service = serviceBox.value else { return }
+                await service.finishVideoStreamReceiveLoop(streamID: streamID)
             }
-            guard let service = serviceBox.value else { return }
-            await service.finishVideoStreamReceiveLoop(streamID: streamID)
+
+        case .processor:
+            let telemetryStore = videoIngressTelemetryStore
+            let ingressProcessor = ClientVideoPacketIngressProcessor(streamID: streamID) { data, streamID in
+                serviceBox.value?.processIncomingVideoData(data, expectedStreamID: streamID)
+            }
+            videoPacketIngressProcessors[streamID] = ingressProcessor
+            stream.setIncomingBytesImmediateBatchHandler(maxBatchSize: 1) { [ingressProcessor, telemetryStore, streamID] batch in
+                ingressProcessor.enqueue(batch)
+                telemetryStore.update(ingressProcessor.snapshot(), for: streamID)
+            }
+            videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
+                for await _ in stream.incomingBytes {
+                    guard !Task.isCancelled else { break }
+                }
+                guard let service = serviceBox.value else { return }
+                await service.finishVideoStreamReceiveLoop(streamID: streamID)
+            }
         }
     }
 

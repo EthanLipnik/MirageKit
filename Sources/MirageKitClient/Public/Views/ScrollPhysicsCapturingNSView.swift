@@ -14,6 +14,9 @@ import QuartzCore
 /// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingNSView: NSView {
+    /// Delay after AppKit reports fullscreen completion before trusting container geometry.
+    static let fullscreenGeometrySettleDelay: Duration = .milliseconds(350)
+
     /// Poll interval for observing modifier-state changes outside key events.
     static let modifierPollInterval: TimeInterval = 0.1
 
@@ -246,6 +249,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     var suppressEscapeKeyUpForCursorUnlock = false
     let shortcutForwardingEventTap = MacShortcutForwardingEventTap()
     nonisolated(unsafe) var registeredCursorStreamID: StreamID?
+    weak var observedFullscreenWindow: NSWindow?
+    var fullscreenTransitionObservers: [NSObjectProtocol] = []
+    var fullscreenGeometryDeferralActive = false
+    var pendingContainerSizeReportDuringFullscreenDeferral = false
+    var fullscreenGeometryDeferralTask: Task<Void, Never>?
 
     override init(frame: CGRect) {
         contentView = NSView(frame: frame)
@@ -267,6 +275,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         MainActor.assumeIsolated {
             cursorHiddenForTyping = false
             stopLockedCursorSmoothing()
+            removeFullscreenTransitionObservers()
         }
         MainActor.assumeIsolated {
             restoreCursorLockIfNeeded()

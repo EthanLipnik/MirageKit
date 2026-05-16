@@ -355,6 +355,9 @@ extension MirageClientService {
     }
 
     private func shouldEnablePriorityInputLane(for controlChannel: MirageControlChannel) async -> Bool {
+        guard !MirageLatencyOptions.disablePriorityInput() else {
+            return false
+        }
         guard await controlChannel.session.context?.transportKind == .udp else {
             return false
         }

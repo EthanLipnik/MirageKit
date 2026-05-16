@@ -86,10 +86,8 @@ extension StreamPacketSender {
     nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
     nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
-    nonisolated static let nonKeyframeSendDeadlineFrameIntervals: Double = 4.0
-    nonisolated static let nonKeyframeMinimumSendDeadlineSeconds: CFAbsoluteTime = 0.100
     nonisolated static let keyframeDependencyDropSuppressionSeconds: CFAbsoluteTime = 0.200
-    nonisolated static let maxQueuedWorkItems: Int = 8
+    nonisolated static let maxQueuedWorkItems: Int = 32
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
     enum DependencyFrameDropReason: String {
@@ -168,11 +166,7 @@ extension StreamPacketSender {
             self.generation = generation
             self.encodedAt = encodedAt
             self.targetFrameRate = resolvedTargetFrameRate
-            self.sendDeadline = sendDeadline ?? StreamPacketSender.defaultSendDeadline(
-                encodedAt: encodedAt,
-                isKeyframe: isKeyframe,
-                targetFrameRate: resolvedTargetFrameRate
-            )
+            self.sendDeadline = sendDeadline ?? StreamPacketSender.defaultSendDeadline()
             self.pacingOverride = pacingOverride
         }
     }
@@ -335,18 +329,9 @@ extension StreamPacketSender {
         return (bytesPerSecond, burstBytes)
     }
 
-    /// Default send deadline for keyframes and realtime non-keyframes.
-    nonisolated static func defaultSendDeadline(
-        encodedAt: CFAbsoluteTime,
-        isKeyframe: Bool,
-        targetFrameRate: Int
-    ) -> CFAbsoluteTime {
-        guard !isKeyframe else { return .greatestFiniteMagnitude }
-        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
-        return encodedAt + max(
-            frameInterval * nonKeyframeSendDeadlineFrameIntervals,
-            nonKeyframeMinimumSendDeadlineSeconds
-        )
+    /// Default send deadline for keyframes and dependent non-keyframes.
+    nonisolated static func defaultSendDeadline() -> CFAbsoluteTime {
+        .greatestFiniteMagnitude
     }
 
     /// Returns whether the AWDL experiment should duplicate the parameter-set packet.

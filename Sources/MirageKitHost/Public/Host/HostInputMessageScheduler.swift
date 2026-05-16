@@ -16,11 +16,17 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         let message: ControlMessage
         let streamID: StreamID?
         let priority: Priority
+        let enqueuedAt: TimeInterval
 
-        init(message: ControlMessage, classification: (streamID: StreamID?, priority: Priority)) {
+        init(
+            message: ControlMessage,
+            classification: (streamID: StreamID?, priority: Priority),
+            enqueuedAt: TimeInterval = Date.timeIntervalSinceReferenceDate
+        ) {
             self.message = message
             streamID = classification.streamID
             priority = classification.priority
+            self.enqueuedAt = enqueuedAt
         }
     }
 
@@ -45,7 +51,12 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
     /// Input event families where only the latest sample of a stream is needed.
     private enum ReplaceableKind: Hashable {
+        case mouseMoved
+        case mouseDragged
+        case rightMouseDragged
+        case otherMouseDragged
         case scrollWheel
+        case stylusHover
     }
 
     private static let maxPendingMessages = 256
@@ -70,10 +81,16 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     /// Queues a control message and schedules the serial drain if needed.
     func enqueue(_ message: ControlMessage) {
         let pending = PendingMessage(message: message, classification: Self.classification(for: message))
+        MirageInputLatencyTelemetry.shared.recordHostReceive(message: message)
 
         lock.lock()
         append(pending)
+        recordReplaceableInputBoundaryIfNeeded(pending)
         trimPendingMessages()
+        MirageInputLatencyTelemetry.shared.recordHostSchedulerDepth(
+            message: message,
+            depth: pendingMessages.count
+        )
         let shouldScheduleDrain: Bool
         if drainScheduled {
             shouldScheduleDrain = false
@@ -108,6 +125,15 @@ final class HostInputMessageScheduler: @unchecked Sendable {
                 pending = pendingMessages.removeFirst()
             }
             let shouldDrop = pending.map(shouldDropStaleReplaceableInput) ?? false
+            let schedulerDepth = pendingMessages.count + (pending == nil ? 0 : 1)
+            if let pending, !shouldDrop {
+                recordReplaceableInputBoundaryIfNeeded(pending)
+                MirageInputLatencyTelemetry.shared.recordHostPost(
+                    message: pending.message,
+                    enqueuedAt: pending.enqueuedAt,
+                    schedulerDepth: schedulerDepth
+                )
+            }
             lock.unlock()
 
             guard let pending else { return }
@@ -130,7 +156,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         }
     }
 
-    /// Adds `pending`, merging adjacent scroll packets and preserving pointer movement order.
+    /// Adds `pending`, merging adjacent scroll packets and replacing latest-value pointer movement.
     private func append(_ pending: PendingMessage) {
         if let last = pendingMessages.last,
            last.streamID == pending.streamID,
@@ -214,6 +240,38 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         return false
     }
 
+    /// Records ordered pointer boundaries so delayed realtime movement cannot overtake clicks/releases.
+    private func recordReplaceableInputBoundaryIfNeeded(_ pending: PendingMessage) {
+        guard let streamID = pending.streamID,
+              let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload) else {
+            return
+        }
+
+        let timestamp = inputMessage.event.timestamp
+        for kind in Self.replaceableKindsInvalidated(by: inputMessage.event) {
+            let key = ReplaceableInputKey(streamID: streamID, kind: kind)
+            latestReplaceableInputTimestampByKey[key] = max(
+                latestReplaceableInputTimestampByKey[key] ?? timestamp,
+                timestamp
+            )
+        }
+    }
+
+    private static func replaceableKindsInvalidated(by event: MirageInputEvent) -> [ReplaceableKind] {
+        switch event {
+        case .mouseDown, .mouseUp:
+            [.mouseMoved, .mouseDragged]
+        case .rightMouseDown, .rightMouseUp:
+            [.mouseMoved, .rightMouseDragged]
+        case .otherMouseDown, .otherMouseUp:
+            [.mouseMoved, .otherMouseDragged]
+        case let .pointerSampleBatch(batch) where batch.phase != .hover:
+            [.stylusHover]
+        default:
+            []
+        }
+    }
+
     /// Classifies a control message for input coalescing and backlog trimming.
     private static func classification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
         guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
@@ -222,18 +280,18 @@ final class HostInputMessageScheduler: @unchecked Sendable {
 
         switch inputMessage.event {
         case .mouseMoved:
-            return (inputMessage.streamID, .pointerMove)
+            return (inputMessage.streamID, .replaceable(.mouseMoved))
         case .mouseDragged:
-            return (inputMessage.streamID, .pointerMove)
+            return (inputMessage.streamID, .replaceable(.mouseDragged))
         case .rightMouseDragged:
-            return (inputMessage.streamID, .pointerMove)
+            return (inputMessage.streamID, .replaceable(.rightMouseDragged))
         case .otherMouseDragged:
-            return (inputMessage.streamID, .pointerMove)
+            return (inputMessage.streamID, .replaceable(.otherMouseDragged))
         case let .scrollWheel(event):
             return (inputMessage.streamID, event.isBoundaryScrollEvent ? .protected : .replaceable(.scrollWheel))
         case let .pointerSampleBatch(batch):
             if batch.phase == .hover {
-                return (inputMessage.streamID, .pointerMove)
+                return (inputMessage.streamID, .replaceable(.stylusHover))
             }
             if batch.phase == .moved {
                 return (inputMessage.streamID, .contactMove)
