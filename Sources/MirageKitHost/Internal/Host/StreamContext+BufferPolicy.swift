@@ -122,8 +122,9 @@ extension StreamContext {
         if useLowLatencyPipeline { return 1 }
         switch latencyMode {
         case .smoothest:
-            if frameRate >= 120 { return 6 }
-            if frameRate >= 60 { return 2 }
+            if frameRate >= 120 { return 2 }
+            if frameRate >= 90 { return 2 }
+            if frameRate >= 60 { return 1 }
             return 1
         case .lowestLatency:
             return 1

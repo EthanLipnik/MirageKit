@@ -238,6 +238,9 @@ extension MirageRenderStreamStore {
                 pendingFrameAgeMs: 0,
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: 0,
+                smoothestAgeDrops: 0,
+                smoothestCatchUpDrops: 0,
+                smoothestCapacityDrops: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
                 duplicateRemoteTimestampCount: 0,
@@ -303,6 +306,9 @@ extension MirageRenderStreamStore {
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
+        let smoothestAgeDrops = state.smoothestAgeDropsSinceLastSnapshot
+        let smoothestCatchUpDrops = state.smoothestCatchUpDropsSinceLastSnapshot
+        let smoothestCapacityDrops = state.smoothestCapacityDropsSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
         let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
@@ -337,6 +343,9 @@ extension MirageRenderStreamStore {
         let presentationMode = presentationDecision.mode
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.smoothestQueueDropsSinceLastSnapshot = 0
+        state.smoothestAgeDropsSinceLastSnapshot = 0
+        state.smoothestCatchUpDropsSinceLastSnapshot = 0
+        state.smoothestCapacityDropsSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
         state.coalescedFramesSinceLastSnapshot = 0
         state.duplicateRemoteTimestampsSinceLastSnapshot = 0
@@ -369,6 +378,9 @@ extension MirageRenderStreamStore {
             pendingFrameAgeMs: pendingFrameAgeMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             smoothestQueueDrops: smoothestQueueDrops,
+            smoothestAgeDrops: smoothestAgeDrops,
+            smoothestCatchUpDrops: smoothestCatchUpDrops,
+            smoothestCapacityDrops: smoothestCapacityDrops,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
             duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,

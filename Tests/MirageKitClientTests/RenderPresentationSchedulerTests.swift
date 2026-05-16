@@ -322,7 +322,7 @@ struct RenderPresentationSchedulerTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Immediate submission seeds presentation before first display tick")

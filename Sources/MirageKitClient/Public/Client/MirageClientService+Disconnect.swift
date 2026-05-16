@@ -101,6 +101,7 @@ extension MirageClientService {
         clearStartupCriticalSection()
         sharedClipboardEnabled = false
         await sharedClipboardBridge?.setActive(false)
+        inputEventSender.updatePriorityRoute(nil)
         inputEventSender.updateSendHandler(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
@@ -317,17 +318,79 @@ extension MirageClientService {
         }
     }
 
-    func installInputSendHandler(controlChannel: MirageControlChannel) {
-        inputEventSender.updateSendHandler { [weak controlChannel] data, deliveryMode in
+    func installInputSendHandler(controlChannel: MirageControlChannel) async {
+        let transportKind = await controlChannel.session.context?.transportKind
+        let fallbackSender: @Sendable (Data, MirageInputEventSender.DeliveryMode) async throws -> Void = {
+            [weak controlChannel, transportKind] data, deliveryMode in
             guard let controlChannel else {
                 throw MirageError.protocolError("Control channel unavailable")
             }
-            let transportKind = await controlChannel.session.context?.transportKind
             if deliveryMode == .droppableRealtime, transportKind == .udp {
                 try await controlChannel.sendSerializedUnreliable(data)
                 return
             }
             try await controlChannel.sendSerialized(data)
         }
+        inputEventSender.updateSendHandler(fallbackSender)
+
+        guard await shouldEnablePriorityInputLane(for: controlChannel) else {
+            inputEventSender.updatePriorityRoute(nil)
+            return
+        }
+
+        do {
+            let endpoint = try await controlChannel.session.makePriorityInputEndpoint()
+            let route = MiragePriorityInputClientRoute(
+                endpoint: endpoint,
+                fallbackSender: fallbackSender
+            )
+            inputEventSender.updatePriorityRoute(route)
+            MirageLogger.client("Priority input lane enabled on local UDP control session")
+        } catch {
+            inputEventSender.updatePriorityRoute(nil)
+            MirageLogger.client(
+                "Priority input lane unavailable; using control input fallback: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func shouldEnablePriorityInputLane(for controlChannel: MirageControlChannel) async -> Bool {
+        guard await controlChannel.session.context?.transportKind == .udp else {
+            return false
+        }
+        // TODO: Enable priority input for remote UDP after remote congestion and
+        // path-health behavior are validated. For now, keep this to local links.
+        guard let pathSnapshot = await controlChannel.session.pathSnapshot else {
+            return isLocalEndpoint(await controlChannel.session.remoteEndpoint)
+        }
+
+        let usesLocalInterface = pathSnapshot.usesWiFi ||
+            pathSnapshot.usesWiredEthernet ||
+            pathSnapshot.usesLoopback ||
+            pathSnapshot.interfaceNames.contains { $0.lowercased().hasPrefix("awdl") }
+        guard usesLocalInterface else { return false }
+        return isLocalEndpoint(await controlChannel.session.remoteEndpoint ?? pathSnapshot.remoteEndpoint)
+    }
+
+    private func isLocalEndpoint(_ endpoint: NWEndpoint?) -> Bool {
+        guard case let .hostPort(host, _) = endpoint else { return false }
+        let normalized = "\(host)".lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized == "localhost" || normalized == "::1" || normalized == "[::1]" { return true }
+        if normalized.contains(".local") { return true }
+        if normalized.hasPrefix("fe80:") || normalized.hasPrefix("[fe80:") { return true }
+        if normalized.hasPrefix("fc") || normalized.hasPrefix("[fc") { return true }
+        if normalized.hasPrefix("fd") || normalized.hasPrefix("[fd") { return true }
+        let tokens = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        guard tokens.count == 4,
+              let first = UInt8(tokens[0]),
+              let second = UInt8(tokens[1]) else {
+            return false
+        }
+        if first == 127 { return true }
+        if first == 10 { return true }
+        if first == 192, second == 168 { return true }
+        if first == 172, (16 ... 31).contains(second) { return true }
+        if first == 169, second == 254 { return true }
+        return false
     }
 }

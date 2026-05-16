@@ -64,5 +64,27 @@ struct HostSharedClipboardTests {
             )
         )
     }
+
+    @Test("Host defers automatic shared clipboard payloads during active streams")
+    func hostDefersAutomaticSharedClipboardDuringActiveStreams() {
+        #expect(
+            !MirageHostService.shouldDeferAutomaticSharedClipboardPayloads(
+                hasAppStreams: false,
+                hasDesktopStream: false
+            )
+        )
+        #expect(
+            MirageHostService.shouldDeferAutomaticSharedClipboardPayloads(
+                hasAppStreams: true,
+                hasDesktopStream: false
+            )
+        )
+        #expect(
+            MirageHostService.shouldDeferAutomaticSharedClipboardPayloads(
+                hasAppStreams: false,
+                hasDesktopStream: true
+            )
+        )
+    }
 }
 #endif

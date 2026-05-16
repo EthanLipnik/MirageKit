@@ -158,6 +158,9 @@ extension StreamController {
                 "uniqueSubmitted=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps " +
                 "pending=\(renderTelemetry.pendingFrameCount) pendingAge=\(Int(renderTelemetry.pendingFrameAgeMs.rounded()))ms " +
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
+                "smoothestAgeDrops=\(renderTelemetry.smoothestAgeDrops) " +
+                "smoothestCatchUpDrops=\(renderTelemetry.smoothestCatchUpDrops) " +
+                "smoothestCapacityDrops=\(renderTelemetry.smoothestCapacityDrops) " +
                 "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +
                 "presentationMode=\(renderTelemetry.presentationMode.rawValue) " +
                 "playoutDelay=\(renderTelemetry.playoutDelayFrames) " +

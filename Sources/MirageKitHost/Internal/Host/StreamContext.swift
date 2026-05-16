@@ -228,6 +228,10 @@ actor StreamContext {
     var receiverFrameAdmissionLastLoggedTargetFPS: Int?
     var receiverFrameAdmissionLastLoggedTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
     var receiverHasPresentedFrame = false
+    var receiverPresentationBacklogFrames = 0
+    var receiverAcceptedFPS: Double = 0
+    var receiverPresentedFPS: Double = 0
+    var lastReceiverFeedbackTime: CFAbsoluteTime = 0
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25

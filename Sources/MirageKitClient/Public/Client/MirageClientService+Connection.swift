@@ -129,7 +129,7 @@ public extension MirageClientService {
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
-            installInputSendHandler(controlChannel: controlChannel)
+            await installInputSendHandler(controlChannel: controlChannel)
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()
@@ -220,7 +220,7 @@ public extension MirageClientService {
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
-            installInputSendHandler(controlChannel: controlChannel)
+            await installInputSendHandler(controlChannel: controlChannel)
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()

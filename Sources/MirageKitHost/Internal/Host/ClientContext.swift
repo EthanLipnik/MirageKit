@@ -30,7 +30,10 @@ struct ClientContext {
     ) -> Bool {
         guard let pathSnapshot else { return false }
 
-        let isLocalInterface = pathSnapshot.usesWiFi || pathSnapshot.usesWiredEthernet
+        let isLocalInterface = pathSnapshot.usesWiFi ||
+            pathSnapshot.usesWiredEthernet ||
+            pathSnapshot.usesLoopback ||
+            pathSnapshot.interfaceNames.contains { $0.lowercased().hasPrefix("awdl") }
         guard isLocalInterface else { return false }
 
         guard case let .hostPort(host, _) = remoteEndpoint ?? pathSnapshot.remoteEndpoint else { return false }
@@ -40,8 +43,11 @@ struct ClientContext {
     /// Returns whether a host string identifies a local-link or private-network endpoint.
     static func isLocalNetworkHost(_ host: String) -> Bool {
         let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized == "localhost" || normalized == "::1" || normalized == "[::1]" { return true }
         if normalized.contains(".local") { return true }
         if normalized.hasPrefix("fe80:") || normalized.hasPrefix("[fe80:") { return true }
+        if normalized.hasPrefix("fc") || normalized.hasPrefix("[fc") { return true }
+        if normalized.hasPrefix("fd") || normalized.hasPrefix("[fd") { return true }
 
         guard let octets = parseIPv4Octets(from: normalized) else { return false }
         guard let first = octets.first,
@@ -49,6 +55,7 @@ struct ClientContext {
             return false
         }
 
+        if first == 127 { return true }
         if first == 10 { return true }
         if first == 192, second == 168 { return true }
         if first == 172, (16 ... 31).contains(second) { return true }

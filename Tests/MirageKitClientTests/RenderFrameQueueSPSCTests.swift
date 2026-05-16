@@ -23,6 +23,8 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         let first = MirageRenderStreamStore.shared.enqueue(
             pixelBuffer: makePixelBuffer(),
@@ -51,6 +53,8 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         for index in 0 ..< 4 {
             _ = MirageRenderStreamStore.shared.enqueue(
@@ -70,9 +74,10 @@ struct RenderFrameQueueSPSCTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
         #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .cushioned)
+        #expect(telemetry.presentationMode == .hardCushion)
     }
 
     @Test("Cushioned smoothest preserves FIFO after jitter")
@@ -81,6 +86,7 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
         MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         for index in 0 ..< 4 {
@@ -99,9 +105,10 @@ struct RenderFrameQueueSPSCTests {
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
         #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .cushioned)
+        #expect(telemetry.presentationMode == .hardCushion)
     }
 
     @Test("Smoothest queue overflow is tracked separately from overwritten frames")
@@ -110,6 +117,8 @@ struct RenderFrameQueueSPSCTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         for index in 0 ..< 10 {
             let overwritten = MirageRenderStreamStore.shared.enqueue(
@@ -128,10 +137,12 @@ struct RenderFrameQueueSPSCTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
         #expect(telemetry.smoothestQueueDrops == 6)
+        #expect(telemetry.smoothestCapacityDrops == 6)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
         #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .cushioned)
+        #expect(telemetry.presentationMode == .hardCushion)
     }
 
     @Test("Submission snapshot does not regress on older sequence marks")

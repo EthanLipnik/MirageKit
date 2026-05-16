@@ -29,6 +29,7 @@ package enum ControlMessageType: UInt8, Codable {
 
     /// Input events
     case inputEvent = 0x30
+    case priorityInputEvent = 0x31
 
     /// Keyframe control
     case keyframeRequest = 0x42

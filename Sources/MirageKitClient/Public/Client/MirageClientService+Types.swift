@@ -66,7 +66,7 @@ public extension MirageClientService {
     }
 
     /// Control refreshes deferred while non-essential updates are suppressed.
-    struct DeferredControlRefreshRequirements: Sendable {
+    struct DeferredControlRefreshRequirements: Sendable, Equatable {
         /// Whether the installed-app list should refresh after suppression ends.
         public var needsAppListRefresh: Bool
 

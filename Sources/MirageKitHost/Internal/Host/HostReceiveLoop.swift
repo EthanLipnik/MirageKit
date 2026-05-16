@@ -226,7 +226,7 @@ final class HostReceiveLoop: @unchecked Sendable {
                 switch ControlMessage.deserialize(from: state.receiveBuffer, offset: parseOffset) {
                 case let .success(message, consumed):
                     parseOffset += consumed
-                    if message.type == .inputEvent {
+                    if message.type == .inputEvent || message.type == .priorityInputEvent {
                         if state.clipboardInputBarrierDepth > 0 {
                             enqueueInput(message, state: &state)
                         } else {

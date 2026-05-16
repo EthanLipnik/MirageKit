@@ -9,8 +9,9 @@ import Foundation
 
 enum MiragePresentationDecisionMode: String, Equatable, Sendable {
     case lowestLatency
-    case cushioned
     case liveEdge
+    case softCushion
+    case hardCushion
 }
 
 struct MiragePresentationDecision: Equatable, Sendable {
@@ -22,30 +23,70 @@ struct MiragePresentationDecision: Equatable, Sendable {
 
 /// Elastic smoothest-mode state that adds timed playout only after local jitter.
 struct MirageSmoothestPlayoutController: Equatable, Sendable {
-    static let cushionHoldDuration: CFTimeInterval = 0.750
-    static let healthSampleFreshness: CFTimeInterval = 1.250
-    static let liveEdgeHealthyWindowRequirement = 2
+    enum JitterSeverity: Equatable, Sendable {
+        case soft
+        case hard
+    }
 
-    private var lastJitterTime: CFTimeInterval?
+    static let softCushionHoldDuration: CFTimeInterval = 0.220
+    static let hardCushionHoldDuration: CFTimeInterval = 0.750
+    static let healthSampleFreshness: CFTimeInterval = 1.250
+    static let startupLiveEdgeHealthyWindowRequirement = 1
+    static let postHardCushionLiveEdgeHealthyWindowRequirement = 2
+
+    private var lastSoftJitterTime: CFTimeInterval?
+    private var lastHardJitterTime: CFTimeInterval?
     private var lastHealthSampleTime: CFTimeInterval?
     private var consecutiveLiveEdgeHealthySamples = 0
+    private var recentSoftJitterCount = 0
+    private var requiresPostHardHealthyHysteresis = false
 
     mutating func reset() {
-        lastJitterTime = nil
+        lastSoftJitterTime = nil
+        lastHardJitterTime = nil
         lastHealthSampleTime = nil
         consecutiveLiveEdgeHealthySamples = 0
+        recentSoftJitterCount = 0
+        requiresPostHardHealthyHysteresis = false
     }
 
-    mutating func noteJitter(at time: CFTimeInterval) {
-        lastJitterTime = time
+    mutating func noteJitter(
+        at time: CFTimeInterval,
+        severity: JitterSeverity = .soft
+    ) {
+        switch severity {
+        case .soft:
+            if let lastSoftJitterTime,
+               time - lastSoftJitterTime <= Self.softCushionHoldDuration {
+                recentSoftJitterCount += 1
+            } else {
+                recentSoftJitterCount = 1
+            }
+            lastSoftJitterTime = time
+            if recentSoftJitterCount >= 2 {
+                noteHardJitter(at: time)
+            }
+        case .hard:
+            noteHardJitter(at: time)
+        }
     }
 
-    mutating func recordHealthSample(healthyForLiveEdge: Bool, at time: CFTimeInterval) {
+    mutating func recordHealthSample(
+        healthyForLiveEdge: Bool,
+        requiresHardCushion: Bool = false,
+        at time: CFTimeInterval
+    ) {
         lastHealthSampleTime = time
-        if healthyForLiveEdge {
+        if requiresHardCushion {
+            noteHardJitter(at: time)
+        }
+        if healthyForLiveEdge, !requiresHardCushion {
             consecutiveLiveEdgeHealthySamples += 1
         } else {
             consecutiveLiveEdgeHealthySamples = 0
+            if !requiresHardCushion {
+                noteJitter(at: time, severity: .soft)
+            }
         }
     }
 
@@ -62,29 +103,62 @@ struct MirageSmoothestPlayoutController: Equatable, Sendable {
                 mode: .lowestLatency
             )
         case .smoothest:
-            let useCushion = shouldUseCushion(
-                now: now
-            )
-            if !useCushion {
-                lastJitterTime = nil
+            let mode = smoothestMode(now: now)
+            if mode == .liveEdge {
+                lastSoftJitterTime = nil
+                lastHardJitterTime = nil
+                recentSoftJitterCount = 0
+                requiresPostHardHealthyHysteresis = false
             }
             return MiragePresentationDecision(
-                playoutDelayFrames: useCushion ? policy.targetPlayoutDelayFrames : 0,
-                displaysImmediately: !useCushion,
-                queueTargetDepth: useCushion ? policy.maximumQueueDepth : 1,
-                mode: useCushion ? .cushioned : .liveEdge
+                playoutDelayFrames: 0,
+                displaysImmediately: true,
+                queueTargetDepth: queueTargetDepth(for: mode, policy: policy),
+                mode: mode
             )
         }
     }
 
-    private func shouldUseCushion(now: CFTimeInterval) -> Bool {
-        guard hasFreshLiveEdgeHealth(now: now) else { return true }
-        guard let lastJitterTime else { return false }
-        return now - lastJitterTime <= Self.cushionHoldDuration
+    private mutating func noteHardJitter(at time: CFTimeInterval) {
+        lastHardJitterTime = time
+        requiresPostHardHealthyHysteresis = true
+        consecutiveLiveEdgeHealthySamples = 0
+    }
+
+    private func smoothestMode(now: CFTimeInterval) -> MiragePresentationDecisionMode {
+        if let lastHardJitterTime,
+           now - lastHardJitterTime <= Self.hardCushionHoldDuration {
+            return .hardCushion
+        }
+        guard hasFreshLiveEdgeHealth(now: now) else {
+            return .softCushion
+        }
+        if let lastSoftJitterTime,
+           now - lastSoftJitterTime <= Self.softCushionHoldDuration {
+            return .softCushion
+        }
+        return .liveEdge
+    }
+
+    private func queueTargetDepth(
+        for mode: MiragePresentationDecisionMode,
+        policy: MiragePresentationLatencyPolicy
+    ) -> Int {
+        switch mode {
+        case .lowestLatency, .liveEdge:
+            return 1
+        case .softCushion:
+            return policy.softCushionQueueDepth
+        case .hardCushion:
+            return policy.maximumQueueDepth
+        }
     }
 
     private func hasFreshLiveEdgeHealth(now: CFTimeInterval) -> Bool {
-        guard consecutiveLiveEdgeHealthySamples >= Self.liveEdgeHealthyWindowRequirement,
+        let requiredSamples = requiresPostHardHealthyHysteresis
+            ? Self.postHardCushionLiveEdgeHealthyWindowRequirement
+            : Self.startupLiveEdgeHealthyWindowRequirement
+        guard consecutiveLiveEdgeHealthySamples >= requiredSamples,
               let lastHealthSampleTime else {
             return false
         }

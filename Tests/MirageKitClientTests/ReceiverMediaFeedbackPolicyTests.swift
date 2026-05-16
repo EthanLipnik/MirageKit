@@ -63,6 +63,42 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.recoveryState == .idle)
     }
 
+    @Test("Smoothest health treats target occupancy as healthy")
+    func smoothestHealthTreatsTargetOccupancyAsHealthy() {
+        let health = MirageClientService.smoothestLiveEdgeHealth(
+            metrics: healthySmoothestMetrics(
+                pendingFrameCount: 4,
+                queueTargetDepth: 4,
+                presentationMode: .hardCushion
+            ),
+            ingressMetrics: healthyIngressMetrics(),
+            ingressDropDelta: 0,
+            targetFPS: 60
+        )
+
+        #expect(health.healthyForLiveEdge)
+        #expect(!health.requiresHardCushion)
+    }
+
+    @Test("Smoothest health ignores intentional catch-up drops")
+    func smoothestHealthIgnoresIntentionalCatchUpDrops() {
+        let health = MirageClientService.smoothestLiveEdgeHealth(
+            metrics: healthySmoothestMetrics(
+                pendingFrameCount: 1,
+                smoothestQueueDrops: 3,
+                smoothestCatchUpDrops: 3,
+                queueTargetDepth: 1,
+                presentationMode: .liveEdge
+            ),
+            ingressMetrics: healthyIngressMetrics(),
+            ingressDropDelta: 0,
+            targetFPS: 60
+        )
+
+        #expect(health.healthyForLiveEdge)
+        #expect(!health.requiresHardCushion)
+    }
+
     private func metrics(
         droppedFrames: UInt64 = 0,
         pendingFrameCount: Int = 0,
@@ -90,6 +126,9 @@ struct ReceiverMediaFeedbackPolicyTests {
             pendingFrameAgeMs: 30,
             overwrittenPendingFrames: 3,
             smoothestQueueDrops: smoothestQueueDrops,
+            smoothestAgeDrops: 0,
+            smoothestCatchUpDrops: smoothestQueueDrops,
+            smoothestCapacityDrops: 0,
             lateFrameDrops: 2,
             displayLayerNotReadyCount: 8,
             repeatedFrameCount: 0,
@@ -102,7 +141,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             playoutDelayFrames: 3,
             displaysImmediately: false,
             queueTargetDepth: 4,
-            presentationMode: .cushioned,
+            presentationMode: .hardCushion,
             presentationStallCount: presentationStallCount,
             worstPresentationGapMs: 120,
             frameIntervalP95Ms: 20,
@@ -119,6 +158,86 @@ struct ReceiverMediaFeedbackPolicyTests {
             decoderOutputPixelFormat: "420v",
             usingHardwareDecoder: true,
             videoIngressMetrics: nil
+        )
+    }
+
+    private func healthySmoothestMetrics(
+        pendingFrameCount: Int,
+        smoothestQueueDrops: UInt64 = 0,
+        smoothestCatchUpDrops: UInt64 = 0,
+        queueTargetDepth: Int,
+        presentationMode: MiragePresentationDecisionMode
+    ) -> StreamController.ClientFrameMetrics {
+        StreamController.ClientFrameMetrics(
+            decodedFPS: 60,
+            receivedFPS: 60,
+            receivedWorstGapMs: 18,
+            receivedFrameIntervalP95Ms: 17,
+            receivedFrameIntervalP99Ms: 18,
+            droppedFrames: 0,
+            displayTickFPS: 60,
+            submitAttemptFPS: 60,
+            layerAcceptedFPS: 60,
+            presentedFPS: 60,
+            submittedFPS: 60,
+            uniqueSubmittedFPS: 60,
+            pendingFrameCount: pendingFrameCount,
+            pendingFrameAgeMs: 20,
+            overwrittenPendingFrames: 0,
+            smoothestQueueDrops: smoothestQueueDrops,
+            smoothestAgeDrops: 0,
+            smoothestCatchUpDrops: smoothestCatchUpDrops,
+            smoothestCapacityDrops: 0,
+            lateFrameDrops: 0,
+            displayLayerNotReadyCount: 0,
+            repeatedFrameCount: 0,
+            displayTickNoFrameCount: 0,
+            frameArrivedAfterNoFrameTickCount: 0,
+            frameArrivalFallbackSubmittedCount: 0,
+            missedVSyncCount: 0,
+            displayTickIntervalP95Ms: 17,
+            displayTickIntervalP99Ms: 18,
+            playoutDelayFrames: 0,
+            displaysImmediately: true,
+            queueTargetDepth: queueTargetDepth,
+            presentationMode: presentationMode,
+            presentationStallCount: 0,
+            worstPresentationGapMs: 0,
+            frameIntervalP95Ms: 17,
+            frameIntervalP99Ms: 18,
+            decodeHealthy: true,
+            activeJitterHoldMs: 0,
+            reassemblerPendingFrameCount: 0,
+            reassemblerPendingKeyframeCount: 0,
+            reassemblerPendingBytes: 0,
+            frameBufferPoolRetainedBytes: 0,
+            reassemblerBudgetEvictions: 0,
+            reassemblerIncompleteFrameTimeouts: 0,
+            reassemblerMissingFragmentTimeouts: 0,
+            decoderOutputPixelFormat: "420v",
+            usingHardwareDecoder: true,
+            videoIngressMetrics: nil
+        )
+    }
+
+    private func healthyIngressMetrics() -> ClientVideoIngressMetricsSnapshot {
+        ClientVideoIngressMetricsSnapshot(
+            loomStreamDeliveryPPS: 600,
+            loomStreamDeliveryIntervalMaxMs: 18,
+            rawPacketIngressPPS: 600,
+            incomingBatchRate: 600,
+            incomingBatchIntervalP95Ms: 2,
+            incomingBatchIntervalP99Ms: 3,
+            incomingBatchIntervalMaxMs: 4,
+            incomingBatchMaxSize: 1,
+            incomingBatchAverageSize: 1,
+            queuedBatchCount: 0,
+            queuedPacketCount: 0,
+            queueAgeMaxMs: 0,
+            stalePacketDropCount: 0,
+            overloadPacketDropCount: 0,
+            processedPacketCount: 600,
+            processorWakeDelayMaxMs: 2
         )
     }
 }

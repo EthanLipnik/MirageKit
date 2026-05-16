@@ -276,12 +276,14 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func recordSmoothestStreamHealth(
         for streamID: StreamID,
         healthyForLiveEdge: Bool,
+        requiresHardCushion: Bool = false,
         now: CFTimeInterval = CFAbsoluteTimeGetCurrent()
     ) {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.smoothestPlayoutController.recordHealthSample(
             healthyForLiveEdge: healthyForLiveEdge,
+            requiresHardCushion: requiresHardCushion,
             at: now
         )
         let policy = presentationLatencyPolicyLocked(state: state)
@@ -384,6 +386,9 @@ extension MirageRenderStreamStore {
     ) {
         recordOverwrittenPendingFramesLocked(result.overwrittenPendingFrames, state: state)
         recordSmoothestQueueDropsLocked(result.smoothestQueueDrops, state: state)
+        recordSmoothestAgeDropsLocked(result.smoothestAgeDrops, state: state)
+        recordSmoothestCatchUpDropsLocked(result.smoothestCatchUpDrops, state: state)
+        recordSmoothestCapacityDropsLocked(result.smoothestCapacityDrops, state: state)
         recordLateFrameDropsLocked(result.lateFrameDrops, state: state)
         recordCoalescedFramesLocked(result.coalescedFrames, state: state)
     }
@@ -396,6 +401,21 @@ extension MirageRenderStreamStore {
     private func recordSmoothestQueueDropsLocked(_ count: Int, state: MirageRenderStreamState) {
         guard count > 0 else { return }
         state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestAgeDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestAgeDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestCatchUpDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestCatchUpDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestCapacityDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestCapacityDropsSinceLastSnapshot &+= UInt64(count)
     }
 
     private func recordLateFrameDropsLocked(_ count: Int, state: MirageRenderStreamState) {

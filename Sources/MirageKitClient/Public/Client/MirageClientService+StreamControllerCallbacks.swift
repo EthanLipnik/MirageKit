@@ -117,7 +117,8 @@ extension MirageClientService {
             videoIngressTelemetryStore.clear(streamID: streamID)
             MirageRenderStreamStore.shared.recordSmoothestStreamHealth(
                 for: streamID,
-                healthyForLiveEdge: false
+                healthyForLiveEdge: false,
+                requiresHardCushion: true
             )
             return
         }
@@ -133,23 +134,30 @@ extension MirageClientService {
         let hostTargetFPS = metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 0
         let displayTargetFPS = Int(metrics.displayTickFPS.rounded())
         let targetFPS = hostTargetFPS > 0 ? hostTargetFPS : max(1, displayTargetFPS)
+        let health = Self.smoothestLiveEdgeHealth(
+            metrics: metrics,
+            ingressMetrics: snapshot,
+            ingressDropDelta: ingressDropDelta,
+            targetFPS: targetFPS
+        )
         MirageRenderStreamStore.shared.recordSmoothestStreamHealth(
             for: streamID,
-            healthyForLiveEdge: Self.smoothestLiveEdgeHealth(
-                metrics: metrics,
-                ingressMetrics: snapshot,
-                ingressDropDelta: ingressDropDelta,
-                targetFPS: targetFPS
-            )
+            healthyForLiveEdge: health.healthyForLiveEdge,
+            requiresHardCushion: health.requiresHardCushion
         )
     }
 
-    private nonisolated static func smoothestLiveEdgeHealth(
+    struct SmoothestLiveEdgeHealth: Sendable, Equatable {
+        let healthyForLiveEdge: Bool
+        let requiresHardCushion: Bool
+    }
+
+    nonisolated static func smoothestLiveEdgeHealth(
         metrics: StreamController.ClientFrameMetrics,
         ingressMetrics: ClientVideoIngressMetricsSnapshot,
         ingressDropDelta: UInt64,
         targetFPS: Int
-    ) -> Bool {
+    ) -> SmoothestLiveEdgeHealth {
         let targetFPS = max(1, targetFPS)
         let frameBudgetMs = 1000.0 / Double(targetFPS)
         let reassembledP99LimitMs = max(frameBudgetMs * 2.25, targetFPS >= 90 ? 24.0 : 37.0)
@@ -162,7 +170,13 @@ extension MirageClientService {
             metrics.frameArrivedAfterNoFrameTickCount == 0 &&
             metrics.frameArrivalFallbackSubmittedCount == 0 &&
             metrics.missedVSyncCount == 0
-        let renderPolicyClean = metrics.smoothestQueueDrops == 0 &&
+        let queueTargetDepth = max(1, metrics.queueTargetDepth)
+        let catchUpDropsAreExpected = metrics.smoothestQueueDrops > 0 &&
+            metrics.smoothestQueueDrops == metrics.smoothestCatchUpDrops &&
+            metrics.pendingFrameCount <= queueTargetDepth &&
+            metrics.pendingFrameAgeMs <= frameBudgetMs * 3.0
+        let smoothestDropsClean = metrics.smoothestQueueDrops == 0 || catchUpDropsAreExpected
+        let renderPolicyClean = smoothestDropsClean &&
             metrics.lateFrameDrops == 0 &&
             metrics.displayLayerNotReadyCount == 0
         let reassembledCadenceClean = metrics.receivedFPS >= minimumFrameCadence &&
@@ -180,11 +194,31 @@ extension MirageClientService {
             (ingressMetrics.loomStreamDeliveryIntervalMaxMs == 0 ||
                 ingressMetrics.loomStreamDeliveryIntervalMaxMs <= loomGapLimitMs)
 
-        return presentationJitterClean &&
+        let healthyForLiveEdge = presentationJitterClean &&
             renderPolicyClean &&
             reassembledCadenceClean &&
             decodeCadenceClean &&
             ingressClean
+
+        let repeatedPresentationJitter = metrics.displayTickNoFrameCount > 1 ||
+            metrics.frameArrivedAfterNoFrameTickCount > 1 ||
+            metrics.frameArrivalFallbackSubmittedCount > 1 ||
+            metrics.missedVSyncCount > 0
+        let ingressBacklogOrDrop = ingressDropDelta > 0 ||
+            ingressMetrics.queuedPacketCount > 0 ||
+            ingressMetrics.queueAgeMaxMs > frameBudgetMs * 2.0 ||
+            ingressMetrics.processorWakeDelayMaxMs > workerWakeLimitMs * 2.0
+        let sustainedClientBacklog = metrics.pendingFrameCount > queueTargetDepth
+        let requiresHardCushion = repeatedPresentationJitter ||
+            !decodeCadenceClean ||
+            metrics.displayLayerNotReadyCount > 0 ||
+            ingressBacklogOrDrop ||
+            sustainedClientBacklog
+
+        return SmoothestLiveEdgeHealth(
+            healthyForLiveEdge: healthyForLiveEdge,
+            requiresHardCushion: requiresHardCushion
+        )
     }
 
     private func sendReceiverMediaFeedback(

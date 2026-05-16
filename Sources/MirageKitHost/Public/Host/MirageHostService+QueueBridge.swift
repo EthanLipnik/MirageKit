@@ -82,6 +82,25 @@ extension MirageHostService {
         loop?.stop()
     }
 
+    /// Stores the priority input route that owns local-UDP input for a session.
+    nonisolated func storePriorityInputRoute(
+        _ route: HostPriorityInputRoute,
+        sessionID: UUID
+    ) {
+        priorityInputRoutesBySessionID.withLock { routes in
+            routes[sessionID]?.stop()
+            routes[sessionID] = route
+        }
+    }
+
+    /// Stops and removes the priority input route for a control session.
+    nonisolated func stopPriorityInputRoute(sessionID: UUID) {
+        let route = priorityInputRoutesBySessionID.withLock { routes in
+            routes.removeValue(forKey: sessionID)
+        }
+        route?.stop()
+    }
+
     /// Registers pointer coalescing state for a stream and forwards capture-stall diagnostics.
     @MainActor
     func registerStallWindowPointerRoute(streamID: StreamID, context: StreamContext) async {

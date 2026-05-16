@@ -67,6 +67,7 @@ extension MirageClientService {
     public func setControlUpdatePolicy(_ policy: ControlUpdatePolicy) {
         guard controlUpdatePolicy != policy else { return }
         controlUpdatePolicy = policy
+        MirageLogger.client("Control update policy=\(policy)")
     }
 
     /// Consumes and clears deferred control refresh requirements accumulated while policy was suppressed.
@@ -74,5 +75,22 @@ extension MirageClientService {
         let requirements = deferredControlRefreshRequirements
         deferredControlRefreshRequirements = .none
         return requirements
+    }
+
+    func refreshActiveStreamTransportBudgetPolicy() {
+        let hasActiveVideoStream = activeMediaStreams.keys.contains { $0.hasPrefix("video/") }
+        if hasActiveVideoStream {
+            setControlUpdatePolicy(.interactiveStreaming)
+            return
+        }
+
+        guard controlUpdatePolicy == .interactiveStreaming else { return }
+        let deferred = deferredControlRefreshRequirements
+        setControlUpdatePolicy(.normal)
+        if deferred != .none {
+            MirageLogger.client(
+                "Deferred active-stream control refreshes ready: apps=\(deferred.needsAppListRefresh) windows=\(deferred.needsWindowListRefresh) softwareUpdate=\(deferred.needsHostSoftwareUpdateRefresh)"
+            )
+        }
     }
 }

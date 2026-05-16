@@ -48,6 +48,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
     private let connectionLock = NSLock()
     private var sendHandler: (@Sendable (Data, DeliveryMode) async throws -> Void)?
+    private var priorityRoute: MiragePriorityInputClientRoute?
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
     private let interactionLock = NSLock()
@@ -73,6 +74,19 @@ public final class MirageInputEventSender: @unchecked Sendable {
                 self?.pendingInputs.removeAll()
             }
         }
+    }
+
+    func updatePriorityRoute(_ route: MiragePriorityInputClientRoute?) {
+        connectionLock.lock()
+        let previousRoute = priorityRoute
+        priorityRoute = route
+        connectionLock.unlock()
+
+        previousRoute?.stop()
+    }
+
+    func priorityInputSnapshot() -> MiragePriorityInputClientMetricsSnapshot? {
+        currentPriorityRoute?.snapshot()
     }
 
     func activateTemporaryPointerCoalescing(
@@ -105,6 +119,10 @@ public final class MirageInputEventSender: @unchecked Sendable {
             deliveryMode: .reliable,
             path: "client_send_reliable"
         )
+        if let priorityRoute = currentPriorityRoute {
+            try await priorityRoute.send(event: event, streamID: streamID, deliveryMode: .reliable)
+            return
+        }
         let data = try makeInputMessageData(event: event, streamID: streamID)
         if let sendHandler = currentSendHandler {
             try await sendHandler(data, .reliable)
@@ -126,10 +144,23 @@ public final class MirageInputEventSender: @unchecked Sendable {
             path: "client_send_best_effort_enqueue"
         )
 
+        let deliveryMode = Self.deliveryMode(for: event)
+        if deliveryMode == .droppableRealtime,
+           let route = currentPriorityRoute {
+            Task.detached(priority: .high) {
+                do {
+                    try route.sendRealtime(event: event, streamID: streamID)
+                } catch {
+                    MirageLogger.error(.client, error: error, message: "Failed to send realtime priority input: ")
+                }
+            }
+            return
+        }
+
         sendQueue.async { [weak self] in
             guard let self else { return }
 
-            guard currentSendHandler != nil else {
+            guard currentSendHandler != nil || currentPriorityRoute != nil else {
                 pendingInputs.removeAll()
                 return
             }
@@ -171,7 +202,9 @@ public final class MirageInputEventSender: @unchecked Sendable {
     private func scheduleDrain() {
         guard !sendInFlight else { return }
         guard !pendingInputs.isEmpty else { return }
-        guard let handler = currentSendHandler else {
+        let route = currentPriorityRoute
+        let handler = currentSendHandler
+        guard route != nil || handler != nil else {
             pendingInputs.removeAll()
             return
         }
@@ -182,8 +215,13 @@ public final class MirageInputEventSender: @unchecked Sendable {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
-                try await handler(data, Self.deliveryMode(for: pending.event))
+                let deliveryMode = Self.deliveryMode(for: pending.event)
+                if let route {
+                    try await route.send(event: pending.event, streamID: pending.streamID, deliveryMode: deliveryMode)
+                } else if let handler {
+                    let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
+                    try await handler(data, deliveryMode)
+                }
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {
                     MirageLogger.client("Dropped best-effort input because the stream closed: \(error.localizedDescription)")
@@ -251,6 +289,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
         connectionLock.lock()
         defer { connectionLock.unlock() }
         return sendHandler
+    }
+
+    private var currentPriorityRoute: MiragePriorityInputClientRoute? {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        return priorityRoute
     }
 
     /// Returns the elapsed time since the last user interaction observed by this sender.

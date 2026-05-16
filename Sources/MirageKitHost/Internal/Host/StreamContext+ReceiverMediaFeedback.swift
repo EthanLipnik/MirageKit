@@ -13,6 +13,10 @@ import MirageKit
 extension StreamContext {
     func applyReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
         let now = CFAbsoluteTimeGetCurrent()
+        lastReceiverFeedbackTime = now
+        receiverPresentationBacklogFrames = feedback.presentationBacklogFrames
+        receiverAcceptedFPS = feedback.rendererAcceptedFPS
+        receiverPresentedFPS = feedback.rendererPresentedFPS
         if feedback.rendererPresentedFPS > 0 || feedback.rendererAcceptedFPS > 0 {
             receiverHasPresentedFrame = true
         }

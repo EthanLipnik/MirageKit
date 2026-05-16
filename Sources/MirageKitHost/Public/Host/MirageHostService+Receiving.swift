@@ -25,6 +25,14 @@ extension MirageHostService {
             guard let self else { return }
             handleInputEventFast(message, from: clientContext.client, sessionID: clientContext.sessionID)
         }
+        let priorityInputRoute = HostPriorityInputRoute(
+            sessionID: clientContext.sessionID,
+            clientName: clientContext.client.name,
+            controlChannel: clientContext.controlChannel,
+            inputScheduler: inputScheduler
+        )
+        storePriorityInputRoute(priorityInputRoute, sessionID: clientContext.sessionID)
+        priorityInputRoute.startIfAvailable(clientContext: clientContext)
 
         let receiveLoop = HostReceiveLoop(
             clientName: clientContext.client.name,
@@ -39,7 +47,7 @@ extension MirageHostService {
                 }
             },
             onInputMessage: { message in
-                inputScheduler.enqueue(message)
+                priorityInputRoute.handleControlInputMessage(message)
             },
             onPingMessage: {
                 clientContext.sendBestEffort(.pong)
@@ -100,6 +108,7 @@ extension MirageHostService {
                 dispatchControlWork(clientID: clientContext.client.id) { [weak self] in
                     guard let self else { return }
                     removeReceiveLoop(sessionID: clientContext.sessionID)
+                    stopPriorityInputRoute(sessionID: clientContext.sessionID)
 
                     switch reason {
                     case .complete:

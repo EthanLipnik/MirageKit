@@ -77,11 +77,13 @@ extension MirageHostService {
             markStreamSetupSessionClosing(clientSessionID: expectedSessionID)
             removedClientContext = clientsBySessionID.removeValue(forKey: expectedSessionID)
             removedSessionID = expectedSessionID
+            stopPriorityInputRoute(sessionID: expectedSessionID)
             stopReceiveLoop(sessionID: expectedSessionID)
         } else if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
             markStreamSetupSessionClosing(clientSessionID: key)
             removedClientContext = clientsBySessionID.removeValue(forKey: key)
             removedSessionID = key
+            stopPriorityInputRoute(sessionID: key)
             stopReceiveLoop(sessionID: key)
         }
         // Fail closed before asynchronous teardown work so queued handlers no longer

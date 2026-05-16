@@ -114,6 +114,9 @@ extension StreamController {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let smoothestQueueDrops: UInt64
+        let smoothestAgeDrops: UInt64
+        let smoothestCatchUpDrops: UInt64
+        let smoothestCapacityDrops: UInt64
         let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64

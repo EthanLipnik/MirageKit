@@ -68,6 +68,7 @@ extension MirageClientService {
         }
         qualityTestStreamReceiveTasks.removeAll()
         activeMediaStreams.removeAll()
+        refreshActiveStreamTransportBudgetPolicy()
     }
 
     // MARK: - Video Stream Receive
@@ -248,6 +249,7 @@ extension MirageClientService {
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        refreshActiveStreamTransportBudgetPolicy()
         cancelRecoveryKeyframeRetry(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
     }
@@ -267,6 +269,7 @@ extension MirageClientService {
         case let .video(streamID):
             MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
             activeMediaStreams[label] = stream
+            refreshActiveStreamTransportBudgetPolicy()
             startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
 
         case let .audio(streamID):
@@ -296,6 +299,7 @@ extension MirageClientService {
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        refreshActiveStreamTransportBudgetPolicy()
         MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
     }
 

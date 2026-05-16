@@ -46,6 +46,15 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         }
     }
 
+    var softCushionQueueDepth: Int {
+        switch latencyMode {
+        case .lowestLatency:
+            return 1
+        case .smoothest:
+            return highCadence ? 3 : 2
+        }
+    }
+
     var maximumQueueAgeMs: Double {
         switch latencyMode {
         case .lowestLatency:

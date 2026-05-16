@@ -30,49 +30,43 @@ struct RenderCadenceSmoothingTests {
             policy: policy,
             now: 10
         )
-        #expect(initial.playoutDelayFrames == 1)
-        #expect(!initial.displaysImmediately)
-        #expect(initial.queueTargetDepth == 4)
-        #expect(initial.mode == .cushioned)
+        #expect(initial.playoutDelayFrames == 0)
+        #expect(initial.displaysImmediately)
+        #expect(initial.queueTargetDepth == 2)
+        #expect(initial.mode == .softCushion)
 
         controller.recordHealthSample(healthyForLiveEdge: true, at: 10.1)
         let firstHealthyWindow = controller.presentationDecision(
             policy: policy,
             now: 10.1
         )
-        #expect(firstHealthyWindow.playoutDelayFrames == 1)
-        #expect(!firstHealthyWindow.displaysImmediately)
+        #expect(firstHealthyWindow.playoutDelayFrames == 0)
+        #expect(firstHealthyWindow.displaysImmediately)
+        #expect(firstHealthyWindow.queueTargetDepth == 1)
+        #expect(firstHealthyWindow.mode == .liveEdge)
 
-        controller.recordHealthSample(healthyForLiveEdge: true, at: 10.2)
-        let healthy = controller.presentationDecision(
-            policy: policy,
-            now: 10.2
-        )
-        #expect(healthy.playoutDelayFrames == 0)
-        #expect(healthy.displaysImmediately)
-        #expect(healthy.queueTargetDepth == 1)
-        #expect(healthy.mode == .liveEdge)
-
-        controller.noteJitter(at: 10)
+        controller.noteJitter(at: 10.2, severity: .hard)
         let cushioned = controller.presentationDecision(
             policy: policy,
             now: 10.5
         )
-        #expect(cushioned.playoutDelayFrames == 1)
-        #expect(!cushioned.displaysImmediately)
+        #expect(cushioned.playoutDelayFrames == 0)
+        #expect(cushioned.displaysImmediately)
         #expect(cushioned.queueTargetDepth == 4)
-        #expect(cushioned.mode == .cushioned)
+        #expect(cushioned.mode == .hardCushion)
 
         let stillCushioned = controller.presentationDecision(
             policy: policy,
-            now: 10.7
+        now: 10.7
         )
-        #expect(stillCushioned.playoutDelayFrames == 1)
-        #expect(!stillCushioned.displaysImmediately)
+        #expect(stillCushioned.playoutDelayFrames == 0)
+        #expect(stillCushioned.displaysImmediately)
 
+        controller.recordHealthSample(healthyForLiveEdge: true, at: 11.0)
+        controller.recordHealthSample(healthyForLiveEdge: true, at: 11.1)
         let recovered = controller.presentationDecision(
             policy: policy,
-            now: 10.8
+            now: 11.1
         )
         #expect(recovered.playoutDelayFrames == 0)
         #expect(recovered.displaysImmediately)
@@ -104,7 +98,7 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.overwrittenPendingFrames == 0)
         #expect(telemetry.smoothestQueueDrops == 5)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Smoothest ProMotion render store keeps a bounded burst absorption queue")
@@ -137,11 +131,11 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 6)
         #expect(telemetry.smoothestQueueDrops == 7)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
-    @Test("Smoothest uses timed playout after a jitter signal")
-    func smoothestUsesTimedPlayoutAfterJitterSignal() {
+    @Test("Smoothest uses immediate active playout after a jitter signal")
+    func smoothestUsesImmediateActivePlayoutAfterJitterSignal() {
         let streamID: StreamID = 407
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -153,6 +147,7 @@ struct RenderCadenceSmoothingTests {
                 latencyMode: .smoothest
             )
         )
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
         MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
 
         _ = MirageRenderStreamStore.shared.enqueue(
@@ -182,7 +177,9 @@ struct RenderCadenceSmoothingTests {
         #expect(next?.sequence == 2)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
+        #expect(telemetry.presentationMode == .hardCushion)
     }
 
     @Test("Smoothest drops stale backlog before presenting a fresh frame")
@@ -245,15 +242,15 @@ struct RenderCadenceSmoothingTests {
         }
 
         let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero)
-        #expect(frame?.sequence == 1)
+        #expect(frame?.sequence == 2)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.pendingFrameCount == 3)
-        #expect(telemetry.playoutDelayFrames == 1)
-        #expect(!telemetry.displaysImmediately)
-        #expect(telemetry.queueTargetDepth == 4)
-        #expect(telemetry.presentationMode == .cushioned)
+        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.pendingFrameCount == 2)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
+        #expect(telemetry.queueTargetDepth == 2)
+        #expect(telemetry.presentationMode == .softCushion)
     }
 
     @Test("Cushioned smoothest ProMotion preserves short jitter FIFO")
@@ -282,15 +279,15 @@ struct RenderCadenceSmoothingTests {
         }
 
         let frame = MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero)
-        #expect(frame?.sequence == 1)
+        #expect(frame?.sequence == 2)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.pendingFrameCount == 4)
-        #expect(telemetry.playoutDelayFrames == 1)
-        #expect(!telemetry.displaysImmediately)
-        #expect(telemetry.queueTargetDepth == 6)
-        #expect(telemetry.presentationMode == .cushioned)
+        #expect(telemetry.smoothestQueueDrops == 1)
+        #expect(telemetry.pendingFrameCount == 3)
+        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.displaysImmediately)
+        #expect(telemetry.queueTargetDepth == 3)
+        #expect(telemetry.presentationMode == .softCushion)
     }
 
     @Test("Healthy smoothest live edge catches up to newest")
@@ -370,17 +367,16 @@ struct RenderCadenceSmoothingTests {
             timescale: timescale
         )) == referenceTime)
 
-        let cushionedSmoothestTiming = MirageRenderPresentationTiming(
+        let activeHardCushionTiming = MirageRenderPresentationTiming(
             targetFPS: 60,
-            playoutDelayFrames: 1,
-            displaysImmediately: false
+            playoutDelayFrames: 0,
+            displaysImmediately: true
         )
-        #expect(!cushionedSmoothestTiming.displaysImmediately)
-        let smoothestPresentationSeconds = CMTimeGetSeconds(cushionedSmoothestTiming.presentationTime(
+        #expect(activeHardCushionTiming.displaysImmediately)
+        #expect(CMTimeGetSeconds(activeHardCushionTiming.presentationTime(
             referenceTime: referenceTime,
             timescale: timescale
-        ))
-        #expect(abs(smoothestPresentationSeconds - (referenceTime + 1.0 / 60.0)) < 0.000_001)
+        )) == referenceTime)
     }
 
     @Test("Lowest latency display tick takes the newest decoded frame")

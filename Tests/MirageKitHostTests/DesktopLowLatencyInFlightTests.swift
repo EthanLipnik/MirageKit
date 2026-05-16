@@ -42,14 +42,14 @@ struct DesktopLowLatencyInFlightTests {
     func desktopSmoothestKeepsSmoothingCapacity() async {
         let context = makeContext(latencyMode: .smoothest)
 
-        #expect(await context.minInFlightFrames == 2)
-        #expect(await context.maxInFlightFrames == 2)
+        #expect(await context.minInFlightFrames == 1)
+        #expect(await context.maxInFlightFrames == 1)
         #expect(await context.maxInFlightFramesCap == 3)
         #expect(await context.frameBufferDepth == 3)
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
 
-        #expect(await context.maxInFlightFrames == 3)
+        #expect(await context.maxInFlightFrames == 2)
     }
 
     @Test("120 Hz desktop smoothest keeps enough host pipeline depth")
@@ -59,14 +59,14 @@ struct DesktopLowLatencyInFlightTests {
             targetFrameRate: 120
         )
 
-        #expect(await context.minInFlightFrames == 6)
-        #expect(await context.maxInFlightFrames == 6)
+        #expect(await context.minInFlightFrames == 2)
+        #expect(await context.maxInFlightFrames == 2)
         #expect(await context.maxInFlightFramesCap == 8)
         #expect(await context.frameBufferDepth == 12)
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
-        #expect(await context.maxInFlightFrames == 7)
+        #expect(await context.maxInFlightFrames == 3)
     }
 
     private func makeContext(

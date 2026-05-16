@@ -62,6 +62,15 @@ struct RenderTelemetrySnapshot {
     /// Smoothest-mode frames dropped by local playout queue bounds.
     let smoothestQueueDrops: UInt64
 
+    /// Smoothest frames expired because they were older than the playout age bound.
+    let smoothestAgeDrops: UInt64
+
+    /// Smoothest frames trimmed intentionally to return toward the active queue target.
+    let smoothestCatchUpDrops: UInt64
+
+    /// Smoothest frames dropped only because the burst absorption capacity was exceeded.
+    let smoothestCapacityDrops: UInt64
+
     /// Queued frames dropped because newer frames had already superseded them.
     let lateFrameDrops: UInt64
 
@@ -186,6 +195,9 @@ final class MirageRenderStreamState {
 
     var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
     var smoothestQueueDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestAgeDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestCatchUpDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestCapacityDropsSinceLastSnapshot: UInt64 = 0
     var lateFrameDropsSinceLastSnapshot: UInt64 = 0
     var coalescedFramesSinceLastSnapshot: UInt64 = 0
     var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
@@ -237,6 +249,9 @@ final class MirageRenderStreamState {
         displayTickIntervalSampleStartIndex = 0
         overwrittenPendingFramesSinceLastSnapshot = 0
         smoothestQueueDropsSinceLastSnapshot = 0
+        smoothestAgeDropsSinceLastSnapshot = 0
+        smoothestCatchUpDropsSinceLastSnapshot = 0
+        smoothestCapacityDropsSinceLastSnapshot = 0
         lateFrameDropsSinceLastSnapshot = 0
         coalescedFramesSinceLastSnapshot = 0
         duplicateRemoteTimestampsSinceLastSnapshot = 0

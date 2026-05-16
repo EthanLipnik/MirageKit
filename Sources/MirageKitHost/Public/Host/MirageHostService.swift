@@ -245,6 +245,8 @@ public final class MirageHostService {
     nonisolated let streamRegistry = HostStreamRegistry()
     /// Active receive loops keyed by authenticated client session.
     nonisolated let receiveLoopsBySessionID = Locked<[UUID: HostReceiveLoop]>([:])
+    /// Active priority input routes keyed by authenticated client session.
+    nonisolated let priorityInputRoutesBySessionID = Locked<[UUID: HostPriorityInputRoute]>([:])
     /// Per-client serial queues for ordered control-message dispatch.
     nonisolated let controlQueuesByClientID = Locked<[UUID: DispatchQueue]>([:])
     /// Queue for nonisolated transport callbacks and packet send completions.
@@ -500,6 +502,10 @@ public final class MirageHostService {
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
     /// Latest shared-clipboard enablement status per client.
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
+    /// Latest automatic host-to-client clipboard payload deferred while streams are active.
+    @ObservationIgnored var deferredAutomaticSharedClipboardSend: (localSend: MirageSharedClipboardLocalSend, sentAtMs: Int64)?
+    /// Count of automatic host clipboard payloads deferred by the active-stream transport budget.
+    @ObservationIgnored var deferredAutomaticSharedClipboardPayloadCount: Int = 0
     /// Chunk reassembler for incoming shared-clipboard payloads.
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
 
