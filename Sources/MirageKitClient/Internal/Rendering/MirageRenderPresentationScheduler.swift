@@ -29,6 +29,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     private var renderingSuspended = false
     private var displayClockActive = false
     private var displayClockFramePending = false
+    private var displayClockNoFrameTickPending = false
     private var lastDisplayTickWallTime: CFTimeInterval = 0
 
     private var scheduledPassPending = false
@@ -91,6 +92,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard displayClockActive != active else { return }
         displayClockActive = active
         displayClockFramePending = false
+        displayClockNoFrameTickPending = false
         lastDisplayTickWallTime = 0
         if active {
             scheduledPassPending = false
@@ -111,6 +113,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         runningPass = false
         pendingScheduledPass = false
         displayClockFramePending = false
+        displayClockNoFrameTickPending = false
         lastDisplayTickWallTime = 0
     }
 
@@ -119,6 +122,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         if presentationTier == .activeLive {
             guard hasPendingFrame() else { return }
             displayClockFramePending = true
+            displayClockNoFrameTickPending = false
             if !displayClockActive || lastDisplayTickWallTime == 0 {
                 performPass(
                     referenceTime: referenceTime,
@@ -141,6 +145,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
                 return
             }
             displayClockFramePending = true
+            displayClockNoFrameTickPending = false
             return
         }
         schedulePass(referenceTime: referenceTime)
@@ -165,12 +170,15 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard !renderingSuspended else { return }
 
         if presentationTier == .activeLive {
-            let arrivedAfterNoFrameTick = displayClockFramePending
+            let arrivedAfterNoFrameTick = displayClockNoFrameTickPending
             displayClockFramePending = true
             if arrivedAfterNoFrameTick {
                 noteFrameArrivedAfterNoFrameTick(delayMs: max(0, referenceTimeProvider() - lastDisplayTickWallTime) * 1000)
             }
-            scheduleActiveLiveFallbackIfNeeded(referenceTime: referenceTime)
+            scheduleActiveLiveFallbackIfNeeded(
+                referenceTime: referenceTime,
+                bypassFreshTickGuard: arrivedAfterNoFrameTick
+            )
             return
         }
 
@@ -190,14 +198,18 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         )
     }
 
-    private func scheduleActiveLiveFallbackIfNeeded(referenceTime: CFTimeInterval) {
+    private func scheduleActiveLiveFallbackIfNeeded(
+        referenceTime: CFTimeInterval,
+        bypassFreshTickGuard: Bool = false
+    ) {
         guard displayClockActive else {
             schedulePass(referenceTime: referenceTime)
             return
         }
         let now = referenceTimeProvider()
         guard pendingFrameCount() > 0 else { return }
-        guard lastDisplayTickWallTime == 0 ||
+        guard bypassFreshTickGuard ||
+            lastDisplayTickWallTime == 0 ||
             now - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
             return
         }
@@ -253,10 +265,14 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         runningPass = false
         if submissionResult == .submitted {
             displayClockFramePending = false
+            displayClockNoFrameTickPending = false
         } else if isDisplayTick, submissionResult == .noPendingFrame {
             MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
             MirageRenderStreamStore.shared.noteRepeatedDisplayTick(for: streamID)
             displayClockFramePending = true
+            displayClockNoFrameTickPending = true
+        } else if isDisplayTick {
+            displayClockNoFrameTickPending = false
         }
         if submissionResult == .displayLayerNotReady {
             onDisplayLayerNotReady()

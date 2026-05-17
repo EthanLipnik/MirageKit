@@ -26,13 +26,18 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     /// Continuous event categories that can be replaced by newer work without changing user intent.
-    private enum ReplaceableContinuousInputKind: Equatable {
+    private enum ReplaceableContinuousInputKind: Hashable {
         case mouseMoved
         case mouseDragged
         case rightMouseDragged
         case otherMouseDragged
         case scrollWheel
         case stylusHover
+    }
+
+    private struct PendingRealtimeInputKey: Hashable {
+        let streamID: StreamID
+        let kind: ReplaceableContinuousInputKind
     }
 
     private static let keyboardDiagnosticRateLimiter = MirageKeyboardInputDiagnosticRateLimiter()
@@ -139,6 +144,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
             }
 
             appendPendingInput(PendingInput(event: event, streamID: streamID))
+            compactPendingRealtimeInputs()
             trimPendingInputs()
             scheduleDrain()
         }
@@ -169,6 +175,37 @@ public final class MirageInputEventSender: @unchecked Sendable {
         }
 
         pendingInputs.append(pending)
+    }
+
+    private func compactPendingRealtimeInputs() {
+        guard pendingInputs.count > 1 else { return }
+
+        var compactedInputs: [PendingInput] = []
+        var latestIndexByKey: [PendingRealtimeInputKey: Int] = [:]
+
+        for pendingInput in pendingInputs {
+            guard let kind = droppableRealtimeKind(for: pendingInput.event) else {
+                compactedInputs.append(pendingInput)
+                latestIndexByKey.removeAll(keepingCapacity: true)
+                continue
+            }
+
+            let key = PendingRealtimeInputKey(streamID: pendingInput.streamID, kind: kind)
+            if let existingIndex = latestIndexByKey[key] {
+                compactedInputs.remove(at: existingIndex)
+                for indexedKey in Array(latestIndexByKey.keys) {
+                    guard let index = latestIndexByKey[indexedKey], index > existingIndex else {
+                        continue
+                    }
+                    latestIndexByKey[indexedKey] = index - 1
+                }
+            }
+
+            latestIndexByKey[key] = compactedInputs.count
+            compactedInputs.append(pendingInput)
+        }
+
+        pendingInputs = compactedInputs
     }
 
     /// Schedules one best-effort send at a time.
@@ -307,6 +344,11 @@ public final class MirageInputEventSender: @unchecked Sendable {
         default:
             nil
         }
+    }
+
+    private func droppableRealtimeKind(for event: MirageInputEvent) -> ReplaceableContinuousInputKind? {
+        guard Self.deliveryMode(for: event) == .droppableRealtime else { return nil }
+        return replaceableContinuousKind(for: event)
     }
 
     private func isDroppablePointerMovement(_ event: MirageInputEvent) -> Bool {

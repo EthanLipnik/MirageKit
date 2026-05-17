@@ -171,6 +171,7 @@ struct RenderPresentationSchedulerTests {
         scheduler.setTargetFPS(60)
         scheduler.setDisplayClockActive(true)
 
+        pendingFrames.enqueue()
         scheduler.handleDisplayTick(referenceTime: 1)
         #expect(submitReferences == [1])
         pendingFrames.enqueue()
@@ -192,7 +193,7 @@ struct RenderPresentationSchedulerTests {
         #expect(scheduledCallbacks.count == 1)
         scheduledCallbacks.removeFirst()()
         #expect(submitReferences == [1, 3])
-        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.submittedCount == 2)
 
         pendingFrames.enqueue()
         scheduler.handleDisplayTick(referenceTime: 4)
@@ -224,7 +225,7 @@ struct RenderPresentationSchedulerTests {
 
         scheduler.handleDisplayTick(referenceTime: 1)
         pendingFrames.enqueue()
-        wallTime = 1.05
+        wallTime = 1.010
         scheduler.handleFrameAvailable(referenceTime: 1.001)
 
         #expect(scheduledCallbacks.count == 1)
@@ -238,7 +239,7 @@ struct RenderPresentationSchedulerTests {
         #expect(telemetry.frameArrivalFallbackScheduledCount == 1)
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
         #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
-        #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 40)
+        #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 9)
     }
 
     @Test("Active live frame arrival drains backlog but preserves a lone pending frame")
@@ -502,6 +503,45 @@ struct RenderPresentationSchedulerTests {
         }
 
         #expect(pendingFrames.submittedCount == 56)
+        #expect(pendingFrames.pendingCount == 0)
+    }
+
+    @Test("60Hz cadence with late 60fps arrivals catches up after no-frame ticks")
+    func sixtyHertzCadenceWithLateSixtyFPSArrivalsCatchesUpAfterNoFrameTicks() {
+        let streamID: StreamID = 918
+        let pendingFrames = SimulatedPendingFrames()
+        var scheduledCallbacks: [@Sendable () -> Void] = []
+        var wallTime: CFTimeInterval = 0
+
+        let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { _ in pendingFrames.submit() },
+            hasPendingFrame: { pendingFrames.hasPendingFrame },
+            pendingFrameCount: { pendingFrames.pendingCount }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setTargetFPS(60)
+        scheduler.setDisplayClockActive(true)
+
+        for frameIndex in 0 ..< 60 {
+            let tickTime = Double(frameIndex) / 60.0
+            wallTime = tickTime
+            scheduler.handleDisplayTick(referenceTime: tickTime)
+
+            let arrivalTime = tickTime + 0.010
+            wallTime = arrivalTime
+            pendingFrames.enqueue()
+            scheduler.handleFrameAvailable(referenceTime: arrivalTime)
+            while !scheduledCallbacks.isEmpty {
+                scheduledCallbacks.removeFirst()()
+            }
+        }
+
+        #expect(pendingFrames.submittedCount == 60)
         #expect(pendingFrames.pendingCount == 0)
     }
 

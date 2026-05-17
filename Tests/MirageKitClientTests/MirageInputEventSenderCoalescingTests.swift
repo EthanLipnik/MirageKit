@@ -125,6 +125,56 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(await recorder.mouseTimestamps() == [0, 4])
     }
 
+    @Test("Slow fallback compacts realtime input within ordered boundaries")
+    func slowFallbackCompactsRealtimeInputWithinOrderedBoundaries() async throws {
+        let sender = MirageInputEventSender()
+        let recorder = InputEventRecorder()
+        let streamID: StreamID = 912
+
+        sender.updateSendHandler { data, _ in
+            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+                Issue.record("Expected a serialized control message")
+                return
+            }
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
+            await recorder.append(inputMessage.event)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        sender.sendInputFireAndForget(.keyDown(MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
+        sender.sendInputFireAndForget(
+            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.1, y: 0.5), timestamp: 1)),
+            streamID: streamID
+        )
+        sender.sendInputFireAndForget(
+            .pointerSampleBatch(makePointerBatch(phase: .hover, sampleX: 10, isHovering: true)),
+            streamID: streamID
+        )
+        sender.sendInputFireAndForget(
+            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.2, y: 0.5), timestamp: 2)),
+            streamID: streamID
+        )
+        sender.sendInputFireAndForget(.keyUp(MirageKeyEvent(keyCode: 0x31)), streamID: streamID)
+        sender.sendInputFireAndForget(
+            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.3, y: 0.5), timestamp: 3)),
+            streamID: streamID
+        )
+        sender.sendInputFireAndForget(
+            .pointerSampleBatch(makePointerBatch(phase: .hover, sampleX: 11, isHovering: true)),
+            streamID: streamID
+        )
+        sender.sendInputFireAndForget(
+            .mouseMoved(MirageMouseEvent(location: CGPoint(x: 0.4, y: 0.5), timestamp: 4)),
+            streamID: streamID
+        )
+
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(await recorder.keyEventNames() == ["keyDown", "keyUp"])
+        #expect(await recorder.mouseTimestamps() == [2, 4])
+        #expect(await recorder.hoverXValues() == [10, 11])
+    }
+
     @Test("Native continuous scroll events merge by summing deltas")
     func nativeContinuousScrollEventsMergeBySummingDeltas() async throws {
         let sender = MirageInputEventSender()
@@ -304,6 +354,29 @@ private actor InputEventRecorder {
         events.compactMap { event in
             guard case let .mouseMoved(mouseEvent) = event else { return nil }
             return mouseEvent.timestamp
+        }
+    }
+
+    func hoverXValues() -> [CGFloat] {
+        events.compactMap { event in
+            guard case let .pointerSampleBatch(batch) = event,
+                  batch.phase == .hover else {
+                return nil
+            }
+            return batch.samples.first?.location.x
+        }
+    }
+
+    func keyEventNames() -> [String] {
+        events.compactMap { event in
+            switch event {
+            case .keyDown:
+                return "keyDown"
+            case .keyUp:
+                return "keyUp"
+            default:
+                return nil
+            }
         }
     }
 }
