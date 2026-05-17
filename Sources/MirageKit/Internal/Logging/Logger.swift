@@ -261,27 +261,58 @@ public struct MirageLogger: Sendable {
         "[\(fileID):\(line) \(function)]"
     }
 
-    /// Parse MIRAGE_LOG environment variable
+    /// Parse MIRAGE_LOG environment variable.
     static func parsedEnabledCategories(environmentValue: String?) -> Set<MirageLogCategory> {
         guard let environmentValue else {
             return [.host, .client, .appState, .stream, .decoder, .renderer]
         }
 
-        let trimmed = environmentValue.trimmingCharacters(in: .whitespaces).lowercased()
-
-        switch trimmed {
-        case "all":
+        let tokens = logTokens(from: environmentValue)
+        guard !tokens.isEmpty else { return [] }
+        guard !tokens.contains("none") else { return [] }
+        if tokens.contains("all") {
             return Set(MirageLogCategory.allCases)
-        case "",
-             "none":
-            return []
-        default:
-            let names = trimmed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            var categories: Set<MirageLogCategory> = []
-            for name in names {
-                if let category = MirageLogCategory(rawValue: name) { categories.insert(category) }
-            }
-            return categories
         }
+
+        var categories: Set<MirageLogCategory> = []
+        for token in tokens {
+            guard let category = MirageLogCategory.matchingLogToken(token) else { continue }
+            categories.insert(category)
+        }
+        return categories
+    }
+
+    static func fullVerboseLoggingRequested(environmentValue: String?) -> Bool {
+        let tokens = logTokens(from: environmentValue)
+        return tokens.contains("all") && !tokens.contains("none")
+    }
+
+    private static func logTokens(from environmentValue: String?) -> [String] {
+        guard let environmentValue else { return [] }
+        return environmentValue
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == ";" })
+            .map { normalizeLogToken(String($0)) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func normalizeLogToken(_ token: String) -> String {
+        token
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter { $0 != "_" && $0 != "-" }
+    }
+}
+
+private extension MirageLogCategory {
+    static func matchingLogToken(_ token: String) -> MirageLogCategory? {
+        allCases.first { category in
+            MirageLogger.normalizeLogCategoryName(category.rawValue) == token
+        }
+    }
+}
+
+private extension MirageLogger {
+    static func normalizeLogCategoryName(_ name: String) -> String {
+        name.lowercased().filter { $0 != "_" && $0 != "-" }
     }
 }

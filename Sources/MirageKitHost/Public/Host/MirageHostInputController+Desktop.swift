@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -66,8 +67,10 @@ extension MirageHostInputController {
         bounds: CGRect,
         deferredInjectionValidator: (@Sendable () -> Bool)?
     ) {
+        let enqueuedAt = Date.timeIntervalSinceReferenceDate
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
+            MirageInputLatencyTelemetry.shared.recordHostAccessibilityDwell(event: event, enqueuedAt: enqueuedAt)
             guard shouldProcessDeferredInput(deferredInjectionValidator) else { return }
 
             switch event {
@@ -160,13 +163,31 @@ extension MirageHostInputController {
             currentCursorPosition: currentCursorPosition
         )
         if Self.shouldWarpDesktopPointerEvent(type) {
+            let warpStartedAt = Date.timeIntervalSinceReferenceDate
             CGWarpMouseCursorPosition(point)
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostCursorWarp(
+                eventClass: .pointer,
+                durationMs: max(0, now - warpStartedAt) * 1000,
+                now: now
+            )
         }
         injectDesktopMouseEvent(type, event, at: point)
     }
 
     /// Injects a mouse event at a specific desktop screen point.
     func injectDesktopMouseEvent(_ type: CGEventType, _ event: MirageMouseEvent, at point: CGPoint) {
+        let injectionStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostInjection(
+                eventClass: .pointer,
+                eventTimestamp: event.timestamp,
+                durationMs: max(0, now - injectionStartedAt) * 1000,
+                now: now
+            )
+        }
+
         refreshPointerModifierState(event.modifiers, domain: .hid)
 
         guard let cgEvent = CGEvent(
@@ -212,7 +233,15 @@ extension MirageHostInputController {
             cgEvent.location = scrollPoint
         }
         cgEvent.flags = event.modifiers.cgEventFlags
+        let injectionStartedAt = Date.timeIntervalSinceReferenceDate
         postEvent(cgEvent)
+        let now = Date.timeIntervalSinceReferenceDate
+        MirageInputLatencyTelemetry.shared.recordHostInjection(
+            eventClass: .scroll,
+            eventTimestamp: event.timestamp,
+            durationMs: max(0, now - injectionStartedAt) * 1000,
+            now: now
+        )
     }
 }
 

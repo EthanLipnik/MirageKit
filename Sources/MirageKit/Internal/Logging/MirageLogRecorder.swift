@@ -117,9 +117,9 @@ public final class MirageLogRecorder: @unchecked Sendable {
         #if DEBUG
         return true
         #else
-        guard let envValue = ProcessInfo.processInfo.environment["MIRAGE_LOG"] else { return false }
-        let trimmed = envValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return trimmed != "none" && !trimmed.isEmpty
+        return !MirageLogger.parsedEnabledCategories(
+            environmentValue: ProcessInfo.processInfo.environment["MIRAGE_LOG"]
+        ).isEmpty
         #endif
     }()
 

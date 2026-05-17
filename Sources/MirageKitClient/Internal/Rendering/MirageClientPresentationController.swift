@@ -11,11 +11,13 @@ import Foundation
 struct MirageClientPresentationController {
     func trimAfterEnqueue(
         frames: inout [MirageRenderFrame],
-        policy: MiragePresentationLatencyPolicy
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> MirageFramePlayoutQueue.TrimResult {
         MirageFramePlayoutQueue.trimAfterEnqueue(
             frames: &frames,
-            policy: policy
+            policy: policy,
+            now: now
         )
     }
 

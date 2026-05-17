@@ -24,8 +24,15 @@ struct ClientStreamingAnomalySample {
     let uniqueSubmittedFPS: Double
     let pendingFrameCount: Int
     let pendingFrameAgeMs: Double
+    let pendingFrameAgeP95Ms: Double
+    let pendingFrameAgeMaxMs: Double
+    let pendingFrameDepthMax: Int
     let overwrittenPendingFrames: UInt64
     let smoothestQueueDrops: UInt64
+    let smoothestDepthDrops: UInt64
+    let smoothestAgeDrops: UInt64
+    let smoothestDropsUnder100ms: UInt64
+    let smoothestDroppedFrameAgeMaxMs: Double
     let lateFrameDrops: UInt64
     let coalescedBeforeSubmitCount: UInt64
     let duplicateRemoteTimestampCount: UInt64
@@ -78,8 +85,15 @@ struct ClientStreamingAnomalySample {
         uniqueSubmittedFPS: Double? = nil,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
+        pendingFrameAgeP95Ms: Double = 0,
+        pendingFrameAgeMaxMs: Double = 0,
+        pendingFrameDepthMax: Int = 0,
         overwrittenPendingFrames: UInt64,
         smoothestQueueDrops: UInt64 = 0,
+        smoothestDepthDrops: UInt64 = 0,
+        smoothestAgeDrops: UInt64 = 0,
+        smoothestDropsUnder100ms: UInt64 = 0,
+        smoothestDroppedFrameAgeMaxMs: Double = 0,
         lateFrameDrops: UInt64 = 0,
         coalescedBeforeSubmitCount: UInt64 = 0,
         duplicateRemoteTimestampCount: UInt64 = 0,
@@ -128,8 +142,15 @@ struct ClientStreamingAnomalySample {
         self.uniqueSubmittedFPS = uniqueSubmittedFPS ?? uniqueLayerEnqueueFPS ?? submittedFPS ?? layerEnqueueFPS ?? submitAttemptFPS
         self.pendingFrameCount = pendingFrameCount
         self.pendingFrameAgeMs = pendingFrameAgeMs
+        self.pendingFrameAgeP95Ms = pendingFrameAgeP95Ms
+        self.pendingFrameAgeMaxMs = pendingFrameAgeMaxMs
+        self.pendingFrameDepthMax = pendingFrameDepthMax
         self.overwrittenPendingFrames = overwrittenPendingFrames
         self.smoothestQueueDrops = smoothestQueueDrops
+        self.smoothestDepthDrops = smoothestDepthDrops
+        self.smoothestAgeDrops = smoothestAgeDrops
+        self.smoothestDropsUnder100ms = smoothestDropsUnder100ms
+        self.smoothestDroppedFrameAgeMaxMs = smoothestDroppedFrameAgeMaxMs
         self.lateFrameDrops = lateFrameDrops
         self.coalescedBeforeSubmitCount = coalescedBeforeSubmitCount
         self.duplicateRemoteTimestampCount = duplicateRemoteTimestampCount
@@ -310,12 +331,17 @@ func clientStreamingAnomalyDiagnostic(
         "presentationAlias=\(formattedFPS(sample.presentedFPS))fps " +
         "submitted=\(formattedFPS(sample.submittedFPS))fps uniqueSubmitted=\(formattedFPS(sample.uniqueSubmittedFPS))fps " +
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
+        "pendingAgeP95=\(formattedMs(sample.pendingFrameAgeP95Ms))ms " +
+        "pendingAgeMax=\(formattedMs(sample.pendingFrameAgeMaxMs))ms pendingDepthMax=\(sample.pendingFrameDepthMax) " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
         "fragmentLossFrames=\(sample.reassemblerIncompleteFrameTimeouts) " +
         "fragmentLossMissing=\(sample.reassemblerMissingFragmentTimeouts) " +
         "overwritten=\(sample.overwrittenPendingFrames) smoothestDrops=\(sample.smoothestQueueDrops) " +
+        "smoothestDepthDrops=\(sample.smoothestDepthDrops) smoothestAgeDrops=\(sample.smoothestAgeDrops) " +
+        "smoothestUnder100=\(sample.smoothestDropsUnder100ms) " +
+        "smoothestDropAgeMax=\(formattedMs(sample.smoothestDroppedFrameAgeMaxMs))ms " +
         "lateDrops=\(sample.lateFrameDrops) " +
         "coalesced=\(sample.coalescedBeforeSubmitCount) duplicateCapturePTS=\(sample.duplicateRemoteTimestampCount) " +
         "correctedStreamPTS=\(sample.correctedStreamTimestampCount) " +

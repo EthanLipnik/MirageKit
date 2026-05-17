@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -24,9 +25,11 @@ extension MirageHostInputController {
         deferredInjectionValidator: (@Sendable () -> Bool)?
     ) {
         let windowFrame = window.frame
+        let enqueuedAt = Date.timeIntervalSinceReferenceDate
 
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
+            MirageInputLatencyTelemetry.shared.recordHostAccessibilityDwell(event: event, enqueuedAt: enqueuedAt)
             guard shouldProcessDeferredInput(deferredInjectionValidator) else { return }
 
             switch event {

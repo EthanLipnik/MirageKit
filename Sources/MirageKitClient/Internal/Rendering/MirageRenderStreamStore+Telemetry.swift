@@ -235,8 +235,15 @@ extension MirageRenderStreamStore {
                 uniqueSubmittedFPS: 0,
                 pendingFrameCount: 0,
                 pendingFrameAgeMs: 0,
+                pendingFrameAgeP95Ms: 0,
+                pendingFrameAgeMaxMs: 0,
+                pendingFrameDepthMax: 0,
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: 0,
+                smoothestDepthDrops: 0,
+                smoothestAgeDrops: 0,
+                smoothestDropsUnder100ms: 0,
+                smoothestDroppedFrameAgeMaxMs: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
                 duplicateRemoteTimestampCount: 0,
@@ -289,6 +296,16 @@ extension MirageRenderStreamStore {
             samples: &state.displayTickIntervalSamples,
             startIndex: &state.displayTickIntervalSampleStartIndex
         )
+        trimMetricSamplesLocked(
+            now: now,
+            samples: &state.pendingFrameAgeSamples,
+            startIndex: &state.pendingFrameAgeSampleStartIndex
+        )
+        trimMetricSamplesLocked(
+            now: now,
+            samples: &state.pendingFrameDepthSamples,
+            startIndex: &state.pendingFrameDepthSampleStartIndex
+        )
 
         let decodeFPS = Double(state.decodeSamples.count - state.decodeSampleStartIndex)
         let displayTickFPS = Double(state.displayTickSamples.count - state.displayTickSampleStartIndex)
@@ -297,8 +314,21 @@ extension MirageRenderStreamStore {
         let uniqueSubmittedFPS = Double(state.uniqueSubmittedSamples.count - state.uniqueSubmittedSampleStartIndex)
         let pendingFrameCount = state.pendingFrames.count
         let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
+        let pendingFrameAgeValues = Array(
+            state.pendingFrameAgeSamples[state.pendingFrameAgeSampleStartIndex...].map(\.value)
+        )
+        let pendingFrameAgeP95Ms = percentile(pendingFrameAgeValues, percentile: 0.95)
+        let pendingFrameAgeMaxMs = pendingFrameAgeValues.max() ?? pendingFrameAgeMs
+        let pendingFrameDepthValues = Array(
+            state.pendingFrameDepthSamples[state.pendingFrameDepthSampleStartIndex...].map(\.value)
+        )
+        let pendingFrameDepthMax = Int((pendingFrameDepthValues.max() ?? Double(pendingFrameCount)).rounded())
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
+        let smoothestDepthDrops = state.smoothestDepthDropsSinceLastSnapshot
+        let smoothestAgeDrops = state.smoothestAgeDropsSinceLastSnapshot
+        let smoothestDropsUnder100ms = state.smoothestDropsUnder100msSinceLastSnapshot
+        let smoothestDroppedFrameAgeMaxMs = state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
         let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
@@ -325,6 +355,10 @@ extension MirageRenderStreamStore {
         let playoutDelayFrames = state.playoutDelayFrames
         state.overwrittenPendingFramesSinceLastSnapshot = 0
         state.smoothestQueueDropsSinceLastSnapshot = 0
+        state.smoothestDepthDropsSinceLastSnapshot = 0
+        state.smoothestAgeDropsSinceLastSnapshot = 0
+        state.smoothestDropsUnder100msSinceLastSnapshot = 0
+        state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
         state.coalescedFramesSinceLastSnapshot = 0
         state.duplicateRemoteTimestampsSinceLastSnapshot = 0
@@ -355,8 +389,15 @@ extension MirageRenderStreamStore {
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
             pendingFrameAgeMs: pendingFrameAgeMs,
+            pendingFrameAgeP95Ms: pendingFrameAgeP95Ms,
+            pendingFrameAgeMaxMs: pendingFrameAgeMaxMs,
+            pendingFrameDepthMax: pendingFrameDepthMax,
             overwrittenPendingFrames: overwrittenPendingFrames,
             smoothestQueueDrops: smoothestQueueDrops,
+            smoothestDepthDrops: smoothestDepthDrops,
+            smoothestAgeDrops: smoothestAgeDrops,
+            smoothestDropsUnder100ms: smoothestDropsUnder100ms,
+            smoothestDroppedFrameAgeMaxMs: smoothestDroppedFrameAgeMaxMs,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
             duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,
@@ -432,6 +473,21 @@ extension MirageRenderStreamStore {
         trimSamplesLocked(now: now, samples: &samples, startIndex: &startIndex)
     }
 
+    func recordPendingQueueSampleLocked(state: MirageRenderStreamState, now: CFAbsoluteTime) {
+        appendMetricSampleLocked(
+            time: now,
+            value: pendingFrameAgeMsLocked(state: state, now: now),
+            samples: &state.pendingFrameAgeSamples,
+            startIndex: &state.pendingFrameAgeSampleStartIndex
+        )
+        appendMetricSampleLocked(
+            time: now,
+            value: Double(state.pendingFrames.count),
+            samples: &state.pendingFrameDepthSamples,
+            startIndex: &state.pendingFrameDepthSampleStartIndex
+        )
+    }
+
     private func trimSamplesLocked(
         now: CFAbsoluteTime,
         samples: inout [CFAbsoluteTime],
@@ -455,6 +511,31 @@ extension MirageRenderStreamStore {
     ) {
         samples.append((time: time, intervalMs: intervalMs))
         trimFrameIntervalSamplesLocked(now: time, samples: &samples, startIndex: &startIndex)
+    }
+
+    private func appendMetricSampleLocked(
+        time: CFAbsoluteTime,
+        value: Double,
+        samples: inout [(time: CFAbsoluteTime, value: Double)],
+        startIndex: inout Int
+    ) {
+        samples.append((time: time, value: value))
+        trimMetricSamplesLocked(now: time, samples: &samples, startIndex: &startIndex)
+    }
+
+    private func trimMetricSamplesLocked(
+        now: CFAbsoluteTime,
+        samples: inout [(time: CFAbsoluteTime, value: Double)],
+        startIndex: inout Int
+    ) {
+        let cutoff = now - Self.sampleWindowSeconds
+        while startIndex < samples.count, samples[startIndex].time < cutoff {
+            startIndex += 1
+        }
+        if startIndex > 256 {
+            samples.removeFirst(startIndex)
+            startIndex = 0
+        }
     }
 
     private func trimFrameIntervalSamplesLocked(

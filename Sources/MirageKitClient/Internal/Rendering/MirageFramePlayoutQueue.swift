@@ -12,10 +12,33 @@ struct MirageFramePlayoutQueue {
     struct TrimResult: Equatable, Sendable {
         var overwrittenPendingFrames: Int = 0
         var smoothestQueueDrops: Int = 0
+        var smoothestDepthDrops: Int = 0
+        var smoothestAgeDrops: Int = 0
+        var smoothestDropsUnder100ms: Int = 0
+        var smoothestDroppedFrameAgeMaxMs: Double = 0
         var lateFrameDrops: Int = 0
         var coalescedFrames: Int = 0
 
         static let empty = TrimResult()
+
+        mutating func recordSmoothestDepthDrop(ageMs: Double) {
+            smoothestQueueDrops += 1
+            smoothestDepthDrops += 1
+            recordSmoothestDroppedFrameAge(ageMs)
+        }
+
+        mutating func recordSmoothestAgeDrop(ageMs: Double) {
+            smoothestQueueDrops += 1
+            smoothestAgeDrops += 1
+            recordSmoothestDroppedFrameAge(ageMs)
+        }
+
+        private mutating func recordSmoothestDroppedFrameAge(_ ageMs: Double) {
+            smoothestDroppedFrameAgeMaxMs = max(smoothestDroppedFrameAgeMaxMs, ageMs)
+            if ageMs > 0, ageMs < 100 {
+                smoothestDropsUnder100ms += 1
+            }
+        }
     }
 
     struct Selection: Sendable {
@@ -26,7 +49,8 @@ struct MirageFramePlayoutQueue {
 
     static func trimAfterEnqueue(
         frames: inout [MirageRenderFrame],
-        policy: MiragePresentationLatencyPolicy
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> TrimResult {
         switch policy.latencyMode {
         case .lowestLatency:
@@ -42,17 +66,13 @@ struct MirageFramePlayoutQueue {
                 coalescedFrames: removed
             )
         case .smoothest:
-            var removed = 0
+            var result = TrimResult()
             while frames.count > policy.maximumQueueDepth {
+                let ageMs = frames.first.map { comparableFrameAgeMs($0, now: now) } ?? 0
                 frames.removeFirst()
-                removed += 1
+                result.recordSmoothestDepthDrop(ageMs: ageMs)
             }
-            return TrimResult(
-                overwrittenPendingFrames: 0,
-                smoothestQueueDrops: removed,
-                lateFrameDrops: 0,
-                coalescedFrames: 0
-            )
+            return result
         }
     }
 
@@ -84,7 +104,14 @@ struct MirageFramePlayoutQueue {
                 policy: policy,
                 now: now
             )
-            trimResult.smoothestQueueDrops += expired
+            trimResult.smoothestQueueDrops += expired.smoothestQueueDrops
+            trimResult.smoothestDepthDrops += expired.smoothestDepthDrops
+            trimResult.smoothestAgeDrops += expired.smoothestAgeDrops
+            trimResult.smoothestDropsUnder100ms += expired.smoothestDropsUnder100ms
+            trimResult.smoothestDroppedFrameAgeMaxMs = max(
+                trimResult.smoothestDroppedFrameAgeMaxMs,
+                expired.smoothestDroppedFrameAgeMaxMs
+            )
         }
 
         let frame = frames.first
@@ -109,15 +136,16 @@ struct MirageFramePlayoutQueue {
         from frames: inout [MirageRenderFrame],
         policy: MiragePresentationLatencyPolicy,
         now: CFAbsoluteTime
-    ) -> Int {
-        var removed = 0
+    ) -> TrimResult {
+        var result = TrimResult()
         while frames.count > 1,
               let first = frames.first,
               comparableFrameAgeMs(first, now: now) > policy.maximumQueueAgeMs {
+            let ageMs = comparableFrameAgeMs(first, now: now)
             frames.removeFirst()
-            removed += 1
+            result.recordSmoothestAgeDrop(ageMs: ageMs)
         }
-        return removed
+        return result
     }
 
     private static func comparableFrameAgeMs(_ frame: MirageRenderFrame, now: CFAbsoluteTime) -> Double {

@@ -27,6 +27,17 @@ extension MirageHostInputController {
         windowID: WindowID,
         app: MirageApplication?
     ) {
+        let injectionStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostInjection(
+                eventClass: .touch,
+                eventTimestamp: batch.timestamp,
+                durationMs: max(0, now - injectionStartedAt) * 1000,
+                now: now
+            )
+        }
+
         guard !batch.samples.isEmpty else { return }
         guard !Self.shouldRejectStaleHoverBatch(batch) else { return }
 
@@ -82,6 +93,17 @@ extension MirageHostInputController {
 
     /// Injects high-rate stylus pointer samples into a desktop stream.
     func injectDesktopPointerSampleBatch(_ batch: MiragePointerSampleBatch, bounds: CGRect) {
+        let injectionStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostInjection(
+                eventClass: .touch,
+                eventTimestamp: batch.timestamp,
+                durationMs: max(0, now - injectionStartedAt) * 1000,
+                now: now
+            )
+        }
+
         guard !batch.samples.isEmpty else { return }
         guard !Self.shouldRejectStaleHoverBatch(batch) else { return }
 
@@ -98,7 +120,14 @@ extension MirageHostInputController {
         for sample in batch.samples {
             let point = screenPoint(sample.location, in: bounds)
             if Self.shouldWarpDesktopPointerEvent(type) {
+                let warpStartedAt = Date.timeIntervalSinceReferenceDate
                 CGWarpMouseCursorPosition(point)
+                let now = Date.timeIntervalSinceReferenceDate
+                MirageInputLatencyTelemetry.shared.recordHostCursorWarp(
+                    eventClass: .touch,
+                    durationMs: max(0, now - warpStartedAt) * 1000,
+                    now: now
+                )
             }
             postTabletPointerSample(sample, batch: batch, type: type, at: point)
         }

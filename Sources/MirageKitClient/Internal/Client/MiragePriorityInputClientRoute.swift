@@ -234,6 +234,10 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     ) throws {
         let payload = try envelope.serialize()
         recordRealtimeSent()
+        recordClientRouteTelemetry(
+            envelope: envelope,
+            route: Self.telemetryRoute(for: transportMode)
+        )
         let completion: @Sendable (Error?) -> Void = { [weak self] error in
             guard let self else { return }
             if let error {
@@ -270,6 +274,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     ) async throws {
         let payload = try envelope.serialize()
         recordProtectedSent()
+        recordClientRouteTelemetry(envelope: envelope, route: .priorityProtected)
         endpoint.sendProtected(payload) { [weak self] error in
             if error != nil {
                 self?.recordPrioritySendError()
@@ -445,6 +450,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     ) async throws {
         recordFallback(for: envelope.deliveryClass)
         MirageInputLatencyTelemetry.shared.recordClientFallback(envelope: envelope)
+        recordClientRouteTelemetry(envelope: envelope, route: .priorityFallback)
         let controlMessage = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
         try await fallbackSender(controlMessage.serialize(), deliveryMode)
     }
@@ -628,6 +634,35 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         default:
             .latest
         }
+    }
+
+    private static func telemetryRoute(
+        for transportMode: RealtimeTransportMode
+    ) -> MirageInputLatencyClientRoute {
+        switch transportMode {
+        case .latest:
+            .priorityRealtimeLatest
+        case .sequenced:
+            .priorityRealtimeSequenced
+        }
+    }
+
+    private func recordClientRouteTelemetry(
+        envelope: MiragePriorityInputEnvelope,
+        route: MirageInputLatencyClientRoute
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
+              let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else {
+            return
+        }
+        let routeSnapshot = snapshot()
+        MirageInputLatencyTelemetry.shared.recordClientRoute(
+            event: inputMessage.event,
+            streamID: inputMessage.streamID,
+            route: route,
+            priorityRouteState: routeSnapshot.routeState.rawValue,
+            priorityAckAgeMs: routeSnapshot.priorityAckAgeMs
+        )
     }
 
     @discardableResult

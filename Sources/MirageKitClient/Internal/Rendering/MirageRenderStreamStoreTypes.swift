@@ -56,11 +56,32 @@ struct RenderTelemetrySnapshot {
     /// Age of the oldest pending frame in milliseconds.
     let pendingFrameAgeMs: Double
 
+    /// 95th percentile age of the oldest pending frame in the telemetry window.
+    let pendingFrameAgeP95Ms: Double
+
+    /// Maximum age of the oldest pending frame in the telemetry window.
+    let pendingFrameAgeMaxMs: Double
+
+    /// Maximum queued frame depth sampled in the telemetry window.
+    let pendingFrameDepthMax: Int
+
     /// Pending frames overwritten because the local playout queue was full.
     let overwrittenPendingFrames: UInt64
 
     /// Smoothest-mode frames dropped by local playout queue bounds.
     let smoothestQueueDrops: UInt64
+
+    /// Smoothest-mode frames dropped because the queue exceeded its depth bound.
+    let smoothestDepthDrops: UInt64
+
+    /// Smoothest-mode frames dropped because queued frames exceeded the stale-age bound.
+    let smoothestAgeDrops: UInt64
+
+    /// Smoothest-mode frames dropped while younger than 100 ms.
+    let smoothestDropsUnder100ms: UInt64
+
+    /// Maximum local age for a Smoothest-mode dropped frame.
+    let smoothestDroppedFrameAgeMaxMs: Double
 
     /// Queued frames dropped because newer frames had already superseded them.
     let lateFrameDrops: UInt64
@@ -170,9 +191,17 @@ final class MirageRenderStreamState {
     var frameIntervalSampleStartIndex: Int = 0
     var displayTickIntervalSamples: [(time: CFAbsoluteTime, intervalMs: Double)] = []
     var displayTickIntervalSampleStartIndex: Int = 0
+    var pendingFrameAgeSamples: [(time: CFAbsoluteTime, value: Double)] = []
+    var pendingFrameAgeSampleStartIndex: Int = 0
+    var pendingFrameDepthSamples: [(time: CFAbsoluteTime, value: Double)] = []
+    var pendingFrameDepthSampleStartIndex: Int = 0
 
     var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
     var smoothestQueueDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestDepthDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestAgeDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestDropsUnder100msSinceLastSnapshot: UInt64 = 0
+    var smoothestDroppedFrameAgeMaxMsSinceLastSnapshot: Double = 0
     var lateFrameDropsSinceLastSnapshot: UInt64 = 0
     var coalescedFramesSinceLastSnapshot: UInt64 = 0
     var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
@@ -217,8 +246,16 @@ final class MirageRenderStreamState {
         frameIntervalSampleStartIndex = 0
         displayTickIntervalSamples.removeAll(keepingCapacity: false)
         displayTickIntervalSampleStartIndex = 0
+        pendingFrameAgeSamples.removeAll(keepingCapacity: false)
+        pendingFrameAgeSampleStartIndex = 0
+        pendingFrameDepthSamples.removeAll(keepingCapacity: false)
+        pendingFrameDepthSampleStartIndex = 0
         overwrittenPendingFramesSinceLastSnapshot = 0
         smoothestQueueDropsSinceLastSnapshot = 0
+        smoothestDepthDropsSinceLastSnapshot = 0
+        smoothestAgeDropsSinceLastSnapshot = 0
+        smoothestDropsUnder100msSinceLastSnapshot = 0
+        smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
         lateFrameDropsSinceLastSnapshot = 0
         coalescedFramesSinceLastSnapshot = 0
         duplicateRemoteTimestampsSinceLastSnapshot = 0

@@ -55,8 +55,15 @@ extension StreamController {
                 uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
                 pendingFrameCount: renderTelemetry.pendingFrameCount,
                 pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+                pendingFrameAgeP95Ms: renderTelemetry.pendingFrameAgeP95Ms,
+                pendingFrameAgeMaxMs: renderTelemetry.pendingFrameAgeMaxMs,
+                pendingFrameDepthMax: renderTelemetry.pendingFrameDepthMax,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
                 smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
+                smoothestDepthDrops: renderTelemetry.smoothestDepthDrops,
+                smoothestAgeDrops: renderTelemetry.smoothestAgeDrops,
+                smoothestDropsUnder100ms: renderTelemetry.smoothestDropsUnder100ms,
+                smoothestDroppedFrameAgeMaxMs: renderTelemetry.smoothestDroppedFrameAgeMaxMs,
                 lateFrameDrops: renderTelemetry.lateFrameDrops,
                 coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
                 duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
@@ -156,7 +163,14 @@ extension StreamController {
                 "layerAccepted=\(String(format: "%.1f", renderTelemetry.layerAcceptedFPS))fps " +
                 "uniqueSubmitted=\(String(format: "%.1f", renderTelemetry.uniqueSubmittedFPS))fps " +
                 "pending=\(renderTelemetry.pendingFrameCount) pendingAge=\(Int(renderTelemetry.pendingFrameAgeMs.rounded()))ms " +
+                "pendingAgeP95=\(Int(renderTelemetry.pendingFrameAgeP95Ms.rounded()))ms " +
+                "pendingAgeMax=\(Int(renderTelemetry.pendingFrameAgeMaxMs.rounded()))ms " +
+                "pendingDepthMax=\(renderTelemetry.pendingFrameDepthMax) " +
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
+                "smoothestDepthDrops=\(renderTelemetry.smoothestDepthDrops) " +
+                "smoothestAgeDrops=\(renderTelemetry.smoothestAgeDrops) " +
+                "smoothestUnder100=\(renderTelemetry.smoothestDropsUnder100ms) " +
+                "smoothestDropAgeMax=\(Int(renderTelemetry.smoothestDroppedFrameAgeMaxMs.rounded()))ms " +
                 "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +
                 "selectedFrame=\(selectedFrameText) renderedFrame=\(renderedFrameText) " +
                 "repeatedTicks=\(renderedFrameTelemetry.repeatedDisplayTicks) " +

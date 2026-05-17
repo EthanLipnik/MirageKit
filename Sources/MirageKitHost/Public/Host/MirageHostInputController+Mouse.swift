@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import Foundation
 import MirageKit
 
 #if os(macOS)
@@ -63,6 +64,17 @@ extension MirageHostInputController {
         windowID: WindowID,
         app: MirageApplication?
     ) {
+        let injectionStartedAt = Date.timeIntervalSinceReferenceDate
+        defer {
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostInjection(
+                eventClass: .pointer,
+                eventTimestamp: event.timestamp,
+                durationMs: max(0, now - injectionStartedAt) * 1000,
+                now: now
+            )
+        }
+
         refreshPointerModifierState(event.modifiers, domain: .session)
 
         let resolvedFrame: CGRect = if appliesTabletSubtype(event) {
@@ -106,7 +118,14 @@ extension MirageHostInputController {
         case .leftMouseDown,
              .otherMouseDown,
              .rightMouseDown:
+            let warpStartedAt = Date.timeIntervalSinceReferenceDate
             CGWarpMouseCursorPosition(screenPoint)
+            let now = Date.timeIntervalSinceReferenceDate
+            MirageInputLatencyTelemetry.shared.recordHostCursorWarp(
+                eventClass: .pointer,
+                durationMs: max(0, now - warpStartedAt) * 1000,
+                now: now
+            )
         default:
             break
         }

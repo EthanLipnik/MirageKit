@@ -64,9 +64,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             remotePresentationTime: remotePresentationTime
         )
         state.pendingFrames.append(frame)
-        overwrittenPendingFrames = trimPendingFramesToCapacityLocked(state: state)
         let now = CFAbsoluteTimeGetCurrent()
+        overwrittenPendingFrames = trimPendingFramesToCapacityLocked(state: state, now: now)
         appendSampleLocked(now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
+        recordPendingQueueSampleLocked(state: state, now: now)
         listeners = activeListenersLocked(state: state)
         state.lock.unlock()
 
@@ -115,9 +116,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             )
         )
         state.pendingFrames.append(frame)
-        let overwrittenPendingFrames = trimPendingFramesToCapacityLocked(state: state)
         let now = CFAbsoluteTimeGetCurrent()
+        let overwrittenPendingFrames = trimPendingFramesToCapacityLocked(state: state, now: now)
         appendSampleLocked(now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
+        recordPendingQueueSampleLocked(state: state, now: now)
         listeners = activeListenersLocked(state: state)
         result = MirageRenderEnqueueResult(
             cursor: frame.cursor,
@@ -146,13 +148,15 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         defer { state.lock.unlock() }
 
         guard !state.pendingFrames.isEmpty else { return nil }
+        let now = CFAbsoluteTimeGetCurrent()
         let selection = state.presentationController.nextFrame(
             frames: &state.pendingFrames,
             after: submittedCursor,
             policy: presentationLatencyPolicyLocked(state: state),
-            now: CFAbsoluteTimeGetCurrent()
+            now: now
         )
         recordPendingFrameTrimLocked(selection.trimResult, state: state)
+        recordPendingQueueSampleLocked(state: state, now: now)
         state.lastSelectedFrameNumber = selection.selectedFrameNumber
         return selection.frame
     }
@@ -329,22 +333,27 @@ extension MirageRenderStreamStore {
     }
 
     private func trimPendingFramesToCurrentCapacityLocked(state: MirageRenderStreamState) {
-        let result = removePendingFramesOverCapacityLocked(state: state)
+        let result = removePendingFramesOverCapacityLocked(state: state, now: CFAbsoluteTimeGetCurrent())
         recordPendingFrameTrimLocked(result, state: state)
     }
 
-    private func trimPendingFramesToCapacityLocked(state: MirageRenderStreamState) -> Int {
-        let result = removePendingFramesOverCapacityLocked(state: state)
+    private func trimPendingFramesToCapacityLocked(
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime
+    ) -> Int {
+        let result = removePendingFramesOverCapacityLocked(state: state, now: now)
         recordPendingFrameTrimLocked(result, state: state)
         return result.overwrittenPendingFrames
     }
 
     private func removePendingFramesOverCapacityLocked(
-        state: MirageRenderStreamState
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime
     ) -> MirageFramePlayoutQueue.TrimResult {
         state.presentationController.trimAfterEnqueue(
             frames: &state.pendingFrames,
-            policy: presentationLatencyPolicyLocked(state: state)
+            policy: presentationLatencyPolicyLocked(state: state),
+            now: now
         )
     }
 
@@ -358,6 +367,10 @@ extension MirageRenderStreamStore {
     ) {
         recordOverwrittenPendingFramesLocked(result.overwrittenPendingFrames, state: state)
         recordSmoothestQueueDropsLocked(result.smoothestQueueDrops, state: state)
+        recordSmoothestDepthDropsLocked(result.smoothestDepthDrops, state: state)
+        recordSmoothestAgeDropsLocked(result.smoothestAgeDrops, state: state)
+        recordSmoothestDropsUnder100msLocked(result.smoothestDropsUnder100ms, state: state)
+        recordSmoothestDroppedFrameAgeMaxLocked(result.smoothestDroppedFrameAgeMaxMs, state: state)
         recordLateFrameDropsLocked(result.lateFrameDrops, state: state)
         recordCoalescedFramesLocked(result.coalescedFrames, state: state)
     }
@@ -370,6 +383,29 @@ extension MirageRenderStreamStore {
     private func recordSmoothestQueueDropsLocked(_ count: Int, state: MirageRenderStreamState) {
         guard count > 0 else { return }
         state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestDepthDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestDepthDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestAgeDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestAgeDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestDropsUnder100msLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestDropsUnder100msSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestDroppedFrameAgeMaxLocked(_ ageMs: Double, state: MirageRenderStreamState) {
+        guard ageMs.isFinite, ageMs > 0 else { return }
+        state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = max(
+            state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot,
+            ageMs
+        )
     }
 
     private func recordLateFrameDropsLocked(_ count: Int, state: MirageRenderStreamState) {

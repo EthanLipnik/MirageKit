@@ -94,6 +94,11 @@ public final class MirageInputEventSender: @unchecked Sendable {
         let data = try makeInputMessageData(event: event, streamID: streamID)
         if let sendHandler = currentSendHandler {
             MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: streamID)
+            MirageInputLatencyTelemetry.shared.recordClientRoute(
+                event: event,
+                streamID: streamID,
+                route: .reliable
+            )
             try await sendHandler(data, .reliable)
             return
         }
@@ -185,6 +190,11 @@ public final class MirageInputEventSender: @unchecked Sendable {
                 let deliveryMode = Self.deliveryMode(for: pending.event)
                 let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
                 MirageInputLatencyTelemetry.shared.recordClientSend(event: pending.event, streamID: pending.streamID)
+                MirageInputLatencyTelemetry.shared.recordClientRoute(
+                    event: pending.event,
+                    streamID: pending.streamID,
+                    route: .orderedBestEffort
+                )
                 try await handler(data, deliveryMode)
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {

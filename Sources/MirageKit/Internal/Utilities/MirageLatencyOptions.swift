@@ -60,7 +60,10 @@ package enum MirageLatencyOptions {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard
     ) -> Bool {
-        optionBool(
+        if MirageLogger.fullVerboseLoggingRequested(environmentValue: environment["MIRAGE_LOG"]) {
+            return true
+        }
+        return optionBool(
             forKey: latencyDiagnosticsKey,
             defaultValue: false,
             environment: environment,
