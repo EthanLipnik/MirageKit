@@ -389,6 +389,10 @@ public final class MirageClientService {
     var activeJitterHoldMs: Int = 0
     /// Runtime frame-rate caps applied by workload safety by stream.
     var runtimeWorkloadSafetyFrameRateCapsByStream: [StreamID: RuntimeWorkloadSafetyFrameRateCap] = [:]
+    /// Target frame rates restored when temporary workload-safety caps expire.
+    var runtimeWorkloadSafetyRestoreFrameRatesByStream: [StreamID: Int] = [:]
+    /// Scheduled restore tasks for temporary workload-safety caps.
+    @ObservationIgnored var runtimeWorkloadSafetyFrameRateRestoreTasksByStream: [StreamID: Task<Void, Never>] = [:]
     /// Last runtime workload safety fallback reason shown to diagnostics/UI.
     var runtimeWorkloadSafetyLastFallbackReason: String?
     /// Number of memory-pressure events that affected runtime workload safety.

@@ -23,10 +23,10 @@ public typealias StreamSessionID = UUID
 /// Public entry point for MirageKit-wide constants and shared service configuration.
 public enum MirageKit {
     /// MirageKit package version exposed to hosts, clients, and diagnostics.
-    public static let version = "0.15.6"
+    public static let version = "1.1.1"
 
-    /// Current Mirage wire protocol version required by both hosts and clients.
-    public static let protocolVersion: UInt8 = mirageProtocolVersion
+    /// Current Mirage wire protocol version required by both hosts and clients, encoded as YYMMDD.
+    public static let protocolVersion: UInt32 = mirageProtocolVersion
 
     /// Bonjour service type used for peer discovery on the local network.
     public static let serviceType = "_mirage._tcp"

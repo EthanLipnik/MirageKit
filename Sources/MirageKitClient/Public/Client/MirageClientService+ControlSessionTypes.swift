@@ -20,15 +20,34 @@ extension MirageClientService {
         let requiredInterface: NWInterface?
         let requiredInterfaceType: NWInterface.InterfaceType?
         let isPeerToPeerPreferred: Bool
+        let proximityInterfaceKind: LoomDiscoveredInterfaceKind?
+        let proximityInterfaceNames: [String]
 
         var interfaceDescription: String {
             if let requiredInterface {
                 return requiredInterface.name
             }
             if isPeerToPeerPreferred {
-                return "awdl"
+                return proximityDescription
             }
             return requiredInterfaceType.map(String.init(describing:)) ?? "any"
+        }
+
+        var requiresProximityPathValidation: Bool {
+            isPeerToPeerPreferred
+        }
+
+        var proximityDescription: String {
+            let names = proximityInterfaceNames
+                .filter { !$0.isEmpty }
+                .joined(separator: ",")
+            if let proximityInterfaceKind {
+                if names.isEmpty {
+                    return "proximity-\(proximityInterfaceKind.rawValue)"
+                }
+                return "\(names)(\(proximityInterfaceKind.rawValue))"
+            }
+            return names.isEmpty ? "proximity" : names
         }
 
         init(
@@ -38,7 +57,9 @@ extension MirageClientService {
             candidateKind: ControlSessionCandidateKind,
             requiredInterface: NWInterface? = nil,
             requiredInterfaceType: NWInterface.InterfaceType? = nil,
-            isPeerToPeerPreferred: Bool = false
+            isPeerToPeerPreferred: Bool = false,
+            proximityInterfaceKind: LoomDiscoveredInterfaceKind? = nil,
+            proximityInterfaceNames: [String] = []
         ) {
             self.hostName = hostName
             self.endpoint = endpoint
@@ -47,6 +68,73 @@ extension MirageClientService {
             self.requiredInterface = requiredInterface
             self.requiredInterfaceType = requiredInterfaceType
             self.isPeerToPeerPreferred = isPeerToPeerPreferred
+            self.proximityInterfaceKind = proximityInterfaceKind
+            self.proximityInterfaceNames = proximityInterfaceNames
+        }
+
+        func acceptsProximityPath(_ snapshot: MirageNetworkPathSnapshot) -> Bool {
+            guard requiresProximityPathValidation else { return true }
+
+            let normalizedNames = Set(snapshot.interfaceNames.map(Self.normalizedInterfaceName(_:)))
+            let expectedNames = proximityInterfaceNames
+                .map(Self.normalizedInterfaceName(_:))
+                .filter { !$0.isEmpty }
+            if !expectedNames.isEmpty {
+                guard expectedNames.contains(where: { normalizedNames.contains($0) }) else {
+                    return false
+                }
+                if let proximityInterfaceKind {
+                    return Self.path(snapshot, matches: proximityInterfaceKind)
+                }
+                return true
+            }
+
+            if let proximityInterfaceKind {
+                return Self.path(snapshot, matches: proximityInterfaceKind)
+            }
+
+            return Self.pathUsesAnyPreferredProximityInterface(snapshot)
+        }
+
+        private static func path(
+            _ snapshot: MirageNetworkPathSnapshot,
+            matches kind: LoomDiscoveredInterfaceKind
+        ) -> Bool {
+            let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
+            switch kind {
+            case .applePrivateNCM:
+                return names.contains { $0.hasPrefix("anpi") }
+            case .awdl:
+                return names.contains { $0.hasPrefix("awdl") }
+            case .lowLatencyWireless:
+                return names.contains { $0.hasPrefix("llw") }
+            case .wiredEthernet:
+                return snapshot.usesWired
+            case .bridge:
+                return names.contains { $0.hasPrefix("bridge") }
+            case .wifi, .cellular, .loopback, .overlay, .other:
+                return false
+            }
+        }
+
+        private static func pathUsesAnyPreferredProximityInterface(
+            _ snapshot: MirageNetworkPathSnapshot
+        ) -> Bool {
+            let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
+            if names.contains(where: { name in
+                name.hasPrefix("anpi") ||
+                    name.hasPrefix("awdl") ||
+                    name.hasPrefix("llw") ||
+                    name.hasPrefix("bridge")
+            }) {
+                return true
+            }
+
+            return snapshot.usesWired && !snapshot.usesWiFi && !snapshot.usesCellular
+        }
+
+        private static func normalizedInterfaceName(_ name: String) -> String {
+            name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
     }
 
@@ -193,6 +281,9 @@ extension MirageClientService {
 
     /// Classifies human-readable protocol errors produced before typed failure details are available.
     static func classifyProtocolErrorReason(_ reason: String) -> ControlSessionFailureClassification? {
+        if looksLikeProximityPathValidationFailure(reason) {
+            return .transportLoss
+        }
         if looksLikeAddressResolutionFailure(reason) {
             return .addressUnavailable
         }
@@ -203,6 +294,10 @@ extension MirageClientService {
             return .transportLoss
         }
         return nil
+    }
+
+    static func looksLikeProximityPathValidationFailure(_ reason: String) -> Bool {
+        reason.lowercased().contains("proximity path validation failed")
     }
 
     static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {

@@ -34,6 +34,8 @@ struct MirageKitStreamControlSerializationTests {
         #expect(serialized.count == mirageAudioHeaderSize)
         let decoded = AudioPacketHeader.deserialize(from: serialized)
         #expect(decoded != nil)
+        #expect(decoded?.version == 260518)
+        #expect(decoded?.version == MirageKit.protocolVersion)
         #expect(decoded?.codec == .pcm16LE)
         #expect(decoded?.flags.contains(.discontinuity) == true)
         #expect(decoded?.streamID == 7)

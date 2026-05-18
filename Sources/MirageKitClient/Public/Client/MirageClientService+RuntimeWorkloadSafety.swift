@@ -149,12 +149,26 @@ extension MirageClientService {
         for streamID in streamIDs {
             let existingCap = runtimeWorkloadSafetyFrameRateCap(for: streamID)
             let effectiveCap = min(existingCap ?? normalizedTarget, normalizedTarget)
+            let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
+            if let restoreFrameRate = runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID]
+                ?? Self.runtimeWorkloadSafetyRestoreFrameRate(
+                    currentFrameRate: currentFrameRate,
+                    cap: effectiveCap
+                ) {
+                runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] = restoreFrameRate
+            }
+            let expiresAt = now + Self.runtimeWorkloadSafetyFrameRateCapDuration
             runtimeWorkloadSafetyFrameRateCapsByStream[streamID] = RuntimeWorkloadSafetyFrameRateCap(
                 frameRate: effectiveCap,
-                expiresAt: now + Self.runtimeWorkloadSafetyFrameRateCapDuration
+                expiresAt: expiresAt
             )
+            if runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] != nil {
+                scheduleRuntimeWorkloadSafetyFrameRateRestore(
+                    for: streamID,
+                    expiresAt: expiresAt
+                )
+            }
             runtimeWorkloadSafetyLastFallbackReason = reason.rawValue
-            let currentFrameRate = runtimeWorkloadSafetyCurrentFrameRate(for: streamID)
             guard currentFrameRate > effectiveCap ||
                 (refreshRateOverridesByStream[streamID] ?? 0) > effectiveCap ||
                 (observedFrameRateByStream[streamID] ?? 0) > effectiveCap else {
@@ -190,6 +204,8 @@ extension MirageClientService {
 
     func resetRuntimeWorkloadSafetyState() {
         runtimeWorkloadSafetyFrameRateCapsByStream.removeAll(keepingCapacity: false)
+        runtimeWorkloadSafetyRestoreFrameRatesByStream.removeAll(keepingCapacity: false)
+        cancelRuntimeWorkloadSafetyFrameRateRestoreTasks()
         runtimeWorkloadSafetyLastFallbackReason = nil
         runtimeWorkloadSafetyMemoryPressureCount = 0
         runtimeWorkloadSafetyLastMemoryPressureTime = nil
@@ -199,6 +215,8 @@ extension MirageClientService {
     func clearRuntimeWorkloadSafetyState(for streamID: StreamID) {
         runtimeWorkloadSafetyStallTimesByStream.removeValue(forKey: streamID)
         runtimeWorkloadSafetyFrameRateCapsByStream.removeValue(forKey: streamID)
+        runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID)
+        runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)?.cancel()
     }
 
     func runtimeWorkloadSafetyFrameRateCap(for streamID: StreamID) -> Int? {
@@ -218,6 +236,82 @@ extension MirageClientService {
         }
         if runtimeWorkloadSafetyFrameRateCapsByStream.isEmpty {
             runtimeWorkloadSafetyLastFallbackReason = nil
+        }
+    }
+
+    func restoreExpiredRuntimeWorkloadSafetyFrameRateIfNeeded(
+        for streamID: StreamID,
+        expectedExpiresAt: CFAbsoluteTime,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    )
+    async {
+        runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)
+        let cap = runtimeWorkloadSafetyFrameRateCapsByStream[streamID]
+        if let cap {
+            guard cap.expiresAt == expectedExpiresAt else { return }
+            guard cap.expiresAt <= now else {
+                scheduleRuntimeWorkloadSafetyFrameRateRestore(
+                    for: streamID,
+                    expiresAt: cap.expiresAt
+                )
+                return
+            }
+            runtimeWorkloadSafetyFrameRateCapsByStream.removeValue(forKey: streamID)
+            if runtimeWorkloadSafetyFrameRateCapsByStream.isEmpty {
+                runtimeWorkloadSafetyLastFallbackReason = nil
+            }
+        }
+
+        guard let restoreFrameRate = runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID) else {
+            return
+        }
+        guard activeInteractiveStreamIDs.contains(streamID) else { return }
+        if let cap {
+            guard restoreFrameRate > cap.frameRate else { return }
+        }
+
+        do {
+            try await sendStreamEncoderSettingsChange(
+                streamID: streamID,
+                targetFrameRate: restoreFrameRate
+            )
+            MirageLogger.client(
+                "Runtime workload safety cap expired: restored stream \(streamID) to \(restoreFrameRate)fps"
+            )
+        } catch {
+            MirageLogger.error(
+                .client,
+                error: error,
+                message: "Failed to restore runtime workload safety frame rate for stream \(streamID): "
+            )
+        }
+    }
+
+    private func scheduleRuntimeWorkloadSafetyFrameRateRestore(
+        for streamID: StreamID,
+        expiresAt: CFAbsoluteTime
+    ) {
+        runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)?.cancel()
+        let delayMilliseconds = max(0, Int64((expiresAt - CFAbsoluteTimeGetCurrent()) * 1_000))
+        runtimeWorkloadSafetyFrameRateRestoreTasksByStream[streamID] = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(delayMilliseconds))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.restoreExpiredRuntimeWorkloadSafetyFrameRateIfNeeded(
+                for: streamID,
+                expectedExpiresAt: expiresAt
+            )
+        }
+    }
+
+    private func cancelRuntimeWorkloadSafetyFrameRateRestoreTasks() {
+        let tasks = runtimeWorkloadSafetyFrameRateRestoreTasksByStream.values
+        runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeAll(keepingCapacity: false)
+        for task in tasks {
+            task.cancel()
         }
     }
 
@@ -299,6 +393,16 @@ extension MirageClientService {
             return runtimeWorkloadSafetyMinimumFrameRate
         }
         return nil
+    }
+
+    nonisolated static func runtimeWorkloadSafetyRestoreFrameRate(
+        currentFrameRate: Int,
+        cap: Int
+    ) -> Int? {
+        let normalizedCurrent = MirageRenderModePolicy.normalizedTargetFPS(currentFrameRate)
+        let normalizedCap = MirageRenderModePolicy.normalizedTargetFPS(cap)
+        let restoreFrameRate = min(normalizedCurrent, 60)
+        return restoreFrameRate > normalizedCap ? restoreFrameRate : nil
     }
 
     nonisolated static func runtimeWorkloadSafetyStallEventAllowsFrameRateFallback(

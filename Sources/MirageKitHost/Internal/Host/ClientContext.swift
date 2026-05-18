@@ -33,11 +33,19 @@ struct ClientContext {
         let isLocalInterface = pathSnapshot.usesWiFi ||
             pathSnapshot.usesWiredEthernet ||
             pathSnapshot.usesLoopback ||
-            pathSnapshot.interfaceNames.contains { $0.lowercased().hasPrefix("awdl") }
+            pathSnapshot.interfaceNames.contains(where: Self.isLocalProximityInterfaceName(_:))
         guard isLocalInterface else { return false }
 
         guard case let .hostPort(host, _) = remoteEndpoint ?? pathSnapshot.remoteEndpoint else { return false }
         return isLocalNetworkHost("\(host)")
+    }
+
+    private static func isLocalProximityInterfaceName(_ name: String) -> Bool {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasPrefix("anpi") ||
+            normalized.hasPrefix("awdl") ||
+            normalized.hasPrefix("llw") ||
+            normalized.hasPrefix("bridge")
     }
 
     /// Returns whether a host string identifies a local-link or private-network endpoint.

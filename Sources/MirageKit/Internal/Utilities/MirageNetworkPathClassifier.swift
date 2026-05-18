@@ -69,6 +69,9 @@ package enum MirageNetworkPathClassifier {
     ) -> MirageNetworkPathKind {
         let interfaces = InterfaceSummary(interfaceNames)
 
+        if interfaces.hasProximity {
+            return .awdl
+        }
         if usesWiFi {
             return .wifi
         }
@@ -81,8 +84,8 @@ package enum MirageNetworkPathClassifier {
         if usesLoopback {
             return .loopback
         }
-        if interfaces.hasAWDL {
-            return .awdl
+        if interfaces.hasBridge {
+            return .wired
         }
         if interfaces.hasOverlay {
             return .vpn
@@ -110,7 +113,7 @@ package enum MirageNetworkPathClassifier {
     ) -> MirageNetworkPathSnapshot {
         let interfaces = InterfaceSummary(interfaceNames)
         let kind: MirageNetworkPathKind
-        if interfaces.hasAWDL {
+        if interfaces.hasProximity {
             kind = .awdl
         } else if interfaces.hasOverlay {
             kind = .vpn
@@ -122,6 +125,8 @@ package enum MirageNetworkPathClassifier {
             kind = .cellular
         } else if usesLoopback {
             kind = .loopback
+        } else if interfaces.hasBridge {
+            kind = .wired
         } else if usesOther {
             kind = .other
         } else {
@@ -161,15 +166,23 @@ package enum MirageNetworkPathClassifier {
     /// Normalizes Network.framework interface names before path-specific classification.
     private struct InterfaceSummary {
         let names: [String]
+        let hasApplePrivateNCM: Bool
         let hasAWDL: Bool
+        let hasLowLatencyWireless: Bool
+        let hasBridge: Bool
         let hasOverlay: Bool
+        let hasProximity: Bool
 
         init(_ interfaceNames: [String]) {
             names = interfaceNames
                 .map { $0.lowercased() }
                 .sorted()
+            hasApplePrivateNCM = names.contains { $0.hasPrefix("anpi") }
             hasAWDL = names.contains { $0.hasPrefix("awdl") }
+            hasLowLatencyWireless = names.contains { $0.hasPrefix("llw") }
+            hasBridge = names.contains { $0.hasPrefix("bridge") }
             hasOverlay = names.contains { $0.hasPrefix("utun") }
+            hasProximity = hasApplePrivateNCM || hasAWDL || hasLowLatencyWireless
         }
     }
 

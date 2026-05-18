@@ -371,9 +371,17 @@ extension MirageClientService {
         let usesLocalInterface = pathSnapshot.usesWiFi ||
             pathSnapshot.usesWiredEthernet ||
             pathSnapshot.usesLoopback ||
-            pathSnapshot.interfaceNames.contains { $0.lowercased().hasPrefix("awdl") }
+            pathSnapshot.interfaceNames.contains(where: Self.isLocalProximityInterfaceName(_:))
         guard usesLocalInterface else { return false }
         return isLocalEndpoint(await controlChannel.session.remoteEndpoint ?? pathSnapshot.remoteEndpoint)
+    }
+
+    private static func isLocalProximityInterfaceName(_ name: String) -> Bool {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasPrefix("anpi") ||
+            normalized.hasPrefix("awdl") ||
+            normalized.hasPrefix("llw") ||
+            normalized.hasPrefix("bridge")
     }
 
     private func isLocalEndpoint(_ endpoint: NWEndpoint?) -> Bool {

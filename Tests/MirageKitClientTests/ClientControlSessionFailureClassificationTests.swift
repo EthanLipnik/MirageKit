@@ -80,6 +80,13 @@ struct ClientControlSessionFailureClassificationTests {
                 MirageError.protocolError("Control stream closed before receiving bootstrap response")
             ) == .transportLoss
         )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError(
+                    "Proximity path validation failed for Altair expected=anpi0 actual=status=satisfied|kind=wifi|if=en0"
+                )
+            ) == .transportLoss
+        )
     }
 
     @MainActor

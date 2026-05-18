@@ -53,6 +53,49 @@ struct ClientNetworkPathStatusTests {
         #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
     }
 
+    @Test("Apple private proximity interfaces use proximity-class path presentation")
+    func applePrivateProximityClassifierUsesProximityPresentation() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["anpi0"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+
+        #expect(snapshot.kind == .awdl)
+        #expect(status.displayName == "USB-C Proximity")
+        #expect(status.transportDiagnosticNote?.contains("USB-C proximity") == true)
+    }
+
+    @Test("Low-latency wireless interfaces use proximity-class path presentation")
+    func lowLatencyWirelessClassifierUsesProximityPresentation() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["llw0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+
+        #expect(snapshot.kind == .awdl)
+        #expect(status.displayName == "Low-Latency Wireless")
+    }
+
     @Test("Local default route keeps Wi-Fi ahead of available tunnel interfaces")
     func localDefaultRouteKeepsWiFiAheadOfAvailableTunnelInterfaces() {
         let kind = MirageNetworkPathClassifier.classifyLocalDefaultRouteKind(

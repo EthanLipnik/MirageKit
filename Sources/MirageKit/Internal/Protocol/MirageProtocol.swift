@@ -11,8 +11,8 @@ import Foundation
 /// Magic number for packet validation
 package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
-/// Mirage wire-contract version for session bootstrap and media packets.
-package let mirageProtocolVersion: UInt8 = 2
+/// Mirage wire-contract version for session bootstrap and media packets, encoded as YYMMDD.
+package let mirageProtocolVersion: UInt32 = 260518
 
 /// Registration packet magic values.
 package let mirageAudioRegistrationMagic: UInt32 = 0x4D49_5241 // "MIRA"
@@ -32,7 +32,7 @@ private enum MiragePacketHeaderFieldSize {
 /// Video packet header size in bytes.
 package let mirageHeaderSize: Int =
     MiragePacketHeaderFieldSize.uint32 + // magic
-    MiragePacketHeaderFieldSize.uint8 + // version
+    MiragePacketHeaderFieldSize.uint32 + // version
     MiragePacketHeaderFieldSize.uint16 + // flags
     MiragePacketHeaderFieldSize.uint16 + // streamID
     MiragePacketHeaderFieldSize.uint32 + // sequenceNumber
@@ -51,7 +51,7 @@ package let mirageHeaderSize: Int =
 /// Audio packet header size in bytes.
 package let mirageAudioHeaderSize: Int =
     MiragePacketHeaderFieldSize.uint32 + // magic
-    MiragePacketHeaderFieldSize.uint8 + // version
+    MiragePacketHeaderFieldSize.uint32 + // version
     MiragePacketHeaderFieldSize.uint8 + // codec
     MiragePacketHeaderFieldSize.uint8 + // flags
     MiragePacketHeaderFieldSize.uint8 + // reserved
@@ -85,8 +85,8 @@ package struct FrameHeader {
     /// Magic number for validation (0x4D495247 = "MIRG")
     package var magic: UInt32 = mirageProtocolMagic
 
-    /// Protocol version
-    package var version: UInt8 = mirageProtocolVersion
+    /// Protocol version.
+    package var version: UInt32 = mirageProtocolVersion
 
     /// Packet flags
     package var flags: FrameFlags
@@ -189,7 +189,7 @@ package struct FrameHeader {
         var data = Data(capacity: mirageHeaderSize)
 
         withUnsafeBytes(of: magic.littleEndian) { data.append(contentsOf: $0) }
-        data.append(version)
+        withUnsafeBytes(of: version.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: flags.rawValue.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: streamID.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: sequenceNumber.littleEndian) { data.append(contentsOf: $0) }
@@ -283,7 +283,7 @@ package struct FrameHeader {
         let magic: UInt32 = read()
         guard magic == mirageProtocolMagic else { return nil }
 
-        let version = readByte()
+        let version: UInt32 = read()
         guard version == mirageProtocolVersion else { return nil }
 
         let flagsRaw: UInt16 = read()

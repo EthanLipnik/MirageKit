@@ -181,8 +181,14 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
     private var interfaceOverrideKind: InterfaceOverrideKind? {
         for interfaceName in interfaceNames {
             let normalized = interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.hasPrefix("anpi") {
+                return .applePrivateNCM
+            }
             if normalized.hasPrefix("awdl") {
                 return .awdl
+            }
+            if normalized.hasPrefix("llw") {
+                return .lowLatencyWireless
             }
             if normalized.contains("thunderbolt") || normalized.contains("bridge") {
                 return .thunderboltBridge
@@ -195,14 +201,20 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
     }
 
     private enum InterfaceOverrideKind {
+        case applePrivateNCM
         case awdl
+        case lowLatencyWireless
         case thunderboltBridge
         case overlay
 
         var displayName: String {
             switch self {
+            case .applePrivateNCM:
+                "USB-C Proximity"
             case .awdl:
                 "AWDL"
+            case .lowLatencyWireless:
+                "Low-Latency Wireless"
             case .thunderboltBridge:
                 "Thunderbolt Bridge"
             case .overlay:
@@ -212,8 +224,12 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
         var diagnosticNote: String {
             switch self {
+            case .applePrivateNCM:
+                "The active control path is using an Apple private USB-C proximity interface."
             case .awdl:
                 "The active control path is using Proximity Connect over Apple's AWDL transport."
+            case .lowLatencyWireless:
+                "The active control path is using Apple's low-latency wireless interface."
             case .thunderboltBridge:
                 "The active control path is using a Thunderbolt Bridge-style interface."
             case .overlay:

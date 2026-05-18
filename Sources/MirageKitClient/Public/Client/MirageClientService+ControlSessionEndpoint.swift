@@ -23,7 +23,7 @@ extension MirageClientService {
         let transportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
 
         attempts.append(
-            contentsOf: peerToPeerPreferredControlSessionAttempts(
+            contentsOf: proximityPreferredControlSessionAttempts(
                 for: host,
                 transportOrder: transportOrder
             )
@@ -70,6 +70,13 @@ extension MirageClientService {
         for host: LoomPeer,
         transportOrder: [LoomTransportKind]
     ) -> [ControlSessionAttempt] {
+        proximityPreferredControlSessionAttempts(for: host, transportOrder: transportOrder)
+    }
+
+    func proximityPreferredControlSessionAttempts(
+        for host: LoomPeer,
+        transportOrder: [LoomTransportKind]
+    ) -> [ControlSessionAttempt] {
         guard networkConfig.enablePeerToPeer else {
             return []
         }
@@ -78,37 +85,88 @@ extension MirageClientService {
         }
         guard let selectedHost = peerToPeerPreferredBonjourControlHost(for: host) else {
             MirageLogger.client(
-                "Skipping AWDL-preferred control attempts for \(host.name): no Bonjour hostname"
+                "Skipping proximity-preferred control attempts for \(host.name): no Bonjour hostname"
             )
             return []
         }
 
-        let discoveredInterface = host.discoveredInterfaces.first(where: \.isPeerToPeer)
-        guard discoveredInterface != nil || !host.resolvedAddresses.isEmpty else {
+        let proximityInterfaces = proximityPreferredDiscoveredInterfaces(for: host)
+        let shouldTryGenericProximity = proximityInterfaces.isEmpty && !host.resolvedAddresses.isEmpty
+        guard !proximityInterfaces.isEmpty || shouldTryGenericProximity else {
             return []
         }
 
-        let requiredInterface: NWInterface?
-        let requiredInterfaceType: NWInterface.InterfaceType?
-        let source: String
-        if let discoveredInterface {
-            requiredInterface = discoveredInterface.networkInterface
-            requiredInterfaceType = discoveredInterface.networkInterface == nil ? discoveredInterface.type : nil
-            source = "bonjour-awdl"
-        } else {
-            requiredInterface = nil
-            requiredInterfaceType = .other
-            source = "bonjour-peer-to-peer"
-
+        if shouldTryGenericProximity {
             let interfaces = host.discoveredInterfaces
                 .map(\.name)
                 .filter { !$0.isEmpty }
                 .joined(separator: ",")
             MirageLogger.client(
-                "Trying optimistic peer-to-peer control attempts for \(host.name): no AWDL Bonjour interface " +
+                "Trying optimistic proximity control attempts for \(host.name): no preferred Bonjour interface " +
                     "interfaces=\(interfaces.isEmpty ? "none" : interfaces)"
             )
         }
+
+        var attempts: [ControlSessionAttempt] = []
+        for discoveredInterface in proximityInterfaces {
+            attempts.append(
+                contentsOf: proximityPreferredControlSessionAttempts(
+                    for: host,
+                    transportOrder: transportOrder,
+                    selectedHost: selectedHost,
+                    discoveredInterface: discoveredInterface
+                )
+            )
+        }
+
+        if shouldTryGenericProximity {
+            attempts.append(
+                contentsOf: proximityPreferredControlSessionAttempts(
+                    for: host,
+                    transportOrder: transportOrder,
+                    selectedHost: selectedHost,
+                    discoveredInterface: nil
+                )
+            )
+        }
+
+        return attempts
+    }
+
+    func proximityPreferredDiscoveredInterfaces(for host: LoomPeer) -> [LoomDiscoveredInterface] {
+        host.discoveredInterfaces
+            .filter(\.isProximityPreferred)
+            .sorted { lhs, rhs in
+                let leftPriority = lhs.proximityPriority ?? Int.max
+                let rightPriority = rhs.proximityPriority ?? Int.max
+                if leftPriority != rightPriority {
+                    return leftPriority < rightPriority
+                }
+                if lhs.index != rhs.index {
+                    return lhs.index < rhs.index
+                }
+                return lhs.name < rhs.name
+            }
+    }
+
+    func proximityPreferredControlSessionAttempts(
+        for host: LoomPeer,
+        transportOrder: [LoomTransportKind],
+        selectedHost: NWEndpoint.Host,
+        discoveredInterface: LoomDiscoveredInterface?
+    ) -> [ControlSessionAttempt] {
+        let requiredInterface = discoveredInterface?.networkInterface
+        let requiredInterfaceType: NWInterface.InterfaceType?
+        if let discoveredInterface, discoveredInterface.networkInterface == nil {
+            requiredInterfaceType = discoveredInterface.type
+        } else if discoveredInterface == nil {
+            requiredInterfaceType = .other
+        } else {
+            requiredInterfaceType = nil
+        }
+        let source = discoveredInterface.map {
+            "bonjour-proximity-\(proximityLogName(for: $0.kind))"
+        } ?? "bonjour-proximity-optimistic"
 
         return transportOrder.compactMap { transportKind in
             guard let endpoint = peerToPeerPreferredControlSessionEndpoint(
@@ -135,8 +193,35 @@ extension MirageClientService {
                 candidateKind: candidateKind,
                 requiredInterface: requiredInterface,
                 requiredInterfaceType: requiredInterfaceType,
-                isPeerToPeerPreferred: true
+                isPeerToPeerPreferred: true,
+                proximityInterfaceKind: discoveredInterface?.kind,
+                proximityInterfaceNames: discoveredInterface.map { [$0.name] } ?? []
             )
+        }
+    }
+
+    func proximityLogName(for kind: LoomDiscoveredInterfaceKind) -> String {
+        switch kind {
+        case .applePrivateNCM:
+            "anpi"
+        case .awdl:
+            "awdl"
+        case .lowLatencyWireless:
+            "llw"
+        case .wiredEthernet:
+            "wired"
+        case .bridge:
+            "bridge"
+        case .wifi:
+            "wifi"
+        case .cellular:
+            "cellular"
+        case .loopback:
+            "loopback"
+        case .overlay:
+            "overlay"
+        case .other:
+            "other"
         }
     }
 

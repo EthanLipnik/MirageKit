@@ -9,6 +9,7 @@
 
 import CoreGraphics
 import Foundation
+@testable import MirageKit
 @testable import MirageKitClient
 import Testing
 
@@ -49,6 +50,30 @@ struct RuntimeWorkloadSafetyTests {
         #expect(MirageClientService.runtimeWorkloadSafetyMemoryPressureTarget(
             currentFrameRate: 30,
             repeated: true
+        ) == nil)
+    }
+
+    @Test("Runtime workload safety restores 30fps caps to 60fps")
+    func memoryPressureRestoreTargets() {
+        #expect(MirageClientService.runtimeWorkloadSafetyRestoreFrameRate(
+            currentFrameRate: 120,
+            cap: 60
+        ) == nil)
+        #expect(MirageClientService.runtimeWorkloadSafetyRestoreFrameRate(
+            currentFrameRate: 90,
+            cap: 60
+        ) == nil)
+        #expect(MirageClientService.runtimeWorkloadSafetyRestoreFrameRate(
+            currentFrameRate: 120,
+            cap: 30
+        ) == 60)
+        #expect(MirageClientService.runtimeWorkloadSafetyRestoreFrameRate(
+            currentFrameRate: 60,
+            cap: 30
+        ) == 60)
+        #expect(MirageClientService.runtimeWorkloadSafetyRestoreFrameRate(
+            currentFrameRate: 30,
+            cap: 30
         ) == nil)
     }
 
@@ -103,6 +128,111 @@ struct RuntimeWorkloadSafetyTests {
         #expect(service.maxRefreshRateOverride == 120)
         #expect(service.screenMaxRefreshRate == 120)
         #expect(service.resolvedStreamCadenceFrameRate(for: streamID, fallback: 120) == 120)
+    }
+
+    @MainActor
+    @Test("Runtime workload cap stores the 60fps restore target")
+    func runtimeCapStoresRestoreFrameRateTarget() async throws {
+        let pair = try await makeLoopbackControlPair()
+        try await pair.startAuthenticatedSessions()
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+        let serverReceiver = ControlMessageReceiver(channel: serverControl)
+
+        do {
+            let service = MirageClientService(deviceName: "Loopback Client")
+            let streamID: StreamID = 7
+            service.loomSession = pair.client
+            service.controlChannel = clientControl
+            service.connectionState = .connected(host: "Loopback Host")
+            service.desktopStreamID = streamID
+            service.refreshRateOverridesByStream[streamID] = 60
+
+            await service.applyRuntimeWorkloadSafetyCap(
+                targetFrameRate: 30,
+                reason: .memoryPressure,
+                triggerStreamID: streamID
+            )
+
+            let capRequestEnvelope = try await serverReceiver.next()
+            #expect(capRequestEnvelope.type == .streamEncoderSettingsChange)
+            let capRequest = try capRequestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            #expect(capRequest.streamID == streamID)
+            #expect(capRequest.targetFrameRate == 30)
+            #expect(service.runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] == 60)
+
+            service.resetRuntimeWorkloadSafetyState()
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
+
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
+    }
+
+    @MainActor
+    @Test("Expired runtime workload cap restores the 60fps target")
+    func expiredRuntimeCapRestoresFrameRateTarget() async throws {
+        let pair = try await makeLoopbackControlPair()
+        try await pair.startAuthenticatedSessions()
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+        let serverReceiver = ControlMessageReceiver(channel: serverControl)
+
+        do {
+            let service = MirageClientService(deviceName: "Loopback Client")
+            let streamID: StreamID = 9
+            let expiresAt = CFAbsoluteTimeGetCurrent() - 1
+            service.loomSession = pair.client
+            service.controlChannel = clientControl
+            service.connectionState = .connected(host: "Loopback Host")
+            service.desktopStreamID = streamID
+            service.refreshRateOverridesByStream[streamID] = 30
+            service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] = RuntimeWorkloadSafetyFrameRateCap(
+                frameRate: 30,
+                expiresAt: expiresAt
+            )
+            service.runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] = 60
+            service.runtimeWorkloadSafetyLastFallbackReason = "memory_pressure"
+            #expect(service.runtimeWorkloadSafetyFrameRateCap(for: streamID) == nil)
+            #expect(service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] == nil)
+
+            await service.restoreExpiredRuntimeWorkloadSafetyFrameRateIfNeeded(
+                for: streamID,
+                expectedExpiresAt: expiresAt
+            )
+
+            let restoreRequestEnvelope = try await serverReceiver.next()
+            #expect(restoreRequestEnvelope.type == .streamEncoderSettingsChange)
+            let restoreRequest = try restoreRequestEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+            #expect(restoreRequest.streamID == streamID)
+            #expect(restoreRequest.targetFrameRate == 60)
+            #expect(service.runtimeWorkloadSafetyFrameRateCapsByStream[streamID] == nil)
+            #expect(service.runtimeWorkloadSafetyRestoreFrameRatesByStream[streamID] == nil)
+            #expect(service.runtimeWorkloadSafetyLastFallbackReason == nil)
+            #expect(service.refreshRateOverridesByStream[streamID] == 60)
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
+
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
     }
 }
 #endif

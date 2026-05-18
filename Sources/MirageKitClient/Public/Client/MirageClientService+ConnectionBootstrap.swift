@@ -42,6 +42,10 @@ extension MirageClientService {
                     attemptID: attemptID
                 )
                 openedSession = session
+                try await validateProximityControlSessionPath(
+                    session,
+                    attempt: attempt
+                )
                 let controlChannel = try await MirageControlChannel.open(on: session)
                 openedChannel = controlChannel
                 try Task.checkCancellation()
@@ -195,6 +199,33 @@ extension MirageClientService {
             clearPendingConnectTaskIfNeeded(for: attemptID)
             throw error
         }
+    }
+
+    func validateProximityControlSessionPath(
+        _ session: LoomAuthenticatedSession,
+        attempt: ControlSessionAttempt
+    ) async throws {
+        guard attempt.requiresProximityPathValidation else { return }
+
+        guard let pathSnapshot = await session.pathSnapshot else {
+            let reason = "Proximity path validation failed for \(attempt.hostName) " +
+                "expected=\(attempt.proximityDescription) actual=missing-path-snapshot"
+            MirageLogger.client(reason)
+            throw MirageError.protocolError(reason)
+        }
+
+        let classifiedSnapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
+        guard attempt.acceptsProximityPath(classifiedSnapshot) else {
+            let reason = "Proximity path validation failed for \(attempt.hostName) " +
+                "expected=\(attempt.proximityDescription) actual=\(classifiedSnapshot.signature)"
+            MirageLogger.client(reason)
+            throw MirageError.protocolError(reason)
+        }
+
+        MirageLogger.client(
+            "Accepted proximity control session for \(attempt.hostName): " +
+                "expected=\(attempt.proximityDescription) actual=\(classifiedSnapshot.signature)"
+        )
     }
 
     /// Races `connectTask` against `controlSessionConnectTimeout` using a

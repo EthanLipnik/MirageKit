@@ -57,6 +57,8 @@ struct MirageKitTests {
 
         let deserialized = FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
+        #expect(deserialized?.version == 260518)
+        #expect(deserialized?.version == MirageKit.protocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
         #expect(deserialized?.frameNumber == 50)
@@ -78,6 +80,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
+        #expect(MirageKit.protocolVersion == 260518)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }

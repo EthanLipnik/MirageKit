@@ -15,6 +15,76 @@ import Testing
 @Suite("Client Connection Endpoint Address Planning")
 struct ClientConnectionEndpointAddressPlanningTests {
     @MainActor
+    @Test("Client ranks proximity Bonjour interfaces before resolved IP fallback")
+    func controlSessionAttemptsRankProximityInterfacesBeforeFallback() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61040))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61041))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61042))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
+                LoomDiscoveredInterface(name: "bridge100", type: .other, index: 14),
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+                LoomDiscoveredInterface(name: "en3", type: .wiredEthernet, index: 10),
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
+                LoomDiscoveredInterface(name: "anpi0", type: .other, index: 9),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let proximityAttempts = Array(attempts.prefix(15))
+        let fallbackAttempts = Array(attempts.suffix(3))
+
+        #expect(attempts.count == 18)
+        #expect(proximityAttempts.allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(proximityAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
+            "anpi0", "anpi0", "anpi0",
+            "awdl0", "awdl0", "awdl0",
+            "llw0", "llw0", "llw0",
+            "en3", "en3", "en3",
+            "bridge100", "bridge100", "bridge100",
+        ])
+        #expect(proximityAttempts.map(\.transportKind) == [
+            .udp, .quic, .tcp,
+            .udp, .quic, .tcp,
+            .udp, .quic, .tcp,
+            .udp, .quic, .tcp,
+            .udp, .quic, .tcp,
+        ])
+        #expect(fallbackAttempts.allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(fallbackAttempts.map(\.transportKind) == [.udp, .quic, .tcp])
+    }
+
+    @MainActor
     @Test("Client tries AWDL Bonjour hostname before resolved IP fallback")
     func controlSessionAttemptsPreferAwdlBeforeResolvedAddressFallback() throws {
         let deviceID = UUID()
@@ -451,5 +521,102 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(message.contains("Proximity Connect"))
         #expect(message.contains("Network settings"))
         #expect(!message.lowercased().contains("peer-to-peer"))
+    }
+
+    @Test("Proximity path validation rejects ordinary Wi-Fi fallback paths")
+    func proximityPathValidationRejectsOrdinaryWiFiFallback() {
+        let attempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: "altair.local", port: 61040),
+            transportKind: .udp,
+            candidateKind: .local,
+            isPeerToPeerPreferred: true,
+            proximityInterfaceKind: .applePrivateNCM,
+            proximityInterfaceNames: ["anpi0"]
+        )
+        let anpiSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["anpi0"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let wifiSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(attempt.acceptsProximityPath(anpiSnapshot))
+        #expect(!attempt.acceptsProximityPath(wifiSnapshot))
+    }
+
+    @Test("Optimistic proximity validation accepts only proximity-like paths")
+    func optimisticProximityPathValidationRequiresProximityPath() {
+        let attempt = MirageClientService.ControlSessionAttempt(
+            hostName: "Altair",
+            endpoint: .hostPort(host: "altair.local", port: 61040),
+            transportKind: .udp,
+            candidateKind: .local,
+            requiredInterfaceType: .other,
+            isPeerToPeerPreferred: true
+        )
+        let llwSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["llw0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let wiredSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en3"],
+            usesWiFi: false,
+            usesWired: true,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let wifiSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(attempt.acceptsProximityPath(llwSnapshot))
+        #expect(attempt.acceptsProximityPath(wiredSnapshot))
+        #expect(!attempt.acceptsProximityPath(wifiSnapshot))
     }
 }

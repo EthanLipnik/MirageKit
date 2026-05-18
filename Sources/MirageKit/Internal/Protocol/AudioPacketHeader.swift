@@ -13,7 +13,7 @@ package struct AudioPacketHeader {
     package var magic: UInt32 = mirageAudioRegistrationMagic
 
     /// Protocol version.
-    package var version: UInt8 = mirageProtocolVersion
+    package var version: UInt32 = mirageProtocolVersion
 
     /// Wire codec.
     package var codec: MirageAudioCodec
@@ -96,7 +96,7 @@ package struct AudioPacketHeader {
     package func serialize() -> Data {
         var data = Data(capacity: mirageAudioHeaderSize)
         withUnsafeBytes(of: magic.littleEndian) { data.append(contentsOf: $0) }
-        data.append(version)
+        withUnsafeBytes(of: version.littleEndian) { data.append(contentsOf: $0) }
         data.append(codec.rawValue)
         data.append(flags.rawValue)
         data.append(reserved)
@@ -138,7 +138,7 @@ package struct AudioPacketHeader {
         let magic: UInt32 = read()
         guard magic == mirageAudioRegistrationMagic else { return nil }
 
-        let version = readByte()
+        let version: UInt32 = read()
         guard version == mirageProtocolVersion else { return nil }
 
         let codecRaw = readByte()
