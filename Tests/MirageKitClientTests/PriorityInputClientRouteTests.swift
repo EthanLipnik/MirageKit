@@ -15,8 +15,8 @@ import Testing
 
 @Suite("Priority Input Client Route")
 struct PriorityInputClientRouteTests {
-    @Test("Ordered input uses control handler while realtime uses priority route")
-    func orderedInputUsesControlHandlerWhileRealtimeUsesPriorityRoute() async throws {
+    @Test("Ordered input uses protected priority while continuous input uses continuous priority route")
+    func orderedInputUsesProtectedPriorityWhileContinuousInputUsesContinuousPriorityRoute() async throws {
         let endpoint = FakePriorityInputEndpoint()
         let fallbackRecorder = LockedPriorityFallbackRecorder()
         let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
@@ -39,31 +39,44 @@ struct PriorityInputClientRouteTests {
             streamID: 11
         )
 
-        try await waitUntil("control input send") {
-            fallbackRecorder.modes.contains(.orderedBestEffort)
+        try await waitUntil("protected priority send") {
+            endpoint.protectedPayloadCount > 0
         }
-        try await waitUntil("realtime priority send") {
-            endpoint.realtimePayloadCount > 0
+        try await waitUntil("continuous priority send") {
+            endpoint.continuousPayloadCount > 0
         }
-        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstRealtimePayload))
+        let continuousEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        endpoint.yield(
+            MiragePriorityInputEnvelope(
+                kind: .ack,
+                eventID: continuousEnvelope.eventID,
+                streamID: continuousEnvelope.streamID,
+                deliveryClass: .realtime,
+                sentAtUptime: ProcessInfo.processInfo.systemUptime
+            )
+        )
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
         endpoint.yield(
             MiragePriorityInputEnvelope(
                 kind: .ack,
                 eventID: sentEnvelope.eventID,
                 streamID: sentEnvelope.streamID,
-                deliveryClass: .realtime,
+                deliveryClass: .protected,
                 sentAtUptime: ProcessInfo.processInfo.systemUptime
             )
         )
-        try await waitUntil("realtime ack") {
-            route.snapshot().realtimeAckCount == 1
+        try await waitUntil("protected ack") {
+            route.snapshot().protectedAckCount == 1
+        }
+        try await waitUntil("continuous ack") {
+            route.snapshot().continuousAckCount == 1
         }
         try await Task.sleep(for: .milliseconds(40))
 
-        #expect(endpoint.protectedPayloadCount == 0)
-        #expect(endpoint.realtimePayloadCount == 1)
+        #expect(endpoint.protectedPayloadCount == 1)
+        #expect(endpoint.continuousPayloadCount == 1)
+        #expect(endpoint.realtimePayloadCount == 0)
         #expect(endpoint.sequencedRealtimePayloadCount == 0)
-        #expect(fallbackRecorder.modes.contains(.orderedBestEffort))
         #expect(!fallbackRecorder.modes.contains(.reliable))
     }
 
@@ -189,6 +202,85 @@ struct PriorityInputClientRouteTests {
         #expect(await fallbackRecorder.modes == [.droppableRealtime])
     }
 
+    @Test("Continuous batches use continuous priority profile and compact fallback")
+    func continuousBatchesUseContinuousPriorityProfileAndCompactFallback() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        try route.sendContinuousBatch(MirageContinuousInputBatch(
+            streamID: 17,
+            kind: .mouseMoved,
+            samples: [
+                MirageContinuousInputBatch.Sample(
+                    timestamp: 1,
+                    location: CGPoint(x: 0.2, y: 0.3)
+                ),
+            ]
+        ))
+
+        try await waitUntil("continuous priority payload") {
+            endpoint.continuousPayloadCount == 1
+        }
+        try await waitUntil("continuous cold fallback", timeout: .milliseconds(80)) {
+            await fallbackRecorder.count == 1
+        }
+
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        let sentBatch = try MirageContinuousInputBatch.deserialize(sentEnvelope.inputPayload)
+        let fallbackEnvelope = try await fallbackRecorder.firstEnvelope()
+        let fallbackBatch = try MirageContinuousInputBatch.deserialize(fallbackEnvelope.inputPayload)
+
+        #expect(sentEnvelope.kind == .continuousInput)
+        #expect(sentBatch.kind == .mouseMoved)
+        #expect(fallbackEnvelope.kind == .continuousInput)
+        #expect(fallbackBatch.inputEvents().count == 1)
+        #expect(route.snapshot().continuousSentCount == 1)
+        #expect(route.snapshot().continuousFallbackCount == 1)
+        #expect(endpoint.realtimePayloadCount == 0)
+    }
+
+    @Test("Continuous realtime ack is counted separately from realtime latest ack")
+    func continuousRealtimeAckIsCountedSeparatelyFromRealtimeLatestAck() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        try route.sendContinuousBatch(MirageContinuousInputBatch(
+            streamID: 18,
+            kind: .mouseMoved,
+            samples: [
+                MirageContinuousInputBatch.Sample(
+                    timestamp: 1,
+                    location: CGPoint(x: 0.2, y: 0.3)
+                ),
+            ]
+        ))
+        try await waitUntil("continuous priority payload") {
+            endpoint.firstContinuousPayload != nil
+        }
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstContinuousPayload))
+        endpoint.yield(MiragePriorityInputEnvelope(
+            kind: .ack,
+            eventID: sentEnvelope.eventID,
+            streamID: sentEnvelope.streamID,
+            deliveryClass: .realtime,
+            sentAtUptime: ProcessInfo.processInfo.systemUptime
+        ))
+
+        try await waitUntil("continuous ack") {
+            route.snapshot().continuousAckCount == 1
+        }
+
+        #expect(route.snapshot().realtimeAckCount == 0)
+    }
+
     @Test("Realtime fallback coalesces to latest pending event")
     func realtimeFallbackCoalescesToLatestPendingEvent() async throws {
         let endpoint = FakePriorityInputEndpoint()
@@ -310,6 +402,7 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
     private let lock = NSLock()
     private var realtimePayloads: [Data] = []
     private var sequencedRealtimePayloads: [Data] = []
+    private var continuousPayloads: [Data] = []
     private var protectedPayloads: [Data] = []
     private let stream: AsyncStream<Data>
     private let continuation: AsyncStream<Data>.Continuation
@@ -339,6 +432,12 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
         return protectedPayloads.count
     }
 
+    var continuousPayloadCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuousPayloads.count
+    }
+
     var sequencedRealtimePayloadCount: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -355,6 +454,18 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
         lock.lock()
         defer { lock.unlock() }
         return sequencedRealtimePayloads.first
+    }
+
+    var firstContinuousPayload: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return continuousPayloads.first
+    }
+
+    var firstProtectedPayload: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return protectedPayloads.first
     }
 
     var realtimeCompletionError: Error? {
@@ -401,6 +512,17 @@ private final class FakePriorityInputEndpoint: MiragePriorityInputEndpointProtoc
         lock.lock()
         sequencedRealtimePayloads.append(payload)
         let error = sequencedRealtimeError
+        lock.unlock()
+        onComplete(error)
+    }
+
+    func sendContinuous(
+        _ payload: Data,
+        onComplete: @escaping @Sendable (Error?) -> Void
+    ) {
+        lock.lock()
+        continuousPayloads.append(payload)
+        let error = realtimeError
         lock.unlock()
         onComplete(error)
     }

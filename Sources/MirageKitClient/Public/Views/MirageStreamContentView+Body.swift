@@ -183,11 +183,17 @@ public extension MirageStreamContentView {
         }
         .onChange(of: awaitingPostResizeFirstFrame) {
             guard isDesktopStream, !awaitingPostResizeFirstFrame else { return }
-            clientService.handleDesktopPresentationReady(streamID: session.streamID)
+            Task { @MainActor in
+                await Task.yield()
+                clientService.handleDesktopPresentationReady(streamID: session.streamID)
+            }
         }
         .onChange(of: session.hasPresentedFrame) {
             guard isDesktopStream, session.hasPresentedFrame else { return }
-            clientService.handleDesktopPresentationReady(streamID: session.streamID)
+            Task { @MainActor in
+                await Task.yield()
+                clientService.handleDesktopPresentationReady(streamID: session.streamID)
+            }
         }
         .onChange(of: maxDrawableSize) {
             guard isDesktopStream else { return }
@@ -203,13 +209,22 @@ public extension MirageStreamContentView {
         }
         .onChange(of: isCurrentStreamActive) {
             guard isCurrentStreamActive else { return }
-            focusCurrentStreamForInputIfNeeded()
+            Task { @MainActor in
+                await Task.yield()
+                focusCurrentStreamForInputIfNeeded()
+            }
         }
         .onAppear {
-            focusCurrentStreamForInputIfNeeded(force: true)
+            Task { @MainActor in
+                await Task.yield()
+                focusCurrentStreamForInputIfNeeded(force: true)
+            }
         }
         .onDisappear {
-            handleStreamContentDisappear()
+            Task { @MainActor in
+                await Task.yield()
+                handleStreamContentDisappear()
+            }
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in

@@ -181,13 +181,29 @@ extension InputCapturingView {
 
     @objc
     func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        let sourceTimestamp = Date.timeIntervalSinceReferenceDate
+        MirageInputLatencyTelemetry.shared.recordClientSource(
+            eventClass: .pointer,
+            streamID: streamID,
+            source: "uiHover",
+            timestamp: sourceTimestamp
+        )
         requestResponderRecovery(.interaction)
         let hoverStylus = stylusHoverEvent(from: gesture)
         let hoverPressure: CGFloat = hoverStylus == nil ? 1.0 : 0.0
         let location = gesture.location(in: self)
 
         if cursorLockEnabled {
-            guard !usesMouseInputDeltas else { return }
+            guard !usesMouseInputDeltas else {
+                MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                    eventClass: .pointer,
+                    streamID: streamID,
+                    source: "uiHover",
+                    reason: "mouseDeltasActive",
+                    sourceTimestamp: sourceTimestamp
+                )
+                return
+            }
             switch gesture.state {
             case .began:
                 lockedPointerLastHoverLocation = location
@@ -198,11 +214,25 @@ extension InputCapturingView {
             case .changed:
                 if lockedPointerButtonDown {
                     lockedPointerLastHoverLocation = nil
+                    MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                        eventClass: .pointer,
+                        streamID: streamID,
+                        source: "uiHover",
+                        reason: "lockedButtonDown",
+                        sourceTimestamp: sourceTimestamp
+                    )
                     return
                 }
                 if let lastLocation = lockedPointerLastHoverLocation {
                     if shouldIgnoreLockedPointerHoverJump(from: lastLocation, to: location) {
                         lockedPointerLastHoverLocation = nil
+                        MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                            eventClass: .pointer,
+                            streamID: streamID,
+                            source: "uiHover",
+                            reason: "lockedHoverJump",
+                            sourceTimestamp: sourceTimestamp
+                        )
                         return
                     }
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
@@ -225,6 +255,14 @@ extension InputCapturingView {
                                 pressure: hoverPressure
                             )
                         }
+                    } else {
+                        MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                            eventClass: .pointer,
+                            streamID: streamID,
+                            source: "uiHover",
+                            reason: "zeroLockedTranslation",
+                            sourceTimestamp: sourceTimestamp
+                        )
                     }
                 }
                 lockedPointerLastHoverLocation = location
@@ -235,8 +273,37 @@ extension InputCapturingView {
             }
             return
         }
-        guard hoverStylus != nil || scrollPhysicsView?.isIndirectScrollActive != true else { return }
+        if hoverStylus == nil, scrollPhysicsView?.isIndirectScrollActive == true {
+            MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                eventClass: .pointer,
+                streamID: streamID,
+                source: "uiHover",
+                reason: "indirectScrollActive",
+                sourceTimestamp: sourceTimestamp
+            )
+            return
+        }
         let normalized = normalizedLocation(location)
+        if normalMouseDeltaInputActive, hoverStylus == nil {
+            switch gesture.state {
+            case .began,
+                 .changed:
+                lastCursorPosition = normalized
+                lockedCursorPosition = normalized
+                updateLockedCursorViewVisibility()
+                updateLockedCursorViewPosition()
+                MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                    eventClass: .pointer,
+                    streamID: streamID,
+                    source: "uiHover",
+                    reason: "mouseDeltasActive",
+                    sourceTimestamp: sourceTimestamp
+                )
+            default:
+                break
+            }
+            return
+        }
         let pointerMoved: Bool = if let lastCursorPosition {
             hypot(normalized.x - lastCursorPosition.x, normalized.y - lastCursorPosition.y) > 0.0001
         } else {
@@ -277,8 +344,22 @@ extension InputCapturingView {
                         modifiers: eventModifiers,
                         pressure: hoverPressure
                     )
+                    MirageInputLatencyTelemetry.shared.recordClientSourceForward(
+                        event: .mouseMoved(mouseEvent),
+                        streamID: streamID,
+                        source: "uiHover",
+                        sourceTimestamp: sourceTimestamp
+                    )
                     onInputEvent?(.mouseMoved(mouseEvent))
                 }
+            } else {
+                MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                    eventClass: hoverStylus == nil ? .pointer : .touch,
+                    streamID: streamID,
+                    source: "uiHover",
+                    reason: pointerMoved ? "dragging" : "noMovement",
+                    sourceTimestamp: sourceTimestamp
+                )
             }
         default:
             sendPencilHoverExitIfNeeded()

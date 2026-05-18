@@ -106,10 +106,10 @@ extension MirageReceiverHealthController {
             )
         )
 
-        let suppressesProbePromotion = queueBytes > 0 ||
+        let suppressesProbePromotion = queueStress ||
             transportDropCount > 0 ||
             sendDelayStress ||
-            pacerStress ||
+            pairedPacerStress ||
             keyframeAssemblyInProgress
 
         return ReceiverHealthSample(

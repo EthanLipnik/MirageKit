@@ -60,7 +60,6 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     private static let maxPendingMessages = 256
-    private static let maxPendingContactSamples = 4096
     private static let maxMessagesPerDrain = 16
 
     private let inputQueue: DispatchQueue
@@ -84,7 +83,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         MirageInputLatencyTelemetry.shared.recordHostReceive(message: message)
 
         lock.lock()
-        append(pending)
+        append(pending, allowNativeScrollMerging: true)
         recordReplaceableInputBoundaryIfNeeded(pending)
         trimPendingMessages()
         MirageInputLatencyTelemetry.shared.recordHostSchedulerDepth(
@@ -99,6 +98,48 @@ final class HostInputMessageScheduler: @unchecked Sendable {
             shouldScheduleDrain = true
         }
         lock.unlock()
+
+        if shouldScheduleDrain {
+            scheduleDrain()
+        }
+    }
+
+    /// Queues a compact continuous batch in packet/sample order.
+    func enqueueContinuousBatch(_ batch: MirageContinuousInputBatch) {
+        let pendingMessages = batch.inputEvents().compactMap { event -> PendingMessage? in
+            let inputMessage = InputEventMessage(streamID: batch.streamID, event: event)
+            guard let payload = try? inputMessage.serializePayload() else { return nil }
+            let message = ControlMessage(type: .inputEvent, payload: payload)
+            MirageInputLatencyTelemetry.shared.recordHostReceive(message: message)
+            return PendingMessage(
+                message: message,
+                classification: Self.continuousClassification(for: message)
+            )
+        }
+        guard !pendingMessages.isEmpty else { return }
+
+        lock.lock()
+        for pending in pendingMessages {
+            append(pending, allowNativeScrollMerging: false)
+            recordReplaceableInputBoundaryIfNeeded(pending)
+        }
+        trimPendingMessages()
+        let depth = self.pendingMessages.count
+        let shouldScheduleDrain: Bool
+        if drainScheduled {
+            shouldScheduleDrain = false
+        } else {
+            drainScheduled = true
+            shouldScheduleDrain = true
+        }
+        lock.unlock()
+
+        for pending in pendingMessages {
+            MirageInputLatencyTelemetry.shared.recordHostSchedulerDepth(
+                message: pending.message,
+                depth: depth
+            )
+        }
 
         if shouldScheduleDrain {
             scheduleDrain()
@@ -157,8 +198,9 @@ final class HostInputMessageScheduler: @unchecked Sendable {
     }
 
     /// Adds `pending`, merging adjacent scroll packets and replacing latest-value pointer movement.
-    private func append(_ pending: PendingMessage) {
-        if let last = pendingMessages.last,
+    private func append(_ pending: PendingMessage, allowNativeScrollMerging: Bool) {
+        if allowNativeScrollMerging,
+           let last = pendingMessages.last,
            last.streamID == pending.streamID,
            let mergedMessage = Self.mergedNativeContinuousScrollMessage(
                olderMessage: last.message,
@@ -193,25 +235,7 @@ final class HostInputMessageScheduler: @unchecked Sendable {
         while pendingMessages.count > Self.maxPendingMessages {
             if removeFirstPendingMessage(where: { $0.priority.isReplaceable }) { continue }
             if removeFirstPendingMessage(where: { $0.priority == .pointerMove }) { continue }
-            if removeFirstPendingMessage(where: { $0.priority == .contactMove }) { continue }
             break
-        }
-
-        while Self.contactSampleCount(in: pendingMessages) > Self.maxPendingContactSamples {
-            if removeFirstPendingMessage(where: { $0.priority == .contactMove }) { continue }
-            break
-        }
-    }
-
-    /// Counts batched contact-move samples currently waiting in the scheduler.
-    private static func contactSampleCount(in pendingMessages: [PendingMessage]) -> Int {
-        pendingMessages.reduce(into: 0) { result, pending in
-            guard case .contactMove = pending.priority,
-                  let inputMessage = try? InputEventMessage.deserializePayload(pending.message.payload),
-                  case let .pointerSampleBatch(batch) = inputMessage.event else {
-                return
-            }
-            result += batch.samples.count
         }
     }
 
@@ -297,6 +321,29 @@ final class HostInputMessageScheduler: @unchecked Sendable {
                 return (inputMessage.streamID, .contactMove)
             }
             return (inputMessage.streamID, .protected)
+        default:
+            return (inputMessage.streamID, .protected)
+        }
+    }
+
+    /// Classifies compact continuous samples without adjacent replacement.
+    private static func continuousClassification(for message: ControlMessage) -> (streamID: StreamID?, priority: Priority) {
+        guard let inputMessage = try? InputEventMessage.deserializePayload(message.payload) else {
+            return (nil, .protected)
+        }
+
+        switch inputMessage.event {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged,
+             .scrollWheel,
+             .magnify,
+             .rotate,
+             .swipe:
+            return (inputMessage.streamID, .pointerMove)
+        case let .pointerSampleBatch(batch):
+            return (inputMessage.streamID, batch.phase == .moved ? .contactMove : .pointerMove)
         default:
             return (inputMessage.streamID, .protected)
         }

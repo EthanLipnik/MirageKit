@@ -10,6 +10,7 @@ import Foundation
 package enum MiragePriorityInputEnvelopeKind: UInt8, Sendable {
     case input = 1
     case ack = 2
+    case continuousInput = 3
 }
 
 package enum MiragePriorityInputDeliveryClass: UInt8, Sendable {

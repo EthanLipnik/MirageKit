@@ -12,6 +12,7 @@ import MirageKit
 #if os(macOS)
 struct HostPriorityInputMetricsSnapshot: Equatable, Sendable {
     let priorityReceiveCount: UInt64
+    let continuousReceiveCount: UInt64
     let realtimeAckCount: UInt64
     let protectedAckCount: UInt64
     let controlFallbackReceiveCount: UInt64
@@ -47,6 +48,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         var latestRealtimeInputTimestampByKey: [RealtimeInputKey: TimeInterval] = [:]
         var lastRealtimeAckAt: CFAbsoluteTime = 0
         var priorityReceiveCount: UInt64 = 0
+        var continuousReceiveCount: UInt64 = 0
         var realtimeAckCount: UInt64 = 0
         var protectedAckCount: UInt64 = 0
         var fallbackCount: UInt64 = 0
@@ -160,6 +162,7 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         withState { state in
             HostPriorityInputMetricsSnapshot(
                 priorityReceiveCount: state.priorityReceiveCount,
+                continuousReceiveCount: state.continuousReceiveCount,
                 realtimeAckCount: state.realtimeAckCount,
                 protectedAckCount: state.protectedAckCount,
                 controlFallbackReceiveCount: state.fallbackCount,
@@ -200,6 +203,8 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         switch envelope.kind {
         case .input:
             handleInputEnvelope(envelope)
+        case .continuousInput:
+            handleContinuousInputEnvelope(envelope)
         case .ack:
             break
         }
@@ -222,6 +227,25 @@ final class HostPriorityInputRoute: @unchecked Sendable {
             inputScheduler.enqueue(try envelope.inputControlMessage())
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to route priority input envelope: ")
+        }
+    }
+
+    private func handleContinuousInputEnvelope(_ envelope: MiragePriorityInputEnvelope) {
+        recordPriorityReceive()
+        recordContinuousReceive()
+        let accepted = shouldAccept(envelope)
+        if accepted {
+            sendRealtimeAcknowledgementIfNeeded(for: envelope)
+        }
+        guard accepted else { return }
+
+        do {
+            let batch = try MirageContinuousInputBatch.deserialize(envelope.inputPayload)
+            MirageInputLatencyTelemetry.shared.recordHostContinuousBatchReceive(batch)
+            inputScheduler.enqueueContinuousBatch(batch)
+        } catch {
+            recordMalformedEnvelope()
+            MirageLogger.error(.host, error: error, message: "Failed to route continuous priority input envelope: ")
         }
     }
 
@@ -349,6 +373,12 @@ final class HostPriorityInputRoute: @unchecked Sendable {
     private func recordPriorityReceive() {
         withState { state in
             state.priorityReceiveCount &+= 1
+        }
+    }
+
+    private func recordContinuousReceive() {
+        withState { state in
+            state.continuousReceiveCount &+= 1
         }
     }
 

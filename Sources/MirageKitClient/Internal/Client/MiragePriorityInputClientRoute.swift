@@ -21,6 +21,11 @@ protocol MiragePriorityInputEndpointProtocol: AnyObject, Sendable {
         onComplete: @escaping @Sendable (Error?) -> Void
     )
 
+    func sendContinuous(
+        _ payload: Data,
+        onComplete: @escaping @Sendable (Error?) -> Void
+    )
+
     func sendProtected(
         _ payload: Data,
         onComplete: @escaping @Sendable (Error?) -> Void
@@ -45,6 +50,11 @@ struct MiragePriorityInputClientMetricsSnapshot: Equatable, Sendable {
     let realtimeFallbackCount: UInt64
     let realtimeFallbackSuppressedCount: UInt64
     let realtimeCoalescedCount: UInt64
+    let continuousSentCount: UInt64
+    let continuousAckCount: UInt64
+    let continuousFallbackCount: UInt64
+    let continuousFallbackSuppressedCount: UInt64
+    let continuousCoalescedCount: UInt64
     let prioritySendErrorCount: UInt64
     let protectedSentCount: UInt64
     let protectedAckCount: UInt64
@@ -96,6 +106,13 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         var realtimeCoalescedCount: UInt64 = 0
         var realtimeFallbackCount: UInt64 = 0
         var realtimeFallbackSuppressedCount: UInt64 = 0
+        var sentContinuousEventIDs: Set<UInt64> = []
+        var sentContinuousEventIDOrder: [UInt64] = []
+        var continuousSentCount: UInt64 = 0
+        var continuousAckCount: UInt64 = 0
+        var continuousCoalescedCount: UInt64 = 0
+        var continuousFallbackCount: UInt64 = 0
+        var continuousFallbackSuppressedCount: UInt64 = 0
         var prioritySendErrorCount: UInt64 = 0
         var protectedSentCount: UInt64 = 0
         var protectedAckCount: UInt64 = 0
@@ -115,6 +132,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     private static let realtimeFallbackThrottle: Duration = .milliseconds(16)
     private static let routeStateLogIntervalSeconds: CFAbsoluteTime = 1
     private static let maxProtectedAckLatencySamples = 128
+    private static let maxSentContinuousEventIDs = 2048
 
     private let endpoint: MiragePriorityInputEndpointProtocol
     private let fallbackSender: @Sendable (Data, MirageInputEventSender.DeliveryMode) async throws -> Void
@@ -142,6 +160,8 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             let continuations = state.pendingProtectedAcks.values.map(\.continuation)
             state.pendingProtectedAcks.removeAll(keepingCapacity: false)
             state.completedProtectedAcks.removeAll(keepingCapacity: false)
+            state.sentContinuousEventIDs.removeAll(keepingCapacity: false)
+            state.sentContinuousEventIDOrder.removeAll(keepingCapacity: false)
             state.pendingRealtimeFallback = nil
             state.realtimeFallbackTaskScheduled = false
             return continuations
@@ -200,6 +220,22 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         )
     }
 
+    func sendContinuousBatch(_ batch: MirageContinuousInputBatch) throws {
+        let eventID = nextEventID()
+        let envelope = MiragePriorityInputEnvelope(
+            kind: .continuousInput,
+            eventID: eventID,
+            streamID: batch.streamID,
+            deliveryClass: .realtime,
+            sentAtUptime: ProcessInfo.processInfo.systemUptime,
+            inputPayload: try batch.serialize()
+        )
+        try sendContinuous(
+            envelope: envelope,
+            deliveryMode: .droppableRealtime
+        )
+    }
+
     func snapshot(
         now: CFAbsoluteTime = ProcessInfo.processInfo.systemUptime
     ) -> MiragePriorityInputClientMetricsSnapshot {
@@ -214,6 +250,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             realtimeFallbackCount: state.realtimeFallbackCount,
             realtimeFallbackSuppressedCount: state.realtimeFallbackSuppressedCount,
             realtimeCoalescedCount: state.realtimeCoalescedCount,
+            continuousSentCount: state.continuousSentCount,
+            continuousAckCount: state.continuousAckCount,
+            continuousFallbackCount: state.continuousFallbackCount,
+            continuousFallbackSuppressedCount: state.continuousFallbackSuppressedCount,
+            continuousCoalescedCount: state.continuousCoalescedCount,
             prioritySendErrorCount: state.prioritySendErrorCount,
             protectedSentCount: state.protectedSentCount,
             protectedAckCount: state.protectedAckCount,
@@ -240,6 +281,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         )
         let completion: @Sendable (Error?) -> Void = { [weak self] error in
             guard let self else { return }
+            MirageInputLatencyTelemetry.shared.recordClientPrioritySendCompletion(
+                envelope: envelope,
+                durationMs: max(0, ProcessInfo.processInfo.systemUptime - envelope.sentAtUptime) * 1000,
+                error: error
+            )
             if let error {
                 self.recordRealtimeCoalesced()
                 if !Self.isExpectedRealtimeQueueDrop(error) {
@@ -258,6 +304,42 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         case .sequenced:
             endpoint.sendRealtimeSequenced(payload, onComplete: completion)
         }
+
+        if let fallbackReason = realtimeFallbackReason() {
+            scheduleRealtimeFallback(
+                envelope: envelope,
+                deliveryMode: deliveryMode,
+                reason: fallbackReason
+            )
+        }
+    }
+
+    private func sendContinuous(
+        envelope: MiragePriorityInputEnvelope,
+        deliveryMode: MirageInputEventSender.DeliveryMode
+    ) throws {
+        let payload = try envelope.serialize()
+        recordContinuousSent(eventID: envelope.eventID)
+        let completion: @Sendable (Error?) -> Void = { [weak self] error in
+            guard let self else { return }
+            MirageInputLatencyTelemetry.shared.recordClientPrioritySendCompletion(
+                envelope: envelope,
+                durationMs: max(0, ProcessInfo.processInfo.systemUptime - envelope.sentAtUptime) * 1000,
+                error: error
+            )
+            if let error {
+                self.recordContinuousCoalesced()
+                if !Self.isExpectedRealtimeQueueDrop(error) {
+                    self.recordPrioritySendError()
+                    self.scheduleRealtimeFallback(
+                        envelope: envelope,
+                        deliveryMode: deliveryMode,
+                        reason: .sendError
+                    )
+                }
+            }
+        }
+        endpoint.sendContinuous(payload, onComplete: completion)
 
         if let fallbackReason = realtimeFallbackReason() {
             scheduleRealtimeFallback(
@@ -312,12 +394,14 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             switch envelope.deliveryClass {
             case .realtime:
                 notePriorityAck(envelope)
-                recordRealtimeAck()
+                if !recordContinuousAckIfNeeded(eventID: envelope.eventID) {
+                    recordRealtimeAck()
+                }
             case .protected:
                 notePriorityAck(envelope)
                 completeProtectedAck(eventID: envelope.eventID, acked: true)
             }
-        case .input:
+        case .input, .continuousInput:
             break
         }
     }
@@ -428,7 +512,11 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             guard let pending = state.pendingRealtimeFallback else { return nil }
             state.pendingRealtimeFallback = nil
             guard !Self.shouldSuppressRealtimeFallbackLocked(state: state, pending: pending) else {
-                state.realtimeFallbackSuppressedCount &+= 1
+                if pending.envelope.kind == .continuousInput {
+                    state.continuousFallbackSuppressedCount &+= 1
+                } else {
+                    state.realtimeFallbackSuppressedCount &+= 1
+                }
                 return nil
             }
             return pending
@@ -448,7 +536,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         envelope: MiragePriorityInputEnvelope,
         deliveryMode: MirageInputEventSender.DeliveryMode
     ) async throws {
-        recordFallback(for: envelope.deliveryClass)
+        recordFallback(for: envelope)
         MirageInputLatencyTelemetry.shared.recordClientFallback(envelope: envelope)
         recordClientRouteTelemetry(envelope: envelope, route: .priorityFallback)
         let controlMessage = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
@@ -563,11 +651,42 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
     }
 
-    private func recordFallback(for deliveryClass: MiragePriorityInputDeliveryClass) {
+    private func recordContinuousSent(eventID: UInt64) {
         withState { state in
-            switch deliveryClass {
+            state.sentContinuousEventIDs.insert(eventID)
+            state.sentContinuousEventIDOrder.append(eventID)
+            while state.sentContinuousEventIDOrder.count > Self.maxSentContinuousEventIDs {
+                let removed = state.sentContinuousEventIDOrder.removeFirst()
+                state.sentContinuousEventIDs.remove(removed)
+            }
+            state.continuousSentCount &+= 1
+        }
+    }
+
+    private func recordContinuousAckIfNeeded(eventID: UInt64) -> Bool {
+        withState { state in
+            guard state.sentContinuousEventIDs.remove(eventID) != nil else { return false }
+            state.sentContinuousEventIDOrder.removeAll { $0 == eventID }
+            state.continuousAckCount &+= 1
+            return true
+        }
+    }
+
+    private func recordContinuousCoalesced() {
+        withState { state in
+            state.continuousCoalescedCount &+= 1
+        }
+    }
+
+    private func recordFallback(for envelope: MiragePriorityInputEnvelope) {
+        withState { state in
+            switch envelope.deliveryClass {
             case .realtime:
-                state.realtimeFallbackCount &+= 1
+                if envelope.kind == .continuousInput {
+                    state.continuousFallbackCount &+= 1
+                } else {
+                    state.realtimeFallbackCount &+= 1
+                }
             case .protected:
                 state.protectedFallbackCount &+= 1
             }
@@ -651,11 +770,23 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         envelope: MiragePriorityInputEnvelope,
         route: MirageInputLatencyClientRoute
     ) {
-        guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
-              let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        let routeSnapshot = snapshot()
+        if envelope.kind == .continuousInput,
+           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+            for event in batch.inputEvents() {
+                MirageInputLatencyTelemetry.shared.recordClientRoute(
+                    event: event,
+                    streamID: batch.streamID,
+                    route: route,
+                    priorityRouteState: routeSnapshot.routeState.rawValue,
+                    priorityAckAgeMs: routeSnapshot.priorityAckAgeMs
+                )
+            }
             return
         }
-        let routeSnapshot = snapshot()
+
+        guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
         MirageInputLatencyTelemetry.shared.recordClientRoute(
             event: inputMessage.event,
             streamID: inputMessage.streamID,

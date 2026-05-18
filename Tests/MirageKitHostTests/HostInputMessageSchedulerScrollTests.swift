@@ -6,10 +6,10 @@
 //
 
 #if os(macOS)
+@testable import MirageKit
 @testable import MirageKitHost
 import CoreGraphics
 import Foundation
-import MirageKit
 import Testing
 
 @Suite("Host Input Message Scheduler Scroll Coalescing")
@@ -189,6 +189,84 @@ struct HostInputMessageSchedulerScrollTests {
             return events.first?.timestamp == 10
         })
     }
+
+    @Test("Continuous scroll batch preserves packet samples without native merging")
+    func continuousScrollBatchPreservesPacketSamplesWithoutNativeMerging() async throws {
+        let streamID: StreamID = 707
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-continuous-scroll", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+        let batch = MirageContinuousInputBatch(
+            streamID: streamID,
+            kind: .scroll,
+            scrollPhase: .changed,
+            isPrecise: true,
+            samples: [
+                MirageContinuousInputBatch.Sample(
+                    timestamp: 1,
+                    location: CGPoint(x: 0.5, y: 0.5),
+                    valueX: 1,
+                    valueY: 2
+                ),
+                MirageContinuousInputBatch.Sample(
+                    timestamp: 2,
+                    location: CGPoint(x: 0.5, y: 0.5),
+                    valueX: 3,
+                    valueY: 4
+                ),
+            ]
+        )
+
+        scheduler.enqueueContinuousBatch(batch)
+
+        queue.activate()
+        try await waitForEvents(events, count: 2)
+
+        let scrollEvents = deliveredScrollEvents(in: events)
+        #expect(scrollEvents.count == 2)
+        #expect(scrollEvents.map(\.deltaX) == [1, 3])
+        #expect(scrollEvents.map(\.deltaY) == [2, 4])
+    }
+
+    @Test("Continuous Pencil contact batches are not trimmed under backlog pressure")
+    func continuousPencilContactBatchesAreNotTrimmedUnderBacklogPressure() async throws {
+        let streamID: StreamID = 708
+        let queue = DispatchQueue(label: "com.mirage.tests.host-input-continuous-pencil", attributes: .initiallyInactive)
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordInputEvent(from: message, into: events)
+        }
+
+        for index in 0 ..< 320 {
+            scheduler.enqueueContinuousBatch(MirageContinuousInputBatch(
+                streamID: streamID,
+                kind: .pointerSampleBatch,
+                pointerPhase: .moved,
+                isButtonPressed: true,
+                samples: [
+                    MirageContinuousInputBatch.Sample(
+                        timestamp: TimeInterval(index),
+                        location: CGPoint(x: CGFloat(index), y: 0.5),
+                        pressure: 0.5,
+                        stylus: makePointerStylus()
+                    ),
+                ]
+            ))
+        }
+
+        queue.activate()
+        try await waitForEvents(events, count: 320)
+
+        let xValues = events.read { events in
+            events.compactMap { event -> CGFloat? in
+                guard case let .pointerSampleBatch(batch) = event else { return nil }
+                return batch.samples.first?.location.x
+            }
+        }
+        #expect(xValues == (0 ..< 320).map(CGFloat.init))
+    }
 }
 
 private func inputMessage(_ event: MirageInputEvent, streamID: StreamID) throws -> ControlMessage {
@@ -243,6 +321,16 @@ private func makeMouseEvent(timestamp: TimeInterval) -> MirageMouseEvent {
     MirageMouseEvent(
         location: CGPoint(x: 0.5, y: 0.5),
         timestamp: timestamp
+    )
+}
+
+private func makePointerStylus() -> MirageStylusEvent {
+    MirageStylusEvent(
+        altitudeAngle: 0.8,
+        azimuthAngle: 0.2,
+        tiltX: 0.1,
+        tiltY: 0.2,
+        isHovering: false
     )
 }
 #endif

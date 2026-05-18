@@ -19,10 +19,24 @@ public final class MirageInputEventSender: @unchecked Sendable {
         case droppableRealtime
     }
 
-    /// Input event waiting for the non-blocking send queue.
-    private struct PendingInput {
-        let event: MirageInputEvent
-        let streamID: StreamID
+    /// Input work waiting for the non-blocking control-channel fallback queue.
+    private enum PendingInput {
+        case event(MirageInputEvent, streamID: StreamID)
+        case continuousBatch(MirageContinuousInputBatch)
+
+        var event: MirageInputEvent? {
+            guard case let .event(event, _) = self else { return nil }
+            return event
+        }
+
+        var streamID: StreamID {
+            switch self {
+            case let .event(_, streamID):
+                streamID
+            case let .continuousBatch(batch):
+                batch.streamID
+            }
+        }
     }
 
     /// Continuous event categories that can be replaced by newer work without changing user intent.
@@ -42,10 +56,8 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     private static let keyboardDiagnosticRateLimiter = MirageKeyboardInputDiagnosticRateLimiter()
     private static let maxPendingInputs = 256
-    private static let maxPendingContactSamples = 4096
 
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
-    private let realtimeInputQueue = DispatchQueue(label: "com.mirage.client.input-realtime", qos: .userInteractive)
     private let connectionLock = NSLock()
     private var sendHandler: (@Sendable (Data, DeliveryMode) async throws -> Void)?
     private var priorityRoute: MiragePriorityInputClientRoute?
@@ -56,10 +68,14 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Accessed only on `sendQueue`.
     private var sendInFlight = false
 
-    /// Pending best-effort input work waiting behind the active send.
-    /// Discrete events stay ordered; replaceable high-rate work is bounded.
+    /// Pending control-channel fallback work waiting behind the active send.
+    /// Discrete events stay ordered; compact continuous batches stay bounded.
     /// Accessed only on `sendQueue`.
     private var pendingInputs: [PendingInput] = []
+    private let continuousInputBatcher = MirageContinuousInputBatcher()
+    private var continuousFlushScheduled = false
+    private var nextContinuousBatchSequence: UInt64 = 1
+    private var nextContinuousFallbackEventID: UInt64 = 1 << 63
 
     func updateSendHandler(_ handler: (@Sendable (Data, DeliveryMode) async throws -> Void)?) {
         connectionLock.lock()
@@ -70,6 +86,8 @@ public final class MirageInputEventSender: @unchecked Sendable {
             sendQueue.async { [weak self] in
                 self?.sendInFlight = false
                 self?.pendingInputs.removeAll()
+                self?.continuousInputBatcher.removeAll()
+                self?.continuousFlushScheduled = false
             }
         }
     }
@@ -88,6 +106,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
     }
 
     func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
+        flushContinuousInputSynchronously(reason: "syncBoundary")
         recordInteractionIfNeeded(event)
         MirageInputLatencyTelemetry.shared.recordClientCapture(event: event, streamID: streamID)
         Self.logKeyboardDiagnosticIfNeeded(
@@ -121,55 +140,115 @@ public final class MirageInputEventSender: @unchecked Sendable {
             path: "client_send_best_effort_enqueue"
         )
 
-        let deliveryMode = Self.deliveryMode(for: event)
-        if deliveryMode == .droppableRealtime,
-           let route = currentPriorityRoute {
-            realtimeInputQueue.async {
-                do {
-                    MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: streamID)
-                    try route.sendRealtime(event: event, streamID: streamID)
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to send realtime priority input: ")
-                }
-            }
-            return
-        }
-
         sendQueue.async { [weak self] in
             guard let self else { return }
 
-            guard currentSendHandler != nil else {
+            guard currentSendHandler != nil || currentPriorityRoute != nil else {
                 pendingInputs.removeAll()
+                continuousInputBatcher.removeAll()
                 return
             }
 
-            appendPendingInput(PendingInput(event: event, streamID: streamID))
+            if continuousInputBatcher.enqueue(event, streamID: streamID) {
+                if continuousInputBatcher.hasFullPacket {
+                    flushContinuousInputsLocked(reason: "fullPacket")
+                } else {
+                    scheduleContinuousFlushLocked()
+                }
+                return
+            }
+
+            flushContinuousInputsLocked(reason: "orderedBoundary")
+            appendPendingInput(.event(event, streamID: streamID))
             compactPendingRealtimeInputs()
             trimPendingInputs()
             scheduleDrain()
         }
     }
 
-    // MARK: - Non-Blocking Send
+    private func flushContinuousInputSynchronously(reason: String) {
+        sendQueue.sync {
+            flushContinuousInputsLocked(reason: reason)
+        }
+    }
 
-    private func appendPendingInput(_ pending: PendingInput) {
-        if let last = pendingInputs.last,
-           last.streamID == pending.streamID,
-           let mergedEvent = last.event.mergedWithCompatibleNativeContinuousScrollEvent(pending.event) {
-            pendingInputs[pendingInputs.count - 1] = PendingInput(event: mergedEvent, streamID: pending.streamID)
+    private func scheduleContinuousFlushLocked() {
+        guard !continuousFlushScheduled else { return }
+        continuousFlushScheduled = true
+        let scheduledAt = Date.timeIntervalSinceReferenceDate
+        sendQueue.asyncAfter(deadline: .now() + .milliseconds(1)) { [weak self] in
+            guard let self else { return }
+            continuousFlushScheduled = false
+            flushContinuousInputsLocked(reason: "timer", scheduledAt: scheduledAt)
+        }
+    }
+
+    private func flushContinuousInputsLocked(
+        reason: String,
+        scheduledAt: TimeInterval? = nil
+    ) {
+        continuousFlushScheduled = false
+        let batches = continuousInputBatcher.flush()
+        guard !batches.isEmpty else { return }
+
+        for batch in batches {
+            let sequencedBatch = batch.withSequence(nextContinuousBatchSequenceLocked())
+            MirageInputLatencyTelemetry.shared.recordClientContinuousBatchFlush(
+                sequencedBatch,
+                reason: reason,
+                scheduledAt: scheduledAt
+            )
+            sendOrEnqueueContinuousBatchLocked(sequencedBatch)
+        }
+    }
+
+    private func sendOrEnqueueContinuousBatchLocked(_ batch: MirageContinuousInputBatch) {
+        if let route = currentPriorityRoute {
+            do {
+                recordContinuousBatchClientSend(batch, route: .priorityContinuousBatch)
+                try route.sendContinuousBatch(batch)
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Failed to send continuous priority input: ")
+                appendPendingInput(.continuousBatch(batch))
+                trimPendingInputs()
+                scheduleDrain()
+            }
             return
         }
 
-        if pending.event.hasNativeScrollMetadata {
+        guard currentSendHandler != nil else { return }
+        appendPendingInput(.continuousBatch(batch))
+        trimPendingInputs()
+        scheduleDrain()
+    }
+
+    // MARK: - Non-Blocking Send
+
+    private func appendPendingInput(_ pending: PendingInput) {
+        guard case let .event(pendingEvent, pendingStreamID) = pending else {
             pendingInputs.append(pending)
             return
         }
 
-        if let kind = replaceableContinuousKind(for: pending.event),
+        if let last = pendingInputs.last,
+           case let .event(lastEvent, lastStreamID) = last,
+           lastStreamID == pendingStreamID,
+           let mergedEvent = lastEvent.mergedWithCompatibleNativeContinuousScrollEvent(pendingEvent) {
+            pendingInputs[pendingInputs.count - 1] = .event(mergedEvent, streamID: pendingStreamID)
+            return
+        }
+
+        if pendingEvent.hasNativeScrollMetadata {
+            pendingInputs.append(pending)
+            return
+        }
+
+        if let kind = replaceableContinuousKind(for: pendingEvent),
            let last = pendingInputs.last,
-           last.streamID == pending.streamID,
-           !last.event.hasNativeScrollMetadata,
-           replaceableContinuousKind(for: last.event) == kind {
+           case let .event(lastEvent, lastStreamID) = last,
+           lastStreamID == pendingStreamID,
+           !lastEvent.hasNativeScrollMetadata,
+           replaceableContinuousKind(for: lastEvent) == kind {
             pendingInputs[pendingInputs.count - 1] = pending
             return
         }
@@ -184,13 +263,14 @@ public final class MirageInputEventSender: @unchecked Sendable {
         var latestIndexByKey: [PendingRealtimeInputKey: Int] = [:]
 
         for pendingInput in pendingInputs {
-            guard let kind = droppableRealtimeKind(for: pendingInput.event) else {
+            guard case let .event(event, streamID) = pendingInput,
+                  let kind = droppableRealtimeKind(for: event) else {
                 compactedInputs.append(pendingInput)
                 latestIndexByKey.removeAll(keepingCapacity: true)
                 continue
             }
 
-            let key = PendingRealtimeInputKey(streamID: pendingInput.streamID, kind: kind)
+            let key = PendingRealtimeInputKey(streamID: streamID, kind: kind)
             if let existingIndex = latestIndexByKey[key] {
                 compactedInputs.remove(at: existingIndex)
                 for indexedKey in Array(latestIndexByKey.keys) {
@@ -213,7 +293,8 @@ public final class MirageInputEventSender: @unchecked Sendable {
         guard !sendInFlight else { return }
         guard !pendingInputs.isEmpty else { return }
         let handler = currentSendHandler
-        guard let handler else {
+        let route = currentPriorityRoute
+        guard handler != nil || route != nil else {
             pendingInputs.removeAll()
             return
         }
@@ -224,15 +305,27 @@ public final class MirageInputEventSender: @unchecked Sendable {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let deliveryMode = Self.deliveryMode(for: pending.event)
-                let data = try makeInputMessageData(event: pending.event, streamID: pending.streamID)
-                MirageInputLatencyTelemetry.shared.recordClientSend(event: pending.event, streamID: pending.streamID)
-                MirageInputLatencyTelemetry.shared.recordClientRoute(
-                    event: pending.event,
-                    streamID: pending.streamID,
-                    route: .orderedBestEffort
-                )
-                try await handler(data, deliveryMode)
+                switch pending {
+                case let .event(event, streamID):
+                    let deliveryMode = Self.deliveryMode(for: event)
+                    MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: streamID)
+                    if let route {
+                        try await route.send(event: event, streamID: streamID, deliveryMode: deliveryMode)
+                    } else if let handler {
+                        let data = try makeInputMessageData(event: event, streamID: streamID)
+                        MirageInputLatencyTelemetry.shared.recordClientRoute(
+                            event: event,
+                            streamID: streamID,
+                            route: .orderedBestEffort
+                        )
+                        try await handler(data, deliveryMode)
+                    }
+                case let .continuousBatch(batch):
+                    guard let handler else { return }
+                    let data = try makeContinuousInputFallbackData(batch: batch)
+                    recordContinuousBatchClientSend(batch, route: .priorityFallback)
+                    try await handler(data, .droppableRealtime)
+                }
             } catch {
                 if Self.isExpectedBestEffortSendFailure(error) {
                     MirageLogger.client("Dropped best-effort input because the stream closed: \(error.localizedDescription)")
@@ -251,20 +344,18 @@ public final class MirageInputEventSender: @unchecked Sendable {
 
     private func trimPendingInputs() {
         while pendingInputs.count > Self.maxPendingInputs {
-            if removeFirstPendingInput(where: { replaceableContinuousKind(for: $0.event) != nil }) { continue }
-            if removeFirstPendingInput(where: { isDroppablePointerMovement($0.event) }) { continue }
-            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
-            break
-        }
-
-        while pendingInputs.reduce(into: 0, { result, input in
-            guard case let .pointerSampleBatch(batch) = input.event,
-                  batch.phase == .moved else {
-                return
-            }
-            result += batch.samples.count
-        }) > Self.maxPendingContactSamples {
-            if removeFirstPendingInput(where: { isDroppableContactMove($0.event) }) { continue }
+            if removeFirstPendingInput(where: { pending in
+                guard case let .event(event, _) = pending else { return false }
+                return replaceableContinuousKind(for: event) != nil
+            }) { continue }
+            if removeFirstPendingInput(where: { pending in
+                guard case let .event(event, _) = pending else { return false }
+                return isDroppablePointerMovement(event)
+            }) { continue }
+            if removeFirstPendingInput(where: { pending in
+                guard case let .continuousBatch(batch) = pending else { return false }
+                return !batch.isPencilContactBatch
+            }) { continue }
             break
         }
     }
@@ -279,6 +370,51 @@ public final class MirageInputEventSender: @unchecked Sendable {
         let inputMessage = InputEventMessage(streamID: streamID, event: event)
         let message = try ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
         return message.serialize()
+    }
+
+    private func makeContinuousInputFallbackData(batch: MirageContinuousInputBatch) throws -> Data {
+        let envelope = MiragePriorityInputEnvelope(
+            kind: .continuousInput,
+            eventID: nextContinuousFallbackEventIDLocked(),
+            streamID: batch.streamID,
+            deliveryClass: .realtime,
+            sentAtUptime: ProcessInfo.processInfo.systemUptime,
+            inputPayload: try batch.serialize()
+        )
+        let message = try ControlMessage(type: .priorityInputEvent, payload: envelope.serialize())
+        return message.serialize()
+    }
+
+    private func nextContinuousBatchSequenceLocked() -> UInt64 {
+        let sequence = nextContinuousBatchSequence
+        nextContinuousBatchSequence &+= 1
+        if nextContinuousBatchSequence == 0 {
+            nextContinuousBatchSequence = 1
+        }
+        return sequence
+    }
+
+    private func nextContinuousFallbackEventIDLocked() -> UInt64 {
+        let eventID = nextContinuousFallbackEventID
+        nextContinuousFallbackEventID &+= 1
+        if nextContinuousFallbackEventID == 0 {
+            nextContinuousFallbackEventID = 1 << 63
+        }
+        return eventID
+    }
+
+    private func recordContinuousBatchClientSend(
+        _ batch: MirageContinuousInputBatch,
+        route: MirageInputLatencyClientRoute
+    ) {
+        for event in batch.inputEvents() {
+            MirageInputLatencyTelemetry.shared.recordClientSend(event: event, streamID: batch.streamID)
+            MirageInputLatencyTelemetry.shared.recordClientRoute(
+                event: event,
+                streamID: batch.streamID,
+                route: route
+            )
+        }
     }
 
     private static func isExpectedBestEffortSendFailure(_ error: Error) -> Bool {
@@ -363,11 +499,6 @@ public final class MirageInputEventSender: @unchecked Sendable {
         default:
             return false
         }
-    }
-
-    private func isDroppableContactMove(_ event: MirageInputEvent) -> Bool {
-        guard case let .pointerSampleBatch(batch) = event else { return false }
-        return batch.phase == .moved
     }
 
     private static func deliveryMode(for event: MirageInputEvent) -> DeliveryMode {

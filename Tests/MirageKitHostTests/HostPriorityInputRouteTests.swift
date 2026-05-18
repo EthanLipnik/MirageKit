@@ -6,10 +6,10 @@
 //
 
 #if os(macOS)
+@testable import MirageKit
 @testable import MirageKitHost
 import CoreGraphics
 import Foundation
-import MirageKit
 import Testing
 
 @Suite("Host Priority Input Route")
@@ -46,6 +46,41 @@ struct HostPriorityInputRouteTests {
         #expect(route.snapshot().controlFallbackReceiveCount == 3)
         #expect(route.snapshot().dedupeCount == 2)
     }
+
+    @Test("Continuous fallback envelope decodes and schedules ordered samples")
+    func continuousFallbackEnvelopeDecodesAndSchedulesOrderedSamples() async throws {
+        let streamID: StreamID = 802
+        let queue = DispatchQueue(label: "com.mirage.tests.host-priority-input-continuous")
+        let events = Locked<[MirageInputEvent]>([])
+        let scheduler = HostInputMessageScheduler(inputQueue: queue) { message in
+            recordHostPriorityInputEvent(from: message, into: events)
+        }
+        let route = HostPriorityInputRoute(inputScheduler: scheduler)
+
+        route.handleControlInputMessage(try priorityContinuousInputMessage(
+            eventID: 10,
+            batch: MirageContinuousInputBatch(
+                streamID: streamID,
+                kind: .mouseMoved,
+                samples: [
+                    MirageContinuousInputBatch.Sample(
+                        timestamp: 1,
+                        location: CGPoint(x: 0.1, y: 0.5)
+                    ),
+                    MirageContinuousInputBatch.Sample(
+                        timestamp: 2,
+                        location: CGPoint(x: 0.2, y: 0.5)
+                    ),
+                ]
+            )
+        ))
+
+        try await waitForHostPriorityEvents(events, count: 2)
+
+        #expect(events.read { $0.map(\.timestamp) } == [1, 2])
+        #expect(route.snapshot().controlFallbackReceiveCount == 1)
+        #expect(route.snapshot().continuousReceiveCount == 1)
+    }
 }
 
 private func priorityInputMessage(
@@ -61,6 +96,21 @@ private func priorityInputMessage(
         deliveryClass: .realtime,
         sentAtUptime: ProcessInfo.processInfo.systemUptime,
         inputPayload: try inputMessage.serializePayload()
+    )
+    return ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
+}
+
+private func priorityContinuousInputMessage(
+    eventID: UInt64,
+    batch: MirageContinuousInputBatch
+) throws -> ControlMessage {
+    let envelope = MiragePriorityInputEnvelope(
+        kind: .continuousInput,
+        eventID: eventID,
+        streamID: batch.streamID,
+        deliveryClass: .realtime,
+        sentAtUptime: ProcessInfo.processInfo.systemUptime,
+        inputPayload: try batch.serialize()
     )
     return ControlMessage(type: .priorityInputEvent, payload: try envelope.serialize())
 }

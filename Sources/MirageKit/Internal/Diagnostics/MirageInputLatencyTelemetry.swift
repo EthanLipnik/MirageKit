@@ -23,6 +23,7 @@ package enum MirageInputLatencyClientRoute: String, Sendable, CaseIterable {
     case priorityProtected
     case priorityRealtimeLatest
     case priorityRealtimeSequenced
+    case priorityContinuousBatch
     case priorityFallback
 }
 
@@ -103,6 +104,20 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     }
 
     private struct ClassStats {
+        var lastClientSourceTimestampByName: [String: TimeInterval] = [:]
+        var clientSourceGapMs = SampleWindow()
+        var clientSourceToForwardMs = SampleWindow()
+        var clientSourceToSuppressMs = SampleWindow()
+        var clientSourceCounts: [String: UInt64] = [:]
+        var clientSuppressionCounts: [String: UInt64] = [:]
+        var clientBatchFlushCounts: [String: UInt64] = [:]
+        var clientBatchSampleCount = SampleWindow()
+        var clientBatchOldestAgeMs = SampleWindow()
+        var clientBatchNewestAgeMs = SampleWindow()
+        var clientBatchTimerDelayMs = SampleWindow()
+        var clientPrioritySendCompletionMs = SampleWindow()
+        var clientPrioritySendCompletionErrors: UInt64 = 0
+
         var lastClientCaptureTimestamp: TimeInterval = 0
         var clientCaptureGapMs = SampleWindow()
         var lastClientSendTimestamp: TimeInterval = 0
@@ -122,9 +137,24 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
         var hostCursorWarpMs = SampleWindow()
         var hostInjectionDurationMs = SampleWindow()
         var hostInjectionAgeMs = SampleWindow()
+        var hostBatchSampleCount = SampleWindow()
+        var hostBatchOldestAgeMs = SampleWindow()
+        var hostBatchNewestAgeMs = SampleWindow()
 
         var hasClientSamples: Bool {
-            !clientCaptureGapMs.values.isEmpty ||
+            !clientSourceGapMs.values.isEmpty ||
+                !clientSourceToForwardMs.values.isEmpty ||
+                !clientSourceToSuppressMs.values.isEmpty ||
+                !clientSourceCounts.isEmpty ||
+                !clientSuppressionCounts.isEmpty ||
+                !clientBatchFlushCounts.isEmpty ||
+                !clientBatchSampleCount.values.isEmpty ||
+                !clientBatchOldestAgeMs.values.isEmpty ||
+                !clientBatchNewestAgeMs.values.isEmpty ||
+                !clientBatchTimerDelayMs.values.isEmpty ||
+                !clientPrioritySendCompletionMs.values.isEmpty ||
+                clientPrioritySendCompletionErrors > 0 ||
+                !clientCaptureGapMs.values.isEmpty ||
                 !clientSendGapMs.values.isEmpty ||
                 !clientCaptureToSendMs.values.isEmpty ||
                 !clientRouteCounts.isEmpty ||
@@ -140,10 +170,52 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
                 !hostCursorWarpMs.values.isEmpty ||
                 !hostInjectionDurationMs.values.isEmpty ||
                 !hostInjectionAgeMs.values.isEmpty ||
+                !hostBatchSampleCount.values.isEmpty ||
+                !hostBatchOldestAgeMs.values.isEmpty ||
+                !hostBatchNewestAgeMs.values.isEmpty ||
                 hostSchedulerDepthMax > 0
         }
 
+        var hasClientSourceDiagnostics: Bool {
+            !clientSourceGapMs.values.isEmpty ||
+                !clientSourceToForwardMs.values.isEmpty ||
+                !clientSourceToSuppressMs.values.isEmpty ||
+                !clientSourceCounts.isEmpty ||
+                !clientSuppressionCounts.isEmpty
+        }
+
+        var hasClientBatchDiagnostics: Bool {
+            !clientBatchFlushCounts.isEmpty ||
+                !clientBatchSampleCount.values.isEmpty ||
+                !clientBatchOldestAgeMs.values.isEmpty ||
+                !clientBatchNewestAgeMs.values.isEmpty ||
+                !clientBatchTimerDelayMs.values.isEmpty
+        }
+
+        var hasClientPriorityCompletionDiagnostics: Bool {
+            !clientPrioritySendCompletionMs.values.isEmpty ||
+                clientPrioritySendCompletionErrors > 0
+        }
+
+        var hasHostBatchDiagnostics: Bool {
+            !hostBatchSampleCount.values.isEmpty ||
+                !hostBatchOldestAgeMs.values.isEmpty ||
+                !hostBatchNewestAgeMs.values.isEmpty
+        }
+
         mutating func resetClientWindow() {
+            clientSourceGapMs.reset()
+            clientSourceToForwardMs.reset()
+            clientSourceToSuppressMs.reset()
+            clientSourceCounts.removeAll(keepingCapacity: true)
+            clientSuppressionCounts.removeAll(keepingCapacity: true)
+            clientBatchFlushCounts.removeAll(keepingCapacity: true)
+            clientBatchSampleCount.reset()
+            clientBatchOldestAgeMs.reset()
+            clientBatchNewestAgeMs.reset()
+            clientBatchTimerDelayMs.reset()
+            clientPrioritySendCompletionMs.reset()
+            clientPrioritySendCompletionErrors = 0
             clientCaptureGapMs.reset()
             clientSendGapMs.reset()
             clientCaptureToSendMs.reset()
@@ -160,6 +232,9 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
             hostCursorWarpMs.reset()
             hostInjectionDurationMs.reset()
             hostInjectionAgeMs.reset()
+            hostBatchSampleCount.reset()
+            hostBatchOldestAgeMs.reset()
+            hostBatchNewestAgeMs.reset()
             hostSchedulerDepthMax = 0
         }
     }
@@ -171,6 +246,112 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
     private let logIntervalSeconds: TimeInterval = 2.0
 
     private init() {}
+
+    package func recordClientSource(
+        eventClass: MirageInputLatencyEventClass,
+        streamID: StreamID?,
+        source: String,
+        timestamp: TimeInterval = Date.timeIntervalSinceReferenceDate,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        _ = streamID
+        lock.lock()
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        if let previousTimestamp = stats.lastClientSourceTimestampByName[source], previousTimestamp > 0 {
+            stats.clientSourceGapMs.record(max(0, timestamp - previousTimestamp) * 1000)
+        }
+        stats.lastClientSourceTimestampByName[source] = timestamp
+        stats.clientSourceCounts[source, default: 0] &+= 1
+        statsByClass[eventClass] = stats
+        logClientIfNeededLocked(now: now)
+        lock.unlock()
+    }
+
+    package func recordClientSourceForward(
+        event: MirageInputEvent,
+        streamID: StreamID?,
+        source: String,
+        sourceTimestamp: TimeInterval,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        _ = streamID
+        lock.lock()
+        let eventClass = event.latencyEventClass
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        stats.clientSourceToForwardMs.record(max(0, now - sourceTimestamp) * 1000)
+        stats.clientSourceCounts["\(source).forwarded", default: 0] &+= 1
+        statsByClass[eventClass] = stats
+        logClientIfNeededLocked(now: now)
+        lock.unlock()
+    }
+
+    package func recordClientSourceSuppression(
+        eventClass: MirageInputLatencyEventClass,
+        streamID: StreamID?,
+        source: String,
+        reason: String,
+        sourceTimestamp: TimeInterval,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        _ = streamID
+        lock.lock()
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        stats.clientSourceToSuppressMs.record(max(0, now - sourceTimestamp) * 1000)
+        stats.clientSuppressionCounts["\(source).\(reason)", default: 0] &+= 1
+        statsByClass[eventClass] = stats
+        logClientIfNeededLocked(now: now)
+        lock.unlock()
+    }
+
+    package func recordClientContinuousBatchFlush(
+        _ batch: MirageContinuousInputBatch,
+        reason: String,
+        scheduledAt: TimeInterval? = nil,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        lock.lock()
+        let eventClass = Self.eventClass(for: batch)
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        stats.clientBatchFlushCounts[reason, default: 0] &+= 1
+        stats.clientBatchSampleCount.record(Double(batch.samples.count))
+        if let oldest = batch.samples.first?.timestamp {
+            stats.clientBatchOldestAgeMs.record(max(0, now - oldest) * 1000)
+        }
+        if let newest = batch.samples.last?.timestamp {
+            stats.clientBatchNewestAgeMs.record(max(0, now - newest) * 1000)
+        }
+        if let scheduledAt {
+            stats.clientBatchTimerDelayMs.record(max(0, now - scheduledAt) * 1000)
+        }
+        statsByClass[eventClass] = stats
+        logClientIfNeededLocked(now: now)
+        lock.unlock()
+    }
+
+    package func recordClientPrioritySendCompletion(
+        envelope: MiragePriorityInputEnvelope,
+        durationMs: Double,
+        error: Error?,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled(),
+              let eventClass = Self.eventClass(for: envelope) else {
+            return
+        }
+        lock.lock()
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        stats.clientPrioritySendCompletionMs.record(durationMs)
+        if error != nil {
+            stats.clientPrioritySendCompletionErrors &+= 1
+        }
+        statsByClass[eventClass] = stats
+        logClientIfNeededLocked(now: now)
+        lock.unlock()
+    }
 
     package func recordClientCapture(
         event: MirageInputEvent,
@@ -256,6 +437,13 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
         envelope: MiragePriorityInputEnvelope,
         now: TimeInterval = Date.timeIntervalSinceReferenceDate
     ) {
+        if envelope.kind == .continuousInput,
+           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+            for event in batch.inputEvents() {
+                recordClientFallback(event: event, streamID: batch.streamID, now: now)
+            }
+            return
+        }
         guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else { return }
         recordClientFallback(event: inputMessage.event, streamID: inputMessage.streamID, now: now)
     }
@@ -275,6 +463,26 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
             stats.hostReceiveGapMs.record(max(0, now - stats.lastHostReceiveTimestamp) * 1000)
         }
         stats.lastHostReceiveTimestamp = now
+        statsByClass[eventClass] = stats
+        logHostIfNeededLocked(now: now)
+        lock.unlock()
+    }
+
+    package func recordHostContinuousBatchReceive(
+        _ batch: MirageContinuousInputBatch,
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        guard MirageLatencyOptions.latencyDiagnosticsEnabled() else { return }
+        lock.lock()
+        let eventClass = Self.eventClass(for: batch)
+        var stats = statsByClass[eventClass] ?? ClassStats()
+        stats.hostBatchSampleCount.record(Double(batch.samples.count))
+        if let oldest = batch.samples.first?.timestamp {
+            stats.hostBatchOldestAgeMs.record(max(0, now - oldest) * 1000)
+        }
+        if let newest = batch.samples.last?.timestamp {
+            stats.hostBatchNewestAgeMs.record(max(0, now - newest) * 1000)
+        }
         statsByClass[eventClass] = stats
         logHostIfNeededLocked(now: now)
         lock.unlock()
@@ -374,7 +582,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
             guard let stats = statsByClass[eventClass], stats.hasClientSamples else { return nil }
             let routes = formattedRoutes(stats.clientRouteCounts)
             let routeState = stats.lastPriorityRouteState ?? "--"
-            return "\(eventClass.rawValue):captureGapP99=\(formatMs(stats.clientCaptureGapMs.p99))ms " +
+            var fragment = "\(eventClass.rawValue):captureGapP99=\(formatMs(stats.clientCaptureGapMs.p99))ms " +
                 "sendGapP99=\(formatMs(stats.clientSendGapMs.p99))ms " +
                 "sendGapMax=\(formatMs(stats.clientSendGapMs.max))ms " +
                 "captureToSendP99=\(formatMs(stats.clientCaptureToSendMs.p99))ms " +
@@ -383,6 +591,26 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
                 "priorityAckAgeP99=\(formatMs(stats.priorityAckAgeMs.p99))ms " +
                 "priorityAckAgeMax=\(formatMs(stats.priorityAckAgeMs.max))ms " +
                 "fallbacks=\(stats.clientFallbackCount)"
+            if stats.hasClientSourceDiagnostics {
+                fragment += " sourceGapP99=\(formatMs(stats.clientSourceGapMs.p99))ms " +
+                    "sourceToForwardP99=\(formatMs(stats.clientSourceToForwardMs.p99))ms " +
+                    "sourceToSuppressP99=\(formatMs(stats.clientSourceToSuppressMs.p99))ms " +
+                    "sources=\(formattedCounts(stats.clientSourceCounts)) " +
+                    "suppressions=\(formattedCounts(stats.clientSuppressionCounts))"
+            }
+            if stats.hasClientBatchDiagnostics {
+                fragment += " batchFlushes=\(formattedCounts(stats.clientBatchFlushCounts)) " +
+                    "batchSamplesP99=\(formatCount(stats.clientBatchSampleCount.p99)) " +
+                    "batchOldestAgeP99=\(formatMs(stats.clientBatchOldestAgeMs.p99))ms " +
+                    "batchNewestAgeP99=\(formatMs(stats.clientBatchNewestAgeMs.p99))ms " +
+                    "batchTimerDelayP99=\(formatMs(stats.clientBatchTimerDelayMs.p99))ms"
+            }
+            if stats.hasClientPriorityCompletionDiagnostics {
+                fragment += " priorityContentProcessedP99=\(formatMs(stats.clientPrioritySendCompletionMs.p99))ms " +
+                    "priorityContentProcessedMax=\(formatMs(stats.clientPrioritySendCompletionMs.max))ms " +
+                    "priorityContentProcessedErrors=\(stats.clientPrioritySendCompletionErrors)"
+            }
+            return fragment
         }
         guard !fragments.isEmpty else { return }
         MirageLogger.client("Input latency diagnostics client \(fragments.joined(separator: " | "))")
@@ -394,7 +622,7 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
         guard lastHostLogTime == 0 || now - lastHostLogTime >= logIntervalSeconds else { return }
         let fragments = MirageInputLatencyEventClass.allCases.compactMap { eventClass -> String? in
             guard let stats = statsByClass[eventClass], stats.hasHostSamples else { return nil }
-            return "\(eventClass.rawValue):receiveGapP99=\(formatMs(stats.hostReceiveGapMs.p99))ms " +
+            var fragment = "\(eventClass.rawValue):receiveGapP99=\(formatMs(stats.hostReceiveGapMs.p99))ms " +
                 "schedulerDepth=\(stats.hostSchedulerDepthMax) " +
                 "schedulerDwellP99=\(formatMs(stats.hostSchedulerDwellMs.p99))ms " +
                 "dispatchAgeP99=\(formatMs(stats.hostSchedulerDispatchAgeMs.p99))ms " +
@@ -407,6 +635,12 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
                 "injectMax=\(formatMs(stats.hostInjectionDurationMs.max))ms " +
                 "injectAgeP99=\(formatMs(stats.hostInjectionAgeMs.p99))ms " +
                 "injectAgeMax=\(formatMs(stats.hostInjectionAgeMs.max))ms"
+            if stats.hasHostBatchDiagnostics {
+                fragment += " hostBatchSamplesP99=\(formatCount(stats.hostBatchSampleCount.p99)) " +
+                    "hostBatchOldestAgeP99=\(formatMs(stats.hostBatchOldestAgeMs.p99))ms " +
+                    "hostBatchNewestAgeP99=\(formatMs(stats.hostBatchNewestAgeMs.p99))ms"
+            }
+            return fragment
         }
         guard !fragments.isEmpty else { return }
         MirageLogger.host("Input latency diagnostics host \(fragments.joined(separator: " | "))")
@@ -440,5 +674,48 @@ package final class MirageInputLatencyTelemetry: @unchecked Sendable {
             return "\(route.rawValue)=\(count)"
         }
         return fragments.isEmpty ? "--" : fragments.joined(separator: ",")
+    }
+
+    private func formatCount(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0)))
+    }
+
+    private func formattedCounts(_ counts: [String: UInt64]) -> String {
+        let fragments = counts
+            .filter { $0.value > 0 }
+            .sorted { left, right in
+                if left.key == right.key { return left.value > right.value }
+                return left.key < right.key
+            }
+            .map { "\($0.key)=\($0.value)" }
+        return fragments.isEmpty ? "--" : fragments.joined(separator: ",")
+    }
+
+    private static func eventClass(for batch: MirageContinuousInputBatch) -> MirageInputLatencyEventClass {
+        switch batch.kind {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            .pointer
+        case .pointerSampleBatch:
+            .touch
+        case .scroll,
+             .magnify,
+             .rotate,
+             .swipe:
+            .scroll
+        }
+    }
+
+    private static func eventClass(for envelope: MiragePriorityInputEnvelope) -> MirageInputLatencyEventClass? {
+        if envelope.kind == .continuousInput,
+           let batch = try? MirageContinuousInputBatch.deserialize(envelope.inputPayload) {
+            return eventClass(for: batch)
+        }
+        guard let inputMessage = try? InputEventMessage.deserializePayload(envelope.inputPayload) else {
+            return nil
+        }
+        return inputMessage.event.latencyEventClass
     }
 }

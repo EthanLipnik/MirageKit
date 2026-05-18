@@ -233,6 +233,7 @@ extension InputCapturingView {
         } else {
             cancelPendingResponderRecovery()
         }
+        updateMouseInputHandler()
     }
 
     override public func layoutSubviews() {

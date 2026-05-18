@@ -11,6 +11,7 @@
 @testable import MirageKit
 @testable import MirageKitClient
 import CoreGraphics
+import Foundation
 import Testing
 
 @Suite("Input Sender Coalescing")
@@ -37,20 +38,17 @@ struct MirageInputEventSenderCoalescingTests {
         #expect(!sender.hasRecentInteraction(within: 3, now: 501))
     }
 
-    @Test("Slow best-effort sends coalesce hover and preserve Pencil contact order")
-    func slowBestEffortSendsCoalesceHoverAndPreserveContactOrder() async throws {
+    @Test("Slow best-effort sends preserve Pencil contact order through compact fallback")
+    func slowBestEffortSendsPreservePencilContactOrderThroughCompactFallback() async throws {
         let sender = MirageInputEventSender()
         let recorder = PointerBatchRecorder()
         let streamID: StreamID = 907
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-                Issue.record("Expected a serialized control message")
-                return
-            }
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
-            if case let .pointerSampleBatch(batch) = inputMessage.event {
-                await recorder.append(batch)
+            for event in try decodeInputEvents(from: data) {
+                if case let .pointerSampleBatch(batch) = event {
+                    await recorder.append(batch)
+                }
             }
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -85,28 +83,25 @@ struct MirageInputEventSenderCoalescingTests {
         let batches = await recorder.snapshot()
         #expect(batches.first?.phase == .began)
         #expect(batches.last?.phase == .ended)
-        #expect(batches.filter { $0.phase == .hover }.count == 1)
-        #expect(batches.first(where: { $0.phase == .hover })?.samples.first?.location.x == CGFloat(79))
-        #expect(batches.filter { $0.phase == .moved }.count == 6)
-        let movedXValues = batches.filter { $0.phase == .moved }.compactMap { $0.samples.first?.location.x }
+        #expect(!batches.filter { $0.phase == .hover }.isEmpty)
+        let movedSamples = batches.filter { $0.phase == .moved }.flatMap(\.samples)
+        #expect(movedSamples.count == 6)
+        let movedXValues = movedSamples.map(\.location.x)
         #expect(movedXValues == [
             CGFloat(0), CGFloat(1), CGFloat(2), CGFloat(3), CGFloat(4), CGFloat(5),
         ])
     }
 
-    @Test("Slow best-effort sends coalesce mouse movement to latest pending sample")
-    func slowBestEffortSendsCoalesceMouseMovementToLatestPendingSample() async throws {
+    @Test("Slow best-effort sends compact mouse movement batches without replacement")
+    func slowBestEffortSendsCompactMouseMovementBatchesWithoutReplacement() async throws {
         let sender = MirageInputEventSender()
         let recorder = InputEventRecorder()
         let streamID: StreamID = 911
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-                Issue.record("Expected a serialized control message")
-                return
+            for event in try decodeInputEvents(from: data) {
+                await recorder.append(event)
             }
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
-            await recorder.append(inputMessage.event)
             try await Task.sleep(for: .milliseconds(20))
         }
 
@@ -122,7 +117,7 @@ struct MirageInputEventSenderCoalescingTests {
 
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(await recorder.mouseTimestamps() == [0, 4])
+        #expect(await recorder.mouseTimestamps() == [0, 1, 2, 3, 4])
     }
 
     @Test("Slow fallback compacts realtime input within ordered boundaries")
@@ -132,12 +127,9 @@ struct MirageInputEventSenderCoalescingTests {
         let streamID: StreamID = 912
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-                Issue.record("Expected a serialized control message")
-                return
+            for event in try decodeInputEvents(from: data) {
+                await recorder.append(event)
             }
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
-            await recorder.append(inputMessage.event)
             try await Task.sleep(for: .milliseconds(20))
         }
 
@@ -171,7 +163,7 @@ struct MirageInputEventSenderCoalescingTests {
         try await Task.sleep(for: .milliseconds(250))
 
         #expect(await recorder.keyEventNames() == ["keyDown", "keyUp"])
-        #expect(await recorder.mouseTimestamps() == [2, 4])
+        #expect(await recorder.mouseTimestamps() == [1, 2, 3, 4])
         #expect(await recorder.hoverXValues() == [10, 11])
     }
 
@@ -183,12 +175,9 @@ struct MirageInputEventSenderCoalescingTests {
         let location = CGPoint(x: 0.5, y: 0.5)
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-                Issue.record("Expected a serialized control message")
-                return
+            for event in try decodeInputEvents(from: data) {
+                await recorder.append(event)
             }
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
-            await recorder.append(inputMessage.event)
             try await Task.sleep(for: .milliseconds(20))
         }
 
@@ -213,11 +202,11 @@ struct MirageInputEventSenderCoalescingTests {
         try await Task.sleep(for: .milliseconds(150))
 
         let scrollEvents = await recorder.scrollEvents()
-        #expect(scrollEvents.count == 1)
-        #expect(scrollEvents.first?.deltaX == 4)
-        #expect(scrollEvents.first?.deltaY == 6)
-        #expect(scrollEvents.first?.phase == .changed)
-        #expect(scrollEvents.first?.timestamp == 2)
+        #expect(scrollEvents.count == 2)
+        #expect(scrollEvents.map(\.deltaX) == [1, 3])
+        #expect(scrollEvents.map(\.deltaY) == [2, 4])
+        #expect(scrollEvents.map(\.phase) == [.changed, .changed])
+        #expect(scrollEvents.map(\.timestamp) == [1, 2])
     }
 
     @Test("Phase-less scroll events keep replacement behavior instead of merging")
@@ -228,12 +217,9 @@ struct MirageInputEventSenderCoalescingTests {
         let location = CGPoint(x: 0.5, y: 0.5)
 
         sender.updateSendHandler { data, _ in
-            guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
-                Issue.record("Expected a serialized control message")
-                return
+            for event in try decodeInputEvents(from: data) {
+                await recorder.append(event)
             }
-            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
-            await recorder.append(inputMessage.event)
             try await Task.sleep(for: .milliseconds(20))
         }
 
@@ -256,11 +242,11 @@ struct MirageInputEventSenderCoalescingTests {
         try await Task.sleep(for: .milliseconds(150))
 
         let scrollEvents = await recorder.scrollEvents()
-        #expect(scrollEvents.count == 1)
-        #expect(scrollEvents.first?.deltaX == 3)
-        #expect(scrollEvents.first?.deltaY == 4)
-        #expect(scrollEvents.first?.phase == MirageScrollPhase.none)
-        #expect(scrollEvents.first?.timestamp == 2)
+        #expect(scrollEvents.count == 2)
+        #expect(scrollEvents.map(\.deltaX) == [1, 3])
+        #expect(scrollEvents.map(\.deltaY) == [2, 4])
+        #expect(scrollEvents.map(\.phase) == [.none, .none])
+        #expect(scrollEvents.map(\.timestamp) == [1, 2])
     }
 
     @Test("Only replaceable realtime input uses droppable delivery mode")
@@ -287,7 +273,7 @@ struct MirageInputEventSenderCoalescingTests {
             .droppableRealtime,
             .droppableRealtime,
             .orderedBestEffort,
-            .orderedBestEffort,
+            .droppableRealtime,
         ])
     }
 
@@ -321,6 +307,26 @@ struct MirageInputEventSenderCoalescingTests {
             samples: [sample],
             timestamp: TimeInterval(sampleX)
         )
+    }
+}
+
+private func decodeInputEvents(from data: Data) throws -> [MirageInputEvent] {
+    guard case let .success(message, _) = ControlMessage.deserialize(from: data) else {
+        Issue.record("Expected a serialized control message")
+        return []
+    }
+
+    switch message.type {
+    case .inputEvent:
+        return [try InputEventMessage.deserializePayload(message.payload).event]
+    case .priorityInputEvent:
+        let envelope = try MiragePriorityInputEnvelope.deserialize(message.payload)
+        if envelope.kind == .continuousInput {
+            return try MirageContinuousInputBatch.deserialize(envelope.inputPayload).inputEvents()
+        }
+        return [try InputEventMessage.deserializePayload(envelope.inputPayload).event]
+    default:
+        return []
     }
 }
 

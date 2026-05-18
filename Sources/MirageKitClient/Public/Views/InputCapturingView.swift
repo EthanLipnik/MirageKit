@@ -165,6 +165,7 @@ public class InputCapturingView: UIView {
             pointerInteraction?.invalidate()
             updateLockedCursorViewVisibility()
             updateLockedCursorViewPosition()
+            updateMouseInputHandler()
         }
     }
 
@@ -208,6 +209,7 @@ public class InputCapturingView: UIView {
             updateLockedCursorViewVisibility()
             pointerInteraction?.invalidate()
             refreshCursorUpdates(force: true)
+            updateMouseInputHandler()
         }
     }
 
@@ -241,6 +243,7 @@ public class InputCapturingView: UIView {
         didSet {
             guard directTouchInputMode != oldValue else { return }
             updateVirtualTrackpadMode()
+            updateMouseInputHandler()
         }
     }
 
@@ -417,6 +420,7 @@ public class InputCapturingView: UIView {
     var swallowingLongPressForCursorRecapture = false
     var swallowingVirtualCursorLongPressForCursorRecapture = false
     var usesMouseInputDeltas: Bool = false
+    var normalMouseDeltaInputActive: Bool = false
     #if canImport(GameController)
     var lastLoggedMouseInputDeltaStatus: String?
     #endif

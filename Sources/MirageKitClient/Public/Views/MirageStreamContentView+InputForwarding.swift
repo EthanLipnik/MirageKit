@@ -73,6 +73,13 @@ extension MirageStreamContentView {
         }
 
         if shouldSuppressDesktopPointerEventDuringResize(event) {
+            MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
+                eventClass: event.latencyEventClass,
+                streamID: session.streamID,
+                source: "streamForwarder",
+                reason: "desktopResizeMask",
+                sourceTimestamp: event.timestamp
+            )
             return
         }
 
@@ -127,11 +134,23 @@ extension MirageStreamContentView {
         guard sessionStore.focusedSessionID == session.id else { return }
         #else
         if sessionStore.focusedSessionID != session.id {
+            MirageInputLatencyTelemetry.shared.recordClientSourceForward(
+                event: event,
+                streamID: session.streamID,
+                source: "streamForwarder.focusCorrection",
+                sourceTimestamp: event.timestamp
+            )
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
         }
         #endif
 
+        MirageInputLatencyTelemetry.shared.recordClientSourceForward(
+            event: event,
+            streamID: session.streamID,
+            source: "streamForwarder",
+            sourceTimestamp: event.timestamp
+        )
         clientService.sendInputFireAndForget(event, forStream: session.streamID)
     }
 
@@ -218,4 +237,3 @@ private extension MirageInputEvent {
         }
     }
 }
-

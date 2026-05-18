@@ -192,24 +192,45 @@ extension InputCapturingView {
         applyLockedCursorTargetStep()
     }
 
+    var normalMouseDeltaInputAllowed: Bool {
+        !cursorLockEnabled &&
+            hideSystemCursor &&
+            !usesVisibleVirtualCursor &&
+            window != nil
+    }
+
     func updateMouseInputHandler() {
         #if canImport(GameController)
-        if cursorLockEnabled, pointerLockActive,
-           let mouse = GCMouse.mice().first(where: { $0.mouseInput != nil }),
-           let input = mouse.mouseInput {
-            if mouseInput !== input {
+        let lockedDeltaInputRequested = cursorLockEnabled && pointerLockActive
+        let normalDeltaInputRequested = normalMouseDeltaInputAllowed
+        let mouse = GCMouse.mice().first(where: { $0.mouseInput != nil })
+        let input = mouse?.mouseInput
+
+        if let input, lockedDeltaInputRequested || normalDeltaInputRequested {
+            let nextUsesLockedDeltas = lockedDeltaInputRequested
+            let nextUsesNormalDeltas = !nextUsesLockedDeltas && normalDeltaInputRequested
+            let modeChanged = usesMouseInputDeltas != nextUsesLockedDeltas ||
+                normalMouseDeltaInputActive != nextUsesNormalDeltas
+
+            if mouseInput !== input || modeChanged {
                 mouseInput?.mouseMovedHandler = nil
                 mouseInput = input
-            }
-            usesMouseInputDeltas = true
-            logMouseInputDeltaStatusIfNeeded("Pointer lock using GameController mouse delta input.")
-            input.mouseMovedHandler = { [weak self] _, deltaX, deltaY in
-                Task { @MainActor [weak self] in
-                    self?.handleLockedMouseDelta(deltaX: deltaX, deltaY: deltaY)
+                usesMouseInputDeltas = nextUsesLockedDeltas
+                normalMouseDeltaInputActive = nextUsesNormalDeltas
+                if nextUsesLockedDeltas {
+                    logMouseInputDeltaStatusIfNeeded("Pointer lock using GameController mouse delta input.")
+                } else {
+                    logMouseInputDeltaStatusIfNeeded("Normal cursor using GameController mouse delta input.")
+                }
+                input.mouseMovedHandler = { [weak self] _, deltaX, deltaY in
+                    Task { @MainActor [weak self] in
+                        self?.handleMouseDeltaInput(deltaX: deltaX, deltaY: deltaY)
+                    }
                 }
             }
         } else {
             usesMouseInputDeltas = false
+            normalMouseDeltaInputActive = false
             mouseInput?.mouseMovedHandler = nil
             mouseInput = nil
             if cursorLockEnabled, pointerLockActive {
@@ -230,7 +251,16 @@ extension InputCapturingView {
         }
         #else
         usesMouseInputDeltas = false
+        normalMouseDeltaInputActive = false
         #endif
+    }
+
+    func handleMouseDeltaInput(deltaX: Float, deltaY: Float) {
+        if usesMouseInputDeltas {
+            handleLockedMouseDelta(deltaX: deltaX, deltaY: deltaY)
+        } else if normalMouseDeltaInputActive {
+            handleNormalMouseDelta(deltaX: deltaX, deltaY: deltaY)
+        }
     }
 
     func handleLockedMouseDelta(deltaX: Float, deltaY: Float) {
@@ -242,6 +272,54 @@ extension InputCapturingView {
         noteLockedPointerDragIfNeeded(for: translation)
         applyLockedCursorDelta(translation)
         sendLockedPointerMovementEvent(location: lockedCursorPosition, modifiers: keyboardModifiers)
+    }
+
+    func handleNormalMouseDelta(deltaX: Float, deltaY: Float) {
+        guard normalMouseDeltaInputActive, !cursorLockEnabled else { return }
+        guard deltaX != 0 || deltaY != 0 else { return }
+
+        revealCursorAfterPointerMovement()
+        syncModifiersForInput()
+
+        let translation = CGPoint(x: CGFloat(deltaX), y: CGFloat(-deltaY))
+        let location = applyNormalMouseDelta(translation)
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: location,
+            modifiers: keyboardModifiers
+        )
+
+        if longPressButtonDown {
+            if !isDragging {
+                resetPrimaryClickTracking()
+            }
+            isDragging = true
+            lastPanLocation = location
+            onInputEvent?(.mouseDragged(mouseEvent))
+        } else {
+            onInputEvent?(.mouseMoved(mouseEvent))
+        }
+    }
+
+    func applyNormalMouseDelta(_ translation: CGPoint) -> CGPoint {
+        let contentRect = resolvedPresentationContentRect()
+        let normalizationSize = contentRect.width > 0 && contentRect.height > 0
+            ? contentRect.size
+            : bounds.size
+        guard normalizationSize.width > 0, normalizationSize.height > 0 else {
+            return lastCursorPosition ?? CGPoint(x: 0.5, y: 0.5)
+        }
+
+        let currentPosition = lastCursorPosition ?? lockedCursorPosition
+        let resolved = CGPoint(
+            x: min(max(currentPosition.x + translation.x / normalizationSize.width, 0), 1),
+            y: min(max(currentPosition.y + translation.y / normalizationSize.height, 0), 1)
+        )
+        lastCursorPosition = resolved
+        lockedCursorPosition = resolved
+        updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
+        return resolved
     }
 
     func noteLockedPointerDragIfNeeded(for translation: CGPoint) {
