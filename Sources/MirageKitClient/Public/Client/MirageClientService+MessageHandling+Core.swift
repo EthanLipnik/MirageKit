@@ -94,7 +94,8 @@ extension MirageClientService {
             deviceType: deviceType,
             endpoint: hostEndpoint,
             advertisement: canonicalAdvertisement,
-            resolvedAddresses: provisionalHost?.resolvedAddresses ?? []
+            resolvedAddresses: provisionalHost?.resolvedAddresses ?? [],
+            discoveredInterfaces: provisionalHost?.discoveredInterfaces ?? []
         )
     }
 

@@ -70,11 +70,44 @@ extension MirageClientService {
         for host: LoomPeer,
         transportOrder: [LoomTransportKind]
     ) -> [ControlSessionAttempt] {
-        guard networkConfig.enablePeerToPeer,
-              isBonjourDiscoveredHost(host),
-              let discoveredInterface = host.discoveredInterfaces.first(where: \.isPeerToPeer),
-              let selectedHost = peerToPeerPreferredBonjourControlHost(for: host) else {
+        guard networkConfig.enablePeerToPeer else {
             return []
+        }
+        guard isBonjourDiscoveredHost(host) else {
+            return []
+        }
+        guard let selectedHost = peerToPeerPreferredBonjourControlHost(for: host) else {
+            MirageLogger.client(
+                "Skipping AWDL-preferred control attempts for \(host.name): no Bonjour hostname"
+            )
+            return []
+        }
+
+        let discoveredInterface = host.discoveredInterfaces.first(where: \.isPeerToPeer)
+        guard discoveredInterface != nil || !host.resolvedAddresses.isEmpty else {
+            return []
+        }
+
+        let requiredInterface: NWInterface?
+        let requiredInterfaceType: NWInterface.InterfaceType?
+        let source: String
+        if let discoveredInterface {
+            requiredInterface = discoveredInterface.networkInterface
+            requiredInterfaceType = discoveredInterface.networkInterface == nil ? discoveredInterface.type : nil
+            source = "bonjour-awdl"
+        } else {
+            requiredInterface = nil
+            requiredInterfaceType = .other
+            source = "bonjour-peer-to-peer"
+
+            let interfaces = host.discoveredInterfaces
+                .map(\.name)
+                .filter { !$0.isEmpty }
+                .joined(separator: ",")
+            MirageLogger.client(
+                "Trying optimistic peer-to-peer control attempts for \(host.name): no AWDL Bonjour interface " +
+                    "interfaces=\(interfaces.isEmpty ? "none" : interfaces)"
+            )
         }
 
         return transportOrder.compactMap { transportKind in
@@ -93,15 +126,15 @@ extension MirageClientService {
                 hostName: host.name,
                 selectedHost: selectedHost,
                 port: endpointPort(for: endpoint),
-                source: "bonjour-awdl"
+                source: source
             )
             return ControlSessionAttempt(
                 hostName: host.name,
                 endpoint: endpoint,
                 transportKind: transportKind,
                 candidateKind: candidateKind,
-                requiredInterface: discoveredInterface.networkInterface,
-                requiredInterfaceType: nil,
+                requiredInterface: requiredInterface,
+                requiredInterfaceType: requiredInterfaceType,
                 isPeerToPeerPreferred: true
             )
         }

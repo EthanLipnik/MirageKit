@@ -212,7 +212,7 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client uses Bonjour-resolved IP addresses instead of hostname")
+    @Test("Client keeps Bonjour-resolved IP addresses as peer-to-peer fallback")
     func controlSessionAttemptsPreferResolvedAddresses() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61020))
@@ -234,15 +234,19 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
+        let fallbackAttempt = try #require(
+            attempts.first { $0.transportKind == .udp && !$0.isPeerToPeerPreferred }
+        )
         let expectedEndpoint: NWEndpoint = try .hostPort(
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 3)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(fallbackAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[2].transportKind == .tcp)
     }
 
     @MainActor
@@ -313,14 +317,17 @@ struct ClientConnectionEndpointPlanningTests {
 
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
-        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
+        let udpAttempt = try #require(
+            attempts.first { $0.transportKind == .udp && !$0.isPeerToPeerPreferred }
+        )
         let expectedEndpoint: NWEndpoint = try .hostPort(
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 3)
         #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].isPeerToPeerPreferred)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 
@@ -403,7 +410,9 @@ struct ClientConnectionEndpointPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         service.preferredNetworkType = .wifi
         let attempts = service.controlSessionAttempts(for: host)
-        let udpAttempt = try #require(attempts.first { $0.transportKind == .udp })
+        let udpAttempt = try #require(
+            attempts.first { $0.transportKind == .udp && !$0.isPeerToPeerPreferred }
+        )
 
         #expect(udpAttempt.candidateKind == .local)
         #expect(udpAttempt.requiredInterfaceType == .wifi)

@@ -40,7 +40,10 @@ struct ClientHelloHandshakeStateTests {
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("bonjour.local"), port: port),
             advertisement: provisionalAdvertisement,
-            resolvedAddresses: [.ipv4(#require(IPv4Address("192.168.50.81")))]
+            resolvedAddresses: [.ipv4(#require(IPv4Address("192.168.50.81")))],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
         )
         let service = MirageClientService(deviceName: "Test Device")
         service.connectedHost = provisionalHost
@@ -83,6 +86,7 @@ struct ClientHelloHandshakeStateTests {
         #expect(service.connectedHost?.advertisement.directTransports == provisionalAdvertisement.directTransports)
         #expect(service.connectedHost?.advertisement.metadata["source"] == "bonjour")
         #expect(service.connectedHost?.resolvedAddresses == provisionalHost.resolvedAddresses)
+        #expect(service.connectedHost?.discoveredInterfaces == provisionalHost.discoveredInterfaces)
     }
 
     @MainActor
