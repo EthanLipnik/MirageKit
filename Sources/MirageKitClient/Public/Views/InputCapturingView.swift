@@ -420,7 +420,6 @@ public class InputCapturingView: UIView {
     var swallowingLongPressForCursorRecapture = false
     var swallowingVirtualCursorLongPressForCursorRecapture = false
     var usesMouseInputDeltas: Bool = false
-    var normalMouseDeltaInputActive: Bool = false
     #if canImport(GameController)
     var lastLoggedMouseInputDeltaStatus: String?
     #endif

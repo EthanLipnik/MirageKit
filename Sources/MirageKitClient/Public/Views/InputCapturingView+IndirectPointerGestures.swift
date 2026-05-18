@@ -284,26 +284,6 @@ extension InputCapturingView {
             return
         }
         let normalized = normalizedLocation(location)
-        if normalMouseDeltaInputActive, hoverStylus == nil {
-            switch gesture.state {
-            case .began,
-                 .changed:
-                lastCursorPosition = normalized
-                lockedCursorPosition = normalized
-                updateLockedCursorViewVisibility()
-                updateLockedCursorViewPosition()
-                MirageInputLatencyTelemetry.shared.recordClientSourceSuppression(
-                    eventClass: .pointer,
-                    streamID: streamID,
-                    source: "uiHover",
-                    reason: "mouseDeltasActive",
-                    sourceTimestamp: sourceTimestamp
-                )
-            default:
-                break
-            }
-            return
-        }
         let pointerMoved: Bool = if let lastCursorPosition {
             hypot(normalized.x - lastCursorPosition.x, normalized.y - lastCursorPosition.y) > 0.0001
         } else {
