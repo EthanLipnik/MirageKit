@@ -39,7 +39,11 @@ final class MiragePixelBufferCropper: @unchecked Sendable {
         }
     }
 
-    func crop(_ source: CVPixelBuffer, to contentRect: CGRect) -> MiragePixelBufferCropResult? {
+    func crop(
+        _ source: CVPixelBuffer,
+        to contentRect: CGRect,
+        allowInvalidCropFallback: Bool = true
+    ) -> MiragePixelBufferCropResult? {
         let sourceWidth = CVPixelBufferGetWidth(source)
         let sourceHeight = CVPixelBufferGetHeight(source)
         guard sourceWidth > 0, sourceHeight > 0 else { return nil }
@@ -51,6 +55,7 @@ final class MiragePixelBufferCropper: @unchecked Sendable {
             height: CGFloat(sourceHeight)
         )
         guard let cropRect = Self.normalizedCropRect(contentRect, in: fullRect) else {
+            guard allowInvalidCropFallback else { return nil }
             return MiragePixelBufferCropResult(
                 pixelBuffer: source,
                 contentRect: fullRect

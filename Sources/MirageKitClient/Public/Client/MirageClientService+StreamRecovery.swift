@@ -37,6 +37,26 @@ enum MirageClientStreamRecoveryTrigger {
         }
     }
 
+    /// Whether recovery should immediately flush pending render frames.
+    var clearsExistingFramesImmediately: Bool {
+        switch self {
+        case .manual:
+            true
+        case .applicationActivation:
+            false
+        }
+    }
+
+    /// Whether recovery should immediately reset the platform presenter.
+    var requestsPresentationRecoveryImmediately: Bool {
+        switch self {
+        case .manual:
+            true
+        case .applicationActivation:
+            false
+        }
+    }
+
     /// Session-store wait reason used when `awaitFirstPresentedFrame` is active.
     var firstPresentedFrameWaitReason: String? {
         switch self {
@@ -196,12 +216,24 @@ extension MirageClientService {
             return
         }
 
+        if trigger == .applicationActivation,
+           recoveryKeyframeRetryTasks[streamID] != nil {
+            MirageLogger.client(
+                "Stream recovery coalesced for stream \(streamID) trigger=\(trigger.logLabel)"
+            )
+            return
+        }
+
         MirageLogger.client(
             "Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)"
         )
 
-        MirageRenderStreamStore.shared.clear(for: streamID)
-        _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        if trigger.clearsExistingFramesImmediately {
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+        if trigger.requestsPresentationRecoveryImmediately {
+            _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
+        }
         cancelRecoveryKeyframeRetry(for: streamID)
         if trigger.awaitFirstPresentedFrame {
             startRecoveryKeyframeRetry(for: streamID, controller: controller, trigger: trigger)

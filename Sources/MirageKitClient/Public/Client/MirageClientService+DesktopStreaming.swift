@@ -92,6 +92,7 @@ public extension MirageClientService {
             disableResolutionCap: encoderRequest.disableResolutionCap == true
         )
         resolutionScale = geometry.resolvedStreamScale
+        desktopStreamDisplayScaleFactor = geometry.displayScaleFactor
         desktopResizeCoordinator.lastSentTarget = DesktopResizeCoordinator.RequestGeometry(
             logicalResolution: effectiveDisplayResolution,
             displayScaleFactor: geometry.displayScaleFactor,
@@ -125,6 +126,7 @@ public extension MirageClientService {
         request.enteredBitrate = bitrateSemantics.enteredBitrateBps
         request.bitrate = bitrateSemantics.requestedTargetBitrateBps
         request.latencyMode = encoderRequest.latencyMode
+        request.hostBufferingPolicy = encoderRequest.hostBufferingPolicy
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
         request.disableResolutionCap = encoderRequest.disableResolutionCap

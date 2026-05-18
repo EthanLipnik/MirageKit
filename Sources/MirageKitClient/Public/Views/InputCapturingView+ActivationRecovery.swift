@@ -46,7 +46,7 @@ extension InputCapturingView {
 
     func applyPendingApplicationActivationHandlingIfPossible() {
         guard let activationDecision = pendingApplicationActivationDecision else { return }
-        guard inputCapturingCanApplyPendingActivationHandling(
+        guard inputCapturingCanApplyPendingDisplayActivationHandling(
             hasWindow: window != nil,
             sceneActivationState: window?.windowScene?.activationState
         ) else {

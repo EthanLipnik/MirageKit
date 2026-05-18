@@ -161,6 +161,7 @@ extension MirageHostService {
                 triggeredByExplicitStreamStop: false
             )
         }
+        await stopAppAtlasCoordinator(clientID: client.id, stopLogicalSessions: true)
 
         if let desktopClient = desktopStreamClientContext, desktopClient.client.id == client.id {
             MirageLogger.host("Stopping desktop stream for disconnected client: \(client.name)")

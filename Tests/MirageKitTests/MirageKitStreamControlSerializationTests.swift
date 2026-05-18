@@ -80,6 +80,7 @@ struct MirageKitStreamControlSerializationTests {
             colorDepth: .pro,
             bitrate: 150_000_000,
             latencyMode: .smoothest,
+            hostBufferingPolicy: .stability,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -92,6 +93,8 @@ struct MirageKitStreamControlSerializationTests {
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .smoothest)
+        #expect(decoded.hostBufferingPolicy == .stability)
+        #expect(decoded.resolvedHostBufferingPolicy == .stability)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
@@ -110,6 +113,7 @@ struct MirageKitStreamControlSerializationTests {
             colorDepth: .pro,
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
             disableResolutionCap: false,
@@ -121,6 +125,8 @@ struct MirageKitStreamControlSerializationTests {
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.targetFrameRate == 90)
         #expect(decoded.latencyMode == .lowestLatency)
+        #expect(decoded.hostBufferingPolicy == .freshestFrame)
+        #expect(decoded.resolvedHostBufferingPolicy == .freshestFrame)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
@@ -159,6 +165,55 @@ struct MirageKitStreamControlSerializationTests {
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
         let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.mediaMaxPacketSize == 1200)
+    }
+
+    @Test("Stream startup requests default missing host buffering policy to stability")
+    func streamStartupRequestsDefaultMissingHostBufferingPolicyToStability() throws {
+        let startStreamEnvelope = try ControlMessage(
+            type: .startStream,
+            content: StartStreamMessage(windowID: 12, targetFrameRate: 60)
+        )
+        let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        #expect(decodedStartStream.hostBufferingPolicy == nil)
+        #expect(decodedStartStream.resolvedHostBufferingPolicy == .stability)
+
+        let selectAppEnvelope = try ControlMessage(
+            type: .selectApp,
+            content: SelectAppMessage(bundleIdentifier: "com.example.Editor", targetFrameRate: 60)
+        )
+        let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        #expect(decodedSelectApp.hostBufferingPolicy == nil)
+        #expect(decodedSelectApp.resolvedHostBufferingPolicy == .stability)
+
+        let startDesktopEnvelope = try ControlMessage(
+            type: .startDesktopStream,
+            content: StartDesktopStreamMessage(
+                scaleFactor: nil,
+                displayWidth: 3008,
+                displayHeight: 1692,
+                targetFrameRate: 60
+            )
+        )
+        let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decodedStartDesktop.hostBufferingPolicy == nil)
+        #expect(decodedStartDesktop.resolvedHostBufferingPolicy == .stability)
+
+        let customEnvelope = try ControlMessage(
+            type: .startCustomStream,
+            content: StartCustomStreamMessage(
+                kind: "test",
+                displayWidth: 1280,
+                displayHeight: 720,
+                targetFrameRate: 60
+            )
+        )
+        let (decodedCustomEnvelope, _) = try requireParsedControlMessage(from: customEnvelope.serialize())
+        let decodedCustom = try decodedCustomEnvelope.decode(StartCustomStreamMessage.self)
+        #expect(decodedCustom.hostBufferingPolicy == nil)
+        #expect(decodedCustom.resolvedHostBufferingPolicy == .stability)
     }
 
     @Test("Quality test and started messages serialize accepted media packet sizing")
@@ -245,6 +300,7 @@ struct MirageKitStreamControlSerializationTests {
             mode: .unified,
             bitrate: 500_000_000,
             latencyMode: .lowestLatency,
+            hostBufferingPolicy: .freshestFrame,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -258,6 +314,8 @@ struct MirageKitStreamControlSerializationTests {
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .lowestLatency)
+        #expect(decoded.hostBufferingPolicy == .freshestFrame)
+        #expect(decoded.resolvedHostBufferingPolicy == .freshestFrame)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)

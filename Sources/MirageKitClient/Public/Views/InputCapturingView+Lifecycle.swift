@@ -221,7 +221,7 @@ extension InputCapturingView {
         applyPendingApplicationActivationHandlingIfPossible()
     }
 
-    override public var canBecomeFirstResponder: Bool { true }
+    override public var canBecomeFirstResponder: Bool { inputEnabled }
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()

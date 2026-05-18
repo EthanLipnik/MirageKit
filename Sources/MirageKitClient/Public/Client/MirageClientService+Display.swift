@@ -136,6 +136,24 @@ extension MirageClientService {
         return geometry.displayScaleFactor
     }
 
+    func inferredDisplayScaleFactor(
+        displayPixelSize: CGSize,
+        presentationSize: CGSize
+    ) -> CGFloat? {
+        let presentationSize = MirageStreamGeometry.normalizedLogicalSize(presentationSize)
+        guard displayPixelSize.width > 0,
+              displayPixelSize.height > 0,
+              presentationSize.width > 0,
+              presentationSize.height > 0 else {
+            return nil
+        }
+        let widthScale = displayPixelSize.width / presentationSize.width
+        let heightScale = displayPixelSize.height / presentationSize.height
+        let scale = max(widthScale, heightScale)
+        guard scale.isFinite, scale > 0 else { return nil }
+        return max(1.0, scale)
+    }
+
     func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
         let alignedViewSize = MirageStreamGeometry.normalizedLogicalSize(viewSize)
         guard alignedViewSize.width > 0, alignedViewSize.height > 0 else { return .zero }

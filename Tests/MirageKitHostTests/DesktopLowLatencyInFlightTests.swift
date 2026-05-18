@@ -12,8 +12,8 @@ import Testing
 
 @Suite("Desktop Low Latency In Flight")
 struct DesktopLowLatencyInFlightTests {
-    @Test("60 Hz desktop lowest-latency keeps bounded two-frame inflight")
-    func desktopLowestLatencyKeepsBoundedTwoFrameInflight() async {
+    @Test("60 Hz desktop lowest-latency stability keeps bounded two-frame inflight")
+    func desktopLowestLatencyStabilityKeepsBoundedTwoFrameInflight() async {
         let context = makeContext()
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
@@ -27,11 +27,50 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.maxInFlightFrames == 2)
     }
 
+    @Test("60 Hz desktop freshest-frame lowest-latency stays single-inflight")
+    func desktopFreshestFrameLowestLatencyStaysSingleInflight() async {
+        let context = makeContext(hostBufferingPolicy: .freshestFrame)
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 1)
+        #expect(await context.frameBufferDepth == 1)
+    }
+
     @Test("60 Hz window lowest-latency stays single-inflight")
     func windowLowestLatencyStaysSingleInflight() async {
         let context = makeContext(streamKind: .window)
 
         await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 1)
+        #expect(await context.frameBufferDepth == 1)
+    }
+
+    @Test("60 Hz app atlas freshest-frame lowest-latency stays single-inflight")
+    func appAtlasFreshestFrameLowestLatencyStaysSingleInflight() async {
+        let context = makeContext(
+            streamKind: .appAtlas,
+            hostBufferingPolicy: .freshestFrame
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.maxInFlightFrames == 1)
+        #expect(await context.maxInFlightFramesCap == 1)
+        #expect(await context.frameBufferDepth == 1)
+    }
+
+    @Test("120 Hz desktop freshest-frame lowest-latency stays single-inflight")
+    func desktopFreshestFrame120HzLowestLatencyStaysSingleInflight() async {
+        let context = makeContext(
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
 
         #expect(await context.maxInFlightFrames == 1)
         #expect(await context.maxInFlightFramesCap == 1)
@@ -72,7 +111,8 @@ struct DesktopLowLatencyInFlightTests {
     private func makeContext(
         streamKind: VideoEncoder.StreamKind = .desktop,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        targetFrameRate: Int = 60
+        targetFrameRate: Int = 60,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: targetFrameRate,
@@ -90,7 +130,8 @@ struct DesktopLowLatencyInFlightTests {
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: false,
             lowLatencyHighResolutionCompressionBoostEnabled: false,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy
         )
     }
 }

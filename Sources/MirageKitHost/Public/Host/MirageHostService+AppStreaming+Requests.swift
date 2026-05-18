@@ -48,6 +48,7 @@ extension MirageHostService {
             MirageLogger.host("Frame rate: \(targetFrameRate)fps")
 
             let latencyMode = request.latencyMode ?? .lowestLatency
+            let hostBufferingPolicy = request.resolvedHostBufferingPolicy
             guard let displayWidth = request.displayWidth,
                   let displayHeight = request.displayHeight,
                   displayWidth > 0,
@@ -70,6 +71,7 @@ extension MirageHostService {
             let sharedBitrateBudget = resolvedAppSessionBitrateBudget(requestedBitrate: request.bitrate)
             let bitrateAllocationPolicy = request.bitrateAllocationPolicy ?? .prioritizeActiveWindow
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
+            MirageLogger.host("Host buffering policy: \(hostBufferingPolicy.rawValue)")
             MirageLogger
                 .host(
                     "App stream slot cap: \(maxVisibleSlots), shared bitrate budget: \(sharedBitrateBudget.map { "\($0) bps" } ?? "none"), allocationPolicy: \(bitrateAllocationPolicy.rawValue)"

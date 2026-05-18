@@ -63,6 +63,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the software keyboard should be visible.
     public var softwareKeyboardVisible: Bool
 
+    /// Whether the native stream view should own input focus and forward input.
+    public var inputEnabled: Bool
+
     /// Apple Pencil hardware gesture mapping.
     public var pencilGestureConfiguration: MiragePencilGestureConfiguration
 
@@ -157,6 +160,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDirectTouchActivity: (() -> Void)? = nil,
         directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
         softwareKeyboardVisible: Bool = false,
+        inputEnabled: Bool = true,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
@@ -200,6 +204,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
+        self.inputEnabled = inputEnabled
         self.pencilGestureConfiguration = pencilGestureConfiguration
         self.clientShortcuts = clientShortcuts
         self.onClientShortcut = onClientShortcut
@@ -320,6 +325,7 @@ package struct MirageStreamViewControllerState {
     let contentRectOverride: CGRect?
     let directTouchInputMode: MirageDirectTouchInputMode
     let softwareKeyboardVisible: Bool
+    let inputEnabled: Bool
     let pencilGestureConfiguration: MiragePencilGestureConfiguration
     let clientShortcuts: [MirageClientShortcut]
     let actions: [MirageAction]
@@ -349,6 +355,7 @@ package struct MirageStreamViewControllerState {
         contentRectOverride = representable.contentRectOverride
         directTouchInputMode = representable.directTouchInputMode
         softwareKeyboardVisible = representable.softwareKeyboardVisible
+        inputEnabled = representable.inputEnabled
         pencilGestureConfiguration = representable.pencilGestureConfiguration
         clientShortcuts = representable.clientShortcuts
         actions = representable.actions

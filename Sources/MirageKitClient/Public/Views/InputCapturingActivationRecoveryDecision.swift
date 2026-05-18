@@ -48,6 +48,15 @@ func inputCapturingCanApplyPendingActivationHandling(
     return sceneActivationState == .foregroundActive
 }
 
+func inputCapturingCanApplyPendingDisplayActivationHandling(
+    hasWindow: Bool,
+    sceneActivationState: UIScene.ActivationState?
+) -> Bool {
+    guard hasWindow else { return false }
+    return sceneActivationState == .foregroundActive ||
+        sceneActivationState == .foregroundInactive
+}
+
 /// Outcome for a pending activation-recovery decision once the stream view is foregrounded again.
 enum InputCapturingPendingActivationRecoveryDisposition {
     /// Apply the queued recovery handling to the active stream view.

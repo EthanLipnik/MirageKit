@@ -177,7 +177,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     func handleFrameAvailable(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
 
-        if submitsFramesImmediately {
+        if presentationTier == .activeLive, submitsFramesImmediately {
             displayClockFramePending = true
             let result = performPass(referenceTime: referenceTime)
             if result == .submitted {

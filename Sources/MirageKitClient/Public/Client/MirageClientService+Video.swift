@@ -59,6 +59,7 @@ extension MirageClientService {
             processor.finish()
         }
         videoPacketIngressProcessors.removeAll()
+        fastPathState.clearAllBufferedEarlyVideoPackets()
         videoIngressTelemetryStore.clearAll()
         videoIngressLastDropCountByStream.removeAll(keepingCapacity: false)
         audioStreamReceiveTask?.cancel()
@@ -162,6 +163,11 @@ extension MirageClientService {
         fastPathState.noteInboundMediaActivity()
 
         guard let packetContext = fastPathState.videoPacketContext(for: streamID) else {
+            if fastPathState.bufferEarlyVideoPacket(data, for: streamID) {
+                MirageLogger.client(
+                    "Media stream \(streamID) buffered early startup video packet bytes=\(data.count)"
+                )
+            }
             logFirstVideoPacketRejectionIfNeeded(.packetContextMissing, expectedStreamID: streamID)
             return
         }
@@ -265,6 +271,14 @@ extension MirageClientService {
         )
     }
 
+    func processBufferedEarlyVideoPacketIfNeeded(streamID: StreamID) {
+        guard let data = fastPathState.takeBufferedEarlyVideoPacket(for: streamID) else { return }
+        MirageLogger.client(
+            "Media stream \(streamID) processing buffered early startup video packet bytes=\(data.count)"
+        )
+        processIncomingVideoData(data, expectedStreamID: streamID)
+    }
+
     /// Stop the video stream receive task for a specific stream.
     func stopVideoStreamReceive(for streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
@@ -274,6 +288,7 @@ extension MirageClientService {
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
         cancelRecoveryKeyframeRetry(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
@@ -324,6 +339,7 @@ extension MirageClientService {
         videoIngressTelemetryStore.clear(streamID: streamID)
         videoIngressLastDropCountByStream.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
         MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
     }

@@ -125,6 +125,7 @@ extension MirageClientService {
             )
         }
         fastPathState.addActiveStreamID(streamID)
+        processBufferedEarlyVideoPacketIfNeeded(streamID: streamID)
         if isAppCentricStream, shouldSetupController {
             MirageLogger.client("Controller set up for app-centric stream \(streamID)")
         }

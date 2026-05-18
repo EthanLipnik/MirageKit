@@ -14,6 +14,32 @@ import Testing
 
 @Suite("Session Minimum Size Generation")
 struct SessionMinimumSizeGenerationTests {
+    @Test("Session revision changes when session shape changes")
+    @MainActor
+    func sessionRevisionChangesWhenSessionShapeChanges() {
+        let store = MirageClientSessionStore()
+        #expect(store.sessionRevision == 0)
+
+        let sessionID = store.createSession(
+            streamID: 1001,
+            mediaStreamID: 1001,
+            window: testWindow(id: 100101),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        #expect(store.sessionRevision == 1)
+
+        store.updateMinimumSize(
+            for: 1001,
+            minSize: CGSize(width: 800, height: 600)
+        )
+        #expect(store.sessionRevision == 1)
+
+        store.removeSession(sessionID)
+        #expect(store.sessionRevision == 2)
+    }
+
     @Test("Generation increments for repeated min-size updates")
     @MainActor
     func generationIncrementsForRepeatedUpdates() {

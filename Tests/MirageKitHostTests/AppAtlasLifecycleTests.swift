@@ -9,10 +9,24 @@
 @testable import MirageKit
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import Testing
 
 @Suite("App Atlas Lifecycle")
 struct AppAtlasLifecycleTests {
+    @MainActor
+    @Test("Stopping app-atlas coordinator clears pending startup marker")
+    func stoppingCoordinatorClearsPendingStartupMarker() async {
+        let host = MirageHostService(hostName: "Atlas Cleanup Host")
+        let clientID = UUID()
+        host.appAtlasCoordinatorCreationClientIDs.insert(clientID)
+
+        await host.stopAppAtlasCoordinator(clientID: clientID, stopLogicalSessions: true)
+
+        #expect(!host.appAtlasCoordinatorCreationClientIDs.contains(clientID))
+        #expect(host.appAtlasCoordinatorsByClientID[clientID] == nil)
+    }
+
     @Test("Auxiliary parent association prefers overlap then nearest center")
     func auxiliaryParentAssociationPrefersOverlapThenNearestCenter() {
         let streamID = MirageHostService.bestAuxiliaryParentStream(

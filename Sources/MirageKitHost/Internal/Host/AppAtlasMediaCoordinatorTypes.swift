@@ -42,6 +42,7 @@ actor AppAtlasWindowCaptureContext {
         displayWrapper: SCDisplayWrapper,
         encoderConfig: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void
@@ -52,6 +53,7 @@ actor AppAtlasWindowCaptureContext {
             configuration: encoderConfig,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             captureFrameRate: targetFrameRate,
             usesDisplayRefreshCadence: false
         )

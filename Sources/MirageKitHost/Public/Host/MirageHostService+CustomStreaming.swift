@@ -150,6 +150,7 @@ extension MirageHostService {
             lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: request.disableResolutionCap ?? false,
             latencyMode: request.latencyMode ?? .lowestLatency,
+            hostBufferingPolicy: request.resolvedHostBufferingPolicy,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight

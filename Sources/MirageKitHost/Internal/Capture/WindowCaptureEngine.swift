@@ -22,6 +22,7 @@ actor WindowCaptureEngine {
     var configuration: MirageEncoderConfiguration
     let capturePressureProfile: CapturePressureProfile
     let latencyMode: MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageHostBufferingPolicy
     var currentFrameRate: Int
     let usesDisplayRefreshCadence: Bool
     var currentDisplayRefreshRate: Int?
@@ -96,12 +97,14 @@ actor WindowCaptureEngine {
         configuration: MirageEncoderConfiguration,
         capturePressureProfile: CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         captureFrameRate: Int? = nil,
         usesDisplayRefreshCadence: Bool = false
     ) {
         self.configuration = configuration
         self.capturePressureProfile = capturePressureProfile
         self.latencyMode = latencyMode
+        self.hostBufferingPolicy = hostBufferingPolicy
         currentFrameRate = max(1, captureFrameRate ?? configuration.targetFrameRate)
         self.usesDisplayRefreshCadence = usesDisplayRefreshCadence
     }

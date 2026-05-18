@@ -23,6 +23,8 @@ extension MirageHostService {
 
     /// Stops the app-atlas media coordinator and optionally stops all logical sessions attached to it.
     func stopAppAtlasCoordinator(clientID: UUID, stopLogicalSessions: Bool = false) async {
+        appAtlasCoordinatorCreationClientIDs.remove(clientID)
+
         if stopLogicalSessions, let coordinator = appAtlasCoordinatorsByClientID[clientID] {
             let logicalStreamIDs = await coordinator.logicalStreamIDs()
             let logicalStreamIDSet = Set(logicalStreamIDs)
@@ -68,6 +70,9 @@ extension MirageHostService {
         mediaMaxPacketSize: Int
     ) async throws -> AppAtlasMediaCoordinator {
         let clientID = clientContext.client.id
+        guard !disconnectingClientIDs.contains(clientID) else {
+            throw MirageError.protocolError("Client is disconnecting")
+        }
         if let existing = appAtlasCoordinatorsByClientID[clientID] {
             return existing
         }
@@ -89,6 +94,9 @@ extension MirageHostService {
             if let existing = appAtlasCoordinatorsByClientID[clientID] {
                 return existing
             }
+            guard !disconnectingClientIDs.contains(clientID) else {
+                throw MirageError.protocolError("Client is disconnecting")
+            }
         }
 
         appAtlasCoordinatorCreationClientIDs.insert(clientID)
@@ -98,6 +106,9 @@ extension MirageHostService {
 
         if let existing = appAtlasCoordinatorsByClientID[clientID] {
             return existing
+        }
+        guard !disconnectingClientIDs.contains(clientID) else {
+            throw MirageError.protocolError("Client is disconnecting")
         }
 
         guard mediaSecurityByClientID[clientID] != nil else {
@@ -129,6 +140,7 @@ extension MirageHostService {
         atlasEncoderConfig = atlasEncoderConfig.withInternalOverrides(pixelFormat: .bgra8)
 
         let latencyMode = selectRequest.latencyMode ?? .lowestLatency
+        let hostBufferingPolicy = selectRequest.resolvedHostBufferingPolicy
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
         let context = StreamContext(
@@ -146,6 +158,7 @@ extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
@@ -203,6 +216,7 @@ extension MirageHostService {
             context: context,
             encoderConfig: atlasEncoderConfig,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             capturePressureProfile: capturePressureProfile,
             targetFrameRate: targetFrameRate,
             sendPacket: { packetData, onComplete in

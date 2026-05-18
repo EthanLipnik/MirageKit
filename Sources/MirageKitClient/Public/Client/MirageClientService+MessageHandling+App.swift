@@ -102,6 +102,7 @@ extension MirageClientService {
             }
 
             fastPathState.addActiveStreamID(mediaStreamID)
+            processBufferedEarlyVideoPacketIfNeeded(streamID: mediaStreamID)
             registeredStreamIDs.insert(mediaStreamID)
             await updateReassemblerSnapshot()
             if shouldSetupController {

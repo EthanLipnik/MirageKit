@@ -33,6 +33,10 @@ extension MirageClientService {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
         }
+        if let hostBufferingPolicy = overrides.hostBufferingPolicy {
+            request.hostBufferingPolicy = hostBufferingPolicy
+            MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -88,6 +92,10 @@ extension MirageClientService {
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
+        }
+        if let hostBufferingPolicy = overrides.hostBufferingPolicy {
+            request.hostBufferingPolicy = hostBufferingPolicy
+            MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
@@ -147,6 +155,10 @@ extension MirageClientService {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
         }
+        if let hostBufferingPolicy = overrides.hostBufferingPolicy {
+            request.hostBufferingPolicy = hostBufferingPolicy
+            MirageLogger.client("Requesting host buffering policy: \(hostBufferingPolicy.rawValue)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -191,6 +203,9 @@ extension MirageClientService {
         }
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
+        }
+        if let hostBufferingPolicy = overrides.hostBufferingPolicy {
+            request.hostBufferingPolicy = hostBufferingPolicy
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment

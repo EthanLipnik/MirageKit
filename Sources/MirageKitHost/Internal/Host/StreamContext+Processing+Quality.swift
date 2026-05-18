@@ -98,7 +98,8 @@ extension StreamContext {
             let baselineLowLatencyLimit = Self.lowLatencyPipelineInFlightLimit(
                 streamKind: streamKind,
                 frameRate: currentFrameRate,
-                latencyMode: latencyMode
+                latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy
             )
             let lowLatencyLimit = min(maxInFlightFramesCap, max(1, baselineLowLatencyLimit))
             if maxInFlightFrames != lowLatencyLimit {

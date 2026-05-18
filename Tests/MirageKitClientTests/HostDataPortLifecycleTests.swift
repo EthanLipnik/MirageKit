@@ -22,6 +22,14 @@ struct HostDataPortLifecycleTests {
         #expect(service.pendingApplicationActivationRecoveryStreamIDs.isEmpty)
     }
 
+    @Test("Application-activation recovery preserves the current presenter frame")
+    func applicationActivationRecoveryPreservesCurrentPresenterFrame() {
+        #expect(!MirageClientStreamRecoveryTrigger.applicationActivation.clearsExistingFramesImmediately)
+        #expect(!MirageClientStreamRecoveryTrigger.applicationActivation.requestsPresentationRecoveryImmediately)
+        #expect(MirageClientStreamRecoveryTrigger.manual.clearsExistingFramesImmediately)
+        #expect(MirageClientStreamRecoveryTrigger.manual.requestsPresentationRecoveryImmediately)
+    }
+
     @MainActor
     @Test("Application-activation recovery waits for active stream controller")
     func applicationActivationRecoveryWaitsForActiveStreamController() {

@@ -28,6 +28,7 @@ extension MirageClientService {
         desktopStreamMode = nil
         desktopCursorPresentation = nil
         desktopStreamPresentationResolution = nil
+        desktopStreamDisplayScaleFactor = nil
         desktopCaptureSource = .virtualDisplay
         desktopStreamAllowsClientResize = true
         pendingDesktopRequestedColorDepth = nil

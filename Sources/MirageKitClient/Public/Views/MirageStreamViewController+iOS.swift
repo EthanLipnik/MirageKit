@@ -93,6 +93,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.streamID = state.streamID
         captureView.contentRectOverride = state.contentRectOverride
         captureView.directTouchInputMode = state.directTouchInputMode
+        captureView.inputEnabled = state.inputEnabled
         captureView.softwareKeyboardVisible = state.softwareKeyboardVisible
         captureView.pencilGestureConfiguration = state.pencilGestureConfiguration
         captureView.clientShortcuts = state.clientShortcuts

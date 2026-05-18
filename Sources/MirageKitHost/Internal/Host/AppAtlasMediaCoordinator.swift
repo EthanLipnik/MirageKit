@@ -20,6 +20,7 @@ actor AppAtlasMediaCoordinator {
     let context: StreamContext
     let encoderConfig: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
+    let hostBufferingPolicy: MirageHostBufferingPolicy
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     let targetFrameRate: Int
 
@@ -62,6 +63,7 @@ actor AppAtlasMediaCoordinator {
         context: StreamContext,
         encoderConfig: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
@@ -73,6 +75,7 @@ actor AppAtlasMediaCoordinator {
         self.context = context
         self.encoderConfig = encoderConfig
         self.latencyMode = latencyMode
+        self.hostBufferingPolicy = hostBufferingPolicy
         self.capturePressureProfile = capturePressureProfile
         self.targetFrameRate = max(1, targetFrameRate)
         self.sendPacket = sendPacket
@@ -176,6 +179,7 @@ actor AppAtlasMediaCoordinator {
                 displayWrapper: displayWrapper,
                 encoderConfig: encoderConfig,
                 latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy,
                 capturePressureProfile: capturePressureProfile,
                 targetFrameRate: targetFrameRate,
                 onFrame: { [weak self] frame in

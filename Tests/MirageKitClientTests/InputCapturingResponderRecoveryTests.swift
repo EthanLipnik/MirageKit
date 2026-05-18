@@ -233,6 +233,28 @@ struct InputCapturingResponderRecoveryTests {
         )
     }
 
+    @Test("Display activation handling can resume in foreground-inactive scene")
+    func displayActivationHandlingCanResumeInForegroundInactiveScene() {
+        #expect(
+            inputCapturingCanApplyPendingDisplayActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .foregroundInactive
+            )
+        )
+        #expect(
+            inputCapturingCanApplyPendingDisplayActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .foregroundActive
+            )
+        )
+        #expect(
+            !inputCapturingCanApplyPendingDisplayActivationHandling(
+                hasWindow: true,
+                sceneActivationState: .background
+            )
+        )
+    }
+
     @Test("Desktop stream start and transition triggers can recover during activation")
     func desktopStreamTriggersCanRecoverDuringActivation() {
         let activationContext = makeContext(sceneActivationState: .foregroundInactive)

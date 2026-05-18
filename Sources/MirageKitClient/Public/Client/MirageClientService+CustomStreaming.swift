@@ -143,6 +143,7 @@ extension MirageClientService {
                 targetFrameRate: started.frameRate
             )
             fastPathState.addActiveStreamID(streamID)
+            processBufferedEarlyVideoPacketIfNeeded(streamID: streamID)
 
             if let startupAttemptID {
                 await sendStreamReadyAck(

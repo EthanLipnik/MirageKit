@@ -221,6 +221,7 @@ public extension MirageClientService {
             colorDepth: encoderRequest.colorDepth,
             bitrate: scaledBitrate,
             latencyMode: encoderRequest.latencyMode,
+            hostBufferingPolicy: encoderRequest.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: encoderRequest.lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: encoderRequest.disableResolutionCap,

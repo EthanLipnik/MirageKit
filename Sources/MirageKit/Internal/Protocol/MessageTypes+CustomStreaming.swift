@@ -40,6 +40,9 @@ package struct StartCustomStreamMessage: Codable {
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
 
+    /// Client-requested host-side capture-to-encode buffering policy.
+    package var hostBufferingPolicy: MirageHostBufferingPolicy?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -102,6 +105,10 @@ package struct StartCustomStreamMessage: Codable {
             targetFrameRate: targetFrameRate,
             requiredPixelFormat: kCVPixelFormatType_32BGRA
         )
+    }
+
+    package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
+        hostBufferingPolicy ?? .stability
     }
 }
 

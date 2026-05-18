@@ -29,6 +29,7 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var activeStreamIDs: Set<StreamID> = []
         var startupPacketPending: Set<StreamID> = []
         var reassemblersByStream: [StreamID: FrameReassembler] = [:]
+        var bufferedEarlyVideoPacketByStream: [StreamID: Data] = [:]
         var observedMediaStreamLabels: Set<String> = []
         var firstVideoPacketRejectionReasonByStream: [StreamID: IncomingVideoPacketRejectionReason] = [:]
         var lastInboundControlActivityTime: CFAbsoluteTime = 0
@@ -68,6 +69,32 @@ final class MirageClientFastPathState: @unchecked Sendable {
 
     func setReassemblerSnapshot(_ snapshot: [StreamID: FrameReassembler]) {
         withLock { $0.reassemblersByStream = snapshot }
+    }
+
+    func bufferEarlyVideoPacket(_ data: Data, for streamID: StreamID) -> Bool {
+        withLock { state in
+            guard !state.activeStreamIDs.contains(streamID),
+                  state.bufferedEarlyVideoPacketByStream[streamID] == nil,
+                  state.bufferedEarlyVideoPacketByStream.count < 16 else {
+                return false
+            }
+            state.bufferedEarlyVideoPacketByStream[streamID] = data
+            return true
+        }
+    }
+
+    func takeBufferedEarlyVideoPacket(for streamID: StreamID) -> Data? {
+        withLock { $0.bufferedEarlyVideoPacketByStream.removeValue(forKey: streamID) }
+    }
+
+    func clearBufferedEarlyVideoPacket(for streamID: StreamID) {
+        withLock { state in
+            _ = state.bufferedEarlyVideoPacketByStream.removeValue(forKey: streamID)
+        }
+    }
+
+    func clearAllBufferedEarlyVideoPackets() {
+        withLock { $0.bufferedEarlyVideoPacketByStream.removeAll() }
     }
 
     func setMediaSecurityContext(_ context: MirageMediaSecurityContext?) {
@@ -133,6 +160,7 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { state in
             state.observedMediaStreamLabels.removeAll()
             state.firstVideoPacketRejectionReasonByStream.removeAll()
+            state.bufferedEarlyVideoPacketByStream.removeAll()
         }
     }
 

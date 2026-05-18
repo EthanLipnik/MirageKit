@@ -192,6 +192,7 @@ extension StreamContext {
             configuration: captureConfig,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             captureFrameRate: captureFrameRate,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )

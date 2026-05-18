@@ -32,11 +32,16 @@ extension WindowCaptureEngine {
         height: Int,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         overrideDepth: Int?,
         usesDisplayRefreshCadence: Bool = false
     ) -> Int {
         if let overrideDepth, overrideDepth > 0 {
             return min(max(3, overrideDepth), 8)
+        }
+
+        if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
+            return 3
         }
 
         let safeWidth = max(1, width)
@@ -146,6 +151,7 @@ extension WindowCaptureEngine {
             height: currentHeight,
             frameRate: currentFrameRate,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             overrideDepth: configuration.captureQueueDepth,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )

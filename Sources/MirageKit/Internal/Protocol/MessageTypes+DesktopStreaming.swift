@@ -67,6 +67,9 @@ package struct StartDesktopStreamMessage: Codable {
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
 
+    /// Client-requested host-side capture-to-encode buffering policy.
+    package var hostBufferingPolicy: MirageHostBufferingPolicy?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -121,6 +124,7 @@ package struct StartDesktopStreamMessage: Codable {
         enteredBitrate: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
+        hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -143,6 +147,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.enteredBitrate = enteredBitrate
         self.bitrate = bitrate
         self.latencyMode = latencyMode
+        self.hostBufferingPolicy = hostBufferingPolicy
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -173,6 +178,7 @@ package struct StartDesktopStreamMessage: Codable {
             enteredBitrate: request.enteredBitrate,
             bitrate: request.bitrate,
             latencyMode: request.latencyMode,
+            hostBufferingPolicy: request.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: request.disableResolutionCap,
@@ -187,6 +193,10 @@ package struct StartDesktopStreamMessage: Codable {
         encoderMaxHeight = request.encoderMaxHeight
         upscalingMode = request.upscalingMode
         codec = request.codec
+    }
+
+    package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
+        hostBufferingPolicy ?? .stability
     }
 }
 

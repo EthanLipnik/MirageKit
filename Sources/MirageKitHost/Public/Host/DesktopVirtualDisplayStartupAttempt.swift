@@ -207,8 +207,10 @@ func desktopVirtualDisplayStartupPlan(
         isCachedTarget: false
     )
     let shouldPreferRetinaEquivalent = primary.backingScale.scaleFactor <= 1.5 &&
-        primary.backingScale.pixelResolution.width >= 3840 &&
-        primary.backingScale.pixelResolution.height >= 2160
+        (
+            primary.backingScale.pixelResolution.width > 1920 ||
+                primary.backingScale.pixelResolution.height > 1080
+        )
 
     var attempts: [DesktopVirtualDisplayStartupAttempt] = []
     var seenAttemptKeys = Set<String>()

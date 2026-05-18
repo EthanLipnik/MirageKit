@@ -27,11 +27,11 @@ public extension MirageStreamContentView {
                 #if os(iOS) || os(visionOS)
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
-                    mediaStreamID: session.mediaStreamID,
-                    contentRectOverride: session.atlasRegion?.pixelRect,
-                    onInputEvent: { event in
+                    mediaStreamID: presentationStreamID,
+                    contentRectOverride: presentationContentRectOverride,
+                    onInputEvent: inputEnabled ? { event in
                         sendInputEvent(event)
-                    },
+                    } : nil,
                     onDrawableMetricsChanged: { metrics in
                         scheduleDrawableMetricsChanged(metrics)
                     },
@@ -52,6 +52,7 @@ public extension MirageStreamContentView {
                     onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
                     directTouchInputMode: directTouchInputMode,
                     softwareKeyboardVisible: softwareKeyboardVisible,
+                    inputEnabled: inputEnabled,
                     pencilGestureConfiguration: pencilGestureConfiguration,
                     clientShortcuts: clientReservedShortcuts,
                     onClientShortcut: handleReservedShortcut,
@@ -81,8 +82,8 @@ public extension MirageStreamContentView {
                 #else
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
-                    mediaStreamID: session.mediaStreamID,
-                    contentRectOverride: session.atlasRegion?.pixelRect,
+                    mediaStreamID: presentationStreamID,
+                    contentRectOverride: presentationContentRectOverride,
                     onInputEvent: { event in
                         sendInputEvent(event)
                     },
@@ -105,7 +106,7 @@ public extension MirageStreamContentView {
                     onCursorLockEscapeRequested: onCursorLockEscapeRequested,
                     onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
                     syntheticCursorEnabled: syntheticCursorEnabled,
-                    inputEnabled: macOSInputEnabled,
+                    inputEnabled: inputEnabled && macOSInputEnabled,
                     systemShortcutForwardingEnabled: macSystemShortcutForwardingEnabled,
                     presentationTier: streamPresentationTier,
                     preferredMaximumRenderFPS: preferredMaximumRenderFPS,
@@ -173,11 +174,11 @@ public extension MirageStreamContentView {
                 handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
             }
         }
-        .onChange(of: clientService.appStreamStartAcknowledgementByStreamID[session.streamID]) {
+        .onChange(of: appStreamStartAcknowledgement) {
             Task { @MainActor in
                 await Task.yield()
                 handleAppStreamStartAcknowledgement(
-                    clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+                    appStreamStartAcknowledgement
                 )
             }
         }
@@ -272,6 +273,7 @@ private extension MirageStreamContentView {
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero
         latestDrawableViewSize = .zero
+        latestDrawableScaleFactor = nil
         localKeyboardOcclusionActive = false
         resizeLifecycleState = .active
         if isResizing { isResizing = false }

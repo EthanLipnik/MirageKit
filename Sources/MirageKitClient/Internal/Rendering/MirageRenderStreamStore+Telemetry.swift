@@ -90,6 +90,14 @@ extension MirageRenderStreamStore {
             startIndex: &state.uniqueSubmittedSampleStartIndex
         )
         state.lock.unlock()
+
+        if let mediaStreamID = MirageAppAtlasRenderFanout.shared.mediaStreamID(forLogicalStreamID: streamID) {
+            markSubmitted(
+                sequence: sequence,
+                remotePresentationTime: remotePresentationTime,
+                for: mediaStreamID
+            )
+        }
     }
 
     func markSubmitted(
@@ -145,6 +153,14 @@ extension MirageRenderStreamStore {
             startIndex: &state.uniqueSubmittedSampleStartIndex
         )
         state.lock.unlock()
+
+        if let mediaStreamID = MirageAppAtlasRenderFanout.shared.mediaStreamID(forLogicalStreamID: streamID) {
+            markSubmitted(
+                sequence: cursor.sequence,
+                remotePresentationTime: remotePresentationTime,
+                for: mediaStreamID
+            )
+        }
     }
 
     /// Returns the latest unique submission state for timestamp mapping and recovery logic.

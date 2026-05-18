@@ -65,6 +65,31 @@ struct DesktopResizeCoordinatorTests {
         return condition()
     }
 
+    @Test("Desktop resize target honors explicit drawable scale")
+    func desktopResizeTargetHonorsExplicitDrawableScale() throws {
+        let service = MirageClientService()
+
+        let oneXTarget = try #require(
+            service.desktopResizeTarget(
+                for: CGSize(width: 1200, height: 800),
+                maxDrawableSize: nil,
+                displayScaleFactor: 1.0
+            )
+        )
+        let retinaTarget = try #require(
+            service.desktopResizeTarget(
+                for: CGSize(width: 1200, height: 800),
+                maxDrawableSize: nil,
+                displayScaleFactor: 2.0
+            )
+        )
+
+        #expect(oneXTarget.displayScaleFactor == 1.0)
+        #expect(retinaTarget.displayScaleFactor == 2.0)
+        #expect(oneXTarget.logicalResolution == retinaTarget.logicalResolution)
+        #expect(!oneXTarget.isEffectivelySameStreamGeometry(as: retinaTarget))
+    }
+
     @Test("Accepts only the matching active transition")
     func acceptsOnlyMatchingActiveTransition() {
         let coordinator = DesktopResizeCoordinator()

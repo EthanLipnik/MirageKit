@@ -22,6 +22,13 @@ extension MirageClientService {
         var attempts: [ControlSessionAttempt] = []
         let transportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
 
+        attempts.append(
+            contentsOf: peerToPeerPreferredControlSessionAttempts(
+                for: host,
+                transportOrder: transportOrder
+            )
+        )
+
         for transportKind in transportOrder {
             guard let endpoint = controlSessionEndpoint(
                 for: host,
@@ -57,6 +64,73 @@ extension MirageClientService {
         }
 
         return attempts
+    }
+
+    func peerToPeerPreferredControlSessionAttempts(
+        for host: LoomPeer,
+        transportOrder: [LoomTransportKind]
+    ) -> [ControlSessionAttempt] {
+        guard networkConfig.enablePeerToPeer,
+              isBonjourDiscoveredHost(host),
+              let discoveredInterface = host.discoveredInterfaces.first(where: \.isPeerToPeer),
+              let selectedHost = peerToPeerPreferredBonjourControlHost(for: host) else {
+            return []
+        }
+
+        return transportOrder.compactMap { transportKind in
+            guard let endpoint = peerToPeerPreferredControlSessionEndpoint(
+                for: host,
+                transportKind: transportKind,
+                selectedHost: selectedHost
+            ) else {
+                return nil
+            }
+
+            let candidateKind = controlSessionCandidateKind(for: endpoint, host: host)
+            guard candidateKind != .overlay else { return nil }
+            logControlSessionEndpointSelection(
+                transportKind: transportKind,
+                hostName: host.name,
+                selectedHost: selectedHost,
+                port: endpointPort(for: endpoint),
+                source: "bonjour-awdl"
+            )
+            return ControlSessionAttempt(
+                hostName: host.name,
+                endpoint: endpoint,
+                transportKind: transportKind,
+                candidateKind: candidateKind,
+                requiredInterface: discoveredInterface.networkInterface,
+                requiredInterfaceType: nil,
+                isPeerToPeerPreferred: true
+            )
+        }
+    }
+
+    func peerToPeerPreferredControlSessionEndpoint(
+        for host: LoomPeer,
+        transportKind: LoomTransportKind,
+        selectedHost: NWEndpoint.Host
+    ) -> NWEndpoint? {
+        if let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
+           let port = NWEndpoint.Port(rawValue: transport.port) {
+            return .hostPort(host: selectedHost, port: port)
+        }
+        guard transportKind == .tcp,
+              case let .hostPort(_, port) = host.endpoint else {
+            return nil
+        }
+        return .hostPort(host: selectedHost, port: port)
+    }
+
+    func peerToPeerPreferredBonjourControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        if let preferredBonjourHost = preferredBonjourControlHost(for: host) {
+            return preferredBonjourHost
+        }
+
+        let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peerName.isEmpty else { return nil }
+        return Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first
     }
 
     func controlSessionEndpoint(
@@ -166,6 +240,11 @@ extension MirageClientService {
         let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !peerName.isEmpty else { return (nil, "none") }
         return (Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first, "peer-name-bonjour")
+    }
+
+    func endpointPort(for endpoint: NWEndpoint) -> NWEndpoint.Port {
+        guard case let .hostPort(_, port) = endpoint else { return .any }
+        return port
     }
 
     func preferredBonjourControlHost(for host: LoomPeer) -> NWEndpoint.Host? {

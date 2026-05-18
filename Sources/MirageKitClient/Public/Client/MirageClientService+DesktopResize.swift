@@ -12,7 +12,8 @@ import MirageKit
 extension MirageClientService {
     func desktopResizeTarget(
         for logicalResolution: CGSize,
-        maxDrawableSize: CGSize?
+        maxDrawableSize: CGSize?,
+        displayScaleFactor explicitDisplayScaleFactor: CGFloat? = nil
     )
     -> DesktopResizeCoordinator.RequestGeometry? {
         let logicalResolution = MirageStreamGeometry.normalizedLogicalSize(logicalResolution)
@@ -20,7 +21,7 @@ extension MirageClientService {
 
         let displayScaleFactor = resolvedDisplayScaleFactor(
             for: logicalResolution,
-            explicitScaleFactor: nil
+            explicitScaleFactor: explicitDisplayScaleFactor ?? desktopStreamDisplayScaleFactor
         ) ?? 1.0
         let encoderMaxWidth: Int? = if let maxDrawableSize, maxDrawableSize.width > 0 {
             Int(maxDrawableSize.width.rounded(.down))

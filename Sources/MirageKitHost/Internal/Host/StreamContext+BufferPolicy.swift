@@ -32,12 +32,23 @@ extension StreamContext {
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         useLowLatencyPipeline: Bool
     ) -> StreamBufferPolicy {
+        if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
+            return StreamBufferPolicy(
+                bufferDepth: 1,
+                initialInFlightFrames: 1,
+                minimumInFlightFrames: 1,
+                maxInFlightFramesCap: 1
+            )
+        }
+
         let usesDesktopLowLatency60HzBufferPolicy = usesStandardDesktopLowLatency60HzBufferPolicy(
             streamKind: streamKind,
             frameRate: frameRate,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy
         )
         var bufferDepth = frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
@@ -135,10 +146,12 @@ extension StreamContext {
     static func usesStandardDesktopLowLatency60HzBufferPolicy(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
     )
     -> Bool {
         streamKind == .desktop &&
+            hostBufferingPolicy == .stability &&
             latencyMode == .lowestLatency &&
             frameRate == 60
     }
@@ -147,12 +160,17 @@ extension StreamContext {
     static func lowLatencyPipelineInFlightLimit(
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
     ) -> Int {
+        if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
+            return 1
+        }
         if usesStandardDesktopLowLatency60HzBufferPolicy(
             streamKind: streamKind,
             frameRate: frameRate,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy
         ) {
             return 2
         }

@@ -55,6 +55,7 @@ extension MirageHostService {
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
+            let hostBufferingPolicy = request.resolvedHostBufferingPolicy
             let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
             let adaptiveFloorFPS = targetFrameRate >= 90 ? 60 : targetFrameRate
             MirageLogger.host(
@@ -68,6 +69,7 @@ extension MirageHostService {
                 pathKind: pathKind
             )
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
+            MirageLogger.host("Desktop stream host buffering policy: \(hostBufferingPolicy.rawValue)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
             let displayResolution: CGSize = if request.useHostResolution == true {
@@ -112,6 +114,7 @@ extension MirageHostService {
                 enteredBitrate: request.enteredBitrate,
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
                 lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost ?? false,
                 disableResolutionCap: request.disableResolutionCap ?? false,

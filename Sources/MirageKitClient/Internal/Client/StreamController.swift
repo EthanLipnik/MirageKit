@@ -289,14 +289,25 @@ extension StreamController {
             let timingEntry = self?.decodeFrameTimingCache.remove(streamPresentationTime: presentationTime)
             let handledByUpscaler = false
             if !handledByUpscaler {
-                _ = MirageRenderStreamStore.shared.enqueue(
+                let remotePresentationTime = timingEntry?.remotePresentationTime ?? .invalid
+                let handledByAppAtlasFanout = MirageAppAtlasRenderFanout.shared.enqueueIfNeeded(
                     pixelBuffer: pixelBuffer,
                     contentRect: contentRect,
                     decodeTime: decodeTime,
                     presentationTime: presentationTime,
-                    remotePresentationTime: timingEntry?.remotePresentationTime ?? .invalid,
+                    remotePresentationTime: remotePresentationTime,
                     for: capturedStreamID
                 )
+                if !handledByAppAtlasFanout {
+                    _ = MirageRenderStreamStore.shared.enqueue(
+                        pixelBuffer: pixelBuffer,
+                        contentRect: contentRect,
+                        decodeTime: decodeTime,
+                        presentationTime: presentationTime,
+                        remotePresentationTime: remotePresentationTime,
+                        for: capturedStreamID
+                    )
+                }
             }
 
             let isFirstFrame = metricsTrackerSnapshot.recordDecodedFrame(now: decodeTime)

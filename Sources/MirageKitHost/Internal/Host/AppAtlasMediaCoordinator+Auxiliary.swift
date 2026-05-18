@@ -65,6 +65,7 @@ extension AppAtlasMediaCoordinator {
                     displayWrapper: displayWrapper,
                     encoderConfig: encoderConfig,
                     latencyMode: latencyMode,
+                    hostBufferingPolicy: hostBufferingPolicy,
                     capturePressureProfile: capturePressureProfile,
                     targetFrameRate: targetFrameRate,
                     onFrame: { [weak self] frame in

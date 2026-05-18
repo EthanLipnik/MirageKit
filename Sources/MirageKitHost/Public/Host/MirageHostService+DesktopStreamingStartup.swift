@@ -111,6 +111,7 @@ extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: request.capturePressureProfile,
             latencyMode: request.latencyMode,
+            hostBufferingPolicy: request.hostBufferingPolicy,
             enteredBitrate: request.enteredBitrate,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,

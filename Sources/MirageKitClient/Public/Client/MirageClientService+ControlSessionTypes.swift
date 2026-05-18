@@ -17,10 +17,36 @@ extension MirageClientService {
         let endpoint: NWEndpoint
         let transportKind: LoomTransportKind
         let candidateKind: ControlSessionCandidateKind
+        let requiredInterface: NWInterface?
         let requiredInterfaceType: NWInterface.InterfaceType?
+        let isPeerToPeerPreferred: Bool
 
         var interfaceDescription: String {
-            requiredInterfaceType.map(String.init(describing:)) ?? "any"
+            if let requiredInterface {
+                return requiredInterface.name
+            }
+            if isPeerToPeerPreferred {
+                return "awdl"
+            }
+            return requiredInterfaceType.map(String.init(describing:)) ?? "any"
+        }
+
+        init(
+            hostName: String,
+            endpoint: NWEndpoint,
+            transportKind: LoomTransportKind,
+            candidateKind: ControlSessionCandidateKind,
+            requiredInterface: NWInterface? = nil,
+            requiredInterfaceType: NWInterface.InterfaceType? = nil,
+            isPeerToPeerPreferred: Bool = false
+        ) {
+            self.hostName = hostName
+            self.endpoint = endpoint
+            self.transportKind = transportKind
+            self.candidateKind = candidateKind
+            self.requiredInterface = requiredInterface
+            self.requiredInterfaceType = requiredInterfaceType
+            self.isPeerToPeerPreferred = isPeerToPeerPreferred
         }
     }
 

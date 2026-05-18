@@ -18,7 +18,8 @@ public final class MirageClientSessionStore {
     /// Active stream sessions by session ID.
     @ObservationIgnored
     var streamSessions: [StreamSessionID: MirageStreamSessionState] = [:]
-    private var streamSessionsRevision: UInt64 = 0
+    /// Monotonic token that changes when the session dictionary shape changes.
+    public private(set) var sessionRevision: UInt64 = 0
 
     /// Minimum window sizes per session (observable for resize completion detection).
     public var sessionMinSizes: [StreamSessionID: CGSize] = [:]
@@ -158,6 +159,7 @@ public final class MirageClientSessionStore {
 
         streamSessions[sessionID] = state
         markStreamSessionsChanged()
+        syncAppAtlasRenderTargets(for: mediaStreamID)
         return sessionID
     }
 
@@ -190,9 +192,11 @@ public final class MirageClientSessionStore {
     /// - Parameter sessionID: The session identifier to remove.
     public func removeSession(_ sessionID: StreamSessionID) {
         if focusedSessionID == sessionID { focusedSessionID = nil }
+        var mediaStreamIDToRefresh: StreamID?
         if let session = streamSessions[sessionID] {
             let streamID = session.streamID
             let mediaStreamID = session.mediaStreamID
+            mediaStreamIDToRefresh = mediaStreamID
             postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
             presentationTierByStreamID.removeValue(forKey: streamID)
             pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
@@ -211,6 +215,19 @@ public final class MirageClientSessionStore {
         }
         sessionMinSizes.removeValue(forKey: sessionID)
         sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
+        if let mediaStreamIDToRefresh {
+            syncAppAtlasRenderTargets(for: mediaStreamIDToRefresh)
+        }
+    }
+
+    /// Removes every logical session rendered by a physical media stream.
+    func removeSessions(renderingMediaStreamID mediaStreamID: StreamID) {
+        let sessionIDs = streamSessions.compactMap { sessionID, session in
+            session.mediaStreamID == mediaStreamID || session.streamID == mediaStreamID ? sessionID : nil
+        }
+        for sessionID in sessionIDs {
+            removeSession(sessionID)
+        }
     }
 
     /// Update window metadata for an existing session keyed by stream ID.
@@ -233,6 +250,7 @@ public final class MirageClientSessionStore {
     ) {
         guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
         session.atlasRegion = atlasRegion
+        syncAppAtlasRenderTargets(for: session.mediaStreamID)
     }
 
     /// Apply a physical app-atlas layout to all logical sessions rendering from that media stream.
@@ -243,6 +261,7 @@ public final class MirageClientSessionStore {
         for session in streamSessions.values where session.mediaStreamID == mediaStreamID {
             session.atlasRegion = layout.region(for: session.window.id)
         }
+        syncAppAtlasRenderTargets(for: mediaStreamID)
     }
 
     // MARK: - Minimum Size Updates
@@ -304,11 +323,24 @@ public final class MirageClientSessionStore {
 
     private func observeStreamSessions() {
         // Reading the revision makes the @ObservationIgnored session dictionary observable.
-        _ = streamSessionsRevision
+        _ = sessionRevision
     }
 
     private func markStreamSessionsChanged() {
-        streamSessionsRevision &+= 1
+        sessionRevision &+= 1
+    }
+
+    private func syncAppAtlasRenderTargets(for mediaStreamID: StreamID) {
+        let targets = streamSessions.values.compactMap { session -> MirageAppAtlasRenderTarget? in
+            guard session.mediaStreamID == mediaStreamID,
+                  session.streamID != mediaStreamID,
+                  let atlasRegion = session.atlasRegion,
+                  atlasRegion.isVisible else {
+                return nil
+            }
+            return MirageAppAtlasRenderTarget(streamID: session.streamID, region: atlasRegion)
+        }
+        MirageAppAtlasRenderFanout.shared.setTargets(targets, for: mediaStreamID)
     }
 }
 

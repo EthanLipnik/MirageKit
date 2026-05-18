@@ -300,6 +300,8 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
+    /// Host-side capture-to-encode buffering preference.
+    let hostBufferingPolicy: MirageHostBufferingPolicy
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -341,6 +343,7 @@ actor StreamContext {
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -360,6 +363,7 @@ actor StreamContext {
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
         self.latencyMode = latencyMode
+        self.hostBufferingPolicy = hostBufferingPolicy
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
@@ -390,6 +394,7 @@ actor StreamContext {
             streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             useLowLatencyPipeline: useLowLatencyPipeline
         )
         maxInFlightFramesCap = bufferPolicy.maxInFlightFramesCap

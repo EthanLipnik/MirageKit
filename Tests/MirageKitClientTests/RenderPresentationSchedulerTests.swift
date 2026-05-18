@@ -42,9 +42,15 @@ private final class SimulatedPendingFrames: @unchecked Sendable {
 @MainActor
 @Suite("Render Presentation Scheduler")
 struct RenderPresentationSchedulerTests {
+    private func configureScheduledPresentationTiming(for streamID: StreamID) {
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+    }
+
     @Test("Active live frame arrival coalesces until display clock starts")
     func activeLiveFrameArrivalCoalescesUntilDisplayClockStarts() {
         let streamID: StreamID = 901
+        configureScheduledPresentationTiming(for: streamID)
         var submitCount = 0
         var scheduledCallbacks: [@Sendable () -> Void] = []
 
@@ -113,6 +119,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Active live display clock suppresses arrival fallback after a fresh tick")
     func activeLiveDisplayClockSuppressesArrivalFallbackAfterFreshTick() {
         let streamID: StreamID = 906
+        configureScheduledPresentationTiming(for: streamID)
         var submitReferences: [CFTimeInterval] = []
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 10
@@ -149,6 +156,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Active live frame arrival suppresses immediate fallback but recovers after a missed-tick interval")
     func activeLiveFrameArrivalSuppressesImmediateFallbackButRecoversAfterMissedTickInterval() {
         let streamID: StreamID = 909
+        configureScheduledPresentationTiming(for: streamID)
         var submitReferences: [CFTimeInterval] = []
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 30
@@ -203,11 +211,11 @@ struct RenderPresentationSchedulerTests {
     @Test("Active live frame arrival catches up after a no-frame display tick")
     func activeLiveFrameArrivalCatchesUpAfterNoFrameDisplayTick() {
         let streamID: StreamID = 915
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 1
 
-        MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
         let scheduler = MirageRenderPresentationScheduler(
@@ -245,6 +253,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Active live frame arrival drains backlog but preserves a lone pending frame")
     func activeLiveFrameArrivalDrainsBacklogButPreservesLonePendingFrame() {
         let streamID: StreamID = 916
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 1
@@ -283,6 +292,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Active live frame arrival falls back before the first active display tick")
     func activeLiveFrameArrivalFallsBackBeforeFirstActiveDisplayTick() {
         let streamID: StreamID = 908
+        configureScheduledPresentationTiming(for: streamID)
         var submitReferences: [CFTimeInterval] = []
         var scheduledCallbacks: [@Sendable () -> Void] = []
         let wallTime: CFTimeInterval = 20
@@ -404,6 +414,7 @@ struct RenderPresentationSchedulerTests {
     @Test("60Hz tick-led cadence presents each decoded frame with phase jitter")
     func sixtyHertzTickLedCadencePresentsEachDecodedFrameWithPhaseJitter() {
         let streamID: StreamID = 913
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
 
@@ -432,6 +443,7 @@ struct RenderPresentationSchedulerTests {
     @Test("60Hz tick-led cadence tracks a 56fps decoded stream")
     func sixtyHertzTickLedCadenceTracksFiftySixFPSDecodedStream() {
         let streamID: StreamID = 914
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
 
@@ -462,6 +474,7 @@ struct RenderPresentationSchedulerTests {
     @Test("60Hz cadence with late 56fps arrivals does not under-submit")
     func sixtyHertzCadenceWithLateFiftySixFPSArrivalsDoesNotUnderSubmit() {
         let streamID: StreamID = 917
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 0
@@ -509,6 +522,7 @@ struct RenderPresentationSchedulerTests {
     @Test("60Hz cadence with late 60fps arrivals catches up after no-frame ticks")
     func sixtyHertzCadenceWithLateSixtyFPSArrivalsCatchesUpAfterNoFrameTicks() {
         let streamID: StreamID = 918
+        configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 0

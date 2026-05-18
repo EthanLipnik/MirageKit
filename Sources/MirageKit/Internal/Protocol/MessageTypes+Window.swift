@@ -82,6 +82,9 @@ package struct StartStreamMessage: Codable {
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
 
+    /// Client-requested host-side capture-to-encode buffering policy.
+    package var hostBufferingPolicy: MirageHostBufferingPolicy?
+
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
@@ -127,6 +130,7 @@ package struct StartStreamMessage: Codable {
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
+        hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -145,6 +149,7 @@ package struct StartStreamMessage: Codable {
         self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
+        self.hostBufferingPolicy = hostBufferingPolicy
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -152,6 +157,10 @@ package struct StartStreamMessage: Codable {
         self.audioConfiguration = audioConfiguration
         self.mediaMaxPacketSize = mediaMaxPacketSize
         self.codec = codec
+    }
+
+    package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
+        hostBufferingPolicy ?? .stability
     }
 }
 

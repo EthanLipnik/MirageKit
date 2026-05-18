@@ -36,6 +36,7 @@ public extension MirageHostService {
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = false,
         disableResolutionCap: Bool = false,
@@ -146,6 +147,7 @@ public extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
@@ -153,6 +155,7 @@ public extension MirageHostService {
         logWindowStreamOptions(
             streamID: streamID,
             latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
             disableResolutionCap: disableResolutionCap,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost
@@ -330,6 +333,7 @@ public extension MirageHostService {
     private func logWindowStreamOptions(
         streamID: StreamID,
         latencyMode: MirageStreamLatencyMode,
+        hostBufferingPolicy: MirageHostBufferingPolicy,
         disableResolutionCap: Bool,
         allowRuntimeQualityAdjustment: Bool?,
         lowLatencyHighResolutionCompressionBoost: Bool
@@ -338,6 +342,7 @@ public extension MirageHostService {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
         }
         MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
+        MirageLogger.host("Host buffering policy for stream \(streamID): \(hostBufferingPolicy.rawValue)")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }

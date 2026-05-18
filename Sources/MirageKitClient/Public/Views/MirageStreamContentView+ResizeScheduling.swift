@@ -46,6 +46,9 @@ extension MirageStreamContentView {
         let viewSize = metrics.viewSize
         let resolvedRawPixelSize = metrics.pixelSize
         latestDrawableViewSize = viewSize
+        if metrics.scaleFactor > 0 {
+            latestDrawableScaleFactor = metrics.scaleFactor
+        }
 
         #if os(iOS) || os(visionOS)
         if resolvedRawPixelSize.width > 0, resolvedRawPixelSize.height > 0 {
@@ -185,7 +188,8 @@ extension MirageStreamContentView {
             #endif
             let target = clientService.desktopResizeTarget(
                 for: preferredDisplaySize,
-                maxDrawableSize: maxDrawableSize
+                maxDrawableSize: maxDrawableSize,
+                displayScaleFactor: latestDrawableScaleFactor
             )
             let dispatchPolicy = desktopResizeDispatchPolicy(for: target)
             clientService.queueDesktopResize(
@@ -266,7 +270,7 @@ extension MirageStreamContentView {
     }
 
     func beginAppResizeAwaitingAck() {
-        appResizeBaselineAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+        appResizeBaselineAcknowledgement = appStreamStartAcknowledgement
         awaitingAppResizeAck = true
         isResizing = true
         appResizeAckTimeoutTask?.cancel()

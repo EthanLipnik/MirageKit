@@ -150,6 +150,7 @@ extension MirageClientService {
                 to: attempt.endpoint,
                 using: attempt.transportKind,
                 hello: hello,
+                requiredInterface: attempt.requiredInterface,
                 requiredInterfaceType: attempt.requiredInterfaceType,
                 onTrustPending: { @MainActor [weak self] in
                     self?.authorizationState = .verifyingTrust
@@ -268,6 +269,9 @@ extension MirageClientService {
     }
 
     func controlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isPeerToPeerPreferred {
+            return .seconds(2)
+        }
         if attempt.transportKind == .udp {
             return .seconds(5)
         }
@@ -275,6 +279,9 @@ extension MirageClientService {
     }
 
     func absoluteControlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isPeerToPeerPreferred {
+            return .seconds(6)
+        }
         if attempt.transportKind == .udp {
             return .seconds(20)
         }

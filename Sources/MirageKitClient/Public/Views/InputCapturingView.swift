@@ -451,6 +451,21 @@ public class InputCapturingView: UIView {
     var pencilInteraction: UIPencilInteraction?
     #endif
 
+    /// Whether this view may own local input focus and forward input to the host.
+    public var inputEnabled: Bool = true {
+        didSet {
+            guard inputEnabled != oldValue else { return }
+            if inputEnabled {
+                requestResponderRecovery(.focusChanged)
+            } else {
+                clearSoftwareKeyboardState()
+                if isFirstResponder {
+                    _ = resignFirstResponder()
+                }
+            }
+        }
+    }
+
     /// Software keyboard state
     public var softwareKeyboardVisible: Bool = false {
         didSet {

@@ -8,7 +8,9 @@
 #if os(macOS)
 @testable import MirageKitClient
 import CoreGraphics
+import CoreMedia
 import CoreVideo
+import MirageKit
 import Testing
 
 @Suite("Pixel Buffer Cropper")
@@ -54,6 +56,83 @@ struct MiragePixelBufferCropperTests {
 
         #expect(sameBuffer(result.pixelBuffer, source))
         #expect(result.contentRect == CGRect(x: 0, y: 0, width: 6, height: 4))
+    }
+
+    @Test("App atlas fanout enqueues cropped frames for logical streams")
+    func appAtlasFanoutEnqueuesCroppedFramesForLogicalStreams() throws {
+        let mediaStreamID: StreamID = 6100
+        let firstLogicalStreamID: StreamID = 6101
+        let secondLogicalStreamID: StreamID = 6102
+        MirageRenderStreamStore.shared.clear(for: mediaStreamID)
+        MirageRenderStreamStore.shared.clear(for: firstLogicalStreamID)
+        MirageRenderStreamStore.shared.clear(for: secondLogicalStreamID)
+        defer {
+            MirageAppAtlasRenderFanout.shared.setTargets([], for: mediaStreamID)
+            MirageRenderStreamStore.shared.clear(for: mediaStreamID)
+            MirageRenderStreamStore.shared.clear(for: firstLogicalStreamID)
+            MirageRenderStreamStore.shared.clear(for: secondLogicalStreamID)
+        }
+
+        MirageAppAtlasRenderFanout.shared.setTargets(
+            [
+                MirageAppAtlasRenderTarget(
+                    streamID: firstLogicalStreamID,
+                    region: MirageAppAtlasRegion(
+                        windowID: 610101,
+                        x: 0,
+                        y: 0,
+                        width: 2,
+                        height: 2
+                    )
+                ),
+                MirageAppAtlasRenderTarget(
+                    streamID: secondLogicalStreamID,
+                    region: MirageAppAtlasRegion(
+                        windowID: 610102,
+                        x: 2,
+                        y: 0,
+                        width: 2,
+                        height: 2
+                    )
+                ),
+            ],
+            for: mediaStreamID
+        )
+
+        let source = try makeBGRAAtlas(width: 4, height: 2)
+        let didFanOut = MirageAppAtlasRenderFanout.shared.enqueueIfNeeded(
+            pixelBuffer: source,
+            contentRect: CGRect(x: 0, y: 0, width: 4, height: 2),
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            remotePresentationTime: .invalid,
+            for: mediaStreamID
+        )
+
+        #expect(didFanOut)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: mediaStreamID) == 0)
+
+        let firstFrame = try #require(
+            MirageRenderStreamStore.shared.frameForPresentation(
+                for: firstLogicalStreamID,
+                after: .zero
+            )
+        )
+        let secondFrame = try #require(
+            MirageRenderStreamStore.shared.frameForPresentation(
+                for: secondLogicalStreamID,
+                after: .zero
+            )
+        )
+
+        #expect(CVPixelBufferGetWidth(firstFrame.pixelBuffer) == 2)
+        #expect(CVPixelBufferGetHeight(firstFrame.pixelBuffer) == 2)
+        #expect(CVPixelBufferGetWidth(secondFrame.pixelBuffer) == 2)
+        #expect(CVPixelBufferGetHeight(secondFrame.pixelBuffer) == 2)
+        #expect(pixelBytes(in: firstFrame.pixelBuffer, x: 0, y: 0) == pixelBytes(in: source, x: 0, y: 0))
+        #expect(pixelBytes(in: firstFrame.pixelBuffer, x: 1, y: 1) == pixelBytes(in: source, x: 1, y: 1))
+        #expect(pixelBytes(in: secondFrame.pixelBuffer, x: 0, y: 0) == pixelBytes(in: source, x: 2, y: 0))
+        #expect(pixelBytes(in: secondFrame.pixelBuffer, x: 1, y: 1) == pixelBytes(in: source, x: 3, y: 1))
     }
 
     private func makeBGRAAtlas(width: Int, height: Int) throws -> CVPixelBuffer {

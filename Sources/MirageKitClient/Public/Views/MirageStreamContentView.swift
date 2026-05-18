@@ -65,6 +65,8 @@ public struct MirageStreamContentView: View {
     public let onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
     /// Handler invoked when software keyboard visibility changes.
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
+    /// Whether the platform stream view should own input focus and forward local input.
+    public let inputEnabled: Bool
     /// Direct-touch translation mode for touch-capable clients.
     public let directTouchInputMode: MirageDirectTouchInputMode
     /// Whether the software keyboard should currently be visible.
@@ -126,6 +128,7 @@ public struct MirageStreamContentView: View {
     @State var appResizeAckTimeoutTask: Task<Void, Never>?
     @State var latestContainerDisplaySize: CGSize = .zero
     @State var latestDrawableViewSize: CGSize = .zero
+    @State var latestDrawableScaleFactor: CGFloat?
     @State var localKeyboardOcclusionActive = false
     #if canImport(UIKit)
     @State var suppressNextOrderedPasteKeyUp = false
@@ -170,6 +173,7 @@ public struct MirageStreamContentView: View {
         onActionTriggered: ((MirageAction) -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
+        inputEnabled: Bool = true,
         directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
         softwareKeyboardVisible: Bool = false,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
@@ -205,6 +209,7 @@ public struct MirageStreamContentView: View {
         self.onActionTriggered = onActionTriggered
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
+        self.inputEnabled = inputEnabled
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilGestureConfiguration = pencilGestureConfiguration
@@ -243,6 +248,19 @@ extension MirageStreamContentView {
             (desktopCursorLockEnabled && !desktopCursorPresentation.capturesHostCursor)
     }
 
+    /// Render-store stream ID used by the platform presenter.
+    ///
+    /// App-atlas windows are decoded from a shared media stream, then fanned out
+    /// into per-logical render-store streams before presentation.
+    var presentationStreamID: StreamID {
+        session.streamID == session.mediaStreamID ? session.mediaStreamID : session.streamID
+    }
+
+    /// App-atlas cropping is handled before enqueueing frames into each logical render stream.
+    var presentationContentRectOverride: CGRect? {
+        nil
+    }
+
     /// Whether the platform cursor should be hidden while the host cursor or synthetic cursor is authoritative.
     var desktopLocalCursorHidden: Bool {
         isDesktopStream && desktopCursorPresentation.hidesLocalCursor
@@ -254,17 +272,21 @@ extension MirageStreamContentView {
     }
 
     /// Host virtual display dimensions in points for 1:1 cursor delta normalization.
-    /// Derived from the stream pixel resolution divided by the client's backing scale
-    /// (which matches the host's virtual display backing scale since the client
-    /// requested the display at that scale).
+    /// Prefer the host-confirmed presentation size so Retina-off 1x streams do
+    /// not accidentally use the local Retina backing scale.
     var hostDisplayPointSize: CGSize? {
         #if os(macOS)
+        if let presentationSize = clientService.desktopStreamPresentationResolution,
+           presentationSize.width > 0,
+           presentationSize.height > 0 {
+            return presentationSize
+        }
         guard let resolution = clientService.desktopStreamResolution,
               resolution.width > 0, resolution.height > 0 else { return nil }
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let scale = clientService.desktopStreamDisplayScaleFactor ?? latestDrawableScaleFactor ?? 1.0
         return CGSize(
-            width: resolution.width / scale,
-            height: resolution.height / scale
+            width: resolution.width / max(1.0, scale),
+            height: resolution.height / max(1.0, scale)
         )
         #else
         return nil
@@ -316,8 +338,7 @@ extension MirageStreamContentView {
             return atlasRegion.size
         }
 
-        if let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID] ??
-            clientService.appStreamStartAcknowledgementByStreamID[session.mediaStreamID],
+        if let acknowledgement = appStreamStartAcknowledgement,
             acknowledgement.width > 0,
             acknowledgement.height > 0 {
             return CGSize(width: acknowledgement.width, height: acknowledgement.height)
@@ -419,6 +440,11 @@ extension MirageStreamContentView {
 // MARK: - Resize Acknowledgements
 
 extension MirageStreamContentView {
+    var appStreamStartAcknowledgement: MirageClientService.StreamStartAcknowledgement? {
+        clientService.appStreamStartAcknowledgementByStreamID[session.streamID] ??
+            clientService.appStreamStartAcknowledgementByStreamID[session.mediaStreamID]
+    }
+
     func handleAppStreamStartAcknowledgement(
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
@@ -437,7 +463,7 @@ extension MirageStreamContentView {
         guard !isDesktopStream else { return }
         guard awaitingAppResizeAck else { return }
         guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
-        let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+        let acknowledgement = appStreamStartAcknowledgement
         guard isMeaningfulAppResizeAcknowledgement(
             acknowledgement,
             comparedTo: appResizeBaselineAcknowledgement

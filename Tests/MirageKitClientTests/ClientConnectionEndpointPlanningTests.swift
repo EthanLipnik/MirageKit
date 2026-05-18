@@ -83,6 +83,7 @@ struct ClientConnectionEndpointPlanningTests {
 
         #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
         #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
+        #expect(attempts.allSatisfy { $0.requiredInterface == nil })
         #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
     }
 

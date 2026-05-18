@@ -83,7 +83,12 @@ extension MirageClientService {
             return
         }
 
-        if activeStreams.contains(where: { $0.id == streamID }) || controllersByStream[streamID] != nil {
+        let appStartupFailure = appAtlasStartupFailure(for: streamID, message: error.localizedDescription)
+        let hasOtherInteractiveStream = hasOtherInteractiveStream(afterStopping: streamID)
+
+        if activeStreams.contains(where: { $0.id == streamID }) ||
+            sessionStore.sessionByMediaStreamID(streamID) != nil ||
+            controllersByStream[streamID] != nil {
             let request = StopStreamMessage(
                 streamID: streamID,
                 minimizeWindow: false,
@@ -93,7 +98,50 @@ extension MirageClientService {
             await forceStopWindowStreamLocally(streamID: streamID)
         }
 
+        if let appStartupFailure {
+            onAppStreamStartupFailed?(appStartupFailure)
+            return
+        }
+
+        if hasOtherInteractiveStream {
+            MirageLogger.client(
+                "Suppressing session-level terminal startup failure for stopped non-desktop stream \(streamID); another stream remains active or starting"
+            )
+            return
+        }
+
         delegate?.didEncounterError(error)
+    }
+}
+
+private extension MirageClientService {
+    func appAtlasStartupFailure(
+        for streamID: StreamID,
+        message: String
+    ) -> AppStreamStartupFailure? {
+        let sessions = sessionStore.activeSessions.filter { $0.mediaStreamID == streamID }
+        guard !sessions.isEmpty else { return nil }
+        let bundleIdentifier = sessions.compactMap { $0.window.application?.bundleIdentifier }.first
+        return AppStreamStartupFailure(
+            bundleIdentifier: bundleIdentifier,
+            message: message
+        )
+    }
+
+    func hasOtherInteractiveStream(afterStopping streamID: StreamID) -> Bool {
+        if let desktopStreamID, desktopStreamID != streamID {
+            return true
+        }
+        if desktopStreamMode != nil, desktopStreamID != streamID {
+            return true
+        }
+        if activeStreams.contains(where: { $0.id != streamID && $0.mediaStreamID != streamID }) {
+            return true
+        }
+        if sessionStore.activeSessions.contains(where: { $0.streamID != streamID && $0.mediaStreamID != streamID }) {
+            return true
+        }
+        return controllersByStream.keys.contains { $0 != streamID }
     }
 }
 
@@ -167,6 +215,7 @@ public extension MirageClientService {
     private func forceStopWindowStreamLocally(streamID: StreamID) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
+        sessionStore.removeSessions(renderingMediaStreamID: streamID)
         pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
         renderLatencyModeByStream.removeValue(forKey: streamID)
 
@@ -232,6 +281,7 @@ public extension MirageClientService {
             desktopSessionID = nil
             desktopStreamResolution = nil
             desktopStreamPresentationResolution = nil
+            desktopStreamDisplayScaleFactor = nil
             desktopCaptureSource = .virtualDisplay
             desktopStreamAllowsClientResize = true
             desktopStreamMode = nil

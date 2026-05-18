@@ -168,6 +168,7 @@ extension MirageHostService {
         let bitrate: Int?
         let codec: MirageVideoCodec?
         let latencyMode: MirageStreamLatencyMode
+        let hostBufferingPolicy: MirageHostBufferingPolicy
         let allowRuntimeQualityAdjustment: Bool?
         let upscalingMode: MirageUpscalingMode?
         let targetFrameRate: Int?
@@ -185,6 +186,7 @@ extension MirageHostService {
         let disableResolutionCap: Bool
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
         let latencyMode: MirageStreamLatencyMode
+        let hostBufferingPolicy: MirageHostBufferingPolicy
         let enteredBitrate: Int?
         let bitrateAdaptationCeiling: Int?
         let encoderMaxWidth: Int?

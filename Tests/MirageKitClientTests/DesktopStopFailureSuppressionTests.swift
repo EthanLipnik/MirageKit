@@ -139,6 +139,73 @@ struct DesktopStopFailureSuppressionTests {
         #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID))
         #expect(!service.hasDesktopStreamRestartBudget(streamID: streamID + 1))
     }
+
+    @MainActor
+    @Test("Non-desktop startup failure does not disconnect while desktop is starting")
+    func nonDesktopStartupFailureDoesNotDisconnectWhileDesktopIsStarting() async {
+        let service = MirageClientService(deviceName: "Test Device")
+        let delegate = DelegateSpy()
+        let failedStreamID: StreamID = 80
+        let window = testWindow(bundleIdentifier: "com.example.Terminal")
+
+        service.delegate = delegate
+        service.activeStreams = [
+            ClientStreamSession(
+                id: failedStreamID,
+                window: window,
+                mediaStreamID: failedStreamID
+            ),
+        ]
+        service.desktopStreamMode = .unified
+
+        let failure = StreamController.TerminalStartupFailure(
+            reason: .startupKeyframeTimeout,
+            hardRecoveryAttempts: 1,
+            waitReason: "startup-hard-recovery"
+        )
+
+        await service.handleTerminalStartupFailure(failure, for: failedStreamID)
+
+        #expect(delegate.errorCount == 0)
+        #expect(service.activeStreams.isEmpty)
+        #expect(service.desktopStreamMode == .unified)
+    }
+
+    @MainActor
+    @Test("App atlas startup failure reports app failure without delegate disconnect")
+    func appAtlasStartupFailureReportsAppFailureWithoutDelegateDisconnect() async {
+        let service = MirageClientService(deviceName: "Test Device")
+        let delegate = DelegateSpy()
+        let mediaStreamID: StreamID = 81
+        let logicalStreamID: StreamID = 810
+        let bundleIdentifier = "com.example.Terminal"
+        let window = testWindow(bundleIdentifier: bundleIdentifier)
+        var reportedFailure: MirageClientService.AppStreamStartupFailure?
+
+        service.delegate = delegate
+        service.onAppStreamStartupFailed = { failure in
+            reportedFailure = failure
+        }
+        _ = service.sessionStore.createSession(
+            streamID: logicalStreamID,
+            mediaStreamID: mediaStreamID,
+            window: window,
+            hostName: "Host",
+            minSize: nil
+        )
+
+        let failure = StreamController.TerminalStartupFailure(
+            reason: .startupKeyframeTimeout,
+            hardRecoveryAttempts: 1,
+            waitReason: "startup-hard-recovery"
+        )
+
+        await service.handleTerminalStartupFailure(failure, for: mediaStreamID)
+
+        #expect(delegate.errorCount == 0)
+        #expect(reportedFailure?.bundleIdentifier == bundleIdentifier)
+        #expect(service.sessionStore.activeSessions.isEmpty)
+    }
 }
 
 private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
@@ -154,5 +221,20 @@ private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
 
     @MainActor
     func hostSessionStateChanged(_: LoomSessionAvailability) {}
+}
+
+private func testWindow(bundleIdentifier: String) -> MirageWindow {
+    MirageWindow(
+        id: 1,
+        title: "Terminal",
+        application: MirageApplication(
+            id: 1,
+            bundleIdentifier: bundleIdentifier,
+            name: "Terminal"
+        ),
+        frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+        isOnScreen: true,
+        windowLayer: 0
+    )
 }
 #endif

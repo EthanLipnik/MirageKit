@@ -122,6 +122,10 @@ extension MirageClientService {
             desktopStreamResolution = displaySize
             let presentationSize = started.presentationSize
             desktopStreamPresentationResolution = presentationSize
+            desktopStreamDisplayScaleFactor = inferredDisplayScaleFactor(
+                displayPixelSize: displaySize,
+                presentationSize: presentationSize
+            )
             desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedStreamGeometry(
                 logicalResolution: presentationSize,
                 displayPixelSize: displaySize
@@ -182,6 +186,7 @@ extension MirageClientService {
                 )
             }
             self.fastPathState.addActiveStreamID(streamID)
+            self.processBufferedEarlyVideoPacketIfNeeded(streamID: streamID)
 
             if let startupAttemptID {
                 await self.sendStreamReadyAck(
@@ -284,6 +289,7 @@ extension MirageClientService {
             desktopSessionID = nil
             desktopStreamResolution = nil
             desktopStreamPresentationResolution = nil
+            desktopStreamDisplayScaleFactor = nil
             desktopCaptureSource = .virtualDisplay
             desktopStreamAllowsClientResize = true
             desktopStreamMode = nil
