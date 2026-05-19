@@ -291,6 +291,31 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .backingOff)
     }
 
+    @Test("Client fragment loss triggers backoff without host send pressure")
+    func clientFragmentLossTriggersBackoffWithoutHostSendPressure() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientReassemblerIncompleteFrameTimeouts = 3
+        snapshot.clientReassemblerMissingFragmentTimeouts = 160
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 80_000_000,
+            now: 0
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 80_000_000,
+            now: 2
+        )
+
+        #expect(firstAction == .none)
+        #expect(secondAction == .backoff(targetBitrateBps: 40_800_000))
+        #expect(controller.lastTransportPressureReason == "client fragment loss frames=3 missing=160")
+    }
+
     @Test("Delivery collapse without transport evidence does not back off")
     func deliveryCollapseWithoutTransportEvidenceDoesNotBackOff() {
         var controller = MirageReceiverHealthController()

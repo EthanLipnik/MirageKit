@@ -50,4 +50,8 @@ extension MirageReceiverHealthController {
     static let packetPacerSevereMs = 2.0
     static let transportDropStressCount: UInt64 = 4
     static let transportDropSevereCount: UInt64 = 24
+    static let clientFragmentLossFrameStressCount: UInt64 = 2
+    static let clientFragmentLossFrameSevereCount: UInt64 = 8
+    static let clientMissingFragmentStressCount: UInt64 = 32
+    static let clientMissingFragmentSevereCount: UInt64 = 128
 }

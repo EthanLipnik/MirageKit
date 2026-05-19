@@ -38,6 +38,10 @@ struct ReceiverTransportPressureContext {
     let transportDropCount: UInt64
     let dropStress: Bool
     let dropSevere: Bool
+    let clientIncompleteFrameTimeouts: UInt64
+    let clientMissingFragmentTimeouts: UInt64
+    let clientFragmentLossStress: Bool
+    let clientFragmentLossSevere: Bool
 }
 
 extension MirageReceiverHealthController {
@@ -65,6 +69,8 @@ extension MirageReceiverHealthController {
         let remoteTransportDropCount = snapshot.hostStalePacketDrops ?? 0
         let transportDropCount = remoteTransportDropCount +
             (snapshot.hostSenderLocalDeadlineDrops ?? 0)
+        let clientIncompleteFrameTimeouts = snapshot.clientReassemblerIncompleteFrameTimeouts
+        let clientMissingFragmentTimeouts = snapshot.clientReassemblerMissingFragmentTimeouts
 
         let queueStress = queueBytes >= Self.sendQueueStressBytes
         let queueSevere = queueBytes >= Self.sendQueueSevereBytes
@@ -76,6 +82,10 @@ extension MirageReceiverHealthController {
         let pacerSevere = packetPacerAverageSleepMs >= Self.packetPacerSevereMs
         let dropStress = transportDropCount >= Self.transportDropStressCount
         let dropSevere = transportDropCount >= Self.transportDropSevereCount
+        let clientFragmentLossStress = clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameStressCount ||
+            clientMissingFragmentTimeouts >= Self.clientMissingFragmentStressCount
+        let clientFragmentLossSevere = clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameSevereCount ||
+            clientMissingFragmentTimeouts >= Self.clientMissingFragmentSevereCount
 
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
         let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
@@ -83,10 +93,12 @@ extension MirageReceiverHealthController {
         let severeTransportPressure = queueSevere ||
             sendDelaySevere ||
             dropSevere ||
+            clientFragmentLossSevere ||
             pairedPacerSevere
         let sustainedTransportPressure = queueStress ||
             sendDelaySevere ||
             dropStress ||
+            clientFragmentLossStress ||
             pairedPacerStress
         let transportPressureReason = Self.transportPressureReason(
             ReceiverTransportPressureContext(
@@ -102,12 +114,17 @@ extension MirageReceiverHealthController {
                 pairedPacerSevere: pairedPacerSevere,
                 transportDropCount: transportDropCount,
                 dropStress: dropStress,
-                dropSevere: dropSevere
+                dropSevere: dropSevere,
+                clientIncompleteFrameTimeouts: clientIncompleteFrameTimeouts,
+                clientMissingFragmentTimeouts: clientMissingFragmentTimeouts,
+                clientFragmentLossStress: clientFragmentLossStress,
+                clientFragmentLossSevere: clientFragmentLossSevere
             )
         )
 
         let suppressesProbePromotion = queueStress ||
             transportDropCount > 0 ||
+            clientFragmentLossStress ||
             sendDelayStress ||
             pairedPacerStress ||
             keyframeAssemblyInProgress
@@ -115,7 +132,8 @@ extension MirageReceiverHealthController {
         return ReceiverHealthSample(
             hasSevereTransportPressure: severeTransportPressure,
             hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
-            hasProvenTransportLoss: remoteTransportDropCount >= Self.transportDropStressCount,
+            hasProvenTransportLoss: remoteTransportDropCount >= Self.transportDropStressCount ||
+                clientFragmentLossStress,
             isTransportClean: !severeTransportPressure && !sustainedTransportPressure && !keyframeAssemblyInProgress,
             allowsProbePromotion: !suppressesProbePromotion,
             suppressesProbePromotion: suppressesProbePromotion,
@@ -129,6 +147,10 @@ extension MirageReceiverHealthController {
         }
         if context.dropSevere || context.dropStress {
             return "host packet drops \(context.transportDropCount)"
+        }
+        if context.clientFragmentLossSevere || context.clientFragmentLossStress {
+            return "client fragment loss frames=\(context.clientIncompleteFrameTimeouts) " +
+                "missing=\(context.clientMissingFragmentTimeouts)"
         }
         if context.sendDelaySevere || context.sendDelayStress {
             let startText = Self.formatMilliseconds(context.sendStartDelayAverageMs)
