@@ -15,6 +15,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func mouseDown(with event: NSEvent) {
         guard isInputProcessingActive else { return }
+        claimKeyboardFocusIfPossible()
         if requestCursorLockRecaptureIfNeeded() { return }
         let location: CGPoint
         if cursorLockEnabled {
@@ -132,6 +133,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func rightMouseDown(with event: NSEvent) {
         guard isInputProcessingActive else { return }
+        claimKeyboardFocusIfPossible()
         if requestCursorLockRecaptureIfNeeded() { return }
         let location: CGPoint
         if cursorLockEnabled {
@@ -203,6 +205,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func otherMouseDown(with event: NSEvent) {
         guard isInputProcessingActive else { return }
+        claimKeyboardFocusIfPossible()
         if requestCursorLockRecaptureIfNeeded() { return }
         let location: CGPoint
         if cursorLockEnabled {
