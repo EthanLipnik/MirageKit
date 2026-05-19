@@ -17,7 +17,6 @@ import AppKit
 import UIKit
 #endif
 
-#if canImport(UIKit)
 /// Snapshot of the client pasteboard state used for shared-clipboard ordering.
 private struct ClientClipboardSnapshot: Sendable {
     /// Pasteboard change count captured with the item.
@@ -26,7 +25,6 @@ private struct ClientClipboardSnapshot: Sendable {
     /// Serialized clipboard item derived from the current pasteboard contents.
     let item: MirageSharedClipboardItem
 }
-#endif
 
 /// Reads and writes platform pasteboards on an actor so clipboard operations stay serialized.
 private actor ClientClipboardSnapshotReader {
@@ -35,16 +33,27 @@ private actor ClientClipboardSnapshotReader {
 
     private let fileManager = FileManager.default
 
-    #if canImport(UIKit)
-    /// Current UIKit pasteboard change count plus a serialized Mirage clipboard item.
+    /// Current platform pasteboard change count plus a serialized Mirage clipboard item.
     var snapshot: ClientClipboardSnapshot {
+        #if os(macOS)
+        let pasteboard = NSPasteboard.general
+        return ClientClipboardSnapshot(
+            changeCount: pasteboard.changeCount,
+            item: Self.item(from: pasteboard)
+        )
+        #elseif canImport(UIKit)
         let pasteboard = UIPasteboard.general
         return ClientClipboardSnapshot(
             changeCount: pasteboard.changeCount,
             item: Self.item(from: pasteboard)
         )
+        #else
+        return ClientClipboardSnapshot(
+            changeCount: 0,
+            item: .unsupported()
+        )
+        #endif
     }
-    #endif
 
     /// Current platform pasteboard change count.
     var changeCount: Int {
@@ -130,7 +139,32 @@ private actor ClientClipboardSnapshotReader {
         }
     }
 
-    #if canImport(UIKit)
+    #if os(macOS)
+    /// Converts the current AppKit pasteboard contents into a Mirage clipboard item.
+    private static func item(from pasteboard: NSPasteboard) -> MirageSharedClipboardItem {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [NSURL],
+           let item = mirageSharedClipboardFileItem(from: urls.map { $0 as URL }) {
+            return item
+        }
+
+        if let image = NSImage(pasteboard: pasteboard),
+           let payload = image.pngData {
+            return mirageSharedClipboardItem(kind: .image, contentType: "public.png", filename: nil, payload: payload)
+        }
+
+        if let text = pasteboard.string(forType: .string),
+           let payload = text.data(using: .utf8) {
+            return mirageSharedClipboardItem(
+                kind: .text,
+                contentType: "public.utf8-plain-text",
+                filename: nil,
+                payload: payload
+            )
+        }
+
+        return .unsupported()
+    }
+    #elseif canImport(UIKit)
     /// Converts the current UIKit pasteboard contents into a Mirage clipboard item.
     private static func item(from pasteboard: UIPasteboard) -> MirageSharedClipboardItem {
         if pasteboard.hasStrings,
@@ -161,7 +195,19 @@ private actor ClientClipboardSnapshotReader {
     #endif
 }
 
-#if canImport(UIKit)
+#if os(macOS)
+private extension NSImage {
+    /// PNG representation used for shared-clipboard image transfer.
+    var pngData: Data? {
+        guard let tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+#endif
+
 /// Result of preparing an explicit client-to-host clipboard sync.
 enum MirageClientSharedClipboardManualSyncPreparation: Sendable, Equatable {
     /// Send the current local clipboard contents to the host.
@@ -170,7 +216,6 @@ enum MirageClientSharedClipboardManualSyncPreparation: Sendable, Equatable {
     /// Skip sending because ordering state shows the host already has the newer clipboard.
     case hostAlreadyCurrent
 }
-#endif
 
 @MainActor
 final class MirageClientSharedClipboardBridge {
@@ -255,7 +300,6 @@ final class MirageClientSharedClipboardBridge {
         )
     }
 
-    #if canImport(UIKit)
     func prepareCurrentClipboardManualSync()
         async -> MirageClientSharedClipboardManualSyncPreparation? {
         let currentChangeCount = await ClientClipboardSnapshotReader.shared.changeCount
@@ -279,7 +323,6 @@ final class MirageClientSharedClipboardBridge {
         let sentAtMs = MirageSharedClipboard.currentTimestampMs()
         return .send(localSend: localSend, sentAtMs: sentAtMs)
     }
-    #endif
 
     private func activate() async {
         let changeCount = await ClientClipboardSnapshotReader.shared.changeCount

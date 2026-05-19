@@ -353,6 +353,46 @@ struct PriorityInputClientRouteTests {
         #expect(await fallbackRecorder.modes == [.orderedBestEffort])
     }
 
+    @Test("Protected ordered input fails over on an interactive deadline")
+    func protectedOrderedInputFailsOverOnInteractiveDeadline() async throws {
+        let endpoint = FakePriorityInputEndpoint()
+        let fallbackRecorder = PriorityFallbackRecorder()
+        let route = MiragePriorityInputClientRoute(endpoint: endpoint) { data, mode in
+            await fallbackRecorder.append(data, mode: mode)
+        }
+        defer { route.stop() }
+
+        let sendTask = Task {
+            try await route.send(
+                event: .keyDown(MirageKeyEvent(keyCode: 0x24)),
+                streamID: 13,
+                deliveryMode: .orderedBestEffort
+            )
+        }
+
+        try await waitUntil("ordered protected fallback", timeout: .milliseconds(40)) {
+            await fallbackRecorder.count == 1
+        }
+
+        let sentEnvelope = try MiragePriorityInputEnvelope.deserialize(try #require(endpoint.firstProtectedPayload))
+        endpoint.yield(
+            MiragePriorityInputEnvelope(
+                kind: .ack,
+                eventID: sentEnvelope.eventID,
+                streamID: sentEnvelope.streamID,
+                deliveryClass: .protected,
+                sentAtUptime: ProcessInfo.processInfo.systemUptime
+            )
+        )
+        try await waitUntil("late ordered protected ack") {
+            route.snapshot().protectedAckCount == 1
+        }
+
+        try await sendTask.value
+        #expect(route.snapshot().protectedFallbackCount == 1)
+        #expect(await fallbackRecorder.modes == [.orderedBestEffort])
+    }
+
     @Test("Expected realtime queue drops do not mark priority unhealthy")
     func expectedRealtimeQueueDropsDoNotMarkPriorityUnhealthy() async throws {
         let endpoint = FakePriorityInputEndpoint()

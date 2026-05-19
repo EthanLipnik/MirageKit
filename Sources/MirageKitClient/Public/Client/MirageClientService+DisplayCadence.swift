@@ -73,10 +73,12 @@ extension MirageClientService {
         )
         updateObservedFrameRate(targetFrameRate, for: streamID)
         let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+        let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         let target = MirageStreamCadenceTarget(
             sourceFPS: targetFrameRate,
             displayFPS: targetFrameRate,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            playoutDelayFrames: playoutDelayFrames
         )
         MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
         guard let controller = controllersByStream[streamID] else { return }
@@ -84,8 +86,19 @@ extension MirageClientService {
             sourceFPS: targetFrameRate,
             displayFPS: targetFrameRate,
             latencyMode: latencyMode,
+            playoutDelayFrames: playoutDelayFrames,
             reason: reason
         )
+    }
+
+    /// Returns the client playout hold for the current transport.
+    func resolvedStreamPlayoutDelayFrames(for latencyMode: MirageStreamLatencyMode?) -> Int {
+        let latencyMode = latencyMode ?? .lowestLatency
+        guard latencyMode == .smoothest else { return 0 }
+        guard controlPathSnapshot?.kind == .vpn else {
+            return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: latencyMode)
+        }
+        return MirageRenderModePolicy.maximumSmoothestPlayoutDelayFrames
     }
 
     /// Sends a refresh-rate override to the host for an active stream.

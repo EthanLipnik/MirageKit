@@ -55,7 +55,6 @@ extension MirageClientService {
             MirageLogger.client("Shared clipboard manual sync skipped: sharing disabled")
             return false
         }
-        #if canImport(UIKit)
         guard let preparation = await ensureSharedClipboardBridge().prepareCurrentClipboardManualSync() else {
             return false
         }
@@ -72,12 +71,8 @@ extension MirageClientService {
             MirageLogger.error(.client, error: error, message: "Failed manual shared clipboard sync: ")
             return false
         }
-        #else
-        return false
-        #endif
     }
 
-    #if canImport(UIKit)
     private func sendSharedClipboardUpdateReliably(
         localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64
@@ -103,7 +98,6 @@ extension MirageClientService {
             try await Task.sleep(for: MirageSharedClipboard.automaticStreamChunkPacingDelay)
         }
     }
-    #endif
 
     func ensureSharedClipboardBridge() -> MirageClientSharedClipboardBridge {
         if let sharedClipboardBridge {

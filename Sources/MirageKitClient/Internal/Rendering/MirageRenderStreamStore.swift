@@ -250,7 +250,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.sourceTargetFPS = target.sourceFPS
         state.displayTargetFPS = target.displayFPS
         state.latencyMode = target.latencyMode
-        state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        state.playoutDelayFrames = target.playoutDelayFrames
         trimPendingFramesToCurrentCapacityLocked(state: state)
         state.lock.unlock()
     }
@@ -262,11 +262,17 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
-    func setLatencyMode(for streamID: StreamID, latencyMode: MirageStreamLatencyMode) {
+    func setLatencyMode(
+        for streamID: StreamID,
+        latencyMode: MirageStreamLatencyMode,
+        playoutDelayFrames: Int? = nil
+    ) {
         let state = streamState(for: streamID)
         state.lock.lock()
         state.latencyMode = latencyMode
-        state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        state.playoutDelayFrames = MirageStreamCadenceTarget.clampedPlayoutDelayFrames(
+            playoutDelayFrames ?? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+        )
         trimPendingFramesToCurrentCapacityLocked(state: state)
         state.lock.unlock()
     }

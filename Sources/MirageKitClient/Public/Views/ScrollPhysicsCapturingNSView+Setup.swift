@@ -38,6 +38,7 @@ extension ScrollPhysicsCapturingNSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        syncKeyboardActivationObservers()
         syncFullscreenTransitionObservers()
         handleInputActivityStateChange()
         reportContainerSizeIfChanged(force: true)
@@ -81,20 +82,23 @@ extension ScrollPhysicsCapturingNSView {
 
     var isKeyboardInputActive: Bool {
         guard isInputProcessingActive, let window else { return false }
-        return window.isKeyWindow && window.firstResponder === self
+        return NSApp.isActive && window.isKeyWindow && window.firstResponder === self
     }
 
     func handleInputActivityStateChange() {
         if isInputProcessingActive {
+            claimKeyboardFocusIfPossible()
             updateCursorLockMode()
-            if shortcutForwardingEnabled {
-                shortcutForwardingEventTap.start()
-            } else {
-                shortcutForwardingEventTap.stop()
-            }
+            updateShortcutForwardingEventTap()
             startModifierPollingIfNeeded()
-            syncModifierStateFromSystem(force: true)
+            if isKeyboardInputActive {
+                syncModifierStateFromSystem(force: true)
+            } else {
+                syncModifierState([], force: true)
+            }
         } else {
+            shortcutForwardingStartTask?.cancel()
+            shortcutForwardingStartTask = nil
             shortcutForwardingEventTap.stop()
             stopLockedCursorSmoothing()
             stopModifierPolling()
@@ -107,6 +111,46 @@ extension ScrollPhysicsCapturingNSView {
         invalidateHostCursorRects()
         applyMirroredSystemCursorAppearance()
         updateTrackingAreas()
+    }
+
+    func handleKeyboardActivationStateChange() {
+        claimKeyboardFocusIfPossible()
+        updateShortcutForwardingEventTap()
+        if isKeyboardInputActive {
+            syncModifierStateFromSystem(force: true)
+        } else {
+            syncModifierState([], force: true)
+        }
+    }
+
+    func claimKeyboardFocusIfPossible() {
+        guard NSApp.isActive,
+              let window,
+              isInputProcessingActive,
+              window.isKeyWindow,
+              window.firstResponder !== self else {
+            return
+        }
+        window.makeFirstResponder(self)
+    }
+
+    func updateShortcutForwardingEventTap() {
+        shortcutForwardingStartTask?.cancel()
+        shortcutForwardingStartTask = nil
+        guard shortcutForwardingEnabled, isKeyboardInputActive else {
+            shortcutForwardingEventTap.stop()
+            return
+        }
+        shortcutForwardingStartTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard let self, shortcutForwardingEnabled, isKeyboardInputActive else { return }
+            shortcutForwardingStartTask = nil
+            shortcutForwardingEventTap.start()
+        }
     }
 
     func reportContainerSizeIfChanged(force: Bool = false) {
@@ -191,6 +235,65 @@ extension ScrollPhysicsCapturingNSView {
         fullscreenGeometryDeferralTask = nil
         fullscreenGeometryDeferralActive = false
         pendingContainerSizeReportDuringFullscreenDeferral = false
+    }
+
+    func syncKeyboardActivationObservers() {
+        guard observedKeyboardActivationWindow !== window else { return }
+        removeKeyboardActivationObservers()
+        guard let window else { return }
+
+        observedKeyboardActivationWindow = window
+        let notificationCenter = NotificationCenter.default
+
+        let didBecomeKey = notificationCenter.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleKeyboardActivationStateChange()
+            }
+        }
+
+        let didResignKey = notificationCenter.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleKeyboardActivationStateChange()
+            }
+        }
+
+        let didBecomeActive = notificationCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleKeyboardActivationStateChange()
+            }
+        }
+
+        let didResignActive = notificationCenter.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleKeyboardActivationStateChange()
+            }
+        }
+
+        keyboardActivationObservers = [didBecomeKey, didResignKey, didBecomeActive, didResignActive]
+    }
+
+    func removeKeyboardActivationObservers() {
+        for observer in keyboardActivationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        keyboardActivationObservers.removeAll()
+        observedKeyboardActivationWindow = nil
     }
 
     func beginFullscreenGeometryDeferral() {

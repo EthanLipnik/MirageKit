@@ -188,6 +188,7 @@ extension StreamController {
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {
+        reassembler.setTransportPathKind(kind)
         let awdlActive = awdlExperimentEnabled && kind == .awdl
         guard awdlTransportActive != awdlActive else { return }
         awdlTransportActive = awdlActive

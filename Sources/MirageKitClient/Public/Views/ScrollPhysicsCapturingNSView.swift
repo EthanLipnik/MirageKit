@@ -248,7 +248,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
     var cursorHiddenForTyping: Bool = false
     var suppressEscapeKeyUpForCursorUnlock = false
     let shortcutForwardingEventTap = MacShortcutForwardingEventTap()
+    var shortcutForwardingStartTask: Task<Void, Never>?
     nonisolated(unsafe) var registeredCursorStreamID: StreamID?
+    weak var observedKeyboardActivationWindow: NSWindow?
+    var keyboardActivationObservers: [NSObjectProtocol] = []
     weak var observedFullscreenWindow: NSWindow?
     var fullscreenTransitionObservers: [NSObjectProtocol] = []
     var fullscreenGeometryDeferralActive = false
@@ -274,7 +277,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if let registeredCursorStreamID { MirageCursorUpdateRouter.shared.unregister(streamID: registeredCursorStreamID) }
         MainActor.assumeIsolated {
             cursorHiddenForTyping = false
+            shortcutForwardingStartTask?.cancel()
+            shortcutForwardingEventTap.stop()
             stopLockedCursorSmoothing()
+            removeKeyboardActivationObservers()
             removeFullscreenTransitionObservers()
         }
         MainActor.assumeIsolated {

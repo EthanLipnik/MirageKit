@@ -119,6 +119,55 @@ struct RenderFrameQueueSPSCTests {
         #expect(snapshot.sequence == 3)
     }
 
+    @Test("Stale presenter cursor is ignored after render-store clear")
+    func stalePresenterCursorIsIgnoredAfterRenderStoreClear() {
+        let streamID: StreamID = 311
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        let listenerOwner = NSObject()
+        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: listenerOwner) {}
+        defer {
+            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: listenerOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            for: streamID
+        )
+        let staleCursor = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor
+        #expect(staleCursor != nil)
+
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        if let staleCursor {
+            MirageRenderStreamStore.shared.markSubmitted(cursor: staleCursor, for: streamID)
+        }
+
+        let staleSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(staleSnapshot.sequence == 0)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(seconds: 2, preferredTimescale: 600),
+            for: streamID
+        )
+        let currentCursor = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.cursor
+        #expect(currentCursor != nil)
+
+        guard let currentCursor else {
+            Issue.record("Expected current cursor after render-store clear")
+            return
+        }
+        MirageRenderStreamStore.shared.markSubmitted(cursor: currentCursor, for: streamID)
+
+        let currentSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(currentSnapshot.sequence == currentCursor.sequence)
+    }
+
     @Test("Render telemetry reports submitted cadence and resets per-snapshot counters")
     func renderTelemetrySnapshot() {
         let streamID: StreamID = 304

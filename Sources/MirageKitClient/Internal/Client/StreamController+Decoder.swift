@@ -120,6 +120,7 @@ extension StreamController {
         sourceFPS: Int,
         displayFPS: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
+        playoutDelayFrames: Int? = nil,
         reason: String = "cadence target update"
     ) async {
         let resolvedSourceFPS: Int
@@ -135,7 +136,8 @@ extension StreamController {
         let target = MirageStreamCadenceTarget(
             sourceFPS: resolvedSourceFPS,
             displayFPS: resolvedDisplayFPS,
-            latencyMode: resolvedLatencyMode
+            latencyMode: resolvedLatencyMode,
+            playoutDelayFrames: playoutDelayFrames
         )
         let resolvedBaseline = presentationTier == .passiveSnapshot
             ? 1
@@ -147,6 +149,7 @@ extension StreamController {
         streamCadenceClock.updateTargetFPS(target.sourceFPS)
         decodeSchedulerTargetFPS = target.sourceFPS
         reassembler.setTargetFrameRate(target.sourceFPS)
+        reassembler.setLatencyMode(target.latencyMode)
         MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
 
         if targetUnchanged, baselineUnchanged {
@@ -190,6 +193,7 @@ extension StreamController {
             sourceFPS: resolvedTargetFPS,
             displayFPS: resolvedTargetFPS,
             latencyMode: streamCadenceTarget.latencyMode,
+            playoutDelayFrames: streamCadenceTarget.playoutDelayFrames,
             reason: "presentation tier update"
         )
 

@@ -110,6 +110,11 @@ extension MirageRenderStreamStore {
         let now = CFAbsoluteTimeGetCurrent()
 
         state.lock.lock()
+        guard cursor.generation >= state.generation else {
+            state.lock.unlock()
+            return
+        }
+
         appendSampleLocked(now, samples: &state.submittedSamples, startIndex: &state.submittedSampleStartIndex)
         guard cursor.isAfter(MirageRenderCursor(generation: state.generation, sequence: state.lastSubmittedSequence)) ||
             state.lastSubmittedSequence == 0 else {

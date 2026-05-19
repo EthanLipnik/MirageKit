@@ -58,14 +58,19 @@ extension ScrollPhysicsCapturingNSView {
 
     override func becomeFirstResponder() -> Bool {
         let becameFirstResponder = super.becomeFirstResponder()
-        if becameFirstResponder { syncModifierStateFromSystem(force: true) }
+        if becameFirstResponder {
+            syncModifierStateFromSystem(force: true)
+            updateShortcutForwardingEventTap()
+        }
         return becameFirstResponder
     }
 
     override func resignFirstResponder() -> Bool {
         // Clear modifier state when losing focus to prevent stuck modifiers
         syncModifierState([], force: true)
-        return super.resignFirstResponder()
+        let resignedFirstResponder = super.resignFirstResponder()
+        updateShortcutForwardingEventTap()
+        return resignedFirstResponder
     }
 
     override func keyDown(with event: NSEvent) {

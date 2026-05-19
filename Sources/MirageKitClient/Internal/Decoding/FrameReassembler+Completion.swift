@@ -468,6 +468,9 @@ extension FrameReassembler {
     }
 
     private func severeForwardGapGraceLocked() -> TimeInterval {
+        if latencyMode == .smoothest, transportPathKind == .vpn {
+            return pFrameTimeoutLocked()
+        }
         let frameRate = max(1, targetFrameRate)
         let frameInterval = 1.0 / Double(frameRate)
         let cadenceGrace = max(frameInterval * 3.0, frameRate >= 90 ? 0.025 : 0.050)

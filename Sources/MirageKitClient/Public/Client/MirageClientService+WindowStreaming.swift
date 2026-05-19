@@ -168,10 +168,13 @@ public extension MirageClientService {
                 await existingController.beginPostResizeTransition()
             }
             let tier = sessionStore.presentationTier(for: streamID)
+            let latencyMode = renderLatencyModeByStream[streamID]
+            let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             await existingController.updateCadenceTarget(
                 sourceFPS: resolvedTargetFrameRate,
                 displayFPS: resolvedTargetFrameRate,
-                latencyMode: renderLatencyModeByStream[streamID],
+                latencyMode: latencyMode,
+                playoutDelayFrames: playoutDelayFrames,
                 reason: "controller reset"
             )
             await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
@@ -204,10 +207,13 @@ public extension MirageClientService {
 
         await configureCallbacks(for: controller, streamID: streamID)
 
+        let latencyMode = renderLatencyModeByStream[streamID]
+        let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         await controller.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
             displayFPS: resolvedTargetFrameRate,
-            latencyMode: renderLatencyModeByStream[streamID],
+            latencyMode: latencyMode,
+            playoutDelayFrames: playoutDelayFrames,
             reason: "controller setup"
         )
         if let kind = controlPathSnapshot?.kind {
@@ -289,10 +295,13 @@ public extension MirageClientService {
             streamDimensions: streamDimensions
         )
         await existingController.beginPostResizeTransition()
+        let latencyMode = renderLatencyModeByStream[streamID]
+        let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         await existingController.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
             displayFPS: resolvedTargetFrameRate,
-            latencyMode: renderLatencyModeByStream[streamID],
+            latencyMode: latencyMode,
+            playoutDelayFrames: playoutDelayFrames,
             reason: "desktop resize"
         )
         await existingController.updatePresentationTier(
@@ -313,7 +322,11 @@ public extension MirageClientService {
             renderLatencyModeByStream[streamID] ??
             .lowestLatency
         renderLatencyModeByStream[streamID] = latencyMode
-        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: latencyMode)
+        MirageRenderStreamStore.shared.setLatencyMode(
+            for: streamID,
+            latencyMode: latencyMode,
+            playoutDelayFrames: resolvedStreamPlayoutDelayFrames(for: latencyMode)
+        )
     }
 
     /// Preferred media packet size for the current control path.
@@ -346,6 +359,8 @@ public extension MirageClientService {
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
+            let latencyMode = renderLatencyModeByStream[policy.streamID]
+            let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
                 policy.targetFPS,
                 cap: runtimeWorkloadSafetyFrameRateCap(for: policy.streamID)
@@ -353,7 +368,8 @@ public extension MirageClientService {
             await controller.updateCadenceTarget(
                 sourceFPS: targetFPS,
                 displayFPS: targetFPS,
-                latencyMode: renderLatencyModeByStream[policy.streamID],
+                latencyMode: latencyMode,
+                playoutDelayFrames: playoutDelayFrames,
                 reason: "host stream policy"
             )
             let tier: StreamPresentationTier = switch policy.tier {

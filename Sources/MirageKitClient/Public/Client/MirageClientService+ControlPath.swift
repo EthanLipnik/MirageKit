@@ -21,6 +21,9 @@ extension MirageClientService {
         let previous = controlPathSnapshot
         controlPathSnapshot = snapshot
         recordControlPathHistory(snapshot)
+        if previous?.kind != snapshot.kind {
+            refreshActiveStreamTransportProfiles(for: snapshot.kind)
+        }
         guard let previous, previous.signature != snapshot.signature else { return }
         if previous.kind != snapshot.kind {
             awdlPathSwitches &+= 1
@@ -62,6 +65,30 @@ extension MirageClientService {
         )
         if controlPathHistory.count > Self.controlPathHistoryLimit {
             controlPathHistory.removeFirst(controlPathHistory.count - Self.controlPathHistoryLimit)
+        }
+    }
+
+    /// Reapplies transport-sensitive stream pacing after the control path changes.
+    private func refreshActiveStreamTransportProfiles(for pathKind: MirageNetworkPathKind) {
+        for (streamID, controller) in controllersByStream {
+            let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+            let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
+            let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
+            MirageRenderStreamStore.shared.setLatencyMode(
+                for: streamID,
+                latencyMode: latencyMode,
+                playoutDelayFrames: playoutDelayFrames
+            )
+            Task {
+                await controller.setTransportPathKind(pathKind)
+                await controller.updateCadenceTarget(
+                    sourceFPS: targetFrameRate,
+                    displayFPS: targetFrameRate,
+                    latencyMode: latencyMode,
+                    playoutDelayFrames: playoutDelayFrames,
+                    reason: "control path update"
+                )
+            }
         }
     }
 }

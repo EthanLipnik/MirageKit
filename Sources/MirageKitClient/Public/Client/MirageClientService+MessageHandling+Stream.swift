@@ -177,6 +177,7 @@ extension MirageClientService {
                     sourceFPS: metrics.targetFrameRate,
                     displayFPS: metrics.targetFrameRate,
                     latencyMode: latencyMode,
+                    playoutDelayFrames: resolvedStreamPlayoutDelayFrames(for: latencyMode),
                     reason: "host metrics"
                 )
             }

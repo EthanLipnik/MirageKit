@@ -103,6 +103,8 @@ final class FrameReassembler: @unchecked Sendable {
     let pFrameTimeoutMaximum: TimeInterval = 0.60
     let severeForwardGapFrameIntervalBudget: Double = 18.0
     var targetFrameRate: Int = 60
+    var latencyMode: MirageStreamLatencyMode = .lowestLatency
+    var transportPathKind: MirageNetworkPathKind = .unknown
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token; frames with mismatched tokens are silently discarded.

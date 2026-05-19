@@ -49,7 +49,6 @@ extension MirageStreamContentView {
                 return
             }
 
-            #if canImport(UIKit)
             if isSharedClipboardPasteShortcut(keyEvent),
                clientService.sharedClipboardEnabled,
                clientService.clientClipboardSharingEnabled {
@@ -57,14 +56,11 @@ extension MirageStreamContentView {
                 sendOrderedSharedClipboardPaste(keyEvent)
                 return
             }
-            #endif
         } else if case let .keyUp(keyEvent) = event {
-            #if canImport(UIKit)
             if isSharedClipboardPasteShortcut(keyEvent), suppressNextOrderedPasteKeyUp {
                 suppressNextOrderedPasteKeyUp = false
                 return
             }
-            #endif
             if escapeRemapShortcut.matches(keyEvent) {
                 guard !desktopCursorLockEnabled else { return }
                 forwardInputEventToHost(.keyUp(remappedEscapeKeyEvent()))
@@ -98,8 +94,7 @@ extension MirageStreamContentView {
         return true
     }
 
-    #if canImport(UIKit)
-    /// Detects the UIKit Command-V shortcut that should sync clipboard before paste.
+    /// Detects the platform Command-V shortcut that should sync clipboard before paste.
     func isSharedClipboardPasteShortcut(_ keyEvent: MirageKeyEvent) -> Bool {
         keyEvent.keyCode == 0x09 && keyEvent.modifiers.contains(.command)
     }
@@ -124,7 +119,6 @@ extension MirageStreamContentView {
             forwardInputEventToHost(.keyUp(keyUpEvent))
         }
     }
-    #endif
 
     /// Sends an input event to the host after focus/connection checks.
     func forwardInputEventToHost(_ event: MirageInputEvent) {

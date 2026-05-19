@@ -33,7 +33,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             0
         case .smoothest:
-            1
+            MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .smoothest)
         }
     }
 

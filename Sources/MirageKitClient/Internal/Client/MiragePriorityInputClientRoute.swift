@@ -128,7 +128,8 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private static let priorityAckFreshnessSeconds: CFAbsoluteTime = 0.500
     private static let realtimeRouteLossSeconds: CFAbsoluteTime = 2.000
-    private static let protectedFallbackDelay: Duration = .milliseconds(50)
+    private static let reliableProtectedFallbackDelay: Duration = .milliseconds(50)
+    private static let interactiveProtectedFallbackDelay: Duration = .milliseconds(8)
     private static let realtimeFallbackThrottle: Duration = .milliseconds(16)
     private static let routeStateLogIntervalSeconds: CFAbsoluteTime = 1
     private static let maxProtectedAckLatencySamples = 128
@@ -364,7 +365,8 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
         }
         let acked = await waitForProtectedAck(
             eventID: envelope.eventID,
-            sentAt: envelope.sentAtUptime
+            sentAt: envelope.sentAtUptime,
+            fallbackDelay: Self.protectedFallbackDelay(for: deliveryMode)
         )
         if acked { return }
         recordProtectedRetry()
@@ -408,7 +410,8 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
 
     private func waitForProtectedAck(
         eventID: UInt64,
-        sentAt: CFAbsoluteTime
+        sentAt: CFAbsoluteTime,
+        fallbackDelay: Duration
     ) async -> Bool {
         await withTaskGroup(of: Bool.self) { group in
             group.addTask { [weak self] in
@@ -416,7 +419,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
                 return await self.registerProtectedAckWaiter(eventID: eventID, sentAt: sentAt)
             }
             group.addTask {
-                try? await Task.sleep(for: Self.protectedFallbackDelay)
+                try? await Task.sleep(for: fallbackDelay)
                 return false
             }
 
@@ -440,7 +443,7 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             withState { state in
                 if state.closed {
                     shouldResume = true
-                } else if state.completedProtectedAcks.remove(eventID) != nil {
+                } else if state.completedProtectedAcks.contains(eventID) {
                     shouldResume = true
                     resumeValue = true
                 } else {
@@ -459,22 +462,24 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
     private func completeProtectedAck(eventID: UInt64, acked: Bool) {
         let continuation = withState { state in
             let pending = state.pendingProtectedAcks.removeValue(forKey: eventID)
-            if let pending, acked {
-                let latencyMs = max(0, ProcessInfo.processInfo.systemUptime - pending.sentAt) * 1000
-                state.protectedAckCount &+= 1
-                state.protectedAckMaxMs = max(state.protectedAckMaxMs, latencyMs)
-                state.protectedAckLatencySamplesMs.append(latencyMs)
-                if state.protectedAckLatencySamplesMs.count > Self.maxProtectedAckLatencySamples {
-                    state.protectedAckLatencySamplesMs.removeFirst(
-                        state.protectedAckLatencySamplesMs.count - Self.maxProtectedAckLatencySamples
-                    )
-                }
-            }
-            if pending == nil, acked, !state.closed {
-                state.completedProtectedAcks.insert(eventID)
-                if state.completedProtectedAcks.count > 128,
-                   let oldest = state.completedProtectedAcks.min() {
-                    state.completedProtectedAcks.remove(oldest)
+            if acked, !state.closed {
+                let isFirstAck = state.completedProtectedAcks.insert(eventID).inserted
+                if isFirstAck {
+                    state.protectedAckCount &+= 1
+                    if let pending {
+                        let latencyMs = max(0, ProcessInfo.processInfo.systemUptime - pending.sentAt) * 1000
+                        state.protectedAckMaxMs = max(state.protectedAckMaxMs, latencyMs)
+                        state.protectedAckLatencySamplesMs.append(latencyMs)
+                        if state.protectedAckLatencySamplesMs.count > Self.maxProtectedAckLatencySamples {
+                            state.protectedAckLatencySamplesMs.removeFirst(
+                                state.protectedAckLatencySamplesMs.count - Self.maxProtectedAckLatencySamples
+                            )
+                        }
+                    }
+                    if state.completedProtectedAcks.count > 128,
+                       let oldest = state.completedProtectedAcks.min() {
+                        state.completedProtectedAcks.remove(oldest)
+                    }
                 }
             }
             return pending?.continuation
@@ -738,6 +743,17 @@ final class MiragePriorityInputClientRoute: @unchecked Sendable {
             .realtime
         case .reliable, .orderedBestEffort:
             .protected
+        }
+    }
+
+    private static func protectedFallbackDelay(
+        for deliveryMode: MirageInputEventSender.DeliveryMode
+    ) -> Duration {
+        switch deliveryMode {
+        case .reliable:
+            reliableProtectedFallbackDelay
+        case .orderedBestEffort, .droppableRealtime:
+            interactiveProtectedFallbackDelay
         }
     }
 

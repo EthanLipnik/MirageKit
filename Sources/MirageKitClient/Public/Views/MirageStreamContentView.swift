@@ -130,9 +130,7 @@ public struct MirageStreamContentView: View {
     @State var latestDrawableViewSize: CGSize = .zero
     @State var latestDrawableScaleFactor: CGFloat?
     @State var localKeyboardOcclusionActive = false
-    #if canImport(UIKit)
     @State var suppressNextOrderedPasteKeyUp = false
-    #endif
 
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:

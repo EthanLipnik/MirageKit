@@ -74,6 +74,38 @@ extension FrameReassembler {
         MirageLogger.log(.frameAssembly, "Reassembler target frame rate updated to \(sanitizedFrameRate)fps for stream \(streamID)")
     }
 
+    func setLatencyMode(_ latencyMode: MirageStreamLatencyMode) {
+        lock.lock()
+        let previousLatencyMode: MirageStreamLatencyMode
+        do {
+            defer { lock.unlock() }
+            previousLatencyMode = self.latencyMode
+            self.latencyMode = latencyMode
+        }
+
+        guard previousLatencyMode != latencyMode else { return }
+        MirageLogger.log(
+            .frameAssembly,
+            "Reassembler latency mode updated to \(latencyMode.rawValue) for stream \(streamID)"
+        )
+    }
+
+    func setTransportPathKind(_ pathKind: MirageNetworkPathKind) {
+        lock.lock()
+        let previousPathKind: MirageNetworkPathKind
+        do {
+            defer { lock.unlock() }
+            previousPathKind = transportPathKind
+            transportPathKind = pathKind
+        }
+
+        guard previousPathKind != pathKind else { return }
+        MirageLogger.log(
+            .frameAssembly,
+            "Reassembler path kind updated to \(pathKind.rawValue) for stream \(streamID)"
+        )
+    }
+
     func processPacket(_ data: Data, header: FrameHeader) {
         var completedFrames: [CompletedFrame] = []
         var completionHandler: (@Sendable (

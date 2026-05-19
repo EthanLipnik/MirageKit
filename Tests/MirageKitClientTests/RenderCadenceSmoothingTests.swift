@@ -257,6 +257,26 @@ struct RenderCadenceSmoothingTests {
         #expect(abs(smoothestPresentationSeconds - (referenceTime + 1.0 / 60.0)) < 0.000_001)
     }
 
+    @Test("Explicit transport playout delay can raise smoothest to two frames")
+    func explicitTransportPlayoutDelayCanRaiseSmoothestToTwoFrames() {
+        let streamID: StreamID = 411
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let target = MirageStreamCadenceTarget(
+            sourceFPS: 60,
+            displayFPS: 60,
+            latencyMode: .smoothest,
+            playoutDelayFrames: 2
+        )
+        #expect(target.playoutDelayFrames == 2)
+
+        MirageRenderStreamStore.shared.setCadenceTarget(for: streamID, target: target)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.playoutDelayFrames == 2)
+    }
+
     @Test("Lowest latency display tick takes the newest decoded frame")
     func lowestLatencyDisplayTickTakesNewestDecodedFrame() {
         let streamID: StreamID = 402
