@@ -108,6 +108,9 @@ final class DirectTouchScrollView: CallbackScrollView {
     /// Called when direct non-stylus input should wake the touch input path.
     var onDirectTouchActivity: (() -> Void)?
 
+    /// Called when direct non-stylus input starts, in this scroll view's local coordinates.
+    var onDirectTouchBegan: ((CGPoint) -> Void)?
+
     /// Called when stylus-like touches begin inside the direct-touch scroll view.
     var onPencilTouchesBegan: ((Set<UITouch>) -> Void)?
 
@@ -129,6 +132,9 @@ final class DirectTouchScrollView: CallbackScrollView {
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
         if !nonPencilTouches.isEmpty {
             onDirectTouchActivity?()
+        }
+        if let startLocation = centroid(of: nonPencilTouches, in: self) {
+            onDirectTouchBegan?(startLocation)
         }
         if !nonPencilTouches.isEmpty {
             super.touchesBegan(Set(nonPencilTouches), with: event)
@@ -169,6 +175,17 @@ final class DirectTouchScrollView: CallbackScrollView {
         if !nonPencilTouches.isEmpty {
             super.touchesCancelled(Set(nonPencilTouches), with: event)
         }
+    }
+
+    private func centroid(of touches: Set<UITouch>, in view: UIView) -> CGPoint? {
+        guard !touches.isEmpty else { return nil }
+        let sum = touches.reduce(into: CGPoint.zero) { partialResult, touch in
+            let location = touch.location(in: view)
+            partialResult.x += location.x
+            partialResult.y += location.y
+        }
+        let count = CGFloat(touches.count)
+        return CGPoint(x: sum.x / count, y: sum.y / count)
     }
 }
 #endif

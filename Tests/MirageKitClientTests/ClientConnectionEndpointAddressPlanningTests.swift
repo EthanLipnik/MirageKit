@@ -168,6 +168,88 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
+    @Test("Client uses scoped link-local addresses matching discovered proximity interfaces")
+    func controlSessionAttemptsUseScopedLinkLocalAddressForMatchingProximityInterface() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61034))
+        let anpiAddress = try #require(IPv6Address("fe80::1%anpi0"))
+        let awdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+                .ipv6(anpiAddress),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+                LoomDiscoveredInterface(name: "anpi0", type: .other, index: 9),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let proximityAttempts = attempts.filter { $0.isPeerToPeerPreferred && $0.transportKind == .udp }
+        let expectedAnpiEndpoint: NWEndpoint = .hostPort(host: .ipv6(anpiAddress), port: udpPort)
+        let expectedAwdlEndpoint: NWEndpoint = .hostPort(host: .ipv6(awdlAddress), port: udpPort)
+
+        #expect(proximityAttempts.count == 2)
+        #expect(proximityAttempts[0].endpoint.debugDescription == expectedAnpiEndpoint.debugDescription)
+        #expect(proximityAttempts[0].proximityInterfaceNames == ["anpi0"])
+        #expect(proximityAttempts[1].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
+        #expect(proximityAttempts[1].proximityInterfaceNames == ["awdl0"])
+    }
+
+    @MainActor
+    @Test("Client orders optimistic scoped proximity addresses by interface priority")
+    func optimisticControlSessionAttemptsOrderScopedProximityAddressesByInterfacePriority() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61035))
+        let anpiAddress = try #require(IPv6Address("fe80::3%anpi0"))
+        let awdlAddress = try #require(IPv6Address("fe80::4%awdl0"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+                .ipv6(anpiAddress),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let proximityAttempts = attempts.filter { $0.isPeerToPeerPreferred && $0.transportKind == .udp }
+        let expectedAnpiEndpoint: NWEndpoint = .hostPort(host: .ipv6(anpiAddress), port: udpPort)
+        let expectedAwdlEndpoint: NWEndpoint = .hostPort(host: .ipv6(awdlAddress), port: udpPort)
+
+        #expect(proximityAttempts.count == 2)
+        #expect(proximityAttempts[0].endpoint.debugDescription == expectedAnpiEndpoint.debugDescription)
+        #expect(proximityAttempts[0].proximityInterfaceNames == ["anpi0"])
+        #expect(proximityAttempts[1].endpoint.debugDescription == expectedAwdlEndpoint.debugDescription)
+        #expect(proximityAttempts[1].proximityInterfaceNames == ["awdl0"])
+    }
+
+    @MainActor
     @Test("Client keeps resolved IP first when peer-to-peer is disabled")
     func controlSessionAttemptsDoNotPreferAwdlWhenPeerToPeerDisabled() throws {
         let deviceID = UUID()
@@ -614,9 +696,37 @@ struct ClientConnectionEndpointAddressPlanningTests {
             supportsIPv4: true,
             supportsIPv6: true
         )
+        let overlaySnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["utun5"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        let genericOtherSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["other0"],
+            usesWiFi: false,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
 
         #expect(attempt.acceptsProximityPath(llwSnapshot))
         #expect(attempt.acceptsProximityPath(wiredSnapshot))
         #expect(!attempt.acceptsProximityPath(wifiSnapshot))
+        #expect(!attempt.acceptsProximityPath(overlaySnapshot))
+        #expect(!attempt.acceptsProximityPath(genericOtherSnapshot))
     }
 }

@@ -109,28 +109,86 @@ extension MirageClientService {
 
         var attempts: [ControlSessionAttempt] = []
         for discoveredInterface in proximityInterfaces {
+            let interfaceSelectedHost = scopedLinkLocalResolvedHost(
+                for: discoveredInterface,
+                host: host
+            ) ?? selectedHost
             attempts.append(
                 contentsOf: proximityPreferredControlSessionAttempts(
                     for: host,
                     transportOrder: transportOrder,
-                    selectedHost: selectedHost,
+                    selectedHost: interfaceSelectedHost,
                     discoveredInterface: discoveredInterface
                 )
             )
         }
 
         if shouldTryGenericProximity {
-            attempts.append(
-                contentsOf: proximityPreferredControlSessionAttempts(
-                    for: host,
-                    transportOrder: transportOrder,
-                    selectedHost: selectedHost,
-                    discoveredInterface: nil
+            let scopedHosts = scopedProximityResolvedHosts(for: host)
+            if scopedHosts.isEmpty {
+                attempts.append(
+                    contentsOf: proximityPreferredControlSessionAttempts(
+                        for: host,
+                        transportOrder: transportOrder,
+                        selectedHost: selectedHost,
+                        discoveredInterface: nil
+                    )
                 )
-            )
+            } else {
+                for scopedHost in scopedHosts {
+                    let interfaceNames = Self.scopedLinkLocalIPv6InterfaceName(scopedHost).map { [$0] } ?? []
+                    attempts.append(
+                        contentsOf: proximityPreferredControlSessionAttempts(
+                            for: host,
+                            transportOrder: transportOrder,
+                            selectedHost: scopedHost,
+                            discoveredInterface: nil,
+                            proximityInterfaceNames: interfaceNames
+                        )
+                    )
+                }
+            }
         }
 
         return attempts
+    }
+
+    func scopedLinkLocalResolvedHost(
+        for discoveredInterface: LoomDiscoveredInterface,
+        host: LoomPeer
+    ) -> NWEndpoint.Host? {
+        let interfaceName = discoveredInterface.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !interfaceName.isEmpty else { return nil }
+        return host.resolvedAddresses.first {
+            Self.scopedLinkLocalIPv6InterfaceName($0) == interfaceName.lowercased()
+        }
+    }
+
+    func scopedProximityResolvedHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        scopedProximityResolvedHosts(for: host).first
+    }
+
+    func scopedProximityResolvedHosts(for host: LoomPeer) -> [NWEndpoint.Host] {
+        host.resolvedAddresses.enumerated().compactMap { offset, resolvedHost
+            -> (host: NWEndpoint.Host, interfaceName: String, priority: Int, offset: Int)? in
+            guard let interfaceName = Self.scopedLinkLocalIPv6InterfaceName(resolvedHost) else {
+                return nil
+            }
+            guard let priority = Self.proximityPriority(forInterfaceName: interfaceName) else {
+                return nil
+            }
+            return (host: resolvedHost, interfaceName: interfaceName, priority: priority, offset: offset)
+        }
+        .sorted { lhs, rhs in
+            if lhs.priority != rhs.priority {
+                return lhs.priority < rhs.priority
+            }
+            if lhs.interfaceName != rhs.interfaceName {
+                return lhs.interfaceName < rhs.interfaceName
+            }
+            return lhs.offset < rhs.offset
+        }
+        .map(\.host)
     }
 
     func proximityPreferredDiscoveredInterfaces(for host: LoomPeer) -> [LoomDiscoveredInterface] {
@@ -153,7 +211,8 @@ extension MirageClientService {
         for host: LoomPeer,
         transportOrder: [LoomTransportKind],
         selectedHost: NWEndpoint.Host,
-        discoveredInterface: LoomDiscoveredInterface?
+        discoveredInterface: LoomDiscoveredInterface?,
+        proximityInterfaceNames: [String] = []
     ) -> [ControlSessionAttempt] {
         let requiredInterface = discoveredInterface?.networkInterface
         let requiredInterfaceType: NWInterface.InterfaceType?
@@ -195,7 +254,7 @@ extension MirageClientService {
                 requiredInterfaceType: requiredInterfaceType,
                 isPeerToPeerPreferred: true,
                 proximityInterfaceKind: discoveredInterface?.kind,
-                proximityInterfaceNames: discoveredInterface.map { [$0.name] } ?? []
+                proximityInterfaceNames: discoveredInterface.map { [$0.name] } ?? proximityInterfaceNames
             )
         }
     }
@@ -501,7 +560,7 @@ extension MirageClientService {
 
     static func isPublicIPv6Candidate(_ host: NWEndpoint.Host) -> Bool {
         guard case .ipv6 = host else { return false }
-        return !isScopeLessLinkLocalIPv6Address(host) && !isOverlayAddress(host)
+        return !isLinkLocalIPv6Address(host) && !isOverlayAddress(host)
     }
 
     static func isLocalControlCandidateHost(_ host: NWEndpoint.Host) -> Bool {
@@ -520,7 +579,7 @@ extension MirageClientService {
             let raw = addr.rawValue
             guard raw.count >= 1 else { return false }
             let first = raw[raw.startIndex]
-            return first == 0xFC || first == 0xFD || isScopeLessLinkLocalIPv6Address(host)
+            return first == 0xFC || first == 0xFD || isLinkLocalIPv6Address(host)
         case let .name(value, _):
             let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !normalized.isEmpty else { return false }
@@ -575,11 +634,47 @@ extension MirageClientService {
     }
 
     static func isScopeLessLinkLocalIPv6Address(_ host: NWEndpoint.Host) -> Bool {
+        guard case let .ipv6(addr) = host, isLinkLocalIPv6Address(host) else { return false }
+        return addr.interface == nil
+    }
+
+    static func isLinkLocalIPv6Address(_ host: NWEndpoint.Host) -> Bool {
         guard case let .ipv6(addr) = host else { return false }
         let raw = addr.rawValue
         guard raw.count >= 2 else { return false }
         return raw[raw.startIndex] == 0xFE &&
             (raw[raw.index(after: raw.startIndex)] & 0xC0) == 0x80
+    }
+
+    static func scopedLinkLocalIPv6InterfaceName(_ host: NWEndpoint.Host) -> String? {
+        guard case let .ipv6(addr) = host,
+              isLinkLocalIPv6Address(host),
+              let interface = addr.interface else {
+            return nil
+        }
+        let normalizedName = interface.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedName.isEmpty ? nil : normalizedName
+    }
+
+    static func isProximityInterfaceName(_ name: String) -> Bool {
+        proximityPriority(forInterfaceName: name) != nil
+    }
+
+    static func proximityPriority(forInterfaceName name: String) -> Int? {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.hasPrefix("anpi") {
+            return 0
+        }
+        if normalized.hasPrefix("awdl") {
+            return 1
+        }
+        if normalized.hasPrefix("llw") {
+            return 2
+        }
+        if normalized.hasPrefix("bridge") {
+            return 4
+        }
+        return nil
     }
 
     static func isScopeLessLinkLocalIPv6Name(_ value: String) -> Bool {

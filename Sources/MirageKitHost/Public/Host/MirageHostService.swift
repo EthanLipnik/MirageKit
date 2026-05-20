@@ -502,10 +502,6 @@ public final class MirageHostService {
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
     /// Latest shared-clipboard enablement status per client.
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
-    /// Latest automatic host-to-client clipboard payload deferred while streams are active.
-    @ObservationIgnored var deferredAutomaticSharedClipboardSend: (localSend: MirageSharedClipboardLocalSend, sentAtMs: Int64)?
-    /// Count of automatic host clipboard payloads deferred by the active-stream transport budget.
-    @ObservationIgnored var deferredAutomaticSharedClipboardPayloadCount: Int = 0
     /// Chunk reassembler for incoming shared-clipboard payloads.
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
 

@@ -10,6 +10,24 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
+    func handleDirectTouchBegan(at rawLocation: CGPoint) {
+        requestResponderRecovery(.interaction)
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+
+        let location = normalizedLocation(rawLocation)
+        updatePointerLocationForLocalContact(location)
+        syncModifiersForInput()
+        let eventModifiers = keyboardModifiers
+        sendModifierSnapshotIfNeeded(eventModifiers)
+
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: cursorLockEnabled ? lockedCursorPosition : location,
+            modifiers: eventModifiers
+        )
+        onInputEvent?(.mouseMoved(mouseEvent))
+    }
+
     @objc
     func handleDirectTap(_ gesture: UITapGestureRecognizer) {
         requestResponderRecovery(.interaction)

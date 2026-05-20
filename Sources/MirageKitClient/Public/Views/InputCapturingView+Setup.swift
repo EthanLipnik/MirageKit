@@ -85,6 +85,11 @@ extension InputCapturingView {
         scrollPhysicsView.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
         }
+        scrollPhysicsView.onDirectTouchBegan = { [weak self, weak scrollPhysicsView] location in
+            guard let self else { return }
+            let localLocation = scrollPhysicsView?.convert(location, to: self) ?? location
+            handleDirectTouchBegan(at: localLocation)
+        }
 
         // Enable user interaction
         isUserInteractionEnabled = true

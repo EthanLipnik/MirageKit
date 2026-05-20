@@ -292,6 +292,46 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client accepts scoped link-local IPv6 endpoints for direct control sessions")
+    func controlSessionAttemptsAcceptScopedLinkLocalIPv6Endpoints() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61025))
+        let scopedLinkLocalAddress = try #require(IPv6Address("fe80::1866:72ff:fe1a:1bf0%lo0"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv6(scopedLinkLocalAddress)]
+        )
+
+        let service = MirageClientService(
+            deviceName: "Test Device",
+            loomConfiguration: LoomNetworkConfiguration(enablePeerToPeer: false)
+        )
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: .ipv6(scopedLinkLocalAddress),
+            port: udpPort
+        )
+        let scopedAttempt = try #require(
+            attempts.first { $0.endpoint.debugDescription == expectedUDPEndpoint.debugDescription }
+        )
+
+        #expect(scopedAttempt.transportKind == .udp)
+        #expect(scopedAttempt.candidateKind == .local)
+        #expect(!scopedAttempt.isPeerToPeerPreferred)
+        #expect(!MirageClientService.isScopeLessLinkLocalIPv6Address(.ipv6(scopedLinkLocalAddress)))
+    }
+
+    @MainActor
     @Test("Client prefers local addresses over overlay addresses from Bonjour resolution")
     func controlSessionAttemptsPreferLocalOverOverlayResolvedAddresses() throws {
         let deviceID = UUID()

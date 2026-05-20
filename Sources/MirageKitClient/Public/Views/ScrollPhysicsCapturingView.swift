@@ -108,6 +108,9 @@ final class ScrollPhysicsCapturingView: UIView {
     /// Callback when a direct non-stylus touch is detected.
     var onDirectTouchActivity: (() -> Void)?
 
+    /// Callback when a direct non-stylus touch begins, in this view's local coordinates.
+    var onDirectTouchBegan: ((CGPoint) -> Void)?
+
     /// Installs Pencil touch callbacks on the private direct-touch scroll view.
     ///
     /// Only moved touches receive the `UIEvent` because coalesced touch samples are only read during movement.
@@ -190,6 +193,10 @@ final class ScrollPhysicsCapturingView: UIView {
         directTouchScrollView.isHidden = true
         directTouchScrollView.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
+        }
+        directTouchScrollView.onDirectTouchBegan = { [weak self, weak directTouchScrollView] location in
+            guard let self, let directTouchScrollView else { return }
+            self.onDirectTouchBegan?(directTouchScrollView.convert(location, to: self))
         }
 
         setupScrollContent(indirectScrollContent, in: indirectScrollView)

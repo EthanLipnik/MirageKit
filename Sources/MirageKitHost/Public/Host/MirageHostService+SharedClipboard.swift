@@ -22,28 +22,11 @@ extension MirageHostService {
         return hasAppStreams || hasDesktopStream
     }
 
-    nonisolated static func shouldDeferAutomaticSharedClipboardPayloads(
-        hasAppStreams: Bool,
-        hasDesktopStream: Bool
-    ) -> Bool {
-        hasAppStreams || hasDesktopStream
-    }
-
     func syncSharedClipboardState(forceStatusBroadcast: Bool = false) {
         let hasAppStreams = !activeStreams.isEmpty
         let hasDesktopStream = desktopStreamID != nil
         let connectedClientIDs = Set(clientsByID.keys)
         sharedClipboardStatusByClientID = sharedClipboardStatusByClientID.filter { connectedClientIDs.contains($0.key) }
-
-        if !Self.shouldDeferAutomaticSharedClipboardPayloads(
-            hasAppStreams: hasAppStreams,
-            hasDesktopStream: hasDesktopStream
-        ), deferredAutomaticSharedClipboardSend != nil {
-            MirageLogger.host(
-                "Dropping deferred automatic shared clipboard payload after stream stop: deferredClipboardPayloads=\(deferredAutomaticSharedClipboardPayloadCount)"
-            )
-            deferredAutomaticSharedClipboardSend = nil
-        }
 
         var hasEligibleActiveClient = false
         for clientContext in clientsBySessionID.values {
@@ -178,20 +161,6 @@ extension MirageHostService {
         _ localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64
     ) async {
-        if Self.shouldDeferAutomaticSharedClipboardPayloads(
-            hasAppStreams: !activeStreams.isEmpty,
-            hasDesktopStream: desktopStreamID != nil
-        ) {
-            deferredAutomaticSharedClipboardSend = (localSend, sentAtMs)
-            deferredAutomaticSharedClipboardPayloadCount += 1
-            MirageLogger.host(
-                "Deferred automatic shared clipboard payload during active stream: " +
-                "deferredClipboardPayloads=\(deferredAutomaticSharedClipboardPayloadCount), " +
-                "bytes=\(localSend.item.representation.byteCount)"
-            )
-            return
-        }
-
         for clientContext in clientsBySessionID.values {
             guard Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,

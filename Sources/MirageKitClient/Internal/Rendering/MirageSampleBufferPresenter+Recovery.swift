@@ -75,7 +75,7 @@ extension MirageSampleBufferPresenter {
         MirageLogger.renderer(
             "Display layer remained not-ready with a presenter-pending frame; resetting presentation pipeline"
         )
-        resetPresentationState()
+        resetPresentationState(removeDisplayedImage: false)
     }
 
     /// Flushes and resets failed display layers, suppressing expected teardown interruptions.
@@ -91,7 +91,7 @@ extension MirageSampleBufferPresenter {
             }
             loggedLayerFailure = true
         }
-        resetPresentationState(preserveLoggedLayerFailure: true)
+        resetPresentationState(preserveLoggedLayerFailure: true, removeDisplayedImage: false)
     }
 
     /// Returns whether an AVSampleBufferDisplayLayer failure is expected during teardown.

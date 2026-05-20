@@ -126,6 +126,9 @@ public struct MirageStreamContentView: View {
     @State var awaitingAppResizeAck: Bool = false
     @State var appResizeBaselineAcknowledgement: MirageClientService.StreamStartAcknowledgement?
     @State var appResizeAckTimeoutTask: Task<Void, Never>?
+    @State var presentationBlurProgressTask: Task<Void, Never>?
+    @State var presentationBlurProgressTaskGeneration: UInt64 = 0
+    @State var presentationBlurProgressSuppressed = false
     @State var latestContainerDisplaySize: CGSize = .zero
     @State var latestDrawableViewSize: CGSize = .zero
     @State var latestDrawableScaleFactor: CGFloat?
@@ -433,6 +436,164 @@ extension MirageStreamContentView {
         if isDesktopStream, desktopResizeCoordinator.isResizing || desktopResizeCoordinator.maskActive { return 20 }
         return 0
     }
+
+    /// Blur applied while recovery preserves the last presented image.
+    var recoveryBlurRadius: CGFloat {
+        guard session.hasPresentedFrame else { return 0 }
+        switch session.clientRecoveryStatus {
+        case .keyframeRecovery:
+            return 16
+        case .hardRecovery:
+            return 20
+        case .postResizeAwaitingFirstFrame:
+            return awaitingPostResizeFirstFrame ? 24 : 0
+        case .idle,
+             .startup,
+             .tierPromotionProbe:
+            return 0
+        }
+    }
+
+    /// Combined presentation blur from resize masking and stream recovery.
+    var rawPresentationBlurRadius: CGFloat {
+        max(resizeBlurRadius, recoveryBlurRadius)
+    }
+
+    /// Whether recent accepted frames should keep the stream visually live.
+    var suppressesPresentationBlurForRecentProgress: Bool {
+        presentationBlurProgressSuppressed
+    }
+
+    /// Whether frame-progress sampling should run while a blur candidate is active.
+    var monitorsPresentationProgressForBlurSuppression: Bool {
+        session.hasPresentedFrame && rawPresentationBlurRadius > 0
+    }
+
+    /// Latest accepted frame submission state for the presented media stream.
+    var latestPresentationSubmissionSnapshot: SubmissionSnapshot {
+        MirageRenderStreamStore.shared.submissionSnapshot(for: presentationStreamID)
+    }
+
+    /// Hold window that covers normal frame cadence without masking a real stall indefinitely.
+    var presentationBlurProgressHoldDuration: CFAbsoluteTime {
+        let snapshot = clientService.metricsStore.snapshot(for: presentationStreamID) ??
+            clientService.metricsStore.snapshot(for: session.streamID)
+        let observedFPS = max(snapshot?.clientPresentedFPS ?? 0, snapshot?.uniqueSubmittedFPS ?? 0)
+        if observedFPS > 0 {
+            return min(1.5, max(0.5, 2.5 / observedFPS))
+        }
+        return 1.25
+    }
+
+    /// Combined presentation blur after live frame-progress suppression.
+    var presentationBlurRadius: CGFloat {
+        let radius = rawPresentationBlurRadius
+        guard radius > 0 else { return 0 }
+        return suppressesPresentationBlurForRecentProgress ? 0 : radius
+    }
+
+    func updatePresentationBlurProgressMonitoring() {
+        guard monitorsPresentationProgressForBlurSuppression else {
+            stopPresentationBlurProgressMonitoring()
+            return
+        }
+        guard presentationBlurProgressTask == nil else { return }
+
+        presentationBlurProgressTaskGeneration &+= 1
+        let taskGeneration = presentationBlurProgressTaskGeneration
+        let initialSnapshot = latestPresentationSubmissionSnapshot
+        let initialSuppressedUntil = Self.presentationBlurProgressSuppressionDeadline(
+            latestSubmittedTime: initialSnapshot.submittedTime,
+            now: CFAbsoluteTimeGetCurrent(),
+            holdDuration: presentationBlurProgressHoldDuration
+        )
+        if initialSuppressedUntil != nil, !presentationBlurProgressSuppressed {
+            presentationBlurProgressSuppressed = true
+        }
+
+        presentationBlurProgressTask = Task { @MainActor in
+            var baselineSubmissionSequence = initialSnapshot.sequence
+            var suppressedUntil = initialSuppressedUntil ?? 0
+
+            while !Task.isCancelled {
+                let now = CFAbsoluteTimeGetCurrent()
+                let update = Self.nextPresentationBlurProgressSuppression(
+                    baselineSubmissionSequence: baselineSubmissionSequence,
+                    latestSubmissionSequence: latestPresentationSubmissionSnapshot.sequence,
+                    now: now,
+                    holdDuration: presentationBlurProgressHoldDuration
+                )
+                baselineSubmissionSequence = update.baselineSubmissionSequence
+                if let nextSuppressedUntil = update.suppressedUntil {
+                    suppressedUntil = nextSuppressedUntil
+                    if !presentationBlurProgressSuppressed {
+                        presentationBlurProgressSuppressed = true
+                    }
+                } else if presentationBlurProgressSuppressed, suppressedUntil <= now {
+                    suppressedUntil = 0
+                    presentationBlurProgressSuppressed = false
+                }
+
+                guard monitorsPresentationProgressForBlurSuppression else { break }
+                do {
+                    try await Task.sleep(for: Self.presentationBlurProgressPollInterval)
+                } catch {
+                    break
+                }
+            }
+            guard presentationBlurProgressTaskGeneration == taskGeneration else { return }
+            presentationBlurProgressTask = nil
+            if !monitorsPresentationProgressForBlurSuppression {
+                resetPresentationBlurProgressSuppression()
+            }
+        }
+    }
+
+    func stopPresentationBlurProgressMonitoring() {
+        guard presentationBlurProgressTask != nil || presentationBlurProgressSuppressed else { return }
+        presentationBlurProgressTaskGeneration &+= 1
+        presentationBlurProgressTask?.cancel()
+        presentationBlurProgressTask = nil
+        resetPresentationBlurProgressSuppression()
+    }
+
+    func resetPresentationBlurProgressSuppression() {
+        if presentationBlurProgressSuppressed {
+            presentationBlurProgressSuppressed = false
+        }
+    }
+
+    static func nextPresentationBlurProgressSuppression(
+        baselineSubmissionSequence: UInt64,
+        latestSubmissionSequence: UInt64,
+        now: CFAbsoluteTime,
+        holdDuration: CFAbsoluteTime
+    ) -> (baselineSubmissionSequence: UInt64, suppressedUntil: CFAbsoluteTime?) {
+        guard latestSubmissionSequence > 0 else {
+            return (0, nil)
+        }
+
+        guard latestSubmissionSequence != baselineSubmissionSequence else {
+            return (baselineSubmissionSequence, nil)
+        }
+
+        return (latestSubmissionSequence, now + holdDuration)
+    }
+
+    static func presentationBlurProgressSuppressionDeadline(
+        latestSubmittedTime: CFAbsoluteTime,
+        now: CFAbsoluteTime,
+        holdDuration: CFAbsoluteTime
+    ) -> CFAbsoluteTime? {
+        guard latestSubmittedTime > 0 else { return nil }
+        let suppressedUntil = latestSubmittedTime + holdDuration
+        guard suppressedUntil > now else { return nil }
+        return suppressedUntil
+    }
+}
+
+private extension MirageStreamContentView {
+    static let presentationBlurProgressPollInterval: Duration = .milliseconds(100)
 }
 
 // MARK: - Resize Acknowledgements

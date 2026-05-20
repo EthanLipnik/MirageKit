@@ -78,7 +78,7 @@ public extension MirageStreamContentView {
                     prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
                     ignoresSafeArea: ignoresSafeArea
                 )
-                .blur(radius: resizeBlurRadius)
+                .blur(radius: presentationBlurRadius)
                 #else
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
@@ -119,7 +119,7 @@ public extension MirageStreamContentView {
                     onActionTriggered: onActionTriggered
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .blur(radius: resizeBlurRadius)
+                .blur(radius: presentationBlurRadius)
                 #endif
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -138,6 +138,11 @@ public extension MirageStreamContentView {
                                 .foregroundStyle(.white.opacity(0.7))
                         }
                     }
+                    .allowsHitTesting(false)
+            } else if awaitingPostResizeFirstFrame, session.hasPresentedFrame {
+                ProgressView()
+                    .controlSize(.regular)
+                    .tint(.white)
                     .allowsHitTesting(false)
             } else if awaitingPostResizeFirstFrame {
                 Rectangle()
@@ -183,6 +188,7 @@ public extension MirageStreamContentView {
             }
         }
         .onChange(of: awaitingPostResizeFirstFrame) {
+            updatePresentationBlurProgressMonitoring()
             guard isDesktopStream, !awaitingPostResizeFirstFrame else { return }
             Task { @MainActor in
                 await Task.yield()
@@ -190,11 +196,18 @@ public extension MirageStreamContentView {
             }
         }
         .onChange(of: session.hasPresentedFrame) {
+            updatePresentationBlurProgressMonitoring()
             guard isDesktopStream, session.hasPresentedFrame else { return }
             Task { @MainActor in
                 await Task.yield()
                 clientService.handleDesktopPresentationReady(streamID: session.streamID)
             }
+        }
+        .onChange(of: session.clientRecoveryStatus) {
+            updatePresentationBlurProgressMonitoring()
+        }
+        .onChange(of: rawPresentationBlurRadius) {
+            updatePresentationBlurProgressMonitoring()
         }
         .onChange(of: maxDrawableSize) {
             guard isDesktopStream else { return }
@@ -216,6 +229,7 @@ public extension MirageStreamContentView {
             }
         }
         .onAppear {
+            updatePresentationBlurProgressMonitoring()
             Task { @MainActor in
                 await Task.yield()
                 focusCurrentStreamForInputIfNeeded(force: true)
@@ -269,6 +283,7 @@ private extension MirageStreamContentView {
         streamScaleTask = nil
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
+        stopPresentationBlurProgressMonitoring()
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero

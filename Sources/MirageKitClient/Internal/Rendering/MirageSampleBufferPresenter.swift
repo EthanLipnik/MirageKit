@@ -118,23 +118,30 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         clearCurrentFrameState()
     }
 
-    func resetPresentationState(preserveLoggedLayerFailure: Bool = false) {
+    func resetPresentationState(
+        preserveLoggedLayerFailure: Bool = false,
+        removeDisplayedImage: Bool = true
+    ) {
         cachedFormatKey = nil
         cachedFormatDescription = nil
         resetSequenceTrackingState()
         if !preserveLoggedLayerFailure {
             loggedLayerFailure = false
         }
-        clearCurrentFrameState()
+        clearCurrentFrameState(removeDisplayedImage: removeDisplayedImage)
     }
 
-    private func clearCurrentFrameState() {
+    private func clearCurrentFrameState(removeDisplayedImage: Bool = true) {
         guard let displayLayer else { return }
-        displayLayer.flushAndRemoveImage()
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        #if os(iOS) || os(visionOS)
-        currentContentReferenceSize = nil
-        #endif
+        if removeDisplayedImage {
+            displayLayer.flushAndRemoveImage()
+            displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            #if os(iOS) || os(visionOS)
+            currentContentReferenceSize = nil
+            #endif
+        } else {
+            displayLayer.flush()
+        }
         lastSubmittedCursor = .zero
         displayLayerNotReadyStartTime = 0
     }

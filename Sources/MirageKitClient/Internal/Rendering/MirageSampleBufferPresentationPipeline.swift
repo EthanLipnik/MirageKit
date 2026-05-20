@@ -186,7 +186,7 @@ final class MirageSampleBufferPresentationPipeline {
 
     func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
         if resetPresentationState {
-            presenter.resetPresentationState()
+            presenter.resetPresentationState(removeDisplayedImage: false)
         }
         resumeRendering()
     }
@@ -292,7 +292,10 @@ final class MirageSampleBufferPresentationPipeline {
         MirageLogger.renderer("Recovering \(platformName) presentation pipeline for stream \(streamID.map(String.init) ?? "none")")
         presenter.setStreamID(streamID)
         presentationScheduler.setStreamID(streamID)
-        presenter.resetPresentationState(preserveLoggedLayerFailure: true)
+        presenter.resetPresentationState(
+            preserveLoggedLayerFailure: true,
+            removeDisplayedImage: streamID == nil
+        )
         presentationScheduler.reset()
         presenter.setRenderingSuspended(false, clearCurrentFrame: false)
         presentationScheduler.setRenderingSuspended(false)

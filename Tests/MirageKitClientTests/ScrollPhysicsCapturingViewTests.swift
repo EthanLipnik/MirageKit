@@ -6,6 +6,7 @@
 //
 
 #if os(iOS) || os(visionOS)
+import MirageKit
 @testable import MirageKitClient
 import Testing
 import UIKit
@@ -285,6 +286,65 @@ struct ScrollPhysicsCapturingViewTests {
         )
 
         #expect(location == nil)
+    }
+
+    @Test("Normal direct touch begin moves the host cursor immediately")
+    func normalDirectTouchBeginMovesHostCursorImmediately() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        view.handleDirectTouchBegan(at: CGPoint(x: 80, y: 60))
+
+        let expectedLocation = CGPoint(x: 0.25, y: 0.25)
+        #expect(view.lastCursorPosition == expectedLocation)
+        #expect(view.scrollEventLocation(source: .directTouch) == expectedLocation)
+
+        let event = try #require(events.first)
+        guard case let .mouseMoved(mouseEvent) = event else {
+            Issue.record("Expected direct touch begin to emit mouseMoved")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
+    }
+
+    @Test("Simulated trackpad touch begin does not emit a direct cursor move")
+    func simulatedTrackpadTouchBeginDoesNotEmitDirectCursorMove() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .dragCursor
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        view.handleDirectTouchBegan(at: CGPoint(x: 80, y: 60))
+
+        #expect(events.isEmpty)
+        #expect(view.lastCursorPosition == view.virtualCursorPosition)
+    }
+
+    @Test("Cursor locked direct touch begin moves the locked cursor immediately")
+    func cursorLockedDirectTouchBeginMovesLockedCursorImmediately() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.directTouchInputMode = .normal
+        view.cursorLockEnabled = true
+        var events: [MirageInputEvent] = []
+        view.onInputEvent = { events.append($0) }
+        events.removeAll()
+
+        view.handleDirectTouchBegan(at: CGPoint(x: 240, y: 120))
+
+        let expectedLocation = CGPoint(x: 0.75, y: 0.5)
+        #expect(view.lockedCursorPosition == expectedLocation)
+        #expect(view.lastCursorPosition == expectedLocation)
+
+        let event = try #require(events.first)
+        guard case let .mouseMoved(mouseEvent) = event else {
+            Issue.record("Expected cursor locked direct touch begin to emit mouseMoved")
+            return
+        }
+        #expect(mouseEvent.location == expectedLocation)
     }
 
     private func allowedTouchTypes(for scrollView: UIScrollView) -> Set<Int> {
