@@ -337,10 +337,8 @@ public final class MirageClientService {
     @ObservationIgnored var controlSessionStateObserverTask: Task<Void, Never>?
     /// Task mirroring Loom path changes into network path status and history.
     @ObservationIgnored var controlSessionPathObserverTask: Task<Void, Never>?
-    /// In-flight connection attempt that owns session establishment until bootstrap completes.
-    @ObservationIgnored var pendingConnectTask: Task<LoomAuthenticatedSession, Error>?
-    /// Attempt identifier associated with `pendingConnectTask`.
-    @ObservationIgnored var pendingConnectTaskAttemptID: UUID?
+    /// In-flight transport candidate tasks keyed by connection attempt and candidate identifiers.
+    @ObservationIgnored var pendingConnectTasksByAttemptID: [UUID: [UUID: Task<LoomAuthenticatedSession, Error>]] = [:]
     /// Current connection attempt identifier used to ignore late async completions.
     @ObservationIgnored var currentConnectAttemptID: UUID?
     /// Host peer for the active connection.

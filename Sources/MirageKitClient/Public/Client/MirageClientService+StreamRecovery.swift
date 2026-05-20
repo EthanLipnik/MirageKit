@@ -124,6 +124,7 @@ extension MirageClientService {
         streamID: StreamID,
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
         streamScale: CGFloat? = nil,
         targetFrameRate: Int? = nil
     )
@@ -131,11 +132,16 @@ extension MirageClientService {
         guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
-        guard colorDepth != nil || bitrate != nil || streamScale != nil || targetFrameRate != nil else {
+        guard colorDepth != nil ||
+            bitrate != nil ||
+            bitrateAdaptationCeiling != nil ||
+            streamScale != nil ||
+            targetFrameRate != nil else {
             return
         }
 
         let clampedScale = streamScale.map(MirageStreamGeometry.clampStreamScale)
+        let clampedBitrateAdaptationCeiling = bitrateAdaptationCeiling.map { max(1, $0) }
         let clampedFrameRate = targetFrameRate.map {
             Self.runtimeWorkloadSafetyCappedFrameRate(
                 $0,
@@ -146,12 +152,19 @@ extension MirageClientService {
             streamID: streamID,
             colorDepth: colorDepth,
             bitrate: bitrate,
+            bitrateAdaptationCeiling: clampedBitrateAdaptationCeiling,
             streamScale: clampedScale,
             targetFrameRate: clampedFrameRate
         )
         if let bitrate {
             MirageLogger.client(
                 "Requesting encoder bitrate update for stream \(streamID): \(mirageFormattedMegabitRate(bitrate))"
+            )
+        }
+        if let clampedBitrateAdaptationCeiling {
+            MirageLogger.client(
+                "Requesting encoder bitrate ceiling update for stream \(streamID): " +
+                    "\(mirageFormattedMegabitRate(clampedBitrateAdaptationCeiling))"
             )
         }
         if let clampedFrameRate {

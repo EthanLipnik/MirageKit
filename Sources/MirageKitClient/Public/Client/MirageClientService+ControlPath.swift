@@ -74,6 +74,7 @@ extension MirageClientService {
             let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
             let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
             let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
+            MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: pathKind)
             MirageRenderStreamStore.shared.setLatencyMode(
                 for: streamID,
                 latencyMode: latencyMode,

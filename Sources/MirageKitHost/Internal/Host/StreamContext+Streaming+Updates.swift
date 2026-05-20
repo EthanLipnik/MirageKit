@@ -17,9 +17,16 @@ extension StreamContext {
     func updateEncoderSettings(
         colorDepth: MirageStreamColorDepth?,
         bitrate: Int?,
+        bitrateAdaptationCeiling: Int? = nil,
         updateRequestedTargetBitrate: Bool = false
     ) async throws {
         guard isRunning else { return }
+
+        let previousBitrateAdaptationCeiling = self.bitrateAdaptationCeiling
+        if let bitrateAdaptationCeiling {
+            self.bitrateAdaptationCeiling = max(1, bitrateAdaptationCeiling)
+        }
+        let effectiveBitrateAdaptationCeiling = self.bitrateAdaptationCeiling
 
         var updatedConfig = encoderConfig.withOverrides(
             colorDepth: colorDepth,
@@ -30,35 +37,43 @@ extension StreamContext {
         ) {
             updatedConfig.bitrate = normalizedBitrate
         }
-        if let bitrateAdaptationCeiling,
+        if let effectiveBitrateAdaptationCeiling,
            let updatedBitrate = updatedConfig.bitrate,
-           updatedBitrate > bitrateAdaptationCeiling {
-            updatedConfig.bitrate = bitrateAdaptationCeiling
+           updatedBitrate > effectiveBitrateAdaptationCeiling {
+            updatedConfig.bitrate = effectiveBitrateAdaptationCeiling
         }
 
         let colorDepthChanged = updatedConfig.colorDepth != encoderConfig.colorDepth
         let bitrateChanged = updatedConfig.bitrate != encoderConfig.bitrate
         let frameRateChanged = updatedConfig.targetFrameRate != encoderConfig.targetFrameRate
-        guard colorDepthChanged || bitrateChanged || frameRateChanged else { return }
+        let bitrateAdaptationCeilingChanged = previousBitrateAdaptationCeiling != self.bitrateAdaptationCeiling
+        guard colorDepthChanged || bitrateChanged || frameRateChanged || bitrateAdaptationCeilingChanged else { return }
 
         let updatedRequestedTargetBitrate: Int? = if updateRequestedTargetBitrate,
                                                      bitrate != nil,
                                                      let updatedBitrate = updatedConfig.bitrate {
-            min(updatedBitrate, bitrateAdaptationCeiling ?? updatedBitrate)
+            min(updatedBitrate, effectiveBitrateAdaptationCeiling ?? updatedBitrate)
+        } else if bitrateAdaptationCeilingChanged,
+                  let requestedTargetBitrate,
+                  let effectiveBitrateAdaptationCeiling {
+            min(requestedTargetBitrate, effectiveBitrateAdaptationCeiling)
         } else {
             requestedTargetBitrate
         }
 
-        if bitrateChanged, !colorDepthChanged, !frameRateChanged {
+        if (bitrateChanged || bitrateAdaptationCeilingChanged), !colorDepthChanged, !frameRateChanged {
             encoderConfig = updatedConfig
             requestedTargetBitrate = updatedRequestedTargetBitrate
-            await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
-            await encoder?.updateBitrate(encoderConfig.bitrate)
+            if bitrateChanged {
+                await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
+                await encoder?.updateBitrate(encoderConfig.bitrate)
+            }
             if currentEncodedSize != .zero {
                 await applyDerivedQuality(for: currentEncodedSize, logLabel: "Bitrate update")
             }
             let bitrateText = encoderConfig.bitrate.map(String.init) ?? "auto"
-            MirageLogger.stream("Encoder bitrate update applied: bitrate=\(bitrateText)")
+            let ceilingText = self.bitrateAdaptationCeiling.map(String.init) ?? "nil"
+            MirageLogger.stream("Encoder bitrate update applied: bitrate=\(bitrateText), ceiling=\(ceilingText)")
             logBitrateContract(event: "bitrate_update")
             return
         }

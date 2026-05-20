@@ -65,6 +65,12 @@ struct RenderTelemetrySnapshot {
     /// Maximum queued frame depth sampled in the telemetry window.
     let pendingFrameDepthMax: Int
 
+    /// Current Smoothest-mode display debt, in milliseconds.
+    let smoothestDisplayDebtMs: Double
+
+    /// Active Smoothest-mode display debt cap, in milliseconds.
+    let smoothestDisplayDebtCapMs: Double
+
     /// Pending frames overwritten because the local playout queue was full.
     let overwrittenPendingFrames: UInt64
 
@@ -180,6 +186,8 @@ final class MirageRenderStreamState {
     var displayTargetFPS: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var playoutDelayFrames: Int = 0
+    var transportPathKind: MirageNetworkPathKind = .unknown
+    var lastInteractionTime: CFAbsoluteTime = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
 
@@ -240,6 +248,8 @@ final class MirageRenderStreamState {
         lastSubmittedMappedPresentationTime = .invalid
         lastAcceptedFrameTimeline = nil
         lastDisplayTickTime = 0
+        transportPathKind = .unknown
+        lastInteractionTime = 0
         decodeSamples.removeAll(keepingCapacity: false)
         decodeSampleStartIndex = 0
         displayTickSamples.removeAll(keepingCapacity: false)

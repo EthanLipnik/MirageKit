@@ -259,6 +259,8 @@ extension MirageRenderStreamStore {
                 pendingFrameAgeP95Ms: 0,
                 pendingFrameAgeMaxMs: 0,
                 pendingFrameDepthMax: 0,
+                smoothestDisplayDebtMs: 0,
+                smoothestDisplayDebtCapMs: 0,
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: 0,
                 smoothestDepthDrops: 0,
@@ -346,6 +348,15 @@ extension MirageRenderStreamStore {
             state.pendingFrameDepthSamples[state.pendingFrameDepthSampleStartIndex...].map(\.value)
         )
         let pendingFrameDepthMax = Int((pendingFrameDepthValues.max() ?? Double(pendingFrameCount)).rounded())
+        let latencyPolicy = presentationLatencyPolicyLocked(state: state, now: now)
+        let smoothestDisplayDebtMs = smoothestDisplayDebtMsLocked(
+            state: state,
+            policy: latencyPolicy,
+            now: now
+        )
+        let smoothestDisplayDebtCapMs = latencyPolicy.latencyMode == .smoothest
+            ? latencyPolicy.smoothestDisplayDebtCapMs
+            : 0
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
         let smoothestDepthDrops = state.smoothestDepthDropsSinceLastSnapshot
@@ -419,6 +430,8 @@ extension MirageRenderStreamStore {
             pendingFrameAgeP95Ms: pendingFrameAgeP95Ms,
             pendingFrameAgeMaxMs: pendingFrameAgeMaxMs,
             pendingFrameDepthMax: pendingFrameDepthMax,
+            smoothestDisplayDebtMs: smoothestDisplayDebtMs,
+            smoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             smoothestQueueDrops: smoothestQueueDrops,
             smoothestDepthDrops: smoothestDepthDrops,
@@ -592,6 +605,20 @@ extension MirageRenderStreamStore {
 
     func pendingFrameAgeMsLocked(state: MirageRenderStreamState, now: CFAbsoluteTime) -> Double {
         guard let decodeTime = state.pendingFrames.first?.decodeTime else { return 0 }
-        return max(0, now - decodeTime) * 1000
+        let ageSeconds = now - decodeTime
+        guard ageSeconds >= 0, ageSeconds < 60 else { return 0 }
+        return ageSeconds * 1000
+    }
+
+    func smoothestDisplayDebtMsLocked(
+        state: MirageRenderStreamState,
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime
+    ) -> Double {
+        MirageFramePlayoutQueue.smoothestDisplayDebtMs(
+            frameCount: state.pendingFrames.count,
+            oldestFrameAgeMs: pendingFrameAgeMsLocked(state: state, now: now),
+            policy: policy
+        )
     }
 }

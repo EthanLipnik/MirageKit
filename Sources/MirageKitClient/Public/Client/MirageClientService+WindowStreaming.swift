@@ -178,6 +178,10 @@ public extension MirageClientService {
                 reason: "controller reset"
             )
             await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
+            if let kind = controlPathSnapshot?.kind {
+                MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: kind)
+                await existingController.setTransportPathKind(kind)
+            }
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
                 .client(
@@ -217,6 +221,7 @@ public extension MirageClientService {
             reason: "controller setup"
         )
         if let kind = controlPathSnapshot?.kind {
+            MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: kind)
             await controller.setTransportPathKind(kind)
         }
         if beginPostResizeTransition {

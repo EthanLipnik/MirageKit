@@ -52,6 +52,17 @@ extension MirageClientService {
         recordControlSessionAttempt(attempt, phase: "started", outcome: "pending")
     }
 
+    func recordControlSessionAttemptHedgeLaunched(
+        _ attempt: ControlSessionAttempt,
+        delayDescription: String
+    ) {
+        recordControlSessionAttempt(
+            attempt,
+            phase: "hedge-launched",
+            outcome: "delay=\(delayDescription)"
+        )
+    }
+
     func recordControlSessionAttemptSucceeded(_ attempt: ControlSessionAttempt) {
         recordControlSessionAttempt(attempt, phase: "succeeded", outcome: "connected")
     }
@@ -61,6 +72,27 @@ extension MirageClientService {
         reason: String
     ) {
         recordControlSessionAttempt(attempt, phase: "failed", outcome: reason)
+    }
+
+    func recordControlSessionAttemptSuppressed(
+        _ attempt: ControlSessionAttempt,
+        reason: String
+    ) {
+        recordControlSessionAttempt(attempt, phase: "suppressed", outcome: reason)
+    }
+
+    func recordControlSessionAttemptCancelled(
+        _ attempt: ControlSessionAttempt,
+        reason: String
+    ) {
+        recordControlSessionAttempt(attempt, phase: "cancelled", outcome: reason)
+    }
+
+    func recordControlSessionAttemptWinner(
+        _ attempt: ControlSessionAttempt,
+        reason: String
+    ) {
+        recordControlSessionAttempt(attempt, phase: "winner", outcome: reason)
     }
 
     func recordControlSessionProximityValidation(

@@ -189,6 +189,100 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.pendingFrameCount == 3)
     }
 
+    @Test("Smoothest uses tighter debt cap during recent input")
+    func smoothestUsesTighterDebtCapDuringRecentInput() {
+        let streamID: StreamID = 412
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .smoothest
+            )
+        )
+        MirageRenderStreamStore.shared.noteInteraction(for: streamID)
+
+        for index in 0 ..< 20 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
+                for: streamID
+            )
+        }
+
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 7)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 14)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.smoothestDisplayDebtCapMs == 100)
+        #expect(telemetry.smoothestDisplayDebtMs <= 100.1)
+        #expect(telemetry.smoothestFifoResetCount == 0)
+    }
+
+    @Test("Smoothest recent input cap expires after idle window")
+    func smoothestRecentInputCapExpiresAfterIdleWindow() {
+        let streamID: StreamID = 413
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .smoothest
+            )
+        )
+        MirageRenderStreamStore.shared.noteInteraction(for: streamID, now: CFAbsoluteTimeGetCurrent() - 1.0)
+
+        for index in 0 ..< 20 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
+                for: streamID
+            )
+        }
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.smoothestDisplayDebtCapMs == 150)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 10)
+    }
+
+    @Test("Smoothest hard resets only beyond three hundred milliseconds")
+    func smoothestHardResetsOnlyBeyondThreeHundredMilliseconds() {
+        let policy = MiragePresentationLatencyPolicy(
+            latencyMode: .smoothest,
+            sourceFPS: 60,
+            displayFPS: 60
+        )
+        let now = CFAbsoluteTimeGetCurrent()
+        var softFrames = makeRenderFrames(count: 10, decodeTime: now - 0.299)
+        let softSelection = MirageFramePlayoutQueue.selectFrame(
+            frames: &softFrames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+        #expect(softSelection.frame?.sequence == 10)
+        #expect(softSelection.trimResult.smoothestFifoResetCount == 0)
+
+        var hardFrames = makeRenderFrames(count: 10, decodeTime: now - 0.301)
+        let hardSelection = MirageFramePlayoutQueue.selectFrame(
+            frames: &hardFrames,
+            after: .zero,
+            policy: policy,
+            now: now
+        )
+        #expect(hardSelection.frame?.sequence == 10)
+        #expect(hardSelection.trimResult.smoothestFifoResetCount == 1)
+        #expect(hardFrames.count == 1)
+    }
+
     @Test("Smoothest ProMotion tolerates short jitter without mass drops")
     func smoothestProMotionToleratesShortJitter() {
         let streamID: StreamID = 410
@@ -390,6 +484,19 @@ struct RenderCadenceSmoothingTests {
             fatalError("Unable to allocate CVPixelBuffer for test")
         }
         return buffer
+    }
+
+    private func makeRenderFrames(count: Int, decodeTime: CFAbsoluteTime) -> [MirageRenderFrame] {
+        (0 ..< count).map { index in
+            MirageRenderFrame(
+                pixelBuffer: makePixelBuffer(),
+                contentRect: .zero,
+                sequence: UInt64(index + 1),
+                decodeTime: decodeTime,
+                presentationTime: CMTime(value: CMTimeValue(index), timescale: 60),
+                remotePresentationTime: .invalid
+            )
+        }
     }
 }
 #endif

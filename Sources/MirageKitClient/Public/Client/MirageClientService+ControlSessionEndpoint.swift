@@ -378,6 +378,9 @@ extension MirageClientService {
         guard let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
               let port = NWEndpoint.Port(rawValue: transport.port) else {
             if transportKind == .tcp {
+                if controlSessionCandidateKind(for: host.endpoint, host: host) == .overlay {
+                    return nil
+                }
                 if case let .hostPort(_, port) = host.endpoint,
                    let selectedHost = controlSessionHostSelection(
                        for: host,

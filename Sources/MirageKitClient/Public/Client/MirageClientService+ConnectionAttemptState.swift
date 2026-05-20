@@ -44,19 +44,45 @@ extension MirageClientService {
         }
     }
 
-    func cancelPendingConnectTask(attemptID: UUID? = nil) {
-        guard attemptID == nil || pendingConnectTaskAttemptID == attemptID else {
-            return
-        }
-        pendingConnectTask?.cancel()
-        pendingConnectTask = nil
-        pendingConnectTaskAttemptID = nil
+    @discardableResult
+    func registerPendingConnectTask(
+        _ task: Task<LoomAuthenticatedSession, Error>,
+        attemptID: UUID
+    ) -> UUID {
+        let taskID = UUID()
+        var tasks = pendingConnectTasksByAttemptID[attemptID, default: [:]]
+        tasks[taskID] = task
+        pendingConnectTasksByAttemptID[attemptID] = tasks
+        return taskID
     }
 
-    func clearPendingConnectTaskIfNeeded(for attemptID: UUID) {
-        guard pendingConnectTaskAttemptID == attemptID else { return }
-        pendingConnectTask = nil
-        pendingConnectTaskAttemptID = nil
+    func cancelPendingConnectTask(attemptID: UUID? = nil) {
+        if let attemptID {
+            let tasks = pendingConnectTasksByAttemptID.removeValue(forKey: attemptID) ?? [:]
+            tasks.values.forEach { $0.cancel() }
+            return
+        }
+
+        let tasks = pendingConnectTasksByAttemptID.values.flatMap(\.values)
+        pendingConnectTasksByAttemptID.removeAll()
+        tasks.forEach { $0.cancel() }
+    }
+
+    func clearPendingConnectTaskIfNeeded(
+        taskID: UUID,
+        attemptID: UUID
+    ) {
+        guard var tasks = pendingConnectTasksByAttemptID[attemptID] else { return }
+        tasks.removeValue(forKey: taskID)
+        if tasks.isEmpty {
+            pendingConnectTasksByAttemptID.removeValue(forKey: attemptID)
+        } else {
+            pendingConnectTasksByAttemptID[attemptID] = tasks
+        }
+    }
+
+    func clearPendingConnectTasksIfNeeded(for attemptID: UUID) {
+        pendingConnectTasksByAttemptID.removeValue(forKey: attemptID)
     }
 
     func performBootstrap(

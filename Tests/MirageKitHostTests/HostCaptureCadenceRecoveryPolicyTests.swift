@@ -263,6 +263,55 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(second == .restartCapture)
     }
 
+    @Test("Presented desktop severe capture stall recovers after one bad window")
+    func presentedDesktopSevereCaptureStallRecoversAfterOneBadWindow() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+        let cadence = StreamCaptureCadenceMetrics(
+            deliveredFrameGapWorstMs: 520,
+            deliveredFrameGapP99Ms: 20,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 60,
+            displayRefreshRate: 60,
+            virtualDisplayRefreshRate: 60
+        )
+
+        let action = policy.evaluate(
+            sample(now: 1, targetFrameRate: 60, captureFPS: 60, captureCadence: cadence)
+        )
+
+        #expect(action == .restartCapture)
+    }
+
+    @Test("Pre-presentation severe capture stall keeps topology ladder")
+    func prePresentationSevereCaptureStallKeepsTopologyLadder() {
+        var policy = policy(
+            consecutiveBadWindowsRequired: 1,
+            cadenceDriverRestartsBeforeReassert: 1
+        )
+        let cadence = StreamCaptureCadenceMetrics(
+            deliveredFrameGapWorstMs: 520,
+            deliveredFrameGapP99Ms: 20,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 60,
+            displayRefreshRate: 60,
+            virtualDisplayRefreshRate: 60
+        )
+
+        let action = policy.evaluate(
+            sample(
+                now: 1,
+                receiverHasPresentedFrame: false,
+                targetFrameRate: 60,
+                captureFPS: 60,
+                captureCadence: cadence
+            )
+        )
+
+        #expect(action == .restartVirtualDisplayCadenceDriver)
+    }
+
     private func policy(
         consecutiveBadWindowsRequired: Int,
         actionCooldownSeconds: Double = 0,

@@ -191,12 +191,8 @@ struct ClientConnectionEndpointPlanningTests {
             host: NWEndpoint.Host("100.65.199.51"),
             port: quicPort
         )
-        let expectedTCPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("100.65.199.51"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .quic)
         #expect(attempts[0].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
         #expect(attempts[0].candidateKind == .overlay)
@@ -205,10 +201,6 @@ struct ClientConnectionEndpointPlanningTests {
         #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[1].candidateKind == .overlay)
         #expect(attempts[1].requiredInterfaceType == nil)
-        #expect(attempts[2].transportKind == .tcp)
-        #expect(attempts[2].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(attempts[2].candidateKind == .overlay)
-        #expect(attempts[2].requiredInterfaceType == nil)
     }
 
     @MainActor

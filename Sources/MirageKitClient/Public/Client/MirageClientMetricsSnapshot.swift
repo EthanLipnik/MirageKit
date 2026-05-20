@@ -36,6 +36,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var pendingFrameCount: Int
     /// Age of the oldest pending decoded frame, in milliseconds.
     public var clientPendingFrameAgeMs: Double
+    /// Current Smoothest-mode display debt, in milliseconds.
+    public var clientSmoothestDisplayDebtMs: Double
+    /// Active Smoothest-mode display debt cap, in milliseconds.
+    public var clientSmoothestDisplayDebtCapMs: Double
     /// Number of pending decoded frames overwritten before presentation.
     public var clientOverwrittenPendingFrames: UInt64
     /// Number of Smoothest-mode decoded frames dropped by local playout queue bounds.
@@ -257,6 +261,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         uniqueSubmittedFPS: Double = 0,
         pendingFrameCount: Int = 0,
         clientPendingFrameAgeMs: Double = 0,
+        clientSmoothestDisplayDebtMs: Double = 0,
+        clientSmoothestDisplayDebtCapMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
         clientSmoothestQueueDrops: UInt64 = 0,
         clientSmoothestDisplayDebtDrops: UInt64 = 0,
@@ -340,6 +346,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
+        self.clientSmoothestDisplayDebtMs = max(0, clientSmoothestDisplayDebtMs)
+        self.clientSmoothestDisplayDebtCapMs = max(0, clientSmoothestDisplayDebtCapMs)
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientSmoothestQueueDrops = clientSmoothestQueueDrops
         self.clientSmoothestDisplayDebtDrops = clientSmoothestDisplayDebtDrops

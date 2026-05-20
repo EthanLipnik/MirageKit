@@ -121,6 +121,8 @@ extension StreamController {
             uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+            smoothestDisplayDebtMs: renderTelemetry.smoothestDisplayDebtMs,
+            smoothestDisplayDebtCapMs: renderTelemetry.smoothestDisplayDebtCapMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
             smoothestDisplayDebtDrops: renderTelemetry.smoothestDisplayDebtDrops,

@@ -44,6 +44,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         var sendStartHealthyFrameMultiplier: Double = 2.0
         var sendCompletionHealthyMinimumMs: Double = 50.0
         var sendCompletionHealthyFrameMultiplier: Double = 3.0
+        var severeCaptureGapMs: Double = 500.0
         var highRefreshTargetFrameRate: Int = 90
         var highRefreshMinimumHealthyFrameRate: Int = 60
         var highRefreshPolicyRateMismatchRatio: Double = 0.85
@@ -120,6 +121,17 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
                 }
             }
             return .none
+        }
+
+        if Self.hasSeverePresentedDesktopCaptureStall(sample, configuration: configuration) {
+            guard lastActionTime <= 0 || sample.now - lastActionTime >= configuration.actionCooldownSeconds else {
+                return .none
+            }
+            badWindowCount = 0
+            goodWindowCount = 0
+            lastActionTime = sample.now
+            captureRestartCount += 1
+            return .restartCapture
         }
 
         if let immediateAction = Self.highRefreshImmediateRecoveryAction(sample, configuration: configuration) {
@@ -263,6 +275,25 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         let healthFPS = effectiveHealthFrameRate(sample, configuration: configuration)
         guard observedCaptureFPS < healthFPS * configuration.captureFPSFloorRatio else { return nil }
         return .restartCapture
+    }
+
+    private static func hasSeverePresentedDesktopCaptureStall(
+        _ sample: Sample,
+        configuration: Configuration
+    ) -> Bool {
+        guard sample.receiverHasPresentedFrame,
+              let cadence = sample.captureCadence else {
+            return false
+        }
+        if cadence.virtualDisplayTimingSuspect == true {
+            return true
+        }
+        let severeGap = largest(
+            cadence.wallClockGapWorstMs,
+            cadence.displayTimeGapWorstMs,
+            cadence.deliveredFrameGapWorstMs
+        ) ?? 0
+        return severeGap >= configuration.severeCaptureGapMs
     }
 
     private static func highRefreshPolicyRateMismatch(

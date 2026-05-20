@@ -150,6 +150,12 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
+        let hostCadenceLimited = !networkBound && (
+            (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
+                (captureFPS > 0 && captureFPS < targetFPS * 0.90) ||
+                (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90) ||
+                hostCaptureCadenceUneven
+        )
         let presentationHealthyEnoughToAvoidBlame =
             decodedFPS >= targetFPS - 1.0 &&
             snapshot.clientDisplayTickFPS >= targetFPS - 1.0 &&
@@ -163,7 +169,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
-        let presentationBound = !presentationHealthyEnoughToAvoidBlame && (
+        let presentationBound = !hostCadenceLimited && !presentationHealthyEnoughToAvoidBlame && (
             rendererLoopStalled ||
                 decodeKeepsUp && (
                 submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
@@ -172,13 +178,6 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
                     severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
             )
             )
-
-        let hostCadenceLimited = !networkBound && (
-            (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
-                (captureFPS > 0 && captureFPS < targetFPS * 0.90) ||
-                (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90) ||
-                hostCaptureCadenceUneven
-        )
 
         let captureBound = !hostCadenceLimited && (
             (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||

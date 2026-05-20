@@ -50,6 +50,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         uniqueSubmittedFPS: Double,
         pendingFrameCount: Int,
         pendingFrameAgeMs: Double,
+        smoothestDisplayDebtMs: Double = 0,
+        smoothestDisplayDebtCapMs: Double = 0,
         overwrittenPendingFrames: UInt64,
         smoothestQueueDrops: UInt64 = 0,
         smoothestDisplayDebtDrops: UInt64 = 0,
@@ -85,6 +87,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
             snapshot.pendingFrameCount = max(0, pendingFrameCount)
             snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
+            snapshot.clientSmoothestDisplayDebtMs = max(0, smoothestDisplayDebtMs)
+            snapshot.clientSmoothestDisplayDebtCapMs = max(0, smoothestDisplayDebtCapMs)
             snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
             snapshot.clientSmoothestQueueDrops = smoothestQueueDrops
             snapshot.clientSmoothestDisplayDebtDrops = smoothestDisplayDebtDrops

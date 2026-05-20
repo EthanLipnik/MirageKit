@@ -23,7 +23,7 @@ struct MirageFramePlayoutQueue {
 
         static let empty = TrimResult()
 
-        mutating func recordSmoothestDepthDrop(ageMs: Double) {
+        mutating func recordSmoothestDisplayDebtDrop(ageMs: Double) {
             smoothestQueueDrops += 1
             smoothestDepthDrops += 1
             smoothestDisplayDebtDrops += 1
@@ -73,16 +73,11 @@ struct MirageFramePlayoutQueue {
                 coalescedFrames: removed
             )
         case .smoothest:
-            var result = TrimResult()
-            while frames.count > policy.maximumQueueDepth {
-                let ageMs = frames.first.map { comparableFrameAgeMs($0, now: now) } ?? 0
-                frames.removeFirst()
-                result.recordSmoothestDepthDrop(ageMs: ageMs)
-            }
-            if result.smoothestQueueDrops > 0 {
-                result.recordSmoothestFifoReset()
-            }
-            return result
+            return trimSmoothestFrames(
+                from: &frames,
+                policy: policy,
+                now: now
+            )
         }
     }
 
@@ -109,7 +104,7 @@ struct MirageFramePlayoutQueue {
                 trimResult.coalescedFrames += removed
             }
         case .smoothest:
-            let expired = removeExpiredSmoothestFrames(
+            let expired = trimSmoothestFrames(
                 from: &frames,
                 policy: policy,
                 now: now
@@ -144,23 +139,57 @@ struct MirageFramePlayoutQueue {
         return .empty
     }
 
-    private static func removeExpiredSmoothestFrames(
+    private static func trimSmoothestFrames(
         from frames: inout [MirageRenderFrame],
         policy: MiragePresentationLatencyPolicy,
         now: CFAbsoluteTime
     ) -> TrimResult {
         var result = TrimResult()
-        while frames.count > 1,
-              let first = frames.first,
-              comparableFrameAgeMs(first, now: now) > policy.maximumQueueAgeMs {
-            let ageMs = comparableFrameAgeMs(first, now: now)
-            frames.removeFirst()
-            result.recordSmoothestAgeDrop(ageMs: ageMs)
-        }
-        if result.smoothestQueueDrops > 0 {
+        guard frames.count > 1 else { return result }
+
+        let oldestAgeMs = frames.first.map { comparableFrameAgeMs($0, now: now) } ?? 0
+        let displayDebtMs = smoothestDisplayDebtMs(
+            frameCount: frames.count,
+            oldestFrameAgeMs: oldestAgeMs,
+            policy: policy
+        )
+        if oldestAgeMs > policy.maximumQueueAgeMs || displayDebtMs > policy.hardResetDebtMs {
+            let hardResetFromAge = oldestAgeMs > policy.maximumQueueAgeMs
+            while frames.count > 1 {
+                let ageMs = frames.first.map { comparableFrameAgeMs($0, now: now) } ?? 0
+                frames.removeFirst()
+                if hardResetFromAge {
+                    result.recordSmoothestAgeDrop(ageMs: ageMs)
+                } else {
+                    result.recordSmoothestDisplayDebtDrop(ageMs: ageMs)
+                }
+            }
             result.recordSmoothestFifoReset()
+            return result
+        }
+
+        while frames.count > 1 {
+            let ageMs = frames.first.map { comparableFrameAgeMs($0, now: now) } ?? 0
+            let debtMs = smoothestDisplayDebtMs(
+                frameCount: frames.count,
+                oldestFrameAgeMs: ageMs,
+                policy: policy
+            )
+            guard debtMs > policy.smoothestDisplayDebtCapMs else { break }
+            frames.removeFirst()
+            result.recordSmoothestDisplayDebtDrop(ageMs: ageMs)
         }
         return result
+    }
+
+    static func smoothestDisplayDebtMs(
+        frameCount: Int,
+        oldestFrameAgeMs: Double,
+        policy: MiragePresentationLatencyPolicy
+    ) -> Double {
+        guard policy.latencyMode == .smoothest, frameCount > 0 else { return 0 }
+        let depthDebtMs = Double(max(0, frameCount - 1)) * policy.displayFrameIntervalMs
+        return max(max(0, oldestFrameAgeMs), depthDebtMs)
     }
 
     private static func comparableFrameAgeMs(_ frame: MirageRenderFrame, now: CFAbsoluteTime) -> Double {

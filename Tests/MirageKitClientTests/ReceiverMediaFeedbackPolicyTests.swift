@@ -126,6 +126,8 @@ struct ReceiverMediaFeedbackPolicyTests {
             uniqueSubmittedFPS: 55,
             pendingFrameCount: pendingFrameCount,
             pendingFrameAgeMs: 30,
+            smoothestDisplayDebtMs: 0,
+            smoothestDisplayDebtCapMs: 0,
             overwrittenPendingFrames: 3,
             smoothestQueueDrops: smoothestQueueDrops,
             smoothestDisplayDebtDrops: 0,

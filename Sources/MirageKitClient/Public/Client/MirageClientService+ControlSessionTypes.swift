@@ -12,7 +12,7 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    struct ControlSessionAttempt {
+    struct ControlSessionAttempt: @unchecked Sendable {
         let hostName: String
         let endpoint: NWEndpoint
         let transportKind: LoomTransportKind
@@ -180,7 +180,7 @@ extension MirageClientService {
         }
     }
 
-    enum ControlSessionFailureClassification: String {
+    enum ControlSessionFailureClassification: String, Sendable {
         case timeout
         case transportLoss
         case connectionRefused
@@ -198,7 +198,7 @@ extension MirageClientService {
         }
     }
 
-    static func classifyControlSessionFailure(_ error: Error) -> ControlSessionFailureClassification {
+    nonisolated static func classifyControlSessionFailure(_ error: Error) -> ControlSessionFailureClassification {
         if error is CancellationError {
             return .cancelled
         }
@@ -245,7 +245,7 @@ extension MirageClientService {
         return .other
     }
 
-    static func classifyBootstrappedControlSessionFailure(
+    nonisolated static func classifyBootstrappedControlSessionFailure(
         _ error: Error,
         isCurrentAttempt: Bool,
         taskIsCancelled: Bool
@@ -261,7 +261,7 @@ extension MirageClientService {
         return classification
     }
 
-    static func shouldRetryCurrentBootstrappedControlSessionAttempt(
+    nonisolated static func shouldRetryCurrentBootstrappedControlSessionAttempt(
         classification: ControlSessionFailureClassification,
         controlChannelOpened: Bool,
         hasRetriedCurrentAttempt: Bool
@@ -271,7 +271,7 @@ extension MirageClientService {
         return !hasRetriedCurrentAttempt
     }
 
-    static func shouldRetryLaterControlSessionAttempt(
+    nonisolated static func shouldRetryLaterControlSessionAttempt(
         classification: ControlSessionFailureClassification,
         attempts: [ControlSessionAttempt],
         currentAttemptIndex: Int
@@ -283,7 +283,7 @@ extension MirageClientService {
     }
 
     /// Classifies human-readable protocol errors produced before typed failure details are available.
-    static func classifyProtocolErrorReason(_ reason: String) -> ControlSessionFailureClassification? {
+    nonisolated static func classifyProtocolErrorReason(_ reason: String) -> ControlSessionFailureClassification? {
         if looksLikeProximityPathValidationFailure(reason) {
             return .transportLoss
         }
@@ -299,29 +299,29 @@ extension MirageClientService {
         return nil
     }
 
-    static func looksLikeProximityPathValidationFailure(_ reason: String) -> Bool {
+    nonisolated static func looksLikeProximityPathValidationFailure(_ reason: String) -> Bool {
         reason.lowercased().contains("proximity path validation failed")
     }
 
-    static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {
+    nonisolated static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {
         let normalized = reason.lowercased()
         return normalized.contains("failed to resolve") ||
             normalized.contains("nodename nor servname provided") ||
             normalized.contains("name or service not known")
     }
 
-    static func looksLikeBootstrapResponseTimeout(_ reason: String) -> Bool {
+    nonisolated static func looksLikeBootstrapResponseTimeout(_ reason: String) -> Bool {
         let normalized = reason.lowercased()
         return normalized.contains("timed out waiting for host bootstrap response")
     }
 
-    static func looksLikeBootstrapTransportFailure(_ reason: String) -> Bool {
+    nonisolated static func looksLikeBootstrapTransportFailure(_ reason: String) -> Bool {
         let normalized = reason.lowercased()
         return normalized.contains("control stream closed before receiving bootstrap response") ||
             normalized.contains("authenticated loom session closed before mirage control stream opened")
     }
 
-    static func classifyLoomConnectionFailure(
+    nonisolated static func classifyLoomConnectionFailure(
         _ failure: LoomConnectionFailure
     ) -> ControlSessionFailureClassification {
         switch failure.reason {
@@ -340,7 +340,7 @@ extension MirageClientService {
         }
     }
 
-    static func bootstrappedControlSessionFailureReason(
+    nonisolated static func bootstrappedControlSessionFailureReason(
         for attempt: ControlSessionAttempt,
         classification: ControlSessionFailureClassification,
         underlyingError: Error
@@ -399,7 +399,7 @@ extension MirageClientService {
         return nil
     }
 
-    static func classifyNetworkFailure(_ error: NWError) -> ControlSessionFailureClassification {
+    nonisolated static func classifyNetworkFailure(_ error: NWError) -> ControlSessionFailureClassification {
         switch error {
         case let .posix(code):
             return classifyPOSIXError(code)
@@ -414,7 +414,7 @@ extension MirageClientService {
         }
     }
 
-    static func classifyPOSIXError(_ code: POSIXErrorCode) -> ControlSessionFailureClassification {
+    nonisolated static func classifyPOSIXError(_ code: POSIXErrorCode) -> ControlSessionFailureClassification {
         switch code {
         case .ETIMEDOUT:
             .timeout

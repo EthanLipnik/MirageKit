@@ -112,6 +112,8 @@ extension StreamController {
         let uniqueSubmittedFPS: Double
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
+        let smoothestDisplayDebtMs: Double
+        let smoothestDisplayDebtCapMs: Double
         let overwrittenPendingFrames: UInt64
         let smoothestQueueDrops: UInt64
         let smoothestDisplayDebtDrops: UInt64

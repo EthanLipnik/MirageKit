@@ -152,7 +152,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let selection = state.presentationController.nextFrame(
             frames: &state.pendingFrames,
             after: submittedCursor,
-            policy: presentationLatencyPolicyLocked(state: state),
+            policy: presentationLatencyPolicyLocked(state: state, now: now),
             now: now
         )
         recordPendingFrameTrimLocked(selection.trimResult, state: state)
@@ -262,6 +262,20 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.unlock()
     }
 
+    func noteInteraction(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.lastInteractionTime = now
+        state.lock.unlock()
+    }
+
+    func setTransportPathKind(for streamID: StreamID, pathKind: MirageNetworkPathKind) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.transportPathKind = pathKind
+        state.lock.unlock()
+    }
+
     func setLatencyMode(
         for streamID: StreamID,
         latencyMode: MirageStreamLatencyMode,
@@ -358,7 +372,7 @@ extension MirageRenderStreamStore {
     ) -> MirageFramePlayoutQueue.TrimResult {
         state.presentationController.trimAfterEnqueue(
             frames: &state.pendingFrames,
-            policy: presentationLatencyPolicyLocked(state: state),
+            policy: presentationLatencyPolicyLocked(state: state, now: now),
             now: now
         )
     }
@@ -436,12 +450,24 @@ extension MirageRenderStreamStore {
         state.coalescedFramesSinceLastSnapshot &+= UInt64(count)
     }
 
-    private func presentationLatencyPolicyLocked(state: MirageRenderStreamState) -> MiragePresentationLatencyPolicy {
+    func presentationLatencyPolicyLocked(
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) -> MiragePresentationLatencyPolicy {
         MiragePresentationLatencyPolicy(
             latencyMode: state.latencyMode,
             sourceFPS: state.sourceTargetFPS,
-            displayFPS: state.displayTargetFPS
+            displayFPS: state.displayTargetFPS,
+            hasRecentInteraction: hasRecentInteractionLocked(state: state, now: now)
         )
+    }
+
+    private func hasRecentInteractionLocked(
+        state: MirageRenderStreamState,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard state.lastInteractionTime > 0 else { return false }
+        return max(0, now - state.lastInteractionTime) < 0.750
     }
 
     func activePresentationRecoveryHandlersLocked(state: MirageRenderStreamState) -> [@Sendable () -> Void] {

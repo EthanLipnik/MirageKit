@@ -259,8 +259,8 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.clientDecodeBacklogFrames == 4)
     }
 
-    @Test("Mixed classification reports multiple active constraints")
-    func mixedClassificationReportsMultipleActiveConstraints() {
+    @Test("Host cadence pressure wins over presentation symptoms")
+    func hostCadencePressureWinsOverPresentationSymptoms() {
         var snapshot = baselineSnapshot()
         snapshot.hostCaptureIngressFPS = 42
         snapshot.hostCaptureFPS = 42
@@ -271,7 +271,7 @@ struct MirageStreamBottleneckKindTests {
         snapshot.clientVisibleFrameFPS = 44
         snapshot.clientDisplayLayerNotReadyCount = 2
 
-        #expect(snapshot.bottleneckKind == .mixed)
+        #expect(snapshot.bottleneckKind == .hostCadenceLimited)
     }
 
     private func baselineSnapshot() -> MirageClientMetricsSnapshot {

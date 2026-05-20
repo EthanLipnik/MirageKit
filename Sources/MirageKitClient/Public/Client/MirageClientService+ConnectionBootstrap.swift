@@ -15,6 +15,10 @@ extension MirageClientService {
     /// Interval used while polling bootstrap progress for stalled control-session attempts.
     private static let controlSessionConnectWatchdogPollingInterval: Duration = .milliseconds(250)
 
+    nonisolated static func controlSessionHedgeDelayDescription(_ delay: Duration) -> String {
+        String(describing: delay)
+    }
+
     func connectBootstrappedControlSession(
         to host: LoomPeer,
         hello: LoomSessionHelloRequest,
@@ -31,21 +35,35 @@ extension MirageClientService {
 
         while attemptIndex < attempts.count {
             let attempt = attempts[attemptIndex]
+            let groupedAttempts = controlSessionAttemptGroup(in: attempts, startingAt: attemptIndex)
+            let failureAttemptIndex = attemptIndex + groupedAttempts.count - 1
             try throwIfConnectAttemptIsStale(attemptID)
 
             var openedSession: LoomAuthenticatedSession?
             var openedChannel: MirageControlChannel?
+            var activeAttempt = attempt
 
             do {
-                let session = try await establishControlSession(
-                    attempt: attempt,
-                    hello: hello,
-                    attemptID: attemptID
-                )
+                let session: LoomAuthenticatedSession
+                if attempt.candidateKind == .overlay, groupedAttempts.count > 1 {
+                    let result = try await establishOverlayControlSession(
+                        attempts: groupedAttempts,
+                        hello: hello,
+                        attemptID: attemptID
+                    )
+                    session = result.session
+                    activeAttempt = result.attempt
+                } else {
+                    session = try await establishControlSession(
+                        attempt: attempt,
+                        hello: hello,
+                        attemptID: attemptID
+                    )
+                }
                 openedSession = session
                 try await validateProximityControlSessionPath(
                     session,
-                    attempt: attempt
+                    attempt: activeAttempt
                 )
                 let controlChannel = try await MirageControlChannel.open(on: session)
                 openedChannel = controlChannel
@@ -58,7 +76,7 @@ extension MirageClientService {
                 )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
-                recordControlSessionAttemptSucceeded(attempt)
+                recordControlSessionAttemptSucceeded(activeAttempt)
                 return BootstrappedControlSession(session: session, controlChannel: controlChannel)
             } catch {
                 if let openedChannel {
@@ -82,21 +100,21 @@ extension MirageClientService {
                 }
 
                 let failureReason = Self.bootstrappedControlSessionFailureReason(
-                    for: attempt,
+                    for: activeAttempt,
                     classification: classification,
                     underlyingError: error
                 )
                 lastFailureReason = failureReason
-                recordControlSessionAttemptFailed(attempt, reason: failureReason)
+                recordControlSessionAttemptFailed(activeAttempt, reason: failureReason)
 
                 if Self.shouldRetryCurrentBootstrappedControlSessionAttempt(
                     classification: classification,
                     controlChannelOpened: openedChannel != nil,
                     hasRetriedCurrentAttempt: retriedCurrentBootstrapTransportLossAttemptIndices.contains(
-                        attemptIndex
+                        failureAttemptIndex
                     )
                 ) {
-                    retriedCurrentBootstrapTransportLossAttemptIndices.insert(attemptIndex)
+                    retriedCurrentBootstrapTransportLossAttemptIndices.insert(failureAttemptIndex)
                     MirageLogger.client(
                         "\(failureReason); retrying same transport once before transport fallback"
                     )
@@ -106,10 +124,10 @@ extension MirageClientService {
                 if Self.shouldRetryLaterControlSessionAttempt(
                     classification: classification,
                     attempts: attempts,
-                    currentAttemptIndex: attemptIndex
+                    currentAttemptIndex: failureAttemptIndex
                 ) {
                     MirageLogger.client("\(failureReason); retrying over next advertised transport")
-                    attemptIndex += 1
+                    attemptIndex = failureAttemptIndex + 1
                     continue
                 }
 
@@ -139,10 +157,140 @@ extension MirageClientService {
         )
     }
 
+    func controlSessionAttemptGroup(
+        in attempts: [ControlSessionAttempt],
+        startingAt startIndex: Int
+    ) -> [ControlSessionAttempt] {
+        guard attempts.indices.contains(startIndex) else { return [] }
+        let candidateKind = attempts[startIndex].candidateKind
+        guard candidateKind == .overlay else { return [attempts[startIndex]] }
+
+        var group: [ControlSessionAttempt] = []
+        var index = startIndex
+        while attempts.indices.contains(index),
+              attempts[index].candidateKind == candidateKind {
+            group.append(attempts[index])
+            index += 1
+        }
+        return group
+    }
+
+    func establishOverlayControlSession(
+        attempts: [ControlSessionAttempt],
+        hello: LoomSessionHelloRequest,
+        attemptID: UUID
+    ) async throws -> OverlayControlSessionRaceResult {
+        let raceState = OverlayControlSessionRaceState()
+        var lastFailure: (classification: ControlSessionFailureClassification, reason: String)?
+
+        return try await withThrowingTaskGroup(
+            of: OverlayControlSessionCandidateOutcome.self,
+            returning: OverlayControlSessionRaceResult.self
+        ) { group in
+            for (index, attempt) in attempts.enumerated() {
+                group.addTask { [weak self] in
+                    let delay = OverlayControlSessionRacePolicy.launchDelay(for: attempt.transportKind)
+                    do {
+                        if delay > .milliseconds(0) {
+                            try await Task.sleep(for: delay)
+                        }
+                        guard await raceState.shouldLaunch(attempt.transportKind) else {
+                            return .suppressed(
+                                index: index,
+                                attempt: attempt,
+                                reason: "overlay hedge suppressed; another candidate reached remote hello or trust"
+                            )
+                        }
+                        await raceState.recordLaunched(attempt.transportKind)
+                        await MainActor.run {
+                            self?.recordControlSessionAttemptHedgeLaunched(
+                                attempt,
+                                delayDescription: Self.controlSessionHedgeDelayDescription(delay)
+                            )
+                        }
+                        guard let self else {
+                            return .cancelled(index: index, attempt: attempt)
+                        }
+                        let session = try await self.establishControlSession(
+                            attempt: attempt,
+                            hello: hello,
+                            attemptID: attemptID,
+                            progressObserver: { progress in
+                                await raceState.recordProgress(
+                                    progress,
+                                    transportKind: attempt.transportKind
+                                )
+                            }
+                        )
+                        return .connected(index: index, attempt: attempt, session: session)
+                    } catch is CancellationError {
+                        return .cancelled(index: index, attempt: attempt)
+                    } catch {
+                        let classification = Self.classifyControlSessionFailure(error)
+                        return .failed(
+                            index: index,
+                            attempt: attempt,
+                            classification: classification,
+                            reason: Self.bootstrappedControlSessionFailureReason(
+                                for: attempt,
+                                classification: classification,
+                                underlyingError: error
+                            )
+                        )
+                    }
+                }
+            }
+
+            while let outcome = try await group.next() {
+                switch outcome {
+                case let .connected(_, attempt, session):
+                    if await raceState.markWinner(attempt.transportKind) {
+                        recordControlSessionAttemptWinner(
+                            attempt,
+                            reason: "overlay race winner"
+                        )
+                        group.cancelAll()
+                        cancelPendingConnectTask(attemptID: attemptID)
+                        return OverlayControlSessionRaceResult(attempt: attempt, session: session)
+                    }
+                    await session.cancel()
+                    recordControlSessionAttemptCancelled(
+                        attempt,
+                        reason: "overlay race loser"
+                    )
+                case let .failed(_, attempt, classification, reason):
+                    lastFailure = (classification, reason)
+                    recordControlSessionAttemptFailed(
+                        attempt,
+                        reason: reason
+                    )
+                case let .suppressed(_, attempt, reason):
+                    recordControlSessionAttemptSuppressed(attempt, reason: reason)
+                case let .cancelled(_, attempt):
+                    recordControlSessionAttemptCancelled(
+                        attempt,
+                        reason: "overlay race cancelled"
+                    )
+                }
+            }
+
+            if let lastFailure {
+                switch lastFailure.classification {
+                case .timeout:
+                    throw MirageError.timeout
+                default:
+                    throw MirageError.protocolError(lastFailure.reason)
+                }
+            }
+            throw MirageError.timeout
+        }
+    }
+
     func establishControlSession(
         attempt: ControlSessionAttempt,
         hello: LoomSessionHelloRequest,
-        attemptID: UUID
+        attemptID: UUID,
+        progressObserver: (@Sendable (LoomAuthenticatedSessionBootstrapProgress) async -> Void)? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
@@ -166,6 +314,7 @@ extension MirageClientService {
                 onBootstrapProgress: { [weak self] progress in
                     Task {
                         await bootstrapProgressTracker.record(progress)
+                        await progressObserver?(progress)
                         await MainActor.run {
                             self?.handleConnectBootstrapProgress(
                                 progress,
@@ -186,21 +335,21 @@ extension MirageClientService {
             }
             return session
         }
-        pendingConnectTask = connectTask
-        pendingConnectTaskAttemptID = attemptID
+        let taskID = registerPendingConnectTask(connectTask, attemptID: attemptID)
 
         do {
             let session = try await awaitConnectSession(
                 connectTask,
                 attempt: attempt,
-                attemptID: attemptID,
-                timeout: controlSessionConnectTimeout(for: attempt),
+                initialTimeout: controlSessionInitialConnectTimeout(for: attempt),
+                activePhaseIdleTimeout: controlSessionActivePhaseIdleTimeout(for: attempt),
+                preRemoteHelloActivePhaseIdleTimeout: controlSessionPreRemoteHelloIdleTimeout(for: attempt),
                 bootstrapProgressTracker: bootstrapProgressTracker
             )
-            clearPendingConnectTaskIfNeeded(for: attemptID)
+            clearPendingConnectTaskIfNeeded(taskID: taskID, attemptID: attemptID)
             return session
         } catch {
-            clearPendingConnectTaskIfNeeded(for: attemptID)
+            clearPendingConnectTaskIfNeeded(taskID: taskID, attemptID: attemptID)
             throw error
         }
     }
@@ -251,8 +400,9 @@ extension MirageClientService {
     func awaitConnectSession(
         _ connectTask: Task<LoomAuthenticatedSession, Error>,
         attempt: ControlSessionAttempt,
-        attemptID: UUID,
-        timeout: Duration,
+        initialTimeout: Duration,
+        activePhaseIdleTimeout: Duration,
+        preRemoteHelloActivePhaseIdleTimeout: Duration?,
         bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker
     ) async throws -> LoomAuthenticatedSession {
         let timeoutError = MirageError.timeout
@@ -279,7 +429,7 @@ extension MirageClientService {
 
                 // Cancel the watchdog loop as soon as this race resolves so
                 // repeated fallback attempts do not accumulate idle timers.
-                timeoutMonitorTask = Task { [timeout, timeoutError] in
+                timeoutMonitorTask = Task { [initialTimeout, activePhaseIdleTimeout, preRemoteHelloActivePhaseIdleTimeout, timeoutError] in
                     let absoluteTimeout = absoluteControlSessionConnectTimeout(for: attempt)
                     let trustPendingTimeout = max(
                         absoluteTimeout,
@@ -294,8 +444,9 @@ extension MirageClientService {
                         }
                         let timedOut = await bootstrapProgressTracker.shouldTimeOut(
                             now: ContinuousClock.now,
-                            initialTimeout: timeout,
-                            activePhaseIdleTimeout: timeout,
+                            initialTimeout: initialTimeout,
+                            activePhaseIdleTimeout: activePhaseIdleTimeout,
+                            preRemoteHelloActivePhaseIdleTimeout: preRemoteHelloActivePhaseIdleTimeout,
                             trustPendingIdleTimeout: trustPendingTimeout,
                             absoluteTimeout: absoluteTimeout,
                             trustPendingAbsoluteTimeout: trustPendingTimeout
@@ -308,14 +459,29 @@ extension MirageClientService {
                 }
             }
         } catch {
-            if isCurrentConnectAttempt(attemptID) {
-                cancelPendingConnectTask(attemptID: attemptID)
-            }
             throw error
         }
     }
 
+    func controlSessionInitialConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.isPeerToPeerPreferred {
+            return .seconds(2)
+        }
+        if attempt.candidateKind == .overlay,
+           attempt.transportKind != .udp {
+            return OverlayControlSessionRacePolicy.preTransportReadyTimeout
+        }
+        if attempt.transportKind == .udp {
+            return .seconds(5)
+        }
+        return controlSessionConnectTimeout
+    }
+
     func controlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        controlSessionInitialConnectTimeout(for: attempt)
+    }
+
+    func controlSessionActivePhaseIdleTimeout(for attempt: ControlSessionAttempt) -> Duration {
         if attempt.isPeerToPeerPreferred {
             return .seconds(2)
         }
@@ -325,14 +491,25 @@ extension MirageClientService {
         return controlSessionConnectTimeout
     }
 
+    func controlSessionPreRemoteHelloIdleTimeout(for attempt: ControlSessionAttempt) -> Duration? {
+        guard attempt.candidateKind == .overlay,
+              attempt.transportKind != .udp else {
+            return nil
+        }
+        return OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout
+    }
+
     func absoluteControlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
         if attempt.isPeerToPeerPreferred {
             return .seconds(6)
         }
+        if attempt.candidateKind == .overlay {
+            return OverlayControlSessionRacePolicy.groupBudget
+        }
         if attempt.transportKind == .udp {
             return .seconds(20)
         }
-        return controlSessionConnectTimeout(for: attempt)
+        return controlSessionInitialConnectTimeout(for: attempt)
     }
 
     func handleConnectBootstrapProgress(

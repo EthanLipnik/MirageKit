@@ -27,6 +27,8 @@ struct ClientStreamingAnomalySample {
     let pendingFrameAgeP95Ms: Double
     let pendingFrameAgeMaxMs: Double
     let pendingFrameDepthMax: Int
+    let smoothestDisplayDebtMs: Double
+    let smoothestDisplayDebtCapMs: Double
     let overwrittenPendingFrames: UInt64
     let smoothestQueueDrops: UInt64
     let smoothestDepthDrops: UInt64
@@ -93,6 +95,8 @@ struct ClientStreamingAnomalySample {
         pendingFrameAgeP95Ms: Double = 0,
         pendingFrameAgeMaxMs: Double = 0,
         pendingFrameDepthMax: Int = 0,
+        smoothestDisplayDebtMs: Double = 0,
+        smoothestDisplayDebtCapMs: Double = 0,
         overwrittenPendingFrames: UInt64,
         smoothestQueueDrops: UInt64 = 0,
         smoothestDepthDrops: UInt64 = 0,
@@ -155,6 +159,8 @@ struct ClientStreamingAnomalySample {
         self.pendingFrameAgeP95Ms = pendingFrameAgeP95Ms
         self.pendingFrameAgeMaxMs = pendingFrameAgeMaxMs
         self.pendingFrameDepthMax = pendingFrameDepthMax
+        self.smoothestDisplayDebtMs = smoothestDisplayDebtMs
+        self.smoothestDisplayDebtCapMs = smoothestDisplayDebtCapMs
         self.overwrittenPendingFrames = overwrittenPendingFrames
         self.smoothestQueueDrops = smoothestQueueDrops
         self.smoothestDepthDrops = smoothestDepthDrops
@@ -214,6 +220,8 @@ struct ClientStreamingAnomalySample {
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
             clientPendingFrameAgeMs: pendingFrameAgeMs,
+            clientSmoothestDisplayDebtMs: smoothestDisplayDebtMs,
+            clientSmoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
             clientSmoothestQueueDrops: smoothestQueueDrops,
             clientSmoothestDisplayDebtDrops: smoothestDisplayDebtDrops,
@@ -357,6 +365,8 @@ func clientStreamingAnomalyDiagnostic(
         "pending=\(sample.pendingFrameCount) pendingAge=\(formattedMs(sample.pendingFrameAgeMs))ms " +
         "pendingAgeP95=\(formattedMs(sample.pendingFrameAgeP95Ms))ms " +
         "pendingAgeMax=\(formattedMs(sample.pendingFrameAgeMaxMs))ms pendingDepthMax=\(sample.pendingFrameDepthMax) " +
+        "smoothestDebt=\(formattedMs(sample.smoothestDisplayDebtMs))ms " +
+        "smoothestDebtCap=\(formattedMs(sample.smoothestDisplayDebtCapMs))ms " +
         "reassemblerPending=\(sample.reassemblerPendingFrameCount) keyframes=\(sample.reassemblerPendingKeyframeCount) " +
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +

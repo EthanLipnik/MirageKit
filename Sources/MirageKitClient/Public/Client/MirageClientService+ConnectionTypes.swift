@@ -109,6 +109,7 @@ actor ConnectSessionBootstrapProgressTracker {
         now: ContinuousClock.Instant,
         initialTimeout: Duration,
         activePhaseIdleTimeout: Duration,
+        preRemoteHelloActivePhaseIdleTimeout: Duration? = nil,
         trustPendingIdleTimeout: Duration,
         absoluteTimeout: Duration,
         trustPendingAbsoluteTimeout: Duration
@@ -127,6 +128,12 @@ actor ConnectSessionBootstrapProgressTracker {
         case .trustPendingApproval:
             idleTimeout = trustPendingIdleTimeout
             resolvedAbsoluteTimeout = trustPendingAbsoluteTimeout
+        case .transportStarting, .transportReady, .localHelloSent:
+            idleTimeout = preRemoteHelloActivePhaseIdleTimeout ?? activePhaseIdleTimeout
+            resolvedAbsoluteTimeout = absoluteTimeout
+        case .remoteHelloReceived:
+            idleTimeout = activePhaseIdleTimeout
+            resolvedAbsoluteTimeout = trustPendingAbsoluteTimeout
         default:
             idleTimeout = activePhaseIdleTimeout
             resolvedAbsoluteTimeout = absoluteTimeout
@@ -140,5 +147,9 @@ actor ConnectSessionBootstrapProgressTracker {
             return now - startedAt >= idleTimeout
         }
         return now - lastProgressAt >= idleTimeout
+    }
+
+    func phase() -> LoomAuthenticatedSessionBootstrapPhase {
+        latestProgress.phase
     }
 }

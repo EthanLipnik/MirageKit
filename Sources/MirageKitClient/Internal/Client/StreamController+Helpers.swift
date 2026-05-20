@@ -58,6 +58,8 @@ extension StreamController {
                 pendingFrameAgeP95Ms: renderTelemetry.pendingFrameAgeP95Ms,
                 pendingFrameAgeMaxMs: renderTelemetry.pendingFrameAgeMaxMs,
                 pendingFrameDepthMax: renderTelemetry.pendingFrameDepthMax,
+                smoothestDisplayDebtMs: renderTelemetry.smoothestDisplayDebtMs,
+                smoothestDisplayDebtCapMs: renderTelemetry.smoothestDisplayDebtCapMs,
                 overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
                 smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
                 smoothestDepthDrops: renderTelemetry.smoothestDepthDrops,
@@ -171,6 +173,8 @@ extension StreamController {
                 "pendingAgeP95=\(Int(renderTelemetry.pendingFrameAgeP95Ms.rounded()))ms " +
                 "pendingAgeMax=\(Int(renderTelemetry.pendingFrameAgeMaxMs.rounded()))ms " +
                 "pendingDepthMax=\(renderTelemetry.pendingFrameDepthMax) " +
+                "smoothestDebt=\(Int(renderTelemetry.smoothestDisplayDebtMs.rounded()))ms " +
+                "smoothestDebtCap=\(Int(renderTelemetry.smoothestDisplayDebtCapMs.rounded()))ms " +
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
                 "smoothestDepthDrops=\(renderTelemetry.smoothestDepthDrops) " +
                 "smoothestAgeDrops=\(renderTelemetry.smoothestAgeDrops) " +

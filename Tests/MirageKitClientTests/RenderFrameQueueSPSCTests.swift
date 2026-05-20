@@ -73,8 +73,8 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
-    @Test("Smoothest queue overflow is tracked separately from overwritten frames")
-    func smoothestQueueOverflowIsTrackedSeparatelyFromOverwrittenFrames() {
+    @Test("Smoothest soft debt drops are tracked separately from overwritten frames")
+    func smoothestSoftDebtDropsAreTrackedSeparatelyFromOverwrittenFrames() {
         let streamID: StreamID = 310
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -91,14 +91,15 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 18)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 10)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 11)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 2)
-        #expect(telemetry.smoothestDisplayDebtDrops == 2)
-        #expect(telemetry.smoothestFifoResetCount == 2)
+        #expect(telemetry.smoothestQueueDrops == 10)
+        #expect(telemetry.smoothestDisplayDebtDrops == 10)
+        #expect(telemetry.smoothestFifoResetCount == 0)
+        #expect(telemetry.smoothestDisplayDebtMs <= telemetry.smoothestDisplayDebtCapMs)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 

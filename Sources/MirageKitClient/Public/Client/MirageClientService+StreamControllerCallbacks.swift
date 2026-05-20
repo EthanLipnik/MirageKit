@@ -55,6 +55,8 @@ extension MirageClientService {
                     uniqueSubmittedFPS: metrics.uniqueSubmittedFPS,
                     pendingFrameCount: metrics.pendingFrameCount,
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
+                    smoothestDisplayDebtMs: metrics.smoothestDisplayDebtMs,
+                    smoothestDisplayDebtCapMs: metrics.smoothestDisplayDebtCapMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
                     smoothestQueueDrops: metrics.smoothestQueueDrops,
                     smoothestDisplayDebtDrops: metrics.smoothestDisplayDebtDrops,
