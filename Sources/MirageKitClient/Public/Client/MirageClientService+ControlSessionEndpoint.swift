@@ -20,16 +20,17 @@ extension MirageClientService {
             snapshot: localNetworkMonitor.snapshot
         )
         var attempts: [ControlSessionAttempt] = []
-        let transportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
+        let localTransportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
 
         attempts.append(
             contentsOf: proximityPreferredControlSessionAttempts(
                 for: host,
-                transportOrder: transportOrder
+                transportOrder: localTransportOrder
             )
         )
 
-        for transportKind in transportOrder {
+        var resolvedAttempts: [ControlSessionAttempt] = []
+        for transportKind in localTransportOrder {
             guard let endpoint = controlSessionEndpoint(
                 for: host,
                 transportKind: transportKind,
@@ -39,7 +40,7 @@ extension MirageClientService {
             }
 
             let candidateKind = controlSessionCandidateKind(for: endpoint, host: host)
-            attempts.append(
+            resolvedAttempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
                     endpoint: endpoint,
@@ -49,6 +50,7 @@ extension MirageClientService {
                 )
             )
         }
+        attempts.append(contentsOf: orderedControlSessionAttempts(resolvedAttempts))
 
         if attempts.isEmpty {
             let candidateKind = controlSessionCandidateKind(for: host.endpoint, host: host)
@@ -64,6 +66,36 @@ extension MirageClientService {
         }
 
         return attempts
+    }
+
+    func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
+        attempts.enumerated()
+            .sorted { lhs, rhs in
+                let leftRank = controlSessionTransportRank(
+                    transportKind: lhs.element.transportKind,
+                    candidateKind: lhs.element.candidateKind
+                )
+                let rightRank = controlSessionTransportRank(
+                    transportKind: rhs.element.transportKind,
+                    candidateKind: rhs.element.candidateKind
+                )
+                if leftRank != rightRank { return leftRank < rightRank }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    func controlSessionTransportRank(
+        transportKind: LoomTransportKind,
+        candidateKind: ControlSessionCandidateKind
+    ) -> Int {
+        let transportOrder: [LoomTransportKind] = switch candidateKind {
+        case .overlay:
+            [.quic, .udp, .tcp]
+        case .local, .publicIPv6, .stun, .portMapped:
+            [.udp, .quic, .tcp]
+        }
+        return transportOrder.firstIndex(of: transportKind) ?? transportOrder.count
     }
 
     func peerToPeerPreferredControlSessionAttempts(

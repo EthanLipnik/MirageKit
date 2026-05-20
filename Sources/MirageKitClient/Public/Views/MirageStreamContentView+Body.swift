@@ -206,6 +206,7 @@ public extension MirageStreamContentView {
             }
         }
         .onChange(of: session.clientRecoveryStatus) {
+            updateRecoveryBlurDebounceState()
             updatePresentationBlurProgressMonitoring()
         }
         .onChange(of: rawPresentationBlurRadius) {
@@ -231,6 +232,7 @@ public extension MirageStreamContentView {
             }
         }
         .onAppear {
+            updateRecoveryBlurDebounceState()
             updatePresentationBlurProgressMonitoring()
             Task { @MainActor in
                 await Task.yield()
@@ -286,6 +288,7 @@ private extension MirageStreamContentView {
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
         stopPresentationBlurProgressMonitoring()
+        resetRecoveryBlurDebounceState()
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero

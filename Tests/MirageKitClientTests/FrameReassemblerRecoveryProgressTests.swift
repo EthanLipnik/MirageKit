@@ -606,7 +606,8 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(metrics.pendingKeyframeCount == 1)
         #expect(metrics.pendingFrameBytes == 8)
         #expect(metrics.pendingFrameBytes <= budget.maxPendingBytes)
-        #expect(metrics.budgetEvictions == 2)
+        #expect(metrics.budgetEvictions == 1)
+        #expect(metrics.droppedFrames == 2)
     }
 }
 #endif

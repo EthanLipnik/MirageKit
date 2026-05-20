@@ -12,6 +12,8 @@ struct ReceiverHealthSample {
     let hasTransportPressure: Bool
     let hasProvenTransportLoss: Bool
     let hasReceiverMediaDeliveryFailure: Bool
+    let hasReceiverMediaLatencyPressure: Bool
+    let hasSevereReceiverMediaLatencyPressure: Bool
     let isTransportClean: Bool
     let allowsProbePromotion: Bool
     let suppressesProbePromotion: Bool
@@ -44,6 +46,10 @@ struct ReceiverTransportPressureContext {
     let clientIncompleteFrameLifetimeTimeouts: UInt64
     let clientMissingFragmentTimeouts: UInt64
     let clientForwardGapTimeouts: UInt64
+    let clientPFrameCompletionLatencyP95Ms: Double
+    let clientLatePFrameCompletionCount: UInt64
+    let clientPFrameLatencyStress: Bool
+    let clientPFrameLatencySevere: Bool
     let clientFragmentLossStress: Bool
     let clientFragmentLossSevere: Bool
 }
@@ -59,6 +65,8 @@ extension MirageReceiverHealthController {
                 hasTransportPressure: false,
                 hasProvenTransportLoss: false,
                 hasReceiverMediaDeliveryFailure: false,
+                hasReceiverMediaLatencyPressure: false,
+                hasSevereReceiverMediaLatencyPressure: false,
                 isTransportClean: false,
                 allowsProbePromotion: false,
                 suppressesProbePromotion: true,
@@ -81,6 +89,8 @@ extension MirageReceiverHealthController {
             snapshot.clientReassemblerIncompleteFrameLifetimeTimeouts
         let clientMissingFragmentTimeouts = snapshot.clientReassemblerMissingFragmentTimeouts
         let clientForwardGapTimeouts = snapshot.clientReassemblerForwardGapTimeouts
+        let clientPFrameCompletionLatencyP95Ms = snapshot.clientPFrameCompletionLatencyP95Ms
+        let clientLatePFrameCompletionCount = snapshot.clientLatePFrameCompletionCount
         let receiverMediaDeliveryFailureCount = clientIncompleteFrameTimeouts + clientForwardGapTimeouts
         let receiverMediaDeliveryFailure = receiverMediaDeliveryFailureCount > 0
 
@@ -101,6 +111,9 @@ extension MirageReceiverHealthController {
         let clientFragmentLossSevere = clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameSevereCount ||
             clientForwardGapTimeouts >= Self.clientForwardGapTimeoutSevereCount ||
             clientMissingFragmentTimeouts >= Self.clientMissingFragmentSevereCount
+        let clientPFrameLatencyStress = clientPFrameCompletionLatencyP95Ms >= Self.clientPFrameLatencyStressMs ||
+            clientLatePFrameCompletionCount >= Self.clientLatePFrameStressCount
+        let clientPFrameLatencySevere = clientPFrameCompletionLatencyP95Ms >= Self.clientPFrameLatencySevereMs
 
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
         let pairedPacerSevere = pacerSevere && (queueSevere || dropSevere)
@@ -109,11 +122,13 @@ extension MirageReceiverHealthController {
             sendDelaySevere ||
             dropSevere ||
             clientFragmentLossSevere ||
+            clientPFrameLatencySevere ||
             pairedPacerSevere
         let sustainedTransportPressure = queueStress ||
             sendDelaySevere ||
             dropStress ||
             clientFragmentLossStress ||
+            clientPFrameLatencyStress ||
             pairedPacerStress
         let transportPressureReason = Self.transportPressureReason(
             ReceiverTransportPressureContext(
@@ -135,6 +150,10 @@ extension MirageReceiverHealthController {
                 clientIncompleteFrameLifetimeTimeouts: clientIncompleteFrameLifetimeTimeouts,
                 clientMissingFragmentTimeouts: clientMissingFragmentTimeouts,
                 clientForwardGapTimeouts: clientForwardGapTimeouts,
+                clientPFrameCompletionLatencyP95Ms: clientPFrameCompletionLatencyP95Ms,
+                clientLatePFrameCompletionCount: clientLatePFrameCompletionCount,
+                clientPFrameLatencyStress: clientPFrameLatencyStress,
+                clientPFrameLatencySevere: clientPFrameLatencySevere,
                 clientFragmentLossStress: clientFragmentLossStress,
                 clientFragmentLossSevere: clientFragmentLossSevere
             )
@@ -143,6 +162,7 @@ extension MirageReceiverHealthController {
         let suppressesProbePromotion = queueStress ||
             transportDropCount > 0 ||
             clientFragmentLossStress ||
+            clientPFrameLatencyStress ||
             sendDelayStress ||
             pairedPacerStress ||
             keyframeAssemblyInProgress
@@ -152,8 +172,11 @@ extension MirageReceiverHealthController {
             hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
             hasProvenTransportLoss: remoteTransportDropCount >= Self.transportDropStressCount ||
                 receiverMediaDeliveryFailure ||
-                clientFragmentLossStress,
+                clientFragmentLossStress ||
+                clientPFrameLatencyStress,
             hasReceiverMediaDeliveryFailure: receiverMediaDeliveryFailure,
+            hasReceiverMediaLatencyPressure: clientPFrameLatencyStress,
+            hasSevereReceiverMediaLatencyPressure: clientPFrameLatencySevere,
             isTransportClean: !severeTransportPressure && !sustainedTransportPressure && !keyframeAssemblyInProgress,
             allowsProbePromotion: !suppressesProbePromotion,
             suppressesProbePromotion: suppressesProbePromotion,
@@ -174,6 +197,10 @@ extension MirageReceiverHealthController {
                 "lifetime=\(context.clientIncompleteFrameLifetimeTimeouts) " +
                 "forwardGaps=\(context.clientForwardGapTimeouts) " +
                 "missing=\(context.clientMissingFragmentTimeouts)"
+        }
+        if context.clientPFrameLatencySevere || context.clientPFrameLatencyStress {
+            return "client p-frame latency p95=\(formatMilliseconds(context.clientPFrameCompletionLatencyP95Ms)) " +
+                "late=\(context.clientLatePFrameCompletionCount)"
         }
         if context.sendDelaySevere || context.sendDelayStress {
             let startText = Self.formatMilliseconds(context.sendStartDelayAverageMs)

@@ -59,4 +59,7 @@ extension MirageReceiverHealthController {
     static let clientForwardGapTimeoutSevereCount: UInt64 = 2
     static let clientMissingFragmentStressCount: UInt64 = 32
     static let clientMissingFragmentSevereCount: UInt64 = 128
+    static let clientPFrameLatencyStressMs = 250.0
+    static let clientPFrameLatencySevereMs = 450.0
+    static let clientLatePFrameStressCount: UInt64 = 2
 }

@@ -39,6 +39,15 @@ final class MiragePixelBufferCropper: @unchecked Sendable {
         }
     }
 
+    func reset() {
+        if let transferSession {
+            VTPixelTransferSessionInvalidate(transferSession)
+        }
+        transferSession = nil
+        outputPool = nil
+        outputPoolKey = nil
+    }
+
     func crop(
         _ source: CVPixelBuffer,
         to contentRect: CGRect,

@@ -97,6 +97,15 @@ extension MirageClientService {
                 trimmedStreamCount += 1
             }
         }
+        MirageAppAtlasRenderFanout.shared.trimForMemoryPressure(streamIDs: Set(streamIDs))
+
+        #if os(iOS) || os(visionOS)
+        if repeatedPressure {
+            for streamID in streamIDs {
+                MirageSampleBufferView.clearDisplayedImages(for: streamID)
+            }
+        }
+        #endif
 
         let highestFrameRate = streamIDs
             .map { runtimeWorkloadSafetyCurrentFrameRate(for: $0) }
@@ -114,11 +123,18 @@ extension MirageClientService {
             )
         }
 
+        let downshiftedStreamCount = repeatedPressure ?
+            await applyRuntimeWorkloadSafetyScaleDownshift(
+                streamIDs: streamIDs,
+                targetFrameRate: targetFrameRate
+            ) :
+            0
+
         let fallbackText = targetFrameRate.map { "\($0)fps" } ?? "none"
         MirageLogger.client(
             "Handled client memory pressure: activeStreams=\(streamIDs.count), " +
                 "trimmedStreams=\(trimmedStreamCount), repeated=\(repeatedPressure), " +
-                "fallback=\(fallbackText)"
+                "fallback=\(fallbackText), downshiftedStreams=\(downshiftedStreamCount)"
         )
     }
 
@@ -202,6 +218,40 @@ extension MirageClientService {
         )
     }
 
+    @discardableResult
+    func applyRuntimeWorkloadSafetyScaleDownshift(
+        streamIDs: [StreamID],
+        targetFrameRate: Int?
+    )
+    async -> Int {
+        var downshiftedCount = 0
+        for streamID in streamIDs {
+            let currentScale = runtimeWorkloadSafetyScaleByStream[streamID] ?? resolutionScale
+            guard let nextScale = Self.runtimeWorkloadSafetyNextScaleDownshift(currentScale: currentScale) else {
+                continue
+            }
+
+            do {
+                try await sendStreamEncoderSettingsChange(
+                    streamID: streamID,
+                    streamScale: nextScale,
+                    targetFrameRate: targetFrameRate
+                )
+                runtimeWorkloadSafetyScaleByStream[streamID] = nextScale
+                downshiftedCount += 1
+                MirageLogger.client(
+                    "Runtime workload safety downshifted stream \(streamID) to scale \(String(format: "%.2f", nextScale))"
+                )
+            } catch {
+                MirageLogger.client(
+                    "Runtime workload safety scale downshift failed for stream \(streamID): " +
+                        "\(error.localizedDescription)"
+                )
+            }
+        }
+        return downshiftedCount
+    }
+
     func resetRuntimeWorkloadSafetyState() {
         runtimeWorkloadSafetyFrameRateCapsByStream.removeAll(keepingCapacity: false)
         runtimeWorkloadSafetyRestoreFrameRatesByStream.removeAll(keepingCapacity: false)
@@ -209,6 +259,7 @@ extension MirageClientService {
         runtimeWorkloadSafetyLastFallbackReason = nil
         runtimeWorkloadSafetyMemoryPressureCount = 0
         runtimeWorkloadSafetyLastMemoryPressureTime = nil
+        runtimeWorkloadSafetyScaleByStream.removeAll(keepingCapacity: false)
         runtimeWorkloadSafetyStallTimesByStream.removeAll(keepingCapacity: false)
     }
 
@@ -216,6 +267,7 @@ extension MirageClientService {
         runtimeWorkloadSafetyStallTimesByStream.removeValue(forKey: streamID)
         runtimeWorkloadSafetyFrameRateCapsByStream.removeValue(forKey: streamID)
         runtimeWorkloadSafetyRestoreFrameRatesByStream.removeValue(forKey: streamID)
+        runtimeWorkloadSafetyScaleByStream.removeValue(forKey: streamID)
         runtimeWorkloadSafetyFrameRateRestoreTasksByStream.removeValue(forKey: streamID)?.cancel()
     }
 
@@ -391,6 +443,17 @@ extension MirageClientService {
         if currentFrameRate > 60 { return 60 }
         if currentFrameRate > runtimeWorkloadSafetyMinimumFrameRate {
             return runtimeWorkloadSafetyMinimumFrameRate
+        }
+        return nil
+    }
+
+    nonisolated static func runtimeWorkloadSafetyNextScaleDownshift(currentScale: CGFloat) -> CGFloat? {
+        let normalizedScale = MirageStreamGeometry.clampStreamScale(currentScale)
+        if normalizedScale > 0.75 {
+            return 0.75
+        }
+        if normalizedScale > 0.5 {
+            return 0.5
         }
         return nil
     }

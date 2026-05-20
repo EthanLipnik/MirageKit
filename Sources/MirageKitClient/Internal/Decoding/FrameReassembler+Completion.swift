@@ -124,6 +124,7 @@ extension FrameReassembler {
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
 
             if !frame.isKeyframe {
+                recordPFrameCompletionLatencyLocked(frame: frame, now: Date())
                 MirageFrameIntegrityDiagnostics.shared.recordPFrame(
                     source: .reassembledPFrame,
                     streamID: streamID,
@@ -257,6 +258,7 @@ extension FrameReassembler {
         let now = Date()
         let pFrameNoProgressTimeout = pFrameTimeoutLocked()
         let pFrameAbsoluteLifetimeCap = pFrameAbsoluteLifetimeCapLocked()
+        let bufferedForwardGapTimeout = bufferedForwardGapTimeoutLocked()
 
         var timedOutPFrameCount: UInt64 = 0
         var timedOutKeyframeCount: UInt64 = 0
@@ -280,7 +282,14 @@ extension FrameReassembler {
                 noProgressTimedOut = now.timeIntervalSince(frame.lastProgressAt) >= timeout
                 lifetimeTimedOut = false
             } else {
-                noProgressTimedOut = now.timeIntervalSince(frame.lastProgressAt) >= pFrameNoProgressTimeout
+                noProgressTimedOut = if isRetainedCompleteForwardGapFrameLocked(
+                    frameNumber: frameNumber,
+                    frame: frame
+                ) {
+                    false
+                } else {
+                    now.timeIntervalSince(frame.lastProgressAt) >= pFrameNoProgressTimeout
+                }
                 lifetimeTimedOut = now.timeIntervalSince(frame.receivedAt) >= pFrameAbsoluteLifetimeCap
             }
             let shouldKeep = !noProgressTimedOut && !lifetimeTimedOut
@@ -326,7 +335,7 @@ extension FrameReassembler {
                 expectedFrameNumber: lastCompletedFrame &+ 1,
                 now: now
             ) &&
-            hasTimedOutBufferedForwardGapLocked(now: now, timeout: pFrameNoProgressTimeout)
+            hasTimedOutBufferedForwardGapLocked(now: now, timeout: bufferedForwardGapTimeout)
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
@@ -411,6 +420,25 @@ extension FrameReassembler {
         return now.timeIntervalSince(earliestBufferedForwardFrame.value.receivedAt) >= timeout
     }
 
+    private func isRetainedCompleteForwardGapFrameLocked(
+        frameNumber: UInt32,
+        frame: PendingFrame
+    ) -> Bool {
+        guard hasDeliveredKeyframeAnchor,
+              !frame.isKeyframe,
+              frame.isComplete else {
+            return false
+        }
+
+        let expectedFrame = lastCompletedFrame &+ 1
+        guard pendingFrames[expectedFrame] == nil,
+              isFrameNewer(frameNumber, than: expectedFrame) else {
+            return false
+        }
+
+        return true
+    }
+
     private func pendingKeyframeContaminatesGapLocked(
         expectedFrameNumber: UInt32,
         now: Date
@@ -482,15 +510,19 @@ extension FrameReassembler {
         return pFrameAbsoluteLifetimeCapDefault
     }
 
+    private func bufferedForwardGapTimeoutLocked() -> TimeInterval {
+        transportPathKind == .vpn ? 0.75 : pFrameTimeoutLocked()
+    }
+
     private func severeForwardGapFrameThresholdLocked() -> UInt32 {
         let frameRate = max(1, targetFrameRate)
         let frameInterval = 1.0 / Double(frameRate)
-        let timeout = pFrameTimeoutLocked()
+        let timeout = bufferedForwardGapTimeoutLocked()
         return max(3, UInt32(ceil(timeout / frameInterval)))
     }
 
     private func severeForwardGapGraceLocked() -> TimeInterval {
-        pFrameTimeoutLocked()
+        bufferedForwardGapTimeoutLocked()
     }
 
     private func bufferedForwardGapAgeLocked(

@@ -20,6 +20,7 @@ extension FrameReassembler {
     var snapshotMetrics: Metrics {
         lock.lock()
         defer { lock.unlock() }
+        let pFrameLatency = pFrameCompletionLatencyMetricsLocked(now: Date())
         return Metrics(
             droppedFrames: droppedFrameCount,
             pendingFrameCount: pendingFrames.count,
@@ -31,7 +32,11 @@ extension FrameReassembler {
             incompleteFrameNoProgressTimeouts: incompleteFrameNoProgressTimeoutCount,
             incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeoutCount,
             missingFragmentTimeouts: missingFragmentTimeoutCount,
-            forwardGapTimeouts: forwardGapTimeoutCount
+            forwardGapTimeouts: forwardGapTimeoutCount,
+            pFrameCompletionLatencyP50Ms: pFrameLatency.p50,
+            pFrameCompletionLatencyP95Ms: pFrameLatency.p95,
+            pFrameCompletionLatencyMaxMs: pFrameLatency.max,
+            latePFrameCompletionCount: pFrameLatency.lateCount
         )
     }
 
@@ -174,6 +179,7 @@ extension FrameReassembler {
             incompleteFrameLifetimeTimeoutCount = 0
             missingFragmentTimeoutCount = 0
             forwardGapTimeoutCount = 0
+            pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
             lastPacketReceivedTime = 0
             startupKeyframeTimeoutOverrideEnabled = false
         }
@@ -209,5 +215,50 @@ extension FrameReassembler {
             frame.buffer.release()
             droppedFrameCount += 1
         }
+    }
+
+    func recordPFrameCompletionLatencyLocked(frame: PendingFrame, now: Date) {
+        let latencyMs = max(0, frame.lastProgressAt.timeIntervalSince(frame.receivedAt) * 1000)
+        pFrameCompletionLatencySamples.append(
+            PFrameCompletionLatencySample(completedAt: now, latencyMs: latencyMs)
+        )
+        trimPFrameCompletionLatencySamplesLocked(now: now)
+    }
+
+    private func pFrameCompletionLatencyMetricsLocked(
+        now: Date
+    ) -> (p50: Double, p95: Double, max: Double, lateCount: UInt64) {
+        trimPFrameCompletionLatencySamplesLocked(now: now)
+        guard !pFrameCompletionLatencySamples.isEmpty else {
+            return (0, 0, 0, 0)
+        }
+
+        let latencies = pFrameCompletionLatencySamples
+            .map(\.latencyMs)
+            .sorted()
+        let lateCount = UInt64(latencies.filter { $0 >= pFrameLateCompletionThresholdMs }.count)
+        return (
+            percentile(latencies, fraction: 0.50),
+            percentile(latencies, fraction: 0.95),
+            latencies.last ?? 0,
+            lateCount
+        )
+    }
+
+    private func trimPFrameCompletionLatencySamplesLocked(now: Date) {
+        let cutoff = now.addingTimeInterval(-pFrameCompletionLatencySampleWindow)
+        while let first = pFrameCompletionLatencySamples.first,
+              first.completedAt < cutoff {
+            pFrameCompletionLatencySamples.removeFirst()
+        }
+    }
+
+    private func percentile(_ sortedValues: [Double], fraction: Double) -> Double {
+        guard !sortedValues.isEmpty else { return 0 }
+        let index = min(
+            sortedValues.count - 1,
+            max(0, Int(ceil(Double(sortedValues.count) * fraction)) - 1)
+        )
+        return sortedValues[index]
     }
 }

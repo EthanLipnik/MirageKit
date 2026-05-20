@@ -85,6 +85,17 @@ final class MirageAppAtlasRenderFanout: @unchecked Sendable {
         return mediaStreamID
     }
 
+    func trimForMemoryPressure(streamIDs: Set<StreamID>) {
+        lock.lock()
+        let targets = targetsByMediaStreamID.values
+            .flatMap(\.values)
+            .filter { streamIDs.isEmpty || streamIDs.contains($0.streamID) }
+        for target in targets {
+            target.cropper.reset()
+        }
+        lock.unlock()
+    }
+
     @discardableResult
     func enqueueIfNeeded(
         pixelBuffer: CVPixelBuffer,

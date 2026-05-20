@@ -38,6 +38,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         reassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         reassemblerMissingFragmentTimeouts: UInt64 = 0,
         reassemblerForwardGapTimeouts: UInt64 = 0,
+        pFrameCompletionLatencyP50Ms: Double = 0,
+        pFrameCompletionLatencyP95Ms: Double = 0,
+        pFrameCompletionLatencyMaxMs: Double = 0,
+        latePFrameCompletionCount: UInt64 = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
@@ -112,6 +116,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientReassemblerIncompleteFrameLifetimeTimeouts = reassemblerIncompleteFrameLifetimeTimeouts
             snapshot.clientReassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
             snapshot.clientReassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
+            snapshot.clientPFrameCompletionLatencyP50Ms = max(0, pFrameCompletionLatencyP50Ms)
+            snapshot.clientPFrameCompletionLatencyP95Ms = max(0, pFrameCompletionLatencyP95Ms)
+            snapshot.clientPFrameCompletionLatencyMaxMs = max(0, pFrameCompletionLatencyMaxMs)
+            snapshot.clientLatePFrameCompletionCount = latePFrameCompletionCount
         }
     }
 

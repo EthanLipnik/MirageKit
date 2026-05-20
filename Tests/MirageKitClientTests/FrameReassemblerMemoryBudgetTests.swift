@@ -179,6 +179,74 @@ struct FrameReassemblerMemoryBudgetTests {
         #expect(metrics.frameBufferPoolRetainedBytes == 0)
         #expect(reassembler.isAwaitingKeyframe == true)
     }
+
+    @Test("Memory budget can evict a single over-budget pending frame")
+    func memoryBudgetCanEvictSingleOverBudgetFrame() {
+        let budget = FrameReassembler.MemoryBudget(
+            maxPendingFrames: 12,
+            maxPendingKeyframes: 2,
+            maxPendingBytes: 16
+        )
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
+        let payload = Data([0x10, 0x00, 0x00, 0x00])
+
+        reassembler.processPacket(
+            payload,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 10,
+                payload: payload,
+                fragmentIndex: 0,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+        let parityPayload = Data(repeating: 0x7F, count: 8)
+        reassembler.processPacket(
+            parityPayload,
+            header: makeHeader(
+                flags: [.keyframe, .fecParity],
+                frameNumber: 10,
+                payload: parityPayload,
+                fragmentIndex: 3,
+                fragmentCount: 4,
+                frameByteCount: 12
+            )
+        )
+
+        let metrics = reassembler.snapshotMetrics
+        #expect(metrics.pendingFrameCount == 0)
+        #expect(metrics.budgetEvictions == 1)
+        #expect(reassembler.isAwaitingKeyframe == true)
+    }
+
+    @Test("Oversized frame headers are rejected before allocation")
+    func oversizedFrameHeadersAreRejectedBeforeAllocation() {
+        let budget = FrameReassembler.MemoryBudget(
+            maxPendingFrames: 12,
+            maxPendingKeyframes: 2,
+            maxPendingBytes: 1024
+        )
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4, memoryBudget: budget)
+        let payload = Data([0x10, 0x00, 0x00, 0x00])
+
+        reassembler.processPacket(
+            payload,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 10,
+                payload: payload,
+                fragmentIndex: 0,
+                fragmentCount: 4,
+                frameByteCount: 2048
+            )
+        )
+
+        let metrics = reassembler.snapshotMetrics
+        #expect(metrics.pendingFrameCount == 0)
+        #expect(metrics.pendingFrameBytes == 0)
+        #expect(metrics.frameBufferPoolRetainedBytes == 0)
+    }
 }
 
 private final class DeliveredFrames: @unchecked Sendable {

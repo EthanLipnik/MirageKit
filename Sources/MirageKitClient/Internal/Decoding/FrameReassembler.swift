@@ -67,6 +67,15 @@ final class FrameReassembler: @unchecked Sendable {
         let incompleteFrameLifetimeTimeouts: UInt64
         let missingFragmentTimeouts: UInt64
         let forwardGapTimeouts: UInt64
+        let pFrameCompletionLatencyP50Ms: Double
+        let pFrameCompletionLatencyP95Ms: Double
+        let pFrameCompletionLatencyMaxMs: Double
+        let latePFrameCompletionCount: UInt64
+    }
+
+    struct PFrameCompletionLatencySample: Sendable {
+        let completedAt: Date
+        let latencyMs: Double
     }
 
     struct MemoryTrimResult: Sendable, Equatable {
@@ -107,6 +116,8 @@ final class FrameReassembler: @unchecked Sendable {
     let pFrameNoProgressTimeout: TimeInterval = 0.30
     let pFrameAbsoluteLifetimeCapDefault: TimeInterval = 0.60
     let pFrameAbsoluteLifetimeCapRemoteSmoothest: TimeInterval = 0.90
+    let pFrameCompletionLatencySampleWindow: TimeInterval = 5.0
+    let pFrameLateCompletionThresholdMs: Double = 250
     var targetFrameRate: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var transportPathKind: MirageNetworkPathKind = .unknown
@@ -145,6 +156,7 @@ final class FrameReassembler: @unchecked Sendable {
 
     /// Prevents repeated frame-loss signals for the same forward gap.
     var hasSignaledGapFrameLoss: Bool = false
+    var pFrameCompletionLatencySamples: [PFrameCompletionLatencySample] = []
 
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer

@@ -143,6 +143,10 @@ extension StreamController {
         let reassemblerIncompleteFrameLifetimeTimeouts: UInt64
         let reassemblerMissingFragmentTimeouts: UInt64
         let reassemblerForwardGapTimeouts: UInt64
+        let reassemblerPFrameCompletionLatencyP50Ms: Double
+        let reassemblerPFrameCompletionLatencyP95Ms: Double
+        let reassemblerPFrameCompletionLatencyMaxMs: Double
+        let reassemblerLatePFrameCompletionCount: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
     }

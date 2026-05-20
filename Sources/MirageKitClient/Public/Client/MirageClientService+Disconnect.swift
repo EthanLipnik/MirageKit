@@ -12,6 +12,14 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    /// Enqueues a disconnect notice without waiting for acknowledgement.
+    public func queueDisconnectNoticeBestEffort() {
+        _ = sendControlMessageBestEffort(
+            .disconnect,
+            content: DisconnectMessage(reason: .userRequested)
+        )
+    }
+
     func sendDisconnectNoticeBeforeTeardown(over controlChannel: MirageControlChannel) async {
         let waiter = MirageDisconnectNoticeWaiter()
         let sendTask = Task {

@@ -11,6 +11,42 @@ import Testing
 
 @Suite("Receiver Media Feedback Policy")
 struct ReceiverMediaFeedbackPolicyTests {
+    @Test("Receiver feedback decodes legacy payloads without optional latency fields")
+    func receiverFeedbackDecodesLegacyPayloadsWithoutOptionalLatencyFields() throws {
+        let payload = Data(
+            #"""
+            {
+              "streamID": 1,
+              "sequence": 2,
+              "sentAtUptime": 10,
+              "targetFPS": 60,
+              "ackRanges": [],
+              "lostFrameCount": 0,
+              "discardedPacketCount": 0,
+              "jitterP95Ms": 0,
+              "jitterP99Ms": 0,
+              "queueEstimateFrames": 0,
+              "reassemblyBacklogFrames": 0,
+              "reassemblyBacklogKeyframes": 0,
+              "reassemblyBacklogBytes": 0,
+              "decodeBacklogFrames": 0,
+              "presentationBacklogFrames": 0,
+              "decodedFPS": 60,
+              "receivedFPS": 60,
+              "rendererAcceptedFPS": 60,
+              "rendererPresentedFPS": 60,
+              "recoveryState": "idle"
+            }
+            """#.utf8
+        )
+
+        let feedback = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: payload)
+
+        #expect(feedback.pFrameCompletionLatencyP95Ms == nil)
+        #expect(feedback.latePFrameCount == nil)
+        #expect(feedback.reliabilityCauses.isEmpty)
+    }
+
     @Test("Local render and reassembly symptoms are not reported as transport loss")
     func localPipelineSymptomsAreNotReportedAsTransportLoss() {
         let feedback = MirageClientService.makeReceiverMediaFeedback(
@@ -37,6 +73,8 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.reassemblyBacklogKeyframes == 1)
         #expect(feedback.presentationBacklogFrames == 5)
         #expect(feedback.recoveryState == .keyframeRecovery)
+        #expect(feedback.reliabilityCauses.contains(.keyframeStarvation))
+        #expect(feedback.reliabilityCauses.contains(.memoryPressure))
     }
 
     @Test("Transport-proven receiver fragment loss is reported separately from local drops")
@@ -119,6 +157,10 @@ struct ReceiverMediaFeedbackPolicyTests {
             reassemblerIncompleteFrameLifetimeTimeouts: 0,
             reassemblerMissingFragmentTimeouts: 0,
             reassemblerForwardGapTimeouts: 0,
+            reassemblerPFrameCompletionLatencyP50Ms: 0,
+            reassemblerPFrameCompletionLatencyP95Ms: 0,
+            reassemblerPFrameCompletionLatencyMaxMs: 0,
+            reassemblerLatePFrameCompletionCount: 0,
             decoderOutputPixelFormat: "420v",
             usingHardwareDecoder: true
         )

@@ -402,6 +402,8 @@ public final class MirageClientService {
     var runtimeWorkloadSafetyMemoryPressureCount: Int = 0
     /// Wall-clock time of the most recent workload safety memory-pressure event.
     var runtimeWorkloadSafetyLastMemoryPressureTime: CFAbsoluteTime?
+    /// Session-scoped stream scale applied by runtime workload safety.
+    var runtimeWorkloadSafetyScaleByStream: [StreamID: CGFloat] = [:]
     /// Recent stall timestamps by stream for runtime workload safety decisions.
     var runtimeWorkloadSafetyStallTimesByStream: [StreamID: [CFAbsoluteTime]] = [:]
     /// Last time AWDL telemetry was logged, used to rate-limit diagnostics.

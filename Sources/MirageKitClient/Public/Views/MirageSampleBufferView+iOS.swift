@@ -76,6 +76,11 @@ public class MirageSampleBufferView: UIView {
     /// Logical stream identifier used for renderer diagnostics and preferences.
     public var streamID: StreamID? {
         didSet {
+            MirageSampleBufferViewRegistry.shared.update(
+                self,
+                oldStreamID: oldValue,
+                newStreamID: streamID
+            )
             applyRenderConfiguration()
         }
     }
@@ -131,6 +136,7 @@ public class MirageSampleBufferView: UIView {
     }
 
     deinit {
+        MirageSampleBufferViewRegistry.shared.unregister(self, streamID: streamID)
         suspendRendering(clearCurrentFrame: true)
     }
 
@@ -201,6 +207,17 @@ public class MirageSampleBufferView: UIView {
     public func suspendRendering(clearCurrentFrame: Bool) {
         stopPresentationDisplayLink()
         presentationPipeline.suspendRendering(clearCurrentFrame: clearCurrentFrame)
+    }
+
+    func clearDisplayedImageForMemoryPressure() {
+        suspendRendering(clearCurrentFrame: true)
+        if window != nil {
+            resumeRendering()
+        }
+    }
+
+    static func clearDisplayedImages(for streamID: StreamID) {
+        MirageSampleBufferViewRegistry.shared.clearDisplayedImages(for: streamID)
     }
 
     // MARK: - Setup
@@ -297,6 +314,56 @@ public class MirageSampleBufferView: UIView {
 
     private static func minimumPresentationDisplayLinkFPS(for targetFPS: Int) -> Int {
         return targetFPS
+    }
+}
+
+private final class MirageSampleBufferViewRegistry: @unchecked Sendable {
+    static let shared = MirageSampleBufferViewRegistry()
+
+    private let lock = NSLock()
+    private var viewsByStreamID: [StreamID: NSHashTable<MirageSampleBufferView>] = [:]
+
+    private init() {}
+
+    func update(
+        _ view: MirageSampleBufferView,
+        oldStreamID: StreamID?,
+        newStreamID: StreamID?
+    ) {
+        lock.lock()
+        if let oldStreamID,
+           oldStreamID != newStreamID {
+            viewsByStreamID[oldStreamID]?.remove(view)
+            if viewsByStreamID[oldStreamID]?.allObjects.isEmpty == true {
+                viewsByStreamID.removeValue(forKey: oldStreamID)
+            }
+        }
+        if let newStreamID {
+            let table = viewsByStreamID[newStreamID] ?? NSHashTable<MirageSampleBufferView>.weakObjects()
+            table.add(view)
+            viewsByStreamID[newStreamID] = table
+        }
+        lock.unlock()
+    }
+
+    func unregister(_ view: MirageSampleBufferView, streamID: StreamID?) {
+        guard let streamID else { return }
+        lock.lock()
+        viewsByStreamID[streamID]?.remove(view)
+        if viewsByStreamID[streamID]?.allObjects.isEmpty == true {
+            viewsByStreamID.removeValue(forKey: streamID)
+        }
+        lock.unlock()
+    }
+
+    func clearDisplayedImages(for streamID: StreamID) {
+        lock.lock()
+        let views = viewsByStreamID[streamID]?.allObjects ?? []
+        lock.unlock()
+
+        for view in views {
+            view.clearDisplayedImageForMemoryPressure()
+        }
     }
 }
 #endif

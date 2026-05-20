@@ -441,8 +441,27 @@ struct FrameReassemblerStaleKeyframeTests {
         )
 
         #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(lossReason.value == nil)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        Thread.sleep(forTimeInterval: 0.460)
+
+        let vpnTimedOutPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x2B])
+        reassembler.processPacket(
+            vpnTimedOutPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 43,
+                payload: vpnTimedOutPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value == 1)
-        #expect(lossReason.value == .severeForwardGap)
+        #expect(lossReason.value == .forwardGapTimeout)
         #expect(reassembler.isAwaitingKeyframe == true)
     }
 

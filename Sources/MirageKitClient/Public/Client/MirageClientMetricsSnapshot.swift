@@ -99,6 +99,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReassemblerMissingFragmentTimeouts: UInt64
     /// Number of buffered forward gaps that reached the reorder timeout.
     public var clientReassemblerForwardGapTimeouts: UInt64
+    /// Recent P-frame assembly latency p50, in milliseconds.
+    public var clientPFrameCompletionLatencyP50Ms: Double
+    /// Recent P-frame assembly latency p95, in milliseconds.
+    public var clientPFrameCompletionLatencyP95Ms: Double
+    /// Recent maximum P-frame assembly latency, in milliseconds.
+    public var clientPFrameCompletionLatencyMaxMs: Double
+    /// Recent P-frames whose assembly latency exceeded the late threshold.
+    public var clientLatePFrameCompletionCount: UInt64
     private var clientDecodeBacklogFrameCountStorage: Int
     /// Frames encoded per second by the host encoder.
     public var hostEncodedFPS: Double
@@ -280,6 +288,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientReassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         clientReassemblerMissingFragmentTimeouts: UInt64 = 0,
         clientReassemblerForwardGapTimeouts: UInt64 = 0,
+        clientPFrameCompletionLatencyP50Ms: Double = 0,
+        clientPFrameCompletionLatencyP95Ms: Double = 0,
+        clientPFrameCompletionLatencyMaxMs: Double = 0,
+        clientLatePFrameCompletionCount: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
@@ -360,6 +372,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientReassemblerIncompleteFrameLifetimeTimeouts = clientReassemblerIncompleteFrameLifetimeTimeouts
         self.clientReassemblerMissingFragmentTimeouts = clientReassemblerMissingFragmentTimeouts
         self.clientReassemblerForwardGapTimeouts = clientReassemblerForwardGapTimeouts
+        self.clientPFrameCompletionLatencyP50Ms = max(0, clientPFrameCompletionLatencyP50Ms)
+        self.clientPFrameCompletionLatencyP95Ms = max(0, clientPFrameCompletionLatencyP95Ms)
+        self.clientPFrameCompletionLatencyMaxMs = max(0, clientPFrameCompletionLatencyMaxMs)
+        self.clientLatePFrameCompletionCount = clientLatePFrameCompletionCount
         clientDecodeBacklogFrameCountStorage = 0
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS

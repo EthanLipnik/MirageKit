@@ -43,6 +43,10 @@ extension MirageClientService {
                     reassemblerIncompleteFrameLifetimeTimeouts: metrics.reassemblerIncompleteFrameLifetimeTimeouts,
                     reassemblerMissingFragmentTimeouts: metrics.reassemblerMissingFragmentTimeouts,
                     reassemblerForwardGapTimeouts: metrics.reassemblerForwardGapTimeouts,
+                    pFrameCompletionLatencyP50Ms: metrics.reassemblerPFrameCompletionLatencyP50Ms,
+                    pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
+                    pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
+                    latePFrameCompletionCount: metrics.reassemblerLatePFrameCompletionCount,
                     displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerAcceptedFPS: metrics.layerAcceptedFPS,
@@ -177,8 +181,50 @@ extension MirageClientService {
             receivedFPS: metrics.receivedFPS,
             rendererAcceptedFPS: metrics.layerAcceptedFPS,
             rendererPresentedFPS: metrics.presentedFPS,
-            recoveryState: recoveryState
+            recoveryState: recoveryState,
+            pFrameCompletionLatencyP50Ms: metrics.reassemblerPFrameCompletionLatencyP50Ms,
+            pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
+            pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
+            latePFrameCount: metrics.reassemblerLatePFrameCompletionCount,
+            reliabilityCauses: receiverReliabilityCauses(
+                recoveryState: recoveryState,
+                metrics: metrics
+            )
         )
+    }
+
+    nonisolated static func receiverReliabilityCauses(
+        recoveryState: MirageMediaFeedbackRecoveryState,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> [ReceiverMediaFeedbackReliabilityCause] {
+        var causes: [ReceiverMediaFeedbackReliabilityCause] = []
+        if metrics.reassemblerIncompleteFrameNoProgressTimeouts > 0 {
+            causes.append(.noProgressTimeout)
+        }
+        if metrics.reassemblerIncompleteFrameLifetimeTimeouts > 0 {
+            causes.append(.absoluteLifetimeTimeout)
+        }
+        if metrics.reassemblerForwardGapTimeouts > 0 {
+            causes.append(.forwardGapStall)
+        }
+        if metrics.reassemblerBudgetEvictions > 0 {
+            causes.append(.memoryPressure)
+        }
+
+        switch recoveryState {
+        case .keyframeRecovery:
+            causes.append(.keyframeStarvation)
+        case .hardRecovery,
+             .postResizeAwaitingFirstFrame,
+             .tierPromotionProbe:
+            causes.append(.presentationLifecycle)
+        case .idle,
+             .startup:
+            break
+        }
+
+        var seen = Set<ReceiverMediaFeedbackReliabilityCause>()
+        return causes.filter { seen.insert($0).inserted }
     }
 
     func clearReceiverMediaFeedbackState(for streamID: StreamID) {

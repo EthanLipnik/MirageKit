@@ -8,9 +8,33 @@
 import Foundation
 import zlib
 
+/// Additional support archive entry included alongside the primary Mirage log.
+public struct MirageLogArchiveEntry: Sendable, Equatable {
+    /// ZIP entry name.
+    public let name: String
+    /// Entry payload.
+    public let data: Data
+
+    public init(name: String, data: Data) {
+        self.name = name
+        self.data = data
+    }
+
+    public init(name: String, text: String) {
+        self.init(name: name, data: Data(text.utf8))
+    }
+}
+
 // MARK: - ZIP Archive Creation
 
 enum MirageLogArchiver {
+    private struct ArchiveEntry {
+        let name: String
+        var data: Data
+        let truncationLabel: String
+        let canDrop: Bool
+    }
+
     /// Writes a ZIP archive containing the current log and optional diagnostics summary.
     ///
     /// The log entry is trimmed before archiving when its compressed ZIP entry would
@@ -20,30 +44,136 @@ enum MirageLogArchiver {
         filename: String,
         maximumCompressedBytes: Int,
         truncationLabel: String,
-        diagnosticsSummary: String? = nil
+        diagnosticsSummary: String? = nil,
+        additionalEntries: [MirageLogArchiveEntry] = []
     ) throws -> URL {
         let archiveURL = FileManager.default.temporaryDirectory.appending(path: "\(filename).zip")
-        let fitted = try fittedLogData(
-            from: logData,
-            filename: filename,
-            maximumCompressedBytes: maximumCompressedBytes,
-            truncationLabel: truncationLabel
-        )
 
         if FileManager.default.fileExists(atPath: archiveURL.path) {
             try FileManager.default.removeItem(at: archiveURL)
         }
 
-        var entries = [(name: "\(filename).log", data: fitted)]
+        var entries = [
+            ArchiveEntry(
+                name: "\(filename).log",
+                data: logData,
+                truncationLabel: truncationLabel,
+                canDrop: false
+            ),
+        ]
         if let diagnosticsSummary = MirageSupportInfo.trimmedValue(diagnosticsSummary) {
-            entries.append((name: "DiagnosticsSummary.txt", data: Data("\(diagnosticsSummary)\n".utf8)))
+            entries.append(
+                ArchiveEntry(
+                    name: "DiagnosticsSummary.txt",
+                    data: Data("\(diagnosticsSummary)\n".utf8),
+                    truncationLabel: "Diagnostics summary",
+                    canDrop: false
+                )
+            )
         }
-        let archiveData = try zipArchiveData(entries: entries)
+        entries.append(
+            contentsOf: additionalEntries.map {
+                ArchiveEntry(
+                    name: $0.name,
+                    data: $0.data,
+                    truncationLabel: $0.name,
+                    canDrop: true
+                )
+            }
+        )
+
+        let fittedEntries = try fittedArchiveEntries(
+            entries,
+            maximumCompressedBytes: maximumCompressedBytes
+        )
+        let archiveData = try zipArchiveData(entries: fittedEntries.map { (name: $0.name, data: $0.data) })
         try archiveData.write(to: archiveURL, options: .atomic)
         return archiveURL
     }
 
     // MARK: - Log Fitting
+
+    private static func fittedArchiveEntries(
+        _ entries: [ArchiveEntry],
+        maximumCompressedBytes: Int
+    ) throws -> [ArchiveEntry] {
+        guard !entries.isEmpty else { return entries }
+        var fitted = entries
+        guard try zipArchiveData(entries: fitted.map { (name: $0.name, data: $0.data) }).count > maximumCompressedBytes else {
+            return fitted
+        }
+
+        for index in fitted.indices.reversed() {
+            fitted[index].data = try fittedEntryData(
+                entry: fitted[index],
+                in: fitted,
+                entryIndex: index,
+                maximumCompressedBytes: maximumCompressedBytes
+            )
+            if try zipArchiveData(entries: fitted.map { (name: $0.name, data: $0.data) }).count <= maximumCompressedBytes {
+                return fitted
+            }
+            if fitted[index].canDrop {
+                fitted.remove(at: index)
+                if try zipArchiveData(entries: fitted.map { (name: $0.name, data: $0.data) }).count <= maximumCompressedBytes {
+                    return fitted
+                }
+            }
+        }
+
+        guard let first = fitted.indices.first else { return fitted }
+        fitted[first].data = minimalLogData(
+            maximumCompressedBytes: maximumCompressedBytes,
+            truncationLabel: fitted[first].truncationLabel
+        )
+        return fitted
+    }
+
+    private static func fittedEntryData(
+        entry: ArchiveEntry,
+        in entries: [ArchiveEntry],
+        entryIndex: Int,
+        maximumCompressedBytes: Int
+    ) throws -> Data {
+        guard let contents = String(data: entry.data, encoding: .utf8) else {
+            return entry.data
+        }
+        let lines = contents
+            .split(omittingEmptySubsequences: false) { $0.isNewline }
+            .map(String.init)
+        guard !lines.isEmpty else { return entry.data }
+
+        var lowerBound = 0
+        var upperBound = lines.count
+        var bestCandidate: Data?
+
+        while lowerBound <= upperBound {
+            let keptLineCount = (lowerBound + upperBound) / 2
+            let candidateData = truncatedLogData(
+                lines: lines,
+                keeping: keptLineCount,
+                maximumCompressedBytes: maximumCompressedBytes,
+                truncationLabel: entry.truncationLabel
+            )
+            var candidateEntries = entries
+            candidateEntries[entryIndex].data = candidateData
+            let candidateArchiveSize = try zipArchiveData(
+                entries: candidateEntries.map { (name: $0.name, data: $0.data) }
+            ).count
+
+            if candidateArchiveSize <= maximumCompressedBytes {
+                bestCandidate = candidateData
+                lowerBound = keptLineCount + 1
+            } else {
+                upperBound = keptLineCount - 1
+            }
+        }
+
+        return bestCandidate ?? minimalLogData(
+            maximumCompressedBytes: maximumCompressedBytes,
+            truncationLabel: entry.truncationLabel
+        )
+    }
 
     /// Returns log data that fits inside a compressed single-entry ZIP archive.
     static func fittedLogData(

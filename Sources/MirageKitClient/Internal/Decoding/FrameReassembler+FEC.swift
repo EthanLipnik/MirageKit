@@ -11,6 +11,14 @@ import Foundation
 import MirageKit
 
 extension FrameReassembler {
+    nonisolated static let hardSingleFrameCompressedByteCap = 64 * 1024 * 1024
+
+    struct FrameAssemblyPlan: Sendable, Equatable {
+        let frameByteCount: Int
+        let dataFragmentCount: Int
+        let bufferCapacity: Int
+    }
+
     func resolvedFrameByteCount(header: FrameHeader, maxPayloadSize: Int) -> Int {
         let byteCount = Int(header.frameByteCount)
         if byteCount > 0 { return byteCount }
@@ -27,6 +35,43 @@ extension FrameReassembler {
         guard maxPayloadSize > 0 else { return Int(header.fragmentCount) }
         if frameByteCount > 0 { return (frameByteCount + maxPayloadSize - 1) / maxPayloadSize }
         return Int(header.fragmentCount)
+    }
+
+    func validatedFrameAssemblyPlan(header: FrameHeader) -> FrameAssemblyPlan? {
+        let totalFragmentCount = Int(header.fragmentCount)
+        let fragmentIndex = Int(header.fragmentIndex)
+        guard maxPayloadSize > 0,
+              totalFragmentCount > 0,
+              fragmentIndex >= 0,
+              fragmentIndex < totalFragmentCount else {
+            return nil
+        }
+
+        let frameByteCount = resolvedFrameByteCount(header: header, maxPayloadSize: maxPayloadSize)
+        let dataFragmentCount = resolvedDataFragmentCount(
+            header: header,
+            frameByteCount: frameByteCount,
+            maxPayloadSize: maxPayloadSize
+        )
+        guard frameByteCount > 0,
+              dataFragmentCount > 0,
+              dataFragmentCount <= totalFragmentCount else {
+            return nil
+        }
+
+        let singleFrameCap = min(memoryBudget.maxPendingBytes, Self.hardSingleFrameCompressedByteCap)
+        guard frameByteCount <= singleFrameCap else { return nil }
+
+        let capacityResult = max(1, dataFragmentCount).multipliedReportingOverflow(by: maxPayloadSize)
+        guard !capacityResult.overflow else { return nil }
+        let capacity = capacityResult.partialValue
+        guard capacity > 0, capacity <= singleFrameCap else { return nil }
+
+        return FrameAssemblyPlan(
+            frameByteCount: frameByteCount,
+            dataFragmentCount: dataFragmentCount,
+            bufferCapacity: capacity
+        )
     }
 
     func parityIndexForDataFragment(fragmentIndex: Int, frame: PendingFrame) -> Int? {

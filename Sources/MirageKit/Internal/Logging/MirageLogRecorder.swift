@@ -112,6 +112,7 @@ public final class MirageLogRecorder: @unchecked Sendable {
     private let writeBatchBytes = 16 * 1024
     private let trimCheckBytes = 64 * 1024
     private let writeBatchDelay: DispatchTimeInterval = .milliseconds(250)
+    private let previousSessionLogSuffix = ".previous"
 
     private static let shouldRecordVerboseLogs: Bool = {
         #if DEBUG
@@ -124,6 +125,16 @@ public final class MirageLogRecorder: @unchecked Sendable {
     }()
 
     private var logURL: URL { logsDirectoryURL.appending(path: configuration.logFilename) }
+
+    private var previousSessionLogURL: URL {
+        let url = URL(fileURLWithPath: configuration.logFilename)
+        let extensionName = url.pathExtension
+        let baseName = url.deletingPathExtension().lastPathComponent
+        let filename = extensionName.isEmpty ?
+            "\(configuration.logFilename)\(previousSessionLogSuffix)" :
+            "\(baseName)\(previousSessionLogSuffix).\(extensionName)"
+        return logsDirectoryURL.appending(path: filename)
+    }
 
     private var logsDirectoryURL: URL {
         if configuration.useApplicationSupport {
@@ -188,7 +199,10 @@ public final class MirageLogRecorder: @unchecked Sendable {
         filename: String,
         maximumCompressedBytes: Int,
         emptyStateMessage: String,
-        diagnosticsSummary: String? = nil
+        diagnosticsSummary: String? = nil,
+        includePreviousSessionLog: Bool = false,
+        previousSessionEntryName: String = "PreviousSession.log",
+        additionalEntries: [MirageLogArchiveEntry] = []
     ) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
@@ -199,12 +213,23 @@ public final class MirageLogRecorder: @unchecked Sendable {
 
                 do {
                     let filteredLogData = try currentSessionLogData(emptyStateMessage: emptyStateMessage)
+                    var archiveEntries = additionalEntries
+                    if includePreviousSessionLog,
+                       let previousLogData = try previousSessionLogData() {
+                        archiveEntries.append(
+                            MirageLogArchiveEntry(
+                                name: previousSessionEntryName,
+                                data: previousLogData
+                            )
+                        )
+                    }
                     let archiveURL = try MirageLogArchiver.exportArchive(
                         from: filteredLogData,
                         filename: filename,
                         maximumCompressedBytes: maximumCompressedBytes,
                         truncationLabel: configuration.truncationLabel,
-                        diagnosticsSummary: diagnosticsSummary
+                        diagnosticsSummary: diagnosticsSummary,
+                        additionalEntries: archiveEntries
                     )
                     continuation.resume(returning: archiveURL)
                 } catch {
@@ -212,6 +237,42 @@ public final class MirageLogRecorder: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Flushes pending log data to disk and runs a trim check.
+    public func flush() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self else {
+                    continuation.resume()
+                    return
+                }
+                do {
+                    try flushPendingLogData(forceTrimCheck: true)
+                } catch {
+                    // Local diagnostics flushing is best effort.
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    /// Best-effort synchronous flush for process termination callbacks.
+    public func flushSynchronously(timeout: TimeInterval = 0.25) {
+        let semaphore = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            guard let self else {
+                semaphore.signal()
+                return
+            }
+            do {
+                try flushPendingLogData(forceTrimCheck: true)
+            } catch {
+                // Local diagnostics flushing is best effort.
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + timeout)
     }
 
     // MARK: - File Management
@@ -225,7 +286,16 @@ public final class MirageLogRecorder: @unchecked Sendable {
         }
 
         if fileManager.fileExists(atPath: logURL.path) {
-            try fileManager.removeItem(at: logURL)
+            if fileManager.fileExists(atPath: previousSessionLogURL.path) {
+                try fileManager.removeItem(at: previousSessionLogURL)
+            }
+            let attributes = try fileManager.attributesOfItem(atPath: logURL.path)
+            let fileSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            if fileSize > 0 {
+                try fileManager.moveItem(at: logURL, to: previousSessionLogURL)
+            } else {
+                try fileManager.removeItem(at: logURL)
+            }
         }
         fileManager.createFile(atPath: logURL.path, contents: nil)
         hasPreparedCurrentSessionLogFile = true
@@ -241,6 +311,13 @@ public final class MirageLogRecorder: @unchecked Sendable {
         guard !sourceData.isEmpty else {
             return Data("\(emptyStateMessage)\n".utf8)
         }
+        return sourceData
+    }
+
+    private func previousSessionLogData() throws -> Data? {
+        guard fileManager.fileExists(atPath: previousSessionLogURL.path) else { return nil }
+        let sourceData = try Data(contentsOf: previousSessionLogURL)
+        guard !sourceData.isEmpty else { return nil }
         return sourceData
     }
 

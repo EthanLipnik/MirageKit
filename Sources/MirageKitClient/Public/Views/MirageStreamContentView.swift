@@ -130,6 +130,8 @@ public struct MirageStreamContentView: View {
     @State var presentationBlurProgressTask: Task<Void, Never>?
     @State var presentationBlurProgressTaskGeneration: UInt64 = 0
     @State var presentationBlurProgressSuppressed = false
+    @State var recoveryBlurTrackedStatus: MirageStreamClientRecoveryStatus = .idle
+    @State var recoveryBlurStatusBecameActiveAt: CFAbsoluteTime?
     @State var latestContainerDisplaySize: CGSize = .zero
     @State var latestDrawableViewSize: CGSize = .zero
     @State var latestDrawableScaleFactor: CGFloat?
@@ -441,18 +443,29 @@ extension MirageStreamContentView {
     /// Blur applied while recovery preserves the last presented image.
     var recoveryBlurRadius: CGFloat {
         guard session.hasPresentedFrame else { return 0 }
+        let baseRadius: CGFloat
         switch session.clientRecoveryStatus {
         case .keyframeRecovery:
-            return 16
+            baseRadius = 16
         case .hardRecovery:
-            return 20
+            baseRadius = 20
         case .postResizeAwaitingFirstFrame:
-            return awaitingPostResizeFirstFrame ? 24 : 0
+            baseRadius = awaitingPostResizeFirstFrame ? 24 : 0
         case .idle,
              .startup,
              .tierPromotionProbe:
             return 0
         }
+        guard baseRadius > 0 else { return 0 }
+        guard let debounce = Self.recoveryBlurDebounceInterval(for: session.clientRecoveryStatus) else {
+            return baseRadius
+        }
+        guard recoveryBlurTrackedStatus == session.clientRecoveryStatus,
+              let recoveryBlurStatusBecameActiveAt else {
+            return 0
+        }
+        let elapsed = CFAbsoluteTimeGetCurrent() - recoveryBlurStatusBecameActiveAt
+        return elapsed >= debounce ? baseRadius : 0
     }
 
     /// Combined presentation blur from resize masking and stream recovery.
@@ -569,6 +582,19 @@ extension MirageStreamContentView {
         }
     }
 
+    func updateRecoveryBlurDebounceState(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        guard recoveryBlurTrackedStatus != session.clientRecoveryStatus else { return }
+        recoveryBlurTrackedStatus = session.clientRecoveryStatus
+        recoveryBlurStatusBecameActiveAt = Self.recoveryBlurDebounceInterval(for: session.clientRecoveryStatus) == nil
+            ? nil
+            : now
+    }
+
+    func resetRecoveryBlurDebounceState() {
+        recoveryBlurTrackedStatus = .idle
+        recoveryBlurStatusBecameActiveAt = nil
+    }
+
     static func nextPresentationBlurProgressSuppression(
         baselineSubmissionSequence: UInt64,
         latestSubmissionSequence: UInt64,
@@ -595,6 +621,22 @@ extension MirageStreamContentView {
         let suppressedUntil = latestSubmittedTime + holdDuration
         guard suppressedUntil > now else { return nil }
         return suppressedUntil
+    }
+
+    static func recoveryBlurDebounceInterval(
+        for status: MirageStreamClientRecoveryStatus
+    ) -> CFAbsoluteTime? {
+        switch status {
+        case .keyframeRecovery:
+            0.30
+        case .hardRecovery:
+            0.15
+        case .idle,
+             .startup,
+             .tierPromotionProbe,
+             .postResizeAwaitingFirstFrame:
+            nil
+        }
     }
 }
 

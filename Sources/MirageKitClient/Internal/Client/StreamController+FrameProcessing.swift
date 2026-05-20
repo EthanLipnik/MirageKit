@@ -50,7 +50,7 @@ extension StreamController {
             while !Task.isCancelled {
                 guard let frame = await dequeueFrame() else { break }
                 defer { frame.releaseBuffer() }
-                let lease = await decodeBudgetController.acquire(streamID: streamID)
+                guard let lease = await decodeBudgetController.acquire(streamID: streamID) else { break }
                 do {
                     try await capturedDecoder.decodeFrame(
                         frame.data,

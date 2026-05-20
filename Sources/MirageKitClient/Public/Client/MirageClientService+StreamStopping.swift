@@ -114,7 +114,7 @@ extension MirageClientService {
     }
 }
 
-private extension MirageClientService {
+extension MirageClientService {
     func appAtlasStartupFailure(
         for streamID: StreamID,
         message: String
@@ -212,7 +212,7 @@ public extension MirageClientService {
         }
     }
 
-    private func forceStopWindowStreamLocally(streamID: StreamID) async {
+    func forceStopWindowStreamLocally(streamID: StreamID) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
         sessionStore.removeSessions(renderingMediaStreamID: streamID)

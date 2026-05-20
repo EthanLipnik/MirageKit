@@ -212,17 +212,22 @@ extension FrameReassembler {
             return
         }
 
-        let frameByteCount = resolvedFrameByteCount(header: header, maxPayloadSize: maxPayloadSize)
-        let dataFragmentCount = resolvedDataFragmentCount(
-            header: header,
-            frameByteCount: frameByteCount,
-            maxPayloadSize: maxPayloadSize
-        )
+        guard let assemblyPlan = validatedFrameAssemblyPlan(header: header) else {
+            droppedFrameCount += 1
+            MirageLogger.log(
+                .frameAssembly,
+                "Dropping frame \(frameNumber) fragment \(header.fragmentIndex): invalid or over-budget assembly header"
+            )
+            lock.unlock()
+            return
+        }
+
+        let frameByteCount = assemblyPlan.frameByteCount
+        let dataFragmentCount = assemblyPlan.dataFragmentCount
         let usesHeaderByteCount = frameByteCount > 0
         let frame: PendingFrame
         if let existingFrame = pendingFrames[frameNumber] { frame = existingFrame } else {
-            let capacity = max(1, dataFragmentCount) * maxPayloadSize
-            let buffer = bufferPool.acquire(capacity: capacity)
+            let buffer = bufferPool.acquire(capacity: assemblyPlan.bufferCapacity)
             frame = PendingFrame(
                 buffer: buffer,
                 receivedMap: Array(repeating: false, count: dataFragmentCount),
@@ -237,7 +242,7 @@ extension FrameReassembler {
                 receivedAt: packetReceivedAt,
                 lastProgressAt: packetReceivedAt,
                 contentRect: header.contentRect,
-                expectedTotalBytes: usesHeaderByteCount ? frameByteCount : capacity
+                expectedTotalBytes: usesHeaderByteCount ? frameByteCount : assemblyPlan.bufferCapacity
             )
             pendingFrames[frameNumber] = frame
         }

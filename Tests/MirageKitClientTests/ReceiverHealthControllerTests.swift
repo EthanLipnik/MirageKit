@@ -352,6 +352,61 @@ struct ReceiverHealthControllerTests {
         #expect(strongerBackoff == .backoff(targetBitrateBps: 30_600_000))
     }
 
+    @Test("P-frame latency pressure backs off without transport loss counters")
+    func pFrameLatencyPressureBacksOffWithoutTransportLossCounters() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientPFrameCompletionLatencyP95Ms = 300
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 30_000_000,
+            ceilingBps: 36_000_000,
+            now: 0
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 30_000_000,
+            ceilingBps: 36_000_000,
+            now: 2
+        )
+        let thirdAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 30_000_000,
+            ceilingBps: 36_000_000,
+            now: 4
+        )
+
+        #expect(firstAction == .none)
+        #expect(secondAction == .none)
+        #expect(thirdAction == .backoff(targetBitrateBps: 25_500_000))
+        #expect(controller.lastTransportPressureReason == "client p-frame latency p95=300.0ms late=0")
+    }
+
+    @Test("Severe P-frame latency uses stronger media backoff floor")
+    func severePFrameLatencyUsesStrongerMediaBackoffFloor() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientPFrameCompletionLatencyP95Ms = 500
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 36_000_000,
+            ceilingBps: 36_000_000,
+            now: 0,
+            minimumBitrateFloorBps: 21_600_000
+        )
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 36_000_000,
+            ceilingBps: 36_000_000,
+            now: 2,
+            minimumBitrateFloorBps: 21_600_000
+        )
+
+        #expect(action == .backoff(targetBitrateBps: 27_000_000))
+    }
+
     @Test("Delivery collapse without transport evidence does not back off")
     func deliveryCollapseWithoutTransportEvidenceDoesNotBackOff() {
         var controller = MirageReceiverHealthController()

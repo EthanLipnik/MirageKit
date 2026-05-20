@@ -23,7 +23,8 @@ actor GlobalDecodeBudgetController {
     }
 
     private struct Waiter {
-        let continuation: CheckedContinuation<Lease, Never>
+        let streamID: StreamID
+        let continuation: CheckedContinuation<Lease?, Never>
     }
 
     static let shared = GlobalDecodeBudgetController()
@@ -40,13 +41,17 @@ actor GlobalDecodeBudgetController {
 
     func unregister(streamID: StreamID) {
         streamTierByID.removeValue(forKey: streamID)
+        resumeRemovedWaiters(for: streamID)
+        grantQueuedWaitersIfPossible()
     }
 
     func updateTier(streamID: StreamID, tier: StreamPresentationTier) {
         streamTierByID[streamID] = tier
     }
 
-    func acquire(streamID: StreamID) async -> Lease {
+    func acquire(streamID: StreamID) async -> Lease? {
+        guard streamTierByID[streamID] != nil else { return nil }
+
         if activeLeaseIDs.count < Self.inFlightLimit,
            activeWaiters.isEmpty,
            passiveWaiters.isEmpty {
@@ -54,8 +59,12 @@ actor GlobalDecodeBudgetController {
         }
 
         return await withCheckedContinuation { continuation in
-            let tier = streamTierByID[streamID] ?? .activeLive
-            let waiter = Waiter(continuation: continuation)
+            guard let tier = streamTierByID[streamID] else {
+                continuation.resume(returning: nil)
+                return
+            }
+
+            let waiter = Waiter(streamID: streamID, continuation: continuation)
             if tier == .activeLive {
                 activeWaiters.append(waiter)
             } else {
@@ -87,7 +96,24 @@ actor GlobalDecodeBudgetController {
             }
 
             guard let waiter else { return }
+            guard streamTierByID[waiter.streamID] != nil else {
+                waiter.continuation.resume(returning: nil)
+                continue
+            }
+
             waiter.continuation.resume(returning: issueLease())
+        }
+    }
+
+    private func resumeRemovedWaiters(for streamID: StreamID) {
+        let removedActiveWaiters = activeWaiters.filter { $0.streamID == streamID }
+        let removedPassiveWaiters = passiveWaiters.filter { $0.streamID == streamID }
+
+        activeWaiters.removeAll { $0.streamID == streamID }
+        passiveWaiters.removeAll { $0.streamID == streamID }
+
+        for waiter in removedActiveWaiters + removedPassiveWaiters {
+            waiter.continuation.resume(returning: nil)
         }
     }
 }

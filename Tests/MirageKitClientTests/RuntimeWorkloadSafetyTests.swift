@@ -95,6 +95,15 @@ struct RuntimeWorkloadSafetyTests {
         #expect(MirageClientService.runtimeWorkloadSafetyCappedFrameRate(120, cap: nil) == 120)
     }
 
+    @Test("Runtime workload scale downshift uses session tiers")
+    func runtimeWorkloadScaleDownshiftTargets() {
+        #expect(MirageClientService.runtimeWorkloadSafetyNextScaleDownshift(currentScale: 1.0) == 0.75)
+        #expect(MirageClientService.runtimeWorkloadSafetyNextScaleDownshift(currentScale: 0.76) == 0.75)
+        #expect(MirageClientService.runtimeWorkloadSafetyNextScaleDownshift(currentScale: 0.75) == 0.5)
+        #expect(MirageClientService.runtimeWorkloadSafetyNextScaleDownshift(currentScale: 0.51) == 0.5)
+        #expect(MirageClientService.runtimeWorkloadSafetyNextScaleDownshift(currentScale: 0.5) == nil)
+    }
+
     @Test("Automatic desktop workload tiers cannot promote above the runtime cap")
     func automaticDesktopWorkloadTierIsCapped() {
         let target = MirageAutomaticDesktopWorkloadTier(

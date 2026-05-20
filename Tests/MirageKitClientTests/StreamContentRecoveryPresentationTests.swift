@@ -67,6 +67,14 @@ struct StreamContentRecoveryPresentationTests {
     }
 
     @MainActor
+    @Test("Recovery blur debounce keeps short media recoveries sharp")
+    func recoveryBlurDebounceKeepsShortMediaRecoveriesSharp() {
+        #expect(MirageStreamContentView.recoveryBlurDebounceInterval(for: .keyframeRecovery) == 0.30)
+        #expect(MirageStreamContentView.recoveryBlurDebounceInterval(for: .hardRecovery) == 0.15)
+        #expect(MirageStreamContentView.recoveryBlurDebounceInterval(for: .postResizeAwaitingFirstFrame) == nil)
+    }
+
+    @MainActor
     @Test("Post-resize blur clears when the replacement frame is presented")
     func postResizeBlurClearsWhenReplacementFrameIsPresented() throws {
         let store = MirageClientSessionStore()

@@ -332,7 +332,7 @@ extension MirageClientService {
         }
     }
 
-    private func finishVideoStreamReceiveLoop(streamID: StreamID) {
+    private func finishVideoStreamReceiveLoop(streamID: StreamID) async {
         videoStreamReceiveTasks.removeValue(forKey: streamID)
         activeMediaStreams["video/\(streamID)"]?.clearIncomingBytesBatchHandler()
         videoPacketIngressProcessors.removeValue(forKey: streamID)?.finish()
@@ -341,7 +341,24 @@ extension MirageClientService {
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
+        if shouldForceLocalTeardownAfterVideoReceiveEnded(streamID: streamID) {
+            MirageLogger.client(
+                "Video stream receive loop ended for unreferenced stream \(streamID); forcing local teardown"
+            )
+            await forceStopWindowStreamLocally(streamID: streamID)
+            return
+        }
         MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
+    }
+
+    private func shouldForceLocalTeardownAfterVideoReceiveEnded(streamID: StreamID) -> Bool {
+        let hasReferencedSession = desktopStreamID == streamID ||
+            activeStreams.contains { $0.id == streamID || $0.mediaStreamID == streamID } ||
+            sessionStore.activeSessions.contains { $0.streamID == streamID || $0.mediaStreamID == streamID }
+        guard !hasReferencedSession else { return false }
+        return controllersByStream[streamID] != nil ||
+            registeredStreamIDs.contains(streamID) ||
+            metricsStore.snapshot(for: streamID) != nil
     }
 
     // MARK: - Keyframe Requests

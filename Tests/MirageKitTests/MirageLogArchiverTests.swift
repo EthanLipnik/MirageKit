@@ -42,6 +42,27 @@ struct MirageLogArchiverTests {
         #expect(archive.contains(Data("Mirage.log".utf8)))
         #expect(archive.contains(Data("DiagnosticsSummary.txt".utf8)))
     }
+
+    @Test("Support archive can include additional prioritized entries")
+    func supportArchiveIncludesAdditionalEntries() throws {
+        let archiveURL = try MirageLogArchiver.exportArchive(
+            from: Data("current\n".utf8),
+            filename: "MirageLogArchiverAdditionalEntries",
+            maximumCompressedBytes: 128 * 1024,
+            truncationLabel: "Mirage",
+            diagnosticsSummary: "summary",
+            additionalEntries: [
+                MirageLogArchiveEntry(name: "MetricKitDiagnostics.txt", text: "metric\n"),
+                MirageLogArchiveEntry(name: "PreviousSession.log", text: "previous\n"),
+            ]
+        )
+        let archive = try Data(contentsOf: archiveURL)
+
+        #expect(archive.contains(Data("MirageLogArchiverAdditionalEntries.log".utf8)))
+        #expect(archive.contains(Data("DiagnosticsSummary.txt".utf8)))
+        #expect(archive.contains(Data("MetricKitDiagnostics.txt".utf8)))
+        #expect(archive.contains(Data("PreviousSession.log".utf8)))
+    }
 }
 
 private extension Data {

@@ -36,6 +36,12 @@ extension FrameReassembler {
             evict(frameNumber)
         }
 
+        if pendingFrameBytesLocked() > memoryBudget.maxPendingBytes,
+           pendingFrames.count == 1,
+           let frameNumber = pendingFrames.keys.first {
+            evict(frameNumber)
+        }
+
         if evictedCount > 0 {
             beginKeyframeWaitLocked()
             MirageLogger.client(

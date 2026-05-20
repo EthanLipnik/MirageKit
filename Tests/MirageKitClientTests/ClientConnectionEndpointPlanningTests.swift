@@ -54,7 +54,7 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Overlay control sessions prefer UDP before reliable transports")
+    @Test("Overlay control sessions prefer QUIC before UDP and TCP")
     func overlayControlSessionAttemptsPreferOverlayTransports() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61011))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61012))
@@ -81,7 +81,7 @@ struct ClientConnectionEndpointPlanningTests {
         let service = MirageClientService(deviceName: "Test Device")
         let attempts = service.controlSessionAttempts(for: host)
 
-        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(attempts.map(\.transportKind) == [.quic, .udp, .tcp])
         #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
         #expect(attempts.allSatisfy { $0.requiredInterface == nil })
         #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
@@ -197,12 +197,12 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 3)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .quic)
+        #expect(attempts[0].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
         #expect(attempts[0].candidateKind == .overlay)
         #expect(attempts[0].requiredInterfaceType == nil)
-        #expect(attempts[1].transportKind == .quic)
-        #expect(attempts[1].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .udp)
+        #expect(attempts[1].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[1].candidateKind == .overlay)
         #expect(attempts[1].requiredInterfaceType == nil)
         #expect(attempts[2].transportKind == .tcp)

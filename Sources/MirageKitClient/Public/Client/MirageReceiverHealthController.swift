@@ -90,7 +90,8 @@ public struct MirageReceiverHealthController: Sendable {
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
         allowsBackoff: Bool = true,
-        minimumHealthyFrameRate: Int? = nil
+        minimumHealthyFrameRate: Int? = nil,
+        minimumBitrateFloorBps: Int = 12_000_000
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0, !snapshots.isEmpty else {
             reset()
@@ -106,7 +107,8 @@ public struct MirageReceiverHealthController: Sendable {
             now: now,
             allowsNewProbe: allowsNewProbe,
             allowsBackoff: allowsBackoff,
-            minimumHealthyFrameRate: minimumHealthyFrameRate
+            minimumHealthyFrameRate: minimumHealthyFrameRate,
+            minimumBitrateFloorBps: minimumBitrateFloorBps
         )
     }
 
@@ -118,7 +120,8 @@ public struct MirageReceiverHealthController: Sendable {
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
         allowsBackoff: Bool = true,
-        minimumHealthyFrameRate: Int? = nil
+        minimumHealthyFrameRate: Int? = nil,
+        minimumBitrateFloorBps: Int = 12_000_000
     ) -> Action {
         guard currentBitrateBps > 0, ceilingBps > 0 else {
             reset()
@@ -145,7 +148,8 @@ public struct MirageReceiverHealthController: Sendable {
             sample: sample,
             currentBitrateBps: currentBitrateBps,
             now: now,
-            allowsBackoff: effectiveAllowsBackoff
+            allowsBackoff: effectiveAllowsBackoff,
+            minimumBitrateFloorBps: minimumBitrateFloorBps
         ) {
             return receiverFailureAction
         }
@@ -168,7 +172,8 @@ public struct MirageReceiverHealthController: Sendable {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
-                    now: now
+                    now: now,
+                    minimumBitrateFloorBps: minimumBitrateFloorBps
                 )
             }
             return probeActionIfReady(
@@ -184,7 +189,8 @@ public struct MirageReceiverHealthController: Sendable {
                 return applyBackoff(
                     sample: sample,
                     currentBitrateBps: currentBitrateBps,
-                    now: now
+                    now: now,
+                    minimumBitrateFloorBps: minimumBitrateFloorBps
                 )
             }
 
@@ -242,10 +248,18 @@ public struct MirageReceiverHealthController: Sendable {
     private mutating func applyBackoff(
         sample: ReceiverHealthSample,
         currentBitrateBps: Int,
-        now: CFAbsoluteTime
+        now: CFAbsoluteTime,
+        minimumBitrateFloorBps: Int
     ) -> Action {
-        let step = sample.hasSevereTransportPressure ? Self.severeBackoffStep : Self.normalBackoffStep
-        let nextBitrate = max(Self.minimumBitrateBps, Int(Double(currentBitrateBps) * step))
+        let floorBps = max(Self.minimumBitrateBps, minimumBitrateFloorBps)
+        let step = if sample.hasSevereReceiverMediaLatencyPressure {
+            Self.receiverMediaRepeatedBackoffStep
+        } else if sample.hasReceiverMediaLatencyPressure {
+            Self.receiverMediaFirstBackoffStep
+        } else {
+            sample.hasSevereTransportPressure ? Self.severeBackoffStep : Self.normalBackoffStep
+        }
+        let nextBitrate = max(floorBps, Int(Double(currentBitrateBps) * step))
         rememberPromotionCeiling(
             max(
                 nextBitrate,
@@ -268,7 +282,8 @@ public struct MirageReceiverHealthController: Sendable {
         sample: ReceiverHealthSample,
         currentBitrateBps: Int,
         now: CFAbsoluteTime,
-        allowsBackoff: Bool
+        allowsBackoff: Bool,
+        minimumBitrateFloorBps: Int
     ) -> Action? {
         guard sample.hasReceiverMediaDeliveryFailure else { return nil }
         recordReceiverMediaDeliveryFailure(now: now)
@@ -281,7 +296,8 @@ public struct MirageReceiverHealthController: Sendable {
         let step = repeatedFailure
             ? Self.receiverMediaRepeatedBackoffStep
             : Self.receiverMediaFirstBackoffStep
-        let nextBitrate = max(Self.minimumBitrateBps, Int(Double(currentBitrateBps) * step))
+        let floorBps = max(Self.minimumBitrateBps, minimumBitrateFloorBps)
+        let nextBitrate = max(floorBps, Int(Double(currentBitrateBps) * step))
         let promotionCeilingStep = repeatedFailure
             ? Self.severeBackoffPromotionCeilingStep
             : Self.normalBackoffPromotionCeilingStep
