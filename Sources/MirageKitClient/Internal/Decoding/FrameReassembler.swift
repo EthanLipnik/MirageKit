@@ -63,7 +63,10 @@ final class FrameReassembler: @unchecked Sendable {
         let frameBufferPoolRetainedBytes: Int
         let budgetEvictions: UInt64
         let incompleteFrameTimeouts: UInt64
+        let incompleteFrameNoProgressTimeouts: UInt64
+        let incompleteFrameLifetimeTimeouts: UInt64
         let missingFragmentTimeouts: UInt64
+        let forwardGapTimeouts: UInt64
     }
 
     struct MemoryTrimResult: Sendable, Equatable {
@@ -88,7 +91,10 @@ final class FrameReassembler: @unchecked Sendable {
     var droppedFrameCount: UInt64 = 0
     var memoryBudgetEvictionCount: UInt64 = 0
     var incompleteFrameTimeoutCount: UInt64 = 0
+    var incompleteFrameNoProgressTimeoutCount: UInt64 = 0
+    var incompleteFrameLifetimeTimeoutCount: UInt64 = 0
     var missingFragmentTimeoutCount: UInt64 = 0
+    var forwardGapTimeoutCount: UInt64 = 0
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0
@@ -98,10 +104,9 @@ final class FrameReassembler: @unchecked Sendable {
     let pendingKeyframePromotionDelay: TimeInterval = 0.15
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
     let pendingKeyframeProgressPreservationThreshold: Double = 0.75
-    let pFrameTimeoutFrameIntervalBudget: Double = 18.0
-    let pFrameTimeoutMinimum: TimeInterval = 0.12
-    let pFrameTimeoutMaximum: TimeInterval = 0.60
-    let severeForwardGapFrameIntervalBudget: Double = 18.0
+    let pFrameNoProgressTimeout: TimeInterval = 0.30
+    let pFrameAbsoluteLifetimeCapDefault: TimeInterval = 0.60
+    let pFrameAbsoluteLifetimeCapRemoteSmoothest: TimeInterval = 0.90
     var targetFrameRate: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var transportPathKind: MirageNetworkPathKind = .unknown

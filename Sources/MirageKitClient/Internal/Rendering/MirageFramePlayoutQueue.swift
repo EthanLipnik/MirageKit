@@ -16,6 +16,8 @@ struct MirageFramePlayoutQueue {
         var smoothestAgeDrops: Int = 0
         var smoothestDropsUnder100ms: Int = 0
         var smoothestDroppedFrameAgeMaxMs: Double = 0
+        var smoothestDisplayDebtDrops: Int = 0
+        var smoothestFifoResetCount: Int = 0
         var lateFrameDrops: Int = 0
         var coalescedFrames: Int = 0
 
@@ -24,6 +26,7 @@ struct MirageFramePlayoutQueue {
         mutating func recordSmoothestDepthDrop(ageMs: Double) {
             smoothestQueueDrops += 1
             smoothestDepthDrops += 1
+            smoothestDisplayDebtDrops += 1
             recordSmoothestDroppedFrameAge(ageMs)
         }
 
@@ -31,6 +34,10 @@ struct MirageFramePlayoutQueue {
             smoothestQueueDrops += 1
             smoothestAgeDrops += 1
             recordSmoothestDroppedFrameAge(ageMs)
+        }
+
+        mutating func recordSmoothestFifoReset() {
+            smoothestFifoResetCount += 1
         }
 
         private mutating func recordSmoothestDroppedFrameAge(_ ageMs: Double) {
@@ -72,6 +79,9 @@ struct MirageFramePlayoutQueue {
                 frames.removeFirst()
                 result.recordSmoothestDepthDrop(ageMs: ageMs)
             }
+            if result.smoothestQueueDrops > 0 {
+                result.recordSmoothestFifoReset()
+            }
             return result
         }
     }
@@ -112,6 +122,8 @@ struct MirageFramePlayoutQueue {
                 trimResult.smoothestDroppedFrameAgeMaxMs,
                 expired.smoothestDroppedFrameAgeMaxMs
             )
+            trimResult.smoothestDisplayDebtDrops += expired.smoothestDisplayDebtDrops
+            trimResult.smoothestFifoResetCount += expired.smoothestFifoResetCount
         }
 
         let frame = frames.first
@@ -144,6 +156,9 @@ struct MirageFramePlayoutQueue {
             let ageMs = comparableFrameAgeMs(first, now: now)
             frames.removeFirst()
             result.recordSmoothestAgeDrop(ageMs: ageMs)
+        }
+        if result.smoothestQueueDrops > 0 {
+            result.recordSmoothestFifoReset()
         }
         return result
     }

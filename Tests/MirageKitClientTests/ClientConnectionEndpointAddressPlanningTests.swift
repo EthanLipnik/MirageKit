@@ -21,6 +21,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61040))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61041))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61042))
+        let anpiAddress = try #require(IPv6Address("fe80::1%anpi0"))
+        let awdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
+        let llwAddress = try #require(IPv6Address("fe80::3%llw0"))
+        let bridgeAddress = try #require(IPv6Address("fe80::4%bridge100"))
         let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
@@ -41,6 +45,10 @@ struct ClientConnectionEndpointAddressPlanningTests {
             ),
             resolvedAddresses: [
                 .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv6(anpiAddress),
+                .ipv6(awdlAddress),
+                .ipv6(llwAddress),
+                .ipv6(bridgeAddress),
             ],
             discoveredInterfaces: [
                 LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
@@ -61,20 +69,18 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let proximityAttempts = Array(attempts.prefix(15))
+        let proximityAttempts = Array(attempts.prefix(12))
         let fallbackAttempts = Array(attempts.suffix(3))
 
-        #expect(attempts.count == 18)
+        #expect(attempts.count == 15)
         #expect(proximityAttempts.allSatisfy { $0.isPeerToPeerPreferred })
         #expect(proximityAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
             "anpi0", "anpi0", "anpi0",
             "awdl0", "awdl0", "awdl0",
             "llw0", "llw0", "llw0",
             "en3", "en3", "en3",
-            "bridge100", "bridge100", "bridge100",
         ])
         #expect(proximityAttempts.map(\.transportKind) == [
-            .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
@@ -85,12 +91,13 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Client tries AWDL Bonjour hostname before resolved IP fallback")
-    func controlSessionAttemptsPreferAwdlBeforeResolvedAddressFallback() throws {
+    @Test("Client tries scoped AWDL address before resolved IP fallback")
+    func controlSessionAttemptsPreferScopedAwdlBeforeResolvedAddressFallback() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61029))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61033))
         let tcpPort = try #require(NWEndpoint.Port(rawValue: 61030))
+        let awdlAddress = try #require(IPv6Address("fe80::5%awdl0"))
         let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
@@ -111,6 +118,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
             ),
             resolvedAddresses: [
                 .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv6(awdlAddress),
             ],
             discoveredInterfaces: [
                 LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
@@ -127,15 +135,15 @@ struct ClientConnectionEndpointAddressPlanningTests {
             )
         )
         let expectedAwdlUDPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
+            host: .ipv6(awdlAddress),
             port: udpPort
         )
         let expectedAwdlTCPEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
+            host: .ipv6(awdlAddress),
             port: tcpPort
         )
         let expectedAwdlQUICEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
+            host: .ipv6(awdlAddress),
             port: quicPort
         )
         let expectedFallbackUDPEndpoint: NWEndpoint = try .hostPort(
@@ -307,6 +315,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
     func awdlAttemptsUseShortTimeoutBeforeFallback() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61032))
+        let awdlAddress = try #require(IPv6Address("fe80::6%awdl0"))
         let host = try LoomPeer(
             id: deviceID,
             name: "Altair",
@@ -322,6 +331,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
             ),
             resolvedAddresses: [
                 .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv6(awdlAddress),
             ],
             discoveredInterfaces: [
                 LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
@@ -341,8 +351,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Client tries optimistic peer-to-peer before same-subnet resolved IP fallback")
-    func controlSessionAttemptsPreferOptimisticPeerToPeerBeforeResolvedAddressOnSameSubnet() throws {
+    @Test("Client skips optimistic peer-to-peer without proximity evidence")
+    func controlSessionAttemptsSkipOptimisticPeerToPeerWithoutProximityEvidence() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61025))
         let host = try LoomPeer(
@@ -379,24 +389,16 @@ struct ClientConnectionEndpointAddressPlanningTests {
             host: .ipv4(#require(IPv4Address("192.168.1.50"))),
             port: udpPort
         )
-        let expectedPeerToPeerEndpoint: NWEndpoint = .hostPort(
-            host: NWEndpoint.Host("altair.local"),
-            port: udpPort
-        )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isPeerToPeerPreferred)
-        #expect(attempts[0].requiredInterfaceType == .other)
-        #expect(attempts[0].endpoint.debugDescription == expectedPeerToPeerEndpoint.debugDescription)
-        #expect(attempts[1].transportKind == .udp)
-        #expect(!attempts[1].isPeerToPeerPreferred)
-        #expect(attempts[1].endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[2].transportKind == .tcp)
+        #expect(!attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
-    @Test("Client prefers Bonjour hostname over off-subnet resolved addresses for peer-to-peer")
+    @Test("Client prefers Bonjour hostname over off-subnet resolved addresses without proximity label")
     func controlSessionAttemptsPreferBonjourHostnameForPeerToPeerAcrossSubnets() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61026))
@@ -441,17 +443,13 @@ struct ClientConnectionEndpointAddressPlanningTests {
             port: tcpPort
         )
 
-        #expect(attempts.count == 4)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
         #expect(attempts[1].transportKind == .tcp)
-        #expect(attempts[1].isPeerToPeerPreferred)
+        #expect(!attempts[1].isPeerToPeerPreferred)
         #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
-        #expect(!attempts[2].isPeerToPeerPreferred)
-        #expect(attempts[2].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
-        #expect(!attempts[3].isPeerToPeerPreferred)
-        #expect(attempts[3].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
     }
 
     @MainActor
@@ -536,9 +534,9 @@ struct ClientConnectionEndpointAddressPlanningTests {
             port: udpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 

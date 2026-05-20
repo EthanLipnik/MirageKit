@@ -48,6 +48,24 @@ struct HostKeyboardInjectionTests {
         #expect(unicodeString(from: cgEvent) == "🙂")
     }
 
+    @Test("Repeat key down sets autorepeat without mutating modifier tracking")
+    func repeatKeyDownSetsAutorepeatWithoutMutatingModifierTracking() throws {
+        let event = MirageKeyEvent(
+            keyCode: 0x04,
+            characters: "h",
+            charactersIgnoringModifiers: "h",
+            modifiers: .control,
+            isRepeat: true
+        )
+
+        let controller = MirageHostInputController()
+        let cgEvent = try #require(controller.makeInjectedKeyboardEvent(isKeyDown: true, event))
+
+        #expect(cgEvent.getIntegerValueField(.keyboardEventAutorepeat) == 1)
+        #expect(controller.lastSentModifiers == [])
+        #expect(controller.heldModifierKeyCodes.isEmpty)
+    }
+
     private func unicodeString(from event: CGEvent) -> String {
         var length = 0
         var buffer = [UniChar](repeating: 0, count: 8)

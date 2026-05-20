@@ -334,7 +334,10 @@ extension FrameReassembler {
                 "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), " +
                     "keyframe=\(timeoutResult.timedOutKeyframes), " +
                     "incomplete=\(timeoutResult.incompleteFrameTimeouts), " +
+                    "noProgress=\(timeoutResult.incompleteFrameNoProgressTimeouts), " +
+                    "lifetime=\(timeoutResult.incompleteFrameLifetimeTimeouts), " +
                     "missingFragments=\(timeoutResult.missingFragmentTimeouts), " +
+                    "forwardGap=\(timeoutResult.forwardGapTimeouts), " +
                     "anchor=\(hasDeliveredKeyframeAnchor)"
             )
         }

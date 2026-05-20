@@ -33,6 +33,8 @@ struct ClientStreamingAnomalySample {
     let smoothestAgeDrops: UInt64
     let smoothestDropsUnder100ms: UInt64
     let smoothestDroppedFrameAgeMaxMs: Double
+    let smoothestDisplayDebtDrops: UInt64
+    let smoothestFifoResetCount: UInt64
     let lateFrameDrops: UInt64
     let coalescedBeforeSubmitCount: UInt64
     let duplicateRemoteTimestampCount: UInt64
@@ -56,7 +58,10 @@ struct ClientStreamingAnomalySample {
     let frameBufferPoolRetainedBytes: Int
     let reassemblerBudgetEvictions: UInt64
     let reassemblerIncompleteFrameTimeouts: UInt64
+    let reassemblerIncompleteFrameNoProgressTimeouts: UInt64
+    let reassemblerIncompleteFrameLifetimeTimeouts: UInt64
     let reassemblerMissingFragmentTimeouts: UInt64
+    let reassemblerForwardGapTimeouts: UInt64
     let decoderOutputPixelFormat: String?
     let usingHardwareDecoder: Bool?
     let targetFrameRate: Int
@@ -94,6 +99,8 @@ struct ClientStreamingAnomalySample {
         smoothestAgeDrops: UInt64 = 0,
         smoothestDropsUnder100ms: UInt64 = 0,
         smoothestDroppedFrameAgeMaxMs: Double = 0,
+        smoothestDisplayDebtDrops: UInt64 = 0,
+        smoothestFifoResetCount: UInt64 = 0,
         lateFrameDrops: UInt64 = 0,
         coalescedBeforeSubmitCount: UInt64 = 0,
         duplicateRemoteTimestampCount: UInt64 = 0,
@@ -117,7 +124,10 @@ struct ClientStreamingAnomalySample {
         frameBufferPoolRetainedBytes: Int = 0,
         reassemblerBudgetEvictions: UInt64 = 0,
         reassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        reassemblerIncompleteFrameNoProgressTimeouts: UInt64 = 0,
+        reassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         reassemblerMissingFragmentTimeouts: UInt64 = 0,
+        reassemblerForwardGapTimeouts: UInt64 = 0,
         decoderOutputPixelFormat: String?,
         usingHardwareDecoder: Bool?,
         targetFrameRate: Int,
@@ -151,6 +161,8 @@ struct ClientStreamingAnomalySample {
         self.smoothestAgeDrops = smoothestAgeDrops
         self.smoothestDropsUnder100ms = smoothestDropsUnder100ms
         self.smoothestDroppedFrameAgeMaxMs = smoothestDroppedFrameAgeMaxMs
+        self.smoothestDisplayDebtDrops = smoothestDisplayDebtDrops
+        self.smoothestFifoResetCount = smoothestFifoResetCount
         self.lateFrameDrops = lateFrameDrops
         self.coalescedBeforeSubmitCount = coalescedBeforeSubmitCount
         self.duplicateRemoteTimestampCount = duplicateRemoteTimestampCount
@@ -174,7 +186,10 @@ struct ClientStreamingAnomalySample {
         self.frameBufferPoolRetainedBytes = frameBufferPoolRetainedBytes
         self.reassemblerBudgetEvictions = reassemblerBudgetEvictions
         self.reassemblerIncompleteFrameTimeouts = reassemblerIncompleteFrameTimeouts
+        self.reassemblerIncompleteFrameNoProgressTimeouts = reassemblerIncompleteFrameNoProgressTimeouts
+        self.reassemblerIncompleteFrameLifetimeTimeouts = reassemblerIncompleteFrameLifetimeTimeouts
         self.reassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
+        self.reassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
         self.decoderOutputPixelFormat = decoderOutputPixelFormat
         self.usingHardwareDecoder = usingHardwareDecoder
         self.targetFrameRate = targetFrameRate
@@ -201,6 +216,12 @@ struct ClientStreamingAnomalySample {
             clientPendingFrameAgeMs: pendingFrameAgeMs,
             clientOverwrittenPendingFrames: overwrittenPendingFrames,
             clientSmoothestQueueDrops: smoothestQueueDrops,
+            clientSmoothestDisplayDebtDrops: smoothestDisplayDebtDrops,
+            clientSmoothestFifoResetCount: smoothestFifoResetCount,
+            clientSmoothestDepthDrops: smoothestDepthDrops,
+            clientSmoothestAgeDrops: smoothestAgeDrops,
+            clientSmoothestDropsUnder100ms: smoothestDropsUnder100ms,
+            clientSmoothestDroppedFrameAgeMaxMs: smoothestDroppedFrameAgeMaxMs,
             clientLateFrameDrops: lateFrameDrops,
             clientDisplayLayerNotReadyCount: displayLayerNotReadyCount,
             clientRepeatedFrameCount: repeatedFrameCount,
@@ -219,7 +240,10 @@ struct ClientStreamingAnomalySample {
             clientFrameBufferPoolRetainedBytes: frameBufferPoolRetainedBytes,
             clientReassemblerBudgetEvictions: reassemblerBudgetEvictions,
             clientReassemblerIncompleteFrameTimeouts: reassemblerIncompleteFrameTimeouts,
+            clientReassemblerIncompleteFrameNoProgressTimeouts: reassemblerIncompleteFrameNoProgressTimeouts,
+            clientReassemblerIncompleteFrameLifetimeTimeouts: reassemblerIncompleteFrameLifetimeTimeouts,
             clientReassemblerMissingFragmentTimeouts: reassemblerMissingFragmentTimeouts,
+            clientReassemblerForwardGapTimeouts: reassemblerForwardGapTimeouts,
             hostEncodedFPS: hostMetrics?.encodedFPS ?? 0,
             hostIdleFPS: hostMetrics?.idleEncodedFPS ?? 0,
             hostDroppedFrames: hostMetrics?.droppedFrames ?? 0,
@@ -337,9 +361,13 @@ func clientStreamingAnomalyDiagnostic(
         "reassemblerBytes=\(sample.reassemblerPendingBytes) pooledBytes=\(sample.frameBufferPoolRetainedBytes) " +
         "budgetEvictions=\(sample.reassemblerBudgetEvictions) " +
         "fragmentLossFrames=\(sample.reassemblerIncompleteFrameTimeouts) " +
+        "fragmentNoProgress=\(sample.reassemblerIncompleteFrameNoProgressTimeouts) " +
+        "fragmentLifetime=\(sample.reassemblerIncompleteFrameLifetimeTimeouts) " +
         "fragmentLossMissing=\(sample.reassemblerMissingFragmentTimeouts) " +
+        "forwardGapTimeouts=\(sample.reassemblerForwardGapTimeouts) " +
         "overwritten=\(sample.overwrittenPendingFrames) smoothestDrops=\(sample.smoothestQueueDrops) " +
         "smoothestDepthDrops=\(sample.smoothestDepthDrops) smoothestAgeDrops=\(sample.smoothestAgeDrops) " +
+        "smoothestDebtDrops=\(sample.smoothestDisplayDebtDrops) smoothestFifoResets=\(sample.smoothestFifoResetCount) " +
         "smoothestUnder100=\(sample.smoothestDropsUnder100ms) " +
         "smoothestDropAgeMax=\(formattedMs(sample.smoothestDroppedFrameAgeMaxMs))ms " +
         "lateDrops=\(sample.lateFrameDrops) " +
@@ -416,6 +444,10 @@ private func resolvedAnomalyBottleneckKind(
     let decodeKeepsUp = sample.decodeHealthy &&
         sample.decodedFPS >= targetFPS * 0.75 &&
         (sample.receivedFPS <= 0 || sample.decodedFPS + decodeGapGrace >= sample.receivedFPS)
+    let presentationHealthyEnoughToAvoidBlame =
+        sample.decodedFPS >= targetFPS - 1.0 &&
+        sample.displayTickFPS >= targetFPS - 1.0 &&
+        sample.displayLayerNotReadyCount == 0
     let submissionLaggingDecode =
         sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
         sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
@@ -432,10 +464,11 @@ private func resolvedAnomalyBottleneckKind(
         sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
         sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
         sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
-    if rendererLoopStalled ||
+    if !presentationHealthyEnoughToAvoidBlame &&
+        (rendererLoopStalled ||
         decodeKeepsUp &&
         (submissionLaggingDecode && presentationBackpressure ||
-            severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90) {
+            severeUnevenPresentationCadence && sample.submittedFPS >= targetFPS * 0.90)) {
         return .presentationBound
     }
 

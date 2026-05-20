@@ -64,6 +64,8 @@ extension StreamController {
                 smoothestAgeDrops: renderTelemetry.smoothestAgeDrops,
                 smoothestDropsUnder100ms: renderTelemetry.smoothestDropsUnder100ms,
                 smoothestDroppedFrameAgeMaxMs: renderTelemetry.smoothestDroppedFrameAgeMaxMs,
+                smoothestDisplayDebtDrops: renderTelemetry.smoothestDisplayDebtDrops,
+                smoothestFifoResetCount: renderTelemetry.smoothestFifoResetCount,
                 lateFrameDrops: renderTelemetry.lateFrameDrops,
                 coalescedBeforeSubmitCount: renderTelemetry.coalescedBeforeSubmitCount,
                 duplicateRemoteTimestampCount: renderTelemetry.duplicateRemoteTimestampCount,
@@ -87,7 +89,10 @@ extension StreamController {
                 frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
                 reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
                 reassemblerIncompleteFrameTimeouts: reassemblerMetrics.incompleteFrameTimeouts,
+                reassemblerIncompleteFrameNoProgressTimeouts: reassemblerMetrics.incompleteFrameNoProgressTimeouts,
+                reassemblerIncompleteFrameLifetimeTimeouts: reassemblerMetrics.incompleteFrameLifetimeTimeouts,
                 reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
+                reassemblerForwardGapTimeouts: reassemblerMetrics.forwardGapTimeouts,
                 decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
                 usingHardwareDecoder: decoder.currentHardwareDecoderStatus,
                 targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? streamCadenceTarget.sourceFPS),
@@ -169,6 +174,8 @@ extension StreamController {
                 "smoothestDrops=\(renderTelemetry.smoothestQueueDrops) " +
                 "smoothestDepthDrops=\(renderTelemetry.smoothestDepthDrops) " +
                 "smoothestAgeDrops=\(renderTelemetry.smoothestAgeDrops) " +
+                "smoothestDebtDrops=\(renderTelemetry.smoothestDisplayDebtDrops) " +
+                "smoothestFifoResets=\(renderTelemetry.smoothestFifoResetCount) " +
                 "smoothestUnder100=\(renderTelemetry.smoothestDropsUnder100ms) " +
                 "smoothestDropAgeMax=\(Int(renderTelemetry.smoothestDroppedFrameAgeMaxMs.rounded()))ms " +
                 "overwritten=\(renderTelemetry.overwrittenPendingFrames) lateDrops=\(renderTelemetry.lateFrameDrops) " +

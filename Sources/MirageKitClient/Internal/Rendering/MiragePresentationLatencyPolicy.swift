@@ -42,7 +42,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 1
         case .smoothest:
-            return highCadence ? 6 : 4
+            return max(1, Int((maximumQueueAgeMs / frameIntervalMs).rounded(.up)))
         }
     }
 
@@ -51,12 +51,8 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return frameIntervalMs
         case .smoothest:
-            return highCadence ? 75 : 100
+            return 300
         }
-    }
-
-    private var highCadence: Bool {
-        max(sourceFPS, displayFPS) >= 90
     }
 
     private var frameIntervalMs: Double {

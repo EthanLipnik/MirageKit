@@ -79,6 +79,7 @@ public extension MirageStreamContentView {
                     ignoresSafeArea: ignoresSafeArea
                 )
                 .blur(radius: presentationBlurRadius)
+                .animation(presentationBlurAnimation, value: presentationBlurRadius)
                 #else
                 MirageStreamViewRepresentable(
                     streamID: session.streamID,
@@ -120,6 +121,7 @@ public extension MirageStreamContentView {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .blur(radius: presentationBlurRadius)
+                .animation(presentationBlurAnimation, value: presentationBlurRadius)
                 #endif
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

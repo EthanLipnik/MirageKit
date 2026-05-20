@@ -2,59 +2,32 @@
 //  MirageHostService+Diagnostics.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 5/12/26.
+//  Created by Ethan Lipnik on 5/20/26.
 //
 
-import Foundation
 import Loom
+import MirageKit
 
 #if os(macOS)
 @MainActor
-extension MirageHostService {
-    /// Registers a Loom diagnostics provider for the current host state.
-    func registerDiagnosticsContextProvider() {
-        Task { [weak self] in
-            guard let self else { return }
-            diagnosticsContextProviderToken = await LoomDiagnostics.registerContextProvider { [weak self] in
-                guard let self else { return [:] }
-                return await MainActor.run { self.diagnosticsContextSnapshot }
+public extension MirageHostService {
+    var networkDiagnosticsSummaryLines: [String] {
+        let directTransports = advertisedPeerAdvertisement.directTransports
+            .map { transport in
+                let path = transport.pathKind?.rawValue ?? "unknown"
+                return "\(transport.transportKind.rawValue):\(transport.port):\(path)"
             }
-        }
-    }
+            .joined(separator: ",")
 
-    /// Point-in-time host diagnostics emitted with Loom reports.
-    private var diagnosticsContextSnapshot: LoomDiagnosticsContext {
-        [
-            "host.state": .string(Self.diagnosticsHostStateName(state)),
-            "host.sessionState": .string(String(describing: sessionState)),
-
-            "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
-            "host.lightsOutEnabled": .bool(lightsOutEnabled),
-            "host.lightsOutDisabledByEnvironment": .bool(lightsOutDisabledByEnvironment),
-            "host.lockHostWhenStreamingStops": .bool(lockHostWhenStreamingStops),
-            "host.connectedClientsCount": .int(connectedClients.count),
-            "host.activeStreamsCount": .int(activeStreams.count),
-            "host.availableWindowsCount": .int(availableWindows.count),
-            "host.desktopStreamActive": .bool(desktopStreamID != nil),
-
-            "host.desktopResizeInFlight": .bool(activeDesktopResizeRequest != nil),
-            "host.desktopSharedDisplayTransitionInFlight": .bool(desktopSharedDisplayTransitionInFlight),
-            "host.windowVirtualDisplayCount": .int(windowVirtualDisplayStateByWindowID.count),
+        return [
+            "Host Proximity Connect Effective: \(loomNode.configuration.enablePeerToPeer)",
+            "Host Bonjour Enabled: \(loomNode.configuration.enableBonjour)",
+            "Host Advertised Name: \(serviceName)",
+            "Host Advertised Bonjour Host Name: \(advertisedPeerAdvertisement.hostName ?? "none")",
+            "Host Direct Transports: \(directTransports.isEmpty ? "none" : directTransports)",
+            "Host Remote Control Listener Ready: \(remoteControlListenerReady)",
+            "Host Remote Control Port: \(remoteControlPort.map(String.init) ?? "none")",
         ]
-    }
-
-    /// Stable diagnostics label for host advertising state.
-    private static func diagnosticsHostStateName(_ state: HostState) -> String {
-        switch state {
-        case .idle:
-            "idle"
-        case .starting:
-            "starting"
-        case .advertising:
-            "advertising"
-        case .error:
-            "error"
-        }
     }
 }
 #endif

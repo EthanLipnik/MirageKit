@@ -17,6 +17,7 @@ extension MirageClientService {
         let endpoint: NWEndpoint
         let transportKind: LoomTransportKind
         let candidateKind: ControlSessionCandidateKind
+        let endpointSource: String
         let requiredInterface: NWInterface?
         let requiredInterfaceType: NWInterface.InterfaceType?
         let isPeerToPeerPreferred: Bool
@@ -55,6 +56,7 @@ extension MirageClientService {
             endpoint: NWEndpoint,
             transportKind: LoomTransportKind,
             candidateKind: ControlSessionCandidateKind,
+            endpointSource: String = "automatic",
             requiredInterface: NWInterface? = nil,
             requiredInterfaceType: NWInterface.InterfaceType? = nil,
             isPeerToPeerPreferred: Bool = false,
@@ -65,6 +67,7 @@ extension MirageClientService {
             self.endpoint = endpoint
             self.transportKind = transportKind
             self.candidateKind = candidateKind
+            self.endpointSource = endpointSource
             self.requiredInterface = requiredInterface
             self.requiredInterfaceType = requiredInterfaceType
             self.isPeerToPeerPreferred = isPeerToPeerPreferred

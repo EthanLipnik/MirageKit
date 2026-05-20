@@ -120,6 +120,7 @@ public class InputCapturingView: UIView {
     public var streamID: StreamID? {
         didSet {
             if oldValue != streamID {
+                stopAllKeyRepeats()
                 resetPointerSuppressionState(reason: "stream_rebound")
             }
             sampleBufferView.streamID = mediaStreamID ?? streamID
@@ -386,10 +387,10 @@ public class InputCapturingView: UIView {
     var keyRepeatTimers: [UIKeyboardHIDUsage: Timer] = [:]
     /// Held key press references for generating repeat events.
     var heldKeyPresses: [UIKeyboardHIDUsage: UIPress] = [:]
-    /// Active repeat session for intercepted UIKeyCommand shortcuts.
-    var passthroughShortcutRepeatState: PassthroughShortcutRepeatState?
-    /// Timer that polls physical key state for intercepted shortcut repeats.
-    var passthroughShortcutRepeatTimer: Timer?
+    /// Active repeat session for a modified key claimed through GameController.
+    var modifiedKeyRepeatState: ModifiedKeyRepeatState?
+    /// Timer that polls physical key state for modified-key repeat sessions.
+    var modifiedKeyRepeatTimer: Timer?
     /// Most recent client-reserved shortcut dispatched through a UIKit command/action path.
     var lastClientShortcutDispatch: ClientShortcutDispatch?
     /// Most recent intercepted shortcut forwarded through a UIKit command/action path.

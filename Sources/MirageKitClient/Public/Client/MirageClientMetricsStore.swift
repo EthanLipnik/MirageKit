@@ -34,7 +34,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         frameBufferPoolRetainedBytes: Int = 0,
         reassemblerBudgetEvictions: UInt64 = 0,
         reassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        reassemblerIncompleteFrameNoProgressTimeouts: UInt64 = 0,
+        reassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         reassemblerMissingFragmentTimeouts: UInt64 = 0,
+        reassemblerForwardGapTimeouts: UInt64 = 0,
         displayTickFPS: Double = 0,
         submitAttemptFPS: Double = 0,
         layerAcceptedFPS: Double = 0,
@@ -45,6 +48,12 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         pendingFrameAgeMs: Double,
         overwrittenPendingFrames: UInt64,
         smoothestQueueDrops: UInt64 = 0,
+        smoothestDisplayDebtDrops: UInt64 = 0,
+        smoothestFifoResetCount: UInt64 = 0,
+        smoothestDepthDrops: UInt64 = 0,
+        smoothestAgeDrops: UInt64 = 0,
+        smoothestDropsUnder100ms: UInt64 = 0,
+        smoothestDroppedFrameAgeMaxMs: Double = 0,
         lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
@@ -74,6 +83,12 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
             snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
             snapshot.clientSmoothestQueueDrops = smoothestQueueDrops
+            snapshot.clientSmoothestDisplayDebtDrops = smoothestDisplayDebtDrops
+            snapshot.clientSmoothestFifoResetCount = smoothestFifoResetCount
+            snapshot.clientSmoothestDepthDrops = smoothestDepthDrops
+            snapshot.clientSmoothestAgeDrops = smoothestAgeDrops
+            snapshot.clientSmoothestDropsUnder100ms = smoothestDropsUnder100ms
+            snapshot.clientSmoothestDroppedFrameAgeMaxMs = max(0, smoothestDroppedFrameAgeMaxMs)
             snapshot.clientLateFrameDrops = lateFrameDrops
             snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
             snapshot.clientRepeatedFrameCount = repeatedFrameCount
@@ -93,7 +108,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientFrameBufferPoolRetainedBytes = max(0, frameBufferPoolRetainedBytes)
             snapshot.clientReassemblerBudgetEvictions = reassemblerBudgetEvictions
             snapshot.clientReassemblerIncompleteFrameTimeouts = reassemblerIncompleteFrameTimeouts
+            snapshot.clientReassemblerIncompleteFrameNoProgressTimeouts = reassemblerIncompleteFrameNoProgressTimeouts
+            snapshot.clientReassemblerIncompleteFrameLifetimeTimeouts = reassemblerIncompleteFrameLifetimeTimeouts
             snapshot.clientReassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
+            snapshot.clientReassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
         }
     }
 

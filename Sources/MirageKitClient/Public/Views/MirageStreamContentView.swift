@@ -117,6 +117,7 @@ public struct MirageStreamContentView: View {
     #if os(iOS) || os(visionOS)
     @Environment(\.scenePhase) var scenePhase
     #endif
+    @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @State var displayResolutionTask: Task<Void, Never>?
     @State var pendingDisplayResolutionDispatchTarget: CGSize = .zero
     /// Tracks the last requested client display resolution, not the host's encoded output size.
@@ -490,6 +491,11 @@ extension MirageStreamContentView {
         let radius = rawPresentationBlurRadius
         guard radius > 0 else { return 0 }
         return suppressesPresentationBlurForRecentProgress ? 0 : radius
+    }
+
+    /// Short blur transition used only when the recovery mask enters or exits.
+    var presentationBlurAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .easeInOut(duration: 0.18)
     }
 
     func updatePresentationBlurProgressMonitoring() {

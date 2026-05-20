@@ -113,6 +113,72 @@ struct InputCapturingViewShortcutModifierResolutionTests {
         #expect(decision == .ignore)
     }
 
+    @Test("Control text-navigation shortcuts are repeat candidates while held")
+    func controlTextNavigationShortcutsAreRepeatCandidatesWhileHeld() {
+        let keyCodes: [UInt16] = [
+            0x04, // H
+            0x03, // F
+            0x2D, // N
+            0x0B, // B
+            0x23, // P
+        ]
+
+        for keyCode in keyCodes {
+            let keyEvent = MirageKeyEvent(keyCode: keyCode, modifiers: .control)
+            let repeatEvent = InputCapturingView.modifiedKeyRepeatEvent(for: keyEvent)
+
+            #expect(repeatEvent.keyCode == keyCode)
+            #expect(repeatEvent.modifiers == .control)
+            #expect(repeatEvent.isRepeat)
+            #expect(InputCapturingView.shouldContinueModifiedKeyRepeat(
+                keyIsPressed: true,
+                currentModifiers: .control,
+                requiredModifiers: .control
+            ))
+        }
+    }
+
+    @Test("Modified key repeat stops when required modifier is released")
+    func modifiedKeyRepeatStopsWhenRequiredModifierIsReleased() {
+        #expect(!InputCapturingView.shouldContinueModifiedKeyRepeat(
+            keyIsPressed: true,
+            currentModifiers: [],
+            requiredModifiers: .control
+        ))
+        #expect(!InputCapturingView.shouldContinueModifiedKeyRepeat(
+            keyIsPressed: false,
+            currentModifiers: .control,
+            requiredModifiers: .control
+        ))
+        #expect(InputCapturingView.shouldContinueModifiedKeyRepeat(
+            keyIsPressed: true,
+            currentModifiers: [.control, .shift],
+            requiredModifiers: .control
+        ))
+    }
+
+    @Test("Modified key repeat key-up uses current modifiers without marking repeat")
+    func modifiedKeyRepeatKeyUpUsesCurrentModifiersWithoutMarkingRepeat() {
+        let initialEvent = MirageKeyEvent(
+            keyCode: 0x04,
+            characters: "h",
+            charactersIgnoringModifiers: "h",
+            modifiers: .control,
+            isRepeat: true
+        )
+
+        let keyUp = InputCapturingView.modifiedKeyRepeatKeyUpEvent(
+            for: initialEvent,
+            modifiers: []
+        )
+
+        #expect(keyUp.keyCode == 0x04)
+        #expect(keyUp.characters == "h")
+        #expect(keyUp.charactersIgnoringModifiers == "h")
+        #expect(keyUp.modifiers == [])
+        #expect(!keyUp.isRepeat)
+    }
+
     @Test("Key command registration normalizes Hyper shortcut modifiers")
     @MainActor
     func keyCommandRegistrationNormalizesHyperShortcutModifiers() throws {

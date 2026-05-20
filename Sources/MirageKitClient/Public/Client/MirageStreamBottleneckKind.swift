@@ -150,6 +150,10 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let decodeKeepsUp = snapshot.decodeHealthy &&
             decodedFPS >= targetFPS * 0.75 &&
             (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
+        let presentationHealthyEnoughToAvoidBlame =
+            decodedFPS >= targetFPS - 1.0 &&
+            snapshot.clientDisplayTickFPS >= targetFPS - 1.0 &&
+            snapshot.clientDisplayLayerNotReadyCount == 0
         let submissionLaggingDecode = (submittedFPS + presentationGapGrace < decodedFPS) ||
             (uniqueSubmittedFPS + presentationGapGrace < decodedFPS)
         let visibleFPS = max(0, snapshot.clientPresentedFPS)
@@ -159,12 +163,14 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.clientLateFrameDrops > 0 ||
             snapshot.clientDisplayLayerNotReadyCount > 0 ||
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
-        let presentationBound = rendererLoopStalled ||
-            decodeKeepsUp && (
+        let presentationBound = !presentationHealthyEnoughToAvoidBlame && (
+            rendererLoopStalled ||
+                decodeKeepsUp && (
                 submissionLaggingDecode && (presentationBackpressure || unevenPresentationCadence) ||
                     visibleLaggingSubmission && (unevenPresentationCadence || snapshot.clientRepeatedFrameCount > 0) ||
                     unevenPresentationCadence && submittedFPS < targetFPS * 0.97 ||
                     severeUnevenPresentationCadence && submittedFPS >= targetFPS * 0.90
+            )
             )
 
         let hostCadenceLimited = !networkBound && (

@@ -80,7 +80,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
-        for index in 0 ..< 10 {
+        for index in 0 ..< 20 {
             let overwritten = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
@@ -91,12 +91,14 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 7)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 18)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 3)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 6)
+        #expect(telemetry.smoothestQueueDrops == 2)
+        #expect(telemetry.smoothestDisplayDebtDrops == 2)
+        #expect(telemetry.smoothestFifoResetCount == 2)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 

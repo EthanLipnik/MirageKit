@@ -190,6 +190,189 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("P-frame timeout tracks fragment progress instead of first-fragment age")
+    func pFrameTimeoutTracksFragmentProgress() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        reassembler.setLatencyMode(.smoothest)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+
+        let fragment0 = Data([0x11, 0x11, 0x11, 0x11])
+        reassembler.processPacket(
+            fragment0,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(220))
+
+        let fragment1 = Data([0x22, 0x22, 0x22, 0x22])
+        reassembler.processPacket(
+            fragment1,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment1,
+                fragmentIndex: 1,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(220))
+
+        reassembler.processPacket(
+            fragment0,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        let fragment2 = Data([0x33, 0x33, 0x33, 0x33])
+        reassembler.processPacket(
+            fragment2,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 1,
+                payload: fragment2,
+                fragmentIndex: 2,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+        #expect(lossCounter.value == 0)
+    }
+
+    @Test("P-frame absolute lifetime cap eventually triggers recovery")
+    func pFrameAbsoluteLifetimeCapTriggersRecovery() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+
+        let fragment0 = Data([0x11, 0x11, 0x11, 0x11])
+        reassembler.processPacket(
+            fragment0,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(230))
+
+        let fragment1 = Data([0x22, 0x22, 0x22, 0x22])
+        reassembler.processPacket(
+            fragment1,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment1,
+                fragmentIndex: 1,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(230))
+
+        let fragment2 = Data([0x33, 0x33, 0x33, 0x33])
+        reassembler.processPacket(
+            fragment2,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment2,
+                fragmentIndex: 2,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(180))
+
+        reassembler.processPacket(
+            fragment2,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: fragment2,
+                fragmentIndex: 2,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        let metrics = reassembler.snapshotMetrics
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value >= 1)
+        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(metrics.incompleteFrameTimeouts == 1)
+        #expect(metrics.incompleteFrameNoProgressTimeouts == 0)
+        #expect(metrics.incompleteFrameLifetimeTimeouts == 1)
+    }
+
     @Test("Pending keyframe progress preserves dependent P-frames for post-keyframe drain")
     func pendingKeyframeProgressPreservesDependentPFramesForPostKeyframeDrain() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)

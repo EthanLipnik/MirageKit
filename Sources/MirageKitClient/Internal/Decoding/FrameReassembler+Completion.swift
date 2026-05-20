@@ -255,12 +255,15 @@ extension FrameReassembler {
 
     func cleanupOldFramesLocked() -> TimeoutCleanupResult {
         let now = Date()
-        let pFrameTimeout = pFrameTimeoutLocked()
+        let pFrameNoProgressTimeout = pFrameTimeoutLocked()
+        let pFrameAbsoluteLifetimeCap = pFrameAbsoluteLifetimeCapLocked()
 
         var timedOutPFrameCount: UInt64 = 0
         var timedOutKeyframeCount: UInt64 = 0
         var staleKeyframeCount: UInt64 = 0
         var incompleteFrameTimeouts: UInt64 = 0
+        var incompleteFrameNoProgressTimeouts: UInt64 = 0
+        var incompleteFrameLifetimeTimeouts: UInt64 = 0
         var missingFragmentTimeouts: UInt64 = 0
         var timedOutExpectedPFrame = false
         var framesToRemove: [UInt32] = []
@@ -270,25 +273,36 @@ extension FrameReassembler {
                 staleKeyframeCount += 1
                 continue
             }
-            let timeout = if frame.isKeyframe {
-                startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+            let noProgressTimedOut: Bool
+            let lifetimeTimedOut: Bool
+            if frame.isKeyframe {
+                let timeout = startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+                noProgressTimedOut = now.timeIntervalSince(frame.lastProgressAt) >= timeout
+                lifetimeTimedOut = false
             } else {
-                pFrameTimeout
+                noProgressTimedOut = now.timeIntervalSince(frame.lastProgressAt) >= pFrameNoProgressTimeout
+                lifetimeTimedOut = now.timeIntervalSince(frame.receivedAt) >= pFrameAbsoluteLifetimeCap
             }
-            let progressReference = frame.isKeyframe ? frame.lastProgressAt : frame.receivedAt
-            let shouldKeep = now.timeIntervalSince(progressReference) < timeout
+            let shouldKeep = !noProgressTimedOut && !lifetimeTimedOut
             if !shouldKeep {
                 // Log timeout with fragment completion info for debugging
                 let receivedCount = frame.receivedCount
                 let totalCount = frame.dataFragmentCount
                 let missingDataFragments = max(0, totalCount - min(receivedCount, totalCount))
                 let isKeyframe = frame.isKeyframe
+                let timeoutCause = lifetimeTimedOut && !noProgressTimedOut ? "lifetime" : "no-progress"
                 MirageLogger.log(
                     .frameAssembly,
-                    "Frame \(frameNumber) timed out: \(receivedCount)/\(totalCount) fragments\(isKeyframe ? " (KEYFRAME)" : "")"
+                    "Frame \(frameNumber) timed out (\(timeoutCause)): " +
+                        "\(receivedCount)/\(totalCount) fragments\(isKeyframe ? " (KEYFRAME)" : "")"
                 )
                 if missingDataFragments > 0, !isKeyframe {
                     incompleteFrameTimeouts += 1
+                    if lifetimeTimedOut && !noProgressTimedOut {
+                        incompleteFrameLifetimeTimeouts += 1
+                    } else {
+                        incompleteFrameNoProgressTimeouts += 1
+                    }
                     missingFragmentTimeouts += UInt64(missingDataFragments)
                 }
                 if isKeyframe {
@@ -312,13 +326,18 @@ extension FrameReassembler {
                 expectedFrameNumber: lastCompletedFrame &+ 1,
                 now: now
             ) &&
-            hasTimedOutBufferedForwardGapLocked(now: now, timeout: pFrameTimeout)
+            hasTimedOutBufferedForwardGapLocked(now: now, timeout: pFrameNoProgressTimeout)
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
         incompleteFrameTimeoutCount += incompleteFrameTimeouts
+        incompleteFrameNoProgressTimeoutCount += incompleteFrameNoProgressTimeouts
+        incompleteFrameLifetimeTimeoutCount += incompleteFrameLifetimeTimeouts
         missingFragmentTimeoutCount += missingFragmentTimeouts
+        if missingExpectedPFrameGapTimedOut {
+            forwardGapTimeoutCount += 1
+        }
 
         // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
         // times out, or when a buffered forward gap persists without the expected frame ever arriving.
@@ -348,7 +367,10 @@ extension FrameReassembler {
             missingExpectedPFrameGapTimedOut: missingExpectedPFrameGapTimedOut,
             shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe,
             incompleteFrameTimeouts: incompleteFrameTimeouts,
-            missingFragmentTimeouts: missingFragmentTimeouts
+            incompleteFrameNoProgressTimeouts: incompleteFrameNoProgressTimeouts,
+            incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeouts,
+            missingFragmentTimeouts: missingFragmentTimeouts,
+            forwardGapTimeouts: missingExpectedPFrameGapTimedOut ? 1 : 0
         )
     }
 
@@ -450,31 +472,25 @@ extension FrameReassembler {
     }
 
     private func pFrameTimeoutLocked() -> TimeInterval {
-        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
-        return min(
-            pFrameTimeoutMaximum,
-            max(pFrameTimeoutMinimum, frameInterval * pFrameTimeoutFrameIntervalBudget)
-        )
+        pFrameNoProgressTimeout
+    }
+
+    private func pFrameAbsoluteLifetimeCapLocked() -> TimeInterval {
+        if latencyMode == .smoothest || transportPathKind == .vpn {
+            return pFrameAbsoluteLifetimeCapRemoteSmoothest
+        }
+        return pFrameAbsoluteLifetimeCapDefault
     }
 
     private func severeForwardGapFrameThresholdLocked() -> UInt32 {
         let frameRate = max(1, targetFrameRate)
         let frameInterval = 1.0 / Double(frameRate)
-        let timeout = min(
-            pFrameTimeoutMaximum,
-            max(pFrameTimeoutMinimum, frameInterval * severeForwardGapFrameIntervalBudget)
-        )
+        let timeout = pFrameTimeoutLocked()
         return max(3, UInt32(ceil(timeout / frameInterval)))
     }
 
     private func severeForwardGapGraceLocked() -> TimeInterval {
-        if latencyMode == .smoothest, transportPathKind == .vpn {
-            return pFrameTimeoutLocked()
-        }
-        let frameRate = max(1, targetFrameRate)
-        let frameInterval = 1.0 / Double(frameRate)
-        let cadenceGrace = max(frameInterval * 3.0, frameRate >= 90 ? 0.025 : 0.050)
-        return min(pFrameTimeoutLocked(), cadenceGrace)
+        pFrameTimeoutLocked()
     }
 
     private func bufferedForwardGapAgeLocked(

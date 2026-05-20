@@ -123,6 +123,12 @@ extension StreamController {
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
+            smoothestDisplayDebtDrops: renderTelemetry.smoothestDisplayDebtDrops,
+            smoothestFifoResetCount: renderTelemetry.smoothestFifoResetCount,
+            smoothestDepthDrops: renderTelemetry.smoothestDepthDrops,
+            smoothestAgeDrops: renderTelemetry.smoothestAgeDrops,
+            smoothestDropsUnder100ms: renderTelemetry.smoothestDropsUnder100ms,
+            smoothestDroppedFrameAgeMaxMs: renderTelemetry.smoothestDroppedFrameAgeMaxMs,
             lateFrameDrops: renderTelemetry.lateFrameDrops,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
@@ -142,7 +148,10 @@ extension StreamController {
             frameBufferPoolRetainedBytes: reassemblerMetrics.frameBufferPoolRetainedBytes,
             reassemblerBudgetEvictions: reassemblerMetrics.budgetEvictions,
             reassemblerIncompleteFrameTimeouts: reassemblerMetrics.incompleteFrameTimeouts,
+            reassemblerIncompleteFrameNoProgressTimeouts: reassemblerMetrics.incompleteFrameNoProgressTimeouts,
+            reassemblerIncompleteFrameLifetimeTimeouts: reassemblerMetrics.incompleteFrameLifetimeTimeouts,
             reassemblerMissingFragmentTimeouts: reassemblerMetrics.missingFragmentTimeouts,
+            reassemblerForwardGapTimeouts: reassemblerMetrics.forwardGapTimeouts,
             decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
             usingHardwareDecoder: decoder.currentHardwareDecoderStatus
         )

@@ -24,6 +24,7 @@ extension MirageClientService {
         try throwIfConnectAttemptIsStale(attemptID)
 
         let attempts = controlSessionAttempts(for: host)
+        recordControlSessionAttemptPlan(attempts, host: host)
         var lastFailureReason: String?
         var retriedCurrentBootstrapTransportLossAttemptIndices: Set<Int> = []
         var attemptIndex = 0
@@ -57,6 +58,7 @@ extension MirageClientService {
                 )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)
+                recordControlSessionAttemptSucceeded(attempt)
                 return BootstrappedControlSession(session: session, controlChannel: controlChannel)
             } catch {
                 if let openedChannel {
@@ -85,6 +87,7 @@ extension MirageClientService {
                     underlyingError: error
                 )
                 lastFailureReason = failureReason
+                recordControlSessionAttemptFailed(attempt, reason: failureReason)
 
                 if Self.shouldRetryCurrentBootstrappedControlSessionAttempt(
                     classification: classification,
@@ -147,6 +150,7 @@ extension MirageClientService {
                 "candidate=\(attempt.candidateKind.rawValue) endpoint=\(attempt.endpoint) " +
                 "interface=\(attempt.interfaceDescription)"
         )
+        recordControlSessionAttemptStarted(attempt)
         let node = loomNode
         let bootstrapProgressTracker = ConnectSessionBootstrapProgressTracker()
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
@@ -205,12 +209,16 @@ extension MirageClientService {
         _ session: LoomAuthenticatedSession,
         attempt: ControlSessionAttempt
     ) async throws {
-        guard attempt.requiresProximityPathValidation else { return }
+        guard attempt.requiresProximityPathValidation else {
+            recordControlSessionProximityValidation(attempt, outcome: "notRequired")
+            return
+        }
 
         guard let pathSnapshot = await session.pathSnapshot else {
             let reason = "Proximity path validation failed for \(attempt.hostName) " +
                 "expected=\(attempt.proximityDescription) actual=missing-path-snapshot"
             MirageLogger.client(reason)
+            recordControlSessionProximityValidation(attempt, outcome: "missingPathSnapshot")
             throw MirageError.protocolError(reason)
         }
 
@@ -219,12 +227,20 @@ extension MirageClientService {
             let reason = "Proximity path validation failed for \(attempt.hostName) " +
                 "expected=\(attempt.proximityDescription) actual=\(classifiedSnapshot.signature)"
             MirageLogger.client(reason)
+            recordControlSessionProximityValidation(
+                attempt,
+                outcome: "rejected actual=\(classifiedSnapshot.signature)"
+            )
             throw MirageError.protocolError(reason)
         }
 
         MirageLogger.client(
             "Accepted proximity control session for \(attempt.hostName): " +
                 "expected=\(attempt.proximityDescription) actual=\(classifiedSnapshot.signature)"
+        )
+        recordControlSessionProximityValidation(
+            attempt,
+            outcome: "accepted actual=\(classifiedSnapshot.signature)"
         )
     }
 

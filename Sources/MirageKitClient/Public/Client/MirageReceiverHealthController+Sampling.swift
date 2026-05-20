@@ -11,6 +11,7 @@ struct ReceiverHealthSample {
     let hasSevereTransportPressure: Bool
     let hasTransportPressure: Bool
     let hasProvenTransportLoss: Bool
+    let hasReceiverMediaDeliveryFailure: Bool
     let isTransportClean: Bool
     let allowsProbePromotion: Bool
     let suppressesProbePromotion: Bool
@@ -39,7 +40,10 @@ struct ReceiverTransportPressureContext {
     let dropStress: Bool
     let dropSevere: Bool
     let clientIncompleteFrameTimeouts: UInt64
+    let clientIncompleteFrameNoProgressTimeouts: UInt64
+    let clientIncompleteFrameLifetimeTimeouts: UInt64
     let clientMissingFragmentTimeouts: UInt64
+    let clientForwardGapTimeouts: UInt64
     let clientFragmentLossStress: Bool
     let clientFragmentLossSevere: Bool
 }
@@ -54,6 +58,7 @@ extension MirageReceiverHealthController {
                 hasSevereTransportPressure: false,
                 hasTransportPressure: false,
                 hasProvenTransportLoss: false,
+                hasReceiverMediaDeliveryFailure: false,
                 isTransportClean: false,
                 allowsProbePromotion: false,
                 suppressesProbePromotion: true,
@@ -70,7 +75,14 @@ extension MirageReceiverHealthController {
         let transportDropCount = remoteTransportDropCount +
             (snapshot.hostSenderLocalDeadlineDrops ?? 0)
         let clientIncompleteFrameTimeouts = snapshot.clientReassemblerIncompleteFrameTimeouts
+        let clientIncompleteFrameNoProgressTimeouts =
+            snapshot.clientReassemblerIncompleteFrameNoProgressTimeouts
+        let clientIncompleteFrameLifetimeTimeouts =
+            snapshot.clientReassemblerIncompleteFrameLifetimeTimeouts
         let clientMissingFragmentTimeouts = snapshot.clientReassemblerMissingFragmentTimeouts
+        let clientForwardGapTimeouts = snapshot.clientReassemblerForwardGapTimeouts
+        let receiverMediaDeliveryFailureCount = clientIncompleteFrameTimeouts + clientForwardGapTimeouts
+        let receiverMediaDeliveryFailure = receiverMediaDeliveryFailureCount > 0
 
         let queueStress = queueBytes >= Self.sendQueueStressBytes
         let queueSevere = queueBytes >= Self.sendQueueSevereBytes
@@ -82,9 +94,12 @@ extension MirageReceiverHealthController {
         let pacerSevere = packetPacerAverageSleepMs >= Self.packetPacerSevereMs
         let dropStress = transportDropCount >= Self.transportDropStressCount
         let dropSevere = transportDropCount >= Self.transportDropSevereCount
-        let clientFragmentLossStress = clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameStressCount ||
+        let clientFragmentLossStress = receiverMediaDeliveryFailure ||
+            clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameStressCount ||
+            clientForwardGapTimeouts > 0 ||
             clientMissingFragmentTimeouts >= Self.clientMissingFragmentStressCount
         let clientFragmentLossSevere = clientIncompleteFrameTimeouts >= Self.clientFragmentLossFrameSevereCount ||
+            clientForwardGapTimeouts >= Self.clientForwardGapTimeoutSevereCount ||
             clientMissingFragmentTimeouts >= Self.clientMissingFragmentSevereCount
 
         let pairedPacerStress = pacerStress && (queueStress || dropStress)
@@ -116,7 +131,10 @@ extension MirageReceiverHealthController {
                 dropStress: dropStress,
                 dropSevere: dropSevere,
                 clientIncompleteFrameTimeouts: clientIncompleteFrameTimeouts,
+                clientIncompleteFrameNoProgressTimeouts: clientIncompleteFrameNoProgressTimeouts,
+                clientIncompleteFrameLifetimeTimeouts: clientIncompleteFrameLifetimeTimeouts,
                 clientMissingFragmentTimeouts: clientMissingFragmentTimeouts,
+                clientForwardGapTimeouts: clientForwardGapTimeouts,
                 clientFragmentLossStress: clientFragmentLossStress,
                 clientFragmentLossSevere: clientFragmentLossSevere
             )
@@ -133,7 +151,9 @@ extension MirageReceiverHealthController {
             hasSevereTransportPressure: severeTransportPressure,
             hasTransportPressure: severeTransportPressure || sustainedTransportPressure,
             hasProvenTransportLoss: remoteTransportDropCount >= Self.transportDropStressCount ||
+                receiverMediaDeliveryFailure ||
                 clientFragmentLossStress,
+            hasReceiverMediaDeliveryFailure: receiverMediaDeliveryFailure,
             isTransportClean: !severeTransportPressure && !sustainedTransportPressure && !keyframeAssemblyInProgress,
             allowsProbePromotion: !suppressesProbePromotion,
             suppressesProbePromotion: suppressesProbePromotion,
@@ -150,6 +170,9 @@ extension MirageReceiverHealthController {
         }
         if context.clientFragmentLossSevere || context.clientFragmentLossStress {
             return "client fragment loss frames=\(context.clientIncompleteFrameTimeouts) " +
+                "noProgress=\(context.clientIncompleteFrameNoProgressTimeouts) " +
+                "lifetime=\(context.clientIncompleteFrameLifetimeTimeouts) " +
+                "forwardGaps=\(context.clientForwardGapTimeouts) " +
                 "missing=\(context.clientMissingFragmentTimeouts)"
         }
         if context.sendDelaySevere || context.sendDelayStress {

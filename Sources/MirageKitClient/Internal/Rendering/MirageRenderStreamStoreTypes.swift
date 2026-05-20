@@ -83,6 +83,12 @@ struct RenderTelemetrySnapshot {
     /// Maximum local age for a Smoothest-mode dropped frame.
     let smoothestDroppedFrameAgeMaxMs: Double
 
+    /// Smoothest-mode frames dropped because queued display debt exceeded the live threshold.
+    let smoothestDisplayDebtDrops: UInt64
+
+    /// Number of Smoothest-mode FIFO resets caused by stale or excessive display debt.
+    let smoothestFifoResetCount: UInt64
+
     /// Queued frames dropped because newer frames had already superseded them.
     let lateFrameDrops: UInt64
 
@@ -202,6 +208,8 @@ final class MirageRenderStreamState {
     var smoothestAgeDropsSinceLastSnapshot: UInt64 = 0
     var smoothestDropsUnder100msSinceLastSnapshot: UInt64 = 0
     var smoothestDroppedFrameAgeMaxMsSinceLastSnapshot: Double = 0
+    var smoothestDisplayDebtDropsSinceLastSnapshot: UInt64 = 0
+    var smoothestFifoResetCountSinceLastSnapshot: UInt64 = 0
     var lateFrameDropsSinceLastSnapshot: UInt64 = 0
     var coalescedFramesSinceLastSnapshot: UInt64 = 0
     var duplicateRemoteTimestampsSinceLastSnapshot: UInt64 = 0
@@ -256,6 +264,8 @@ final class MirageRenderStreamState {
         smoothestAgeDropsSinceLastSnapshot = 0
         smoothestDropsUnder100msSinceLastSnapshot = 0
         smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
+        smoothestDisplayDebtDropsSinceLastSnapshot = 0
+        smoothestFifoResetCountSinceLastSnapshot = 0
         lateFrameDropsSinceLastSnapshot = 0
         coalescedFramesSinceLastSnapshot = 0
         duplicateRemoteTimestampsSinceLastSnapshot = 0

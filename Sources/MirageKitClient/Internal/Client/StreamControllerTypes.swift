@@ -114,6 +114,12 @@ extension StreamController {
         let pendingFrameAgeMs: Double
         let overwrittenPendingFrames: UInt64
         let smoothestQueueDrops: UInt64
+        let smoothestDisplayDebtDrops: UInt64
+        let smoothestFifoResetCount: UInt64
+        let smoothestDepthDrops: UInt64
+        let smoothestAgeDrops: UInt64
+        let smoothestDropsUnder100ms: UInt64
+        let smoothestDroppedFrameAgeMaxMs: Double
         let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
@@ -133,7 +139,10 @@ extension StreamController {
         let frameBufferPoolRetainedBytes: Int
         let reassemblerBudgetEvictions: UInt64
         let reassemblerIncompleteFrameTimeouts: UInt64
+        let reassemblerIncompleteFrameNoProgressTimeouts: UInt64
+        let reassemblerIncompleteFrameLifetimeTimeouts: UInt64
         let reassemblerMissingFragmentTimeouts: UInt64
+        let reassemblerForwardGapTimeouts: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
     }

@@ -140,6 +140,20 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .presentationBound)
     }
 
+    @Test("Healthy decode and display ticks avoid presentation-bound classification without layer backpressure")
+    func healthyDecodeAndDisplayTicksAvoidPresentationBoundWithoutLayerBackpressure() {
+        var snapshot = baselineSnapshot()
+        snapshot.clientDisplayTickFPS = 60
+        snapshot.layerEnqueueFPS = 50
+        snapshot.uniqueLayerEnqueueFPS = 50
+        snapshot.clientVisibleFrameFPS = 50
+        snapshot.clientFrameIntervalP99Ms = 120
+        snapshot.clientWorstPresentationGapMs = 220
+        snapshot.clientDisplayLayerNotReadyCount = 0
+
+        #expect(snapshot.bottleneckKind != .presentationBound)
+    }
+
     @Test("Client render pressure is not classified as network-bound on clean transport")
     func clientRenderPressureIsNotNetworkBoundOnCleanTransport() {
         var snapshot = baselineSnapshot()

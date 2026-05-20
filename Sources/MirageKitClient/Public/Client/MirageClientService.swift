@@ -376,6 +376,9 @@ public final class MirageClientService {
     /// Recent control-session path history entries.
     public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
 
+    /// Recent control-session routing attempts included in support diagnostics.
+    public internal(set) var recentControlSessionAttemptSummaries: [MirageClientControlSessionAttemptSummary] = []
+
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     /// Last successful direct host endpoint remembered per device for Bonjour fallback.
     @ObservationIgnored var rememberedDirectEndpointHostByDeviceID: [UUID: NWEndpoint.Host] = [:]
@@ -509,6 +512,9 @@ public final class MirageClientService {
 
     /// Last cumulative incomplete-frame timeout counter included in receiver feedback.
     var receiverMediaFeedbackLastIncompleteFrameTimeouts: [StreamID: UInt64] = [:]
+
+    /// Last cumulative forward-gap timeout counter included in receiver feedback.
+    var receiverMediaFeedbackLastForwardGapTimeouts: [StreamID: UInt64] = [:]
 
     /// Last cumulative missing-fragment timeout counter included in receiver feedback.
     var receiverMediaFeedbackLastMissingFragmentTimeouts: [StreamID: UInt64] = [:]

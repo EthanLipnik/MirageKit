@@ -34,15 +34,15 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 6)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 9)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 4)
+        #expect(telemetry.pendingFrameCount == 9)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 5)
+        #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Smoothest ProMotion render store keeps a bounded FIFO playout queue")
@@ -69,13 +69,13 @@ struct RenderCadenceSmoothingTests {
             )
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 6)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 8)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 13)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.pendingFrameCount == 6)
-        #expect(telemetry.smoothestQueueDrops == 7)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.pendingFrameCount == 13)
+        #expect(telemetry.smoothestQueueDrops == 0)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Smoothest uses timed playout without queue-level hold")
@@ -119,7 +119,7 @@ struct RenderCadenceSmoothingTests {
         #expect(next?.sequence == 2)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 1)
+        #expect(telemetry.playoutDelayFrames == 0)
     }
 
     @Test("Smoothest drops stale backlog before presenting a fresh frame")
@@ -231,7 +231,7 @@ struct RenderCadenceSmoothingTests {
             displayFPS: 60,
             latencyMode: .smoothest
         )
-        #expect(cadenceTarget.playoutDelayFrames == 1)
+        #expect(cadenceTarget.playoutDelayFrames == 0)
 
         let lowestLatencyTiming = MirageRenderPresentationTiming(
             targetFPS: 60,
@@ -246,15 +246,15 @@ struct RenderCadenceSmoothingTests {
 
         let smoothestTiming = MirageRenderPresentationTiming(
             targetFPS: 60,
-            playoutDelayFrames: 1,
+            playoutDelayFrames: 0,
             latencyMode: .smoothest
         )
-        #expect(!smoothestTiming.displaysImmediately)
+        #expect(smoothestTiming.displaysImmediately)
         let smoothestPresentationSeconds = CMTimeGetSeconds(smoothestTiming.presentationTime(
             referenceTime: referenceTime,
             timescale: timescale
         ))
-        #expect(abs(smoothestPresentationSeconds - (referenceTime + 1.0 / 60.0)) < 0.000_001)
+        #expect(abs(smoothestPresentationSeconds - referenceTime) < 0.000_001)
     }
 
     @Test("Explicit transport playout delay can raise smoothest to two frames")

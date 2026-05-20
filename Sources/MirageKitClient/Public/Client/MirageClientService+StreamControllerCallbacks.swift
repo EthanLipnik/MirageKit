@@ -39,7 +39,10 @@ extension MirageClientService {
                     frameBufferPoolRetainedBytes: metrics.frameBufferPoolRetainedBytes,
                     reassemblerBudgetEvictions: metrics.reassemblerBudgetEvictions,
                     reassemblerIncompleteFrameTimeouts: metrics.reassemblerIncompleteFrameTimeouts,
+                    reassemblerIncompleteFrameNoProgressTimeouts: metrics.reassemblerIncompleteFrameNoProgressTimeouts,
+                    reassemblerIncompleteFrameLifetimeTimeouts: metrics.reassemblerIncompleteFrameLifetimeTimeouts,
                     reassemblerMissingFragmentTimeouts: metrics.reassemblerMissingFragmentTimeouts,
+                    reassemblerForwardGapTimeouts: metrics.reassemblerForwardGapTimeouts,
                     displayTickFPS: metrics.displayTickFPS,
                     submitAttemptFPS: metrics.submitAttemptFPS,
                     layerAcceptedFPS: metrics.layerAcceptedFPS,
@@ -50,6 +53,12 @@ extension MirageClientService {
                     pendingFrameAgeMs: metrics.pendingFrameAgeMs,
                     overwrittenPendingFrames: metrics.overwrittenPendingFrames,
                     smoothestQueueDrops: metrics.smoothestQueueDrops,
+                    smoothestDisplayDebtDrops: metrics.smoothestDisplayDebtDrops,
+                    smoothestFifoResetCount: metrics.smoothestFifoResetCount,
+                    smoothestDepthDrops: metrics.smoothestDepthDrops,
+                    smoothestAgeDrops: metrics.smoothestAgeDrops,
+                    smoothestDropsUnder100ms: metrics.smoothestDropsUnder100ms,
+                    smoothestDroppedFrameAgeMaxMs: metrics.smoothestDroppedFrameAgeMaxMs,
                     lateFrameDrops: metrics.lateFrameDrops,
                     displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
                     repeatedFrameCount: metrics.repeatedFrameCount,
@@ -175,6 +184,7 @@ extension MirageClientService {
     func clearReceiverMediaFeedbackState(for streamID: StreamID) {
         receiverMediaFeedbackLastSendTime.removeValue(forKey: streamID)
         receiverMediaFeedbackLastIncompleteFrameTimeouts.removeValue(forKey: streamID)
+        receiverMediaFeedbackLastForwardGapTimeouts.removeValue(forKey: streamID)
         receiverMediaFeedbackLastMissingFragmentTimeouts.removeValue(forKey: streamID)
     }
 
@@ -184,13 +194,17 @@ extension MirageClientService {
         recoveryState: MirageMediaFeedbackRecoveryState
     ) -> ReceiverTransportLossFeedback {
         let currentIncompleteTimeouts = metrics.reassemblerIncompleteFrameTimeouts
+        let currentForwardGapTimeouts = metrics.reassemblerForwardGapTimeouts
         let currentMissingFragments = metrics.reassemblerMissingFragmentTimeouts
         let previousIncompleteTimeouts = receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] ??
             currentIncompleteTimeouts
+        let previousForwardGapTimeouts = receiverMediaFeedbackLastForwardGapTimeouts[streamID] ??
+            currentForwardGapTimeouts
         let previousMissingFragments = receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] ??
             currentMissingFragments
 
         receiverMediaFeedbackLastIncompleteFrameTimeouts[streamID] = currentIncompleteTimeouts
+        receiverMediaFeedbackLastForwardGapTimeouts[streamID] = currentForwardGapTimeouts
         receiverMediaFeedbackLastMissingFragmentTimeouts[streamID] = currentMissingFragments
 
         let contaminatedByRecovery = recoveryState != .idle || metrics.reassemblerPendingKeyframeCount > 0
@@ -201,11 +215,14 @@ extension MirageClientService {
         let incompleteDelta = currentIncompleteTimeouts >= previousIncompleteTimeouts
             ? currentIncompleteTimeouts - previousIncompleteTimeouts
             : 0
+        let forwardGapDelta = currentForwardGapTimeouts >= previousForwardGapTimeouts
+            ? currentForwardGapTimeouts - previousForwardGapTimeouts
+            : 0
         let missingFragmentDelta = currentMissingFragments >= previousMissingFragments
             ? currentMissingFragments - previousMissingFragments
             : 0
         return ReceiverTransportLossFeedback(
-            lostFrameCount: incompleteDelta,
+            lostFrameCount: incompleteDelta + forwardGapDelta,
             discardedPacketCount: missingFragmentDelta
         )
     }

@@ -88,7 +88,13 @@ extension InputCapturingView {
             guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return }
             guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
             if clientShortcutClaimedKeyCodes.remove(hidUsage) != nil { return }
-            if passthroughClaimedKeyCodes.remove(hidUsage) != nil { return }
+            if passthroughClaimedKeyCodes.remove(hidUsage) != nil {
+                stopModifiedKeyRepeat(for: keyCode, sendKeyUp: true)
+                return
+            }
+            if stopModifiedKeyRepeat(for: keyCode, sendKeyUp: true) {
+                return
+            }
             let keyEvent = gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: keyboardModifiers)
             onInputEvent?(.keyUp(keyEvent))
             return
@@ -148,7 +154,13 @@ extension InputCapturingView {
             }
             gcClaimedKeyCodes.insert(keyCode)
             hideCursorForTypingUntilPointerMovement()
-            onInputEvent?(.keyDown(gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: eventModifiers)))
+            let keyEvent = gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: eventModifiers)
+            onInputEvent?(.keyDown(keyEvent))
+            startModifiedKeyRepeat(
+                keyCode: keyCode,
+                keyEvent: keyEvent,
+                requiredModifiers: eventModifiers.normalizedForShortcutMatching
+            )
         }
     }
 

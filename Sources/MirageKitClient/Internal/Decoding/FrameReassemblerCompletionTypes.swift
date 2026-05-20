@@ -75,8 +75,17 @@ extension FrameReassembler {
         /// Timed-out non-keyframes that were missing one or more data fragments.
         let incompleteFrameTimeouts: UInt64
 
+        /// Incomplete non-keyframes that timed out because no fragments made progress.
+        let incompleteFrameNoProgressTimeouts: UInt64
+
+        /// Incomplete non-keyframes that hit the absolute lifetime cap.
+        let incompleteFrameLifetimeTimeouts: UInt64
+
         /// Total missing data fragments across timed-out incomplete non-keyframes.
         let missingFragmentTimeouts: UInt64
+
+        /// Buffered forward gaps that reached the reorder timeout.
+        let forwardGapTimeouts: UInt64
 
         /// Frame-loss reason represented by this timeout cleanup.
         var frameLossReason: FrameLossReason? {

@@ -26,7 +26,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientSubmitAttemptFPS: Double
     /// Submitted frames per second accepted by the display layer.
     public var clientLayerAcceptedFPS: Double
-    /// Frames per second presented by the client display layer.
+    /// Unique accepted frame submissions per second. This is not guaranteed scan-out cadence.
     public var clientPresentedFPS: Double
     /// Frame submissions per second, including repeated frames.
     public var submittedFPS: Double
@@ -40,6 +40,18 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientOverwrittenPendingFrames: UInt64
     /// Number of Smoothest-mode decoded frames dropped by local playout queue bounds.
     public var clientSmoothestQueueDrops: UInt64
+    /// Number of Smoothest-mode frames dropped because queued display debt exceeded the live threshold.
+    public var clientSmoothestDisplayDebtDrops: UInt64
+    /// Number of Smoothest-mode FIFO resets caused by stale or excessive display debt.
+    public var clientSmoothestFifoResetCount: UInt64
+    /// Number of Smoothest-mode frames dropped because the queue exceeded its depth bound.
+    public var clientSmoothestDepthDrops: UInt64
+    /// Number of Smoothest-mode frames dropped because queued frames exceeded the stale-age bound.
+    public var clientSmoothestAgeDrops: UInt64
+    /// Number of Smoothest-mode frames dropped while younger than 100 ms.
+    public var clientSmoothestDropsUnder100ms: UInt64
+    /// Maximum local age for a Smoothest-mode dropped frame.
+    public var clientSmoothestDroppedFrameAgeMaxMs: Double
     /// Number of frames dropped because they arrived too late for presentation.
     public var clientLateFrameDrops: UInt64
     /// Number of times the display layer rejected submission because it was not ready.
@@ -79,8 +91,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientReassemblerBudgetEvictions: UInt64
     /// Number of timed-out non-keyframes that were missing one or more media fragments.
     public var clientReassemblerIncompleteFrameTimeouts: UInt64
+    /// Number of incomplete non-keyframes that timed out after no fragment progress.
+    public var clientReassemblerIncompleteFrameNoProgressTimeouts: UInt64
+    /// Number of incomplete non-keyframes that reached the absolute lifetime cap.
+    public var clientReassemblerIncompleteFrameLifetimeTimeouts: UInt64
     /// Number of media fragments missing from timed-out incomplete non-keyframes.
     public var clientReassemblerMissingFragmentTimeouts: UInt64
+    /// Number of buffered forward gaps that reached the reorder timeout.
+    public var clientReassemblerForwardGapTimeouts: UInt64
     private var clientDecodeBacklogFrameCountStorage: Int
     /// Frames encoded per second by the host encoder.
     public var hostEncodedFPS: Double
@@ -233,6 +251,12 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientPendingFrameAgeMs: Double = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
         clientSmoothestQueueDrops: UInt64 = 0,
+        clientSmoothestDisplayDebtDrops: UInt64 = 0,
+        clientSmoothestFifoResetCount: UInt64 = 0,
+        clientSmoothestDepthDrops: UInt64 = 0,
+        clientSmoothestAgeDrops: UInt64 = 0,
+        clientSmoothestDropsUnder100ms: UInt64 = 0,
+        clientSmoothestDroppedFrameAgeMaxMs: Double = 0,
         clientLateFrameDrops: UInt64 = 0,
         clientDisplayLayerNotReadyCount: UInt64 = 0,
         clientRepeatedFrameCount: UInt64 = 0,
@@ -252,7 +276,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientFrameBufferPoolRetainedBytes: Int = 0,
         clientReassemblerBudgetEvictions: UInt64 = 0,
         clientReassemblerIncompleteFrameTimeouts: UInt64 = 0,
+        clientReassemblerIncompleteFrameNoProgressTimeouts: UInt64 = 0,
+        clientReassemblerIncompleteFrameLifetimeTimeouts: UInt64 = 0,
         clientReassemblerMissingFragmentTimeouts: UInt64 = 0,
+        clientReassemblerForwardGapTimeouts: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
@@ -303,6 +330,12 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientSmoothestQueueDrops = clientSmoothestQueueDrops
+        self.clientSmoothestDisplayDebtDrops = clientSmoothestDisplayDebtDrops
+        self.clientSmoothestFifoResetCount = clientSmoothestFifoResetCount
+        self.clientSmoothestDepthDrops = clientSmoothestDepthDrops
+        self.clientSmoothestAgeDrops = clientSmoothestAgeDrops
+        self.clientSmoothestDropsUnder100ms = clientSmoothestDropsUnder100ms
+        self.clientSmoothestDroppedFrameAgeMaxMs = clientSmoothestDroppedFrameAgeMaxMs
         self.clientLateFrameDrops = clientLateFrameDrops
         self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.clientRepeatedFrameCount = clientRepeatedFrameCount
@@ -323,7 +356,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientFrameBufferPoolRetainedBytes = clientFrameBufferPoolRetainedBytes
         self.clientReassemblerBudgetEvictions = clientReassemblerBudgetEvictions
         self.clientReassemblerIncompleteFrameTimeouts = clientReassemblerIncompleteFrameTimeouts
+        self.clientReassemblerIncompleteFrameNoProgressTimeouts = clientReassemblerIncompleteFrameNoProgressTimeouts
+        self.clientReassemblerIncompleteFrameLifetimeTimeouts = clientReassemblerIncompleteFrameLifetimeTimeouts
         self.clientReassemblerMissingFragmentTimeouts = clientReassemblerMissingFragmentTimeouts
+        self.clientReassemblerForwardGapTimeouts = clientReassemblerForwardGapTimeouts
         clientDecodeBacklogFrameCountStorage = 0
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS

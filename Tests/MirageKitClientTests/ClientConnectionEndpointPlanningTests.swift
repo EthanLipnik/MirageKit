@@ -212,7 +212,7 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client keeps Bonjour-resolved IP addresses as peer-to-peer fallback")
+    @Test("Client keeps Bonjour-resolved IP addresses as normal fallback without proximity evidence")
     func controlSessionAttemptsPreferResolvedAddresses() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61020))
@@ -242,11 +242,11 @@ struct ClientConnectionEndpointPlanningTests {
             port: udpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(fallbackAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
-        #expect(attempts[2].transportKind == .tcp)
+        #expect(attempts[1].transportKind == .tcp)
     }
 
     @MainActor
@@ -365,9 +365,9 @@ struct ClientConnectionEndpointPlanningTests {
             port: udpPort
         )
 
-        #expect(attempts.count == 3)
+        #expect(attempts.count == 2)
         #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(!attempts[0].isPeerToPeerPreferred)
         #expect(udpAttempt.endpoint.debugDescription == expectedEndpoint.debugDescription)
     }
 

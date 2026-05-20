@@ -343,7 +343,7 @@ struct FrameReassemblerStaleKeyframeTests {
         )
         #expect(lossCounter.value == 0)
 
-        Thread.sleep(forTimeInterval: 0.070)
+        Thread.sleep(forTimeInterval: 0.320)
 
         let laterSevereGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x29])
         reassembler.processPacket(
@@ -446,8 +446,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe == true)
     }
 
-    @Test("Smoothest non-VPN severe forward gap keeps low grace")
-    func smoothestNonVPNSevereForwardGapKeepsLowGrace() {
+    @Test("Smoothest non-VPN severe forward gap also waits for reorder timeout")
+    func smoothestNonVPNSevereForwardGapWaitsForReorderTimeout() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         reassembler.setLatencyMode(.smoothest)
         reassembler.setTransportPathKind(.wifi)
@@ -492,19 +492,37 @@ struct FrameReassemblerStaleKeyframeTests {
 
         Thread.sleep(forTimeInterval: 0.070)
 
-        let laterSevereGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x29])
+        let reorderedWindowPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x29])
         reassembler.processPacket(
-            laterSevereGapPFrame,
+            reorderedWindowPFrame,
             header: makeHeader(
                 flags: [.endOfFrame],
                 frameNumber: 41,
-                payload: laterSevereGapPFrame,
+                payload: reorderedWindowPFrame,
                 fragmentIndex: 0,
                 fragmentCount: 1
             )
         )
 
         #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(lossReason.value == nil)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        Thread.sleep(forTimeInterval: 0.260)
+
+        let timedOutPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x2A])
+        reassembler.processPacket(
+            timedOutPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 42,
+                payload: timedOutPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .severeForwardGap)
         #expect(reassembler.isAwaitingKeyframe == true)

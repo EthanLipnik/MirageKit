@@ -87,10 +87,238 @@ extension InputCapturingView {
         }
         keyRepeatTimers.removeAll()
         heldKeyPresses.removeAll()
-        stopPassthroughShortcutRepeat(sendKeyUp: true)
+        stopModifiedKeyRepeat(sendKeyUp: true)
         lastClientShortcutDispatch = nil
         lastPassthroughShortcutDispatch = nil
     }
+
+    // MARK: - Modified Key Repeat
+
+    static func modifiedKeyRepeatEvent(for keyEvent: MirageKeyEvent) -> MirageKeyEvent {
+        MirageKeyEvent(
+            keyCode: keyEvent.keyCode,
+            characters: keyEvent.characters,
+            charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
+            modifiers: keyEvent.modifiers,
+            isRepeat: true
+        )
+    }
+
+    static func modifiedKeyRepeatKeyUpEvent(
+        for keyEvent: MirageKeyEvent,
+        modifiers: MirageModifierFlags
+    ) -> MirageKeyEvent {
+        MirageKeyEvent(
+            keyCode: keyEvent.keyCode,
+            characters: keyEvent.characters,
+            charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
+            modifiers: modifiers,
+            isRepeat: false
+        )
+    }
+
+    static func shouldContinueModifiedKeyRepeat(
+        keyIsPressed: Bool,
+        currentModifiers: MirageModifierFlags,
+        requiredModifiers: MirageModifierFlags
+    ) -> Bool {
+        keyIsPressed &&
+            currentModifiers.normalizedForShortcutMatching
+            .isSuperset(of: requiredModifiers.normalizedForShortcutMatching)
+    }
+
+    #if canImport(GameController)
+    func startModifiedKeyRepeat(
+        keyCode: GCKeyCode,
+        keyEvent: MirageKeyEvent,
+        requiredModifiers: MirageModifierFlags
+    ) {
+        let normalizedRequiredModifiers = requiredModifiers.normalizedForShortcutMatching
+        if let existing = modifiedKeyRepeatState,
+           existing.keyCode == keyCode,
+           existing.keyEvent.keyCode == keyEvent.keyCode,
+           existing.requiredModifiers == normalizedRequiredModifiers {
+            return
+        }
+
+        stopModifiedKeyRepeat(sendKeyUp: true)
+        modifiedKeyRepeatState = ModifiedKeyRepeatState(
+            keyCode: keyCode,
+            keyEvent: keyEvent,
+            requiredModifiers: normalizedRequiredModifiers,
+            nextRepeatDeadline: Date.timeIntervalSinceReferenceDate + Self.keyRepeatInitialDelay
+        )
+
+        if modifiedKeyRepeatTimer == nil {
+            modifiedKeyRepeatTimer = Timer
+                .scheduledTimer(
+                    withTimeInterval: Self.passthroughShortcutRepeatPollInterval,
+                    repeats: true
+                ) { [weak self] _ in
+                    self?.tickModifiedKeyRepeat()
+                }
+        }
+    }
+
+    @discardableResult
+    func stopModifiedKeyRepeat(
+        for keyCode: GCKeyCode? = nil,
+        sendKeyUp: Bool
+    ) -> Bool {
+        guard let state = modifiedKeyRepeatState else { return false }
+        if let keyCode, state.keyCode != keyCode { return false }
+
+        modifiedKeyRepeatState = nil
+        modifiedKeyRepeatTimer?.invalidate()
+        modifiedKeyRepeatTimer = nil
+
+        if sendKeyUp {
+            onInputEvent?(
+                .keyUp(Self.modifiedKeyRepeatKeyUpEvent(
+                    for: state.keyEvent,
+                    modifiers: keyboardModifiers
+                ))
+            )
+        }
+        return true
+    }
+
+    func stopModifiedKeyRepeatIfRequiredModifiersReleased() {
+        guard let state = modifiedKeyRepeatState else { return }
+        guard isModifiedKeyRepeatHeld(keyCode: state.keyCode, requiredModifiers: state.requiredModifiers) else {
+            stopModifiedKeyRepeat(sendKeyUp: true)
+            return
+        }
+    }
+
+    func tickModifiedKeyRepeat() {
+        guard var state = modifiedKeyRepeatState else {
+            modifiedKeyRepeatTimer?.invalidate()
+            modifiedKeyRepeatTimer = nil
+            return
+        }
+
+        guard isModifiedKeyRepeatHeld(keyCode: state.keyCode, requiredModifiers: state.requiredModifiers) else {
+            stopModifiedKeyRepeat(sendKeyUp: true)
+            return
+        }
+
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now >= state.nextRepeatDeadline else { return }
+
+        hideCursorForTypingUntilPointerMovement()
+        onInputEvent?(.keyDown(Self.modifiedKeyRepeatEvent(for: state.keyEvent)))
+        state.nextRepeatDeadline = now + Self.keyRepeatInterval
+        modifiedKeyRepeatState = state
+    }
+
+    func isModifiedKeyRepeatHeld(
+        keyCode: GCKeyCode,
+        requiredModifiers: MirageModifierFlags
+    ) -> Bool {
+        guard let keyboardInput = GCKeyboard.coalesced?.keyboardInput else { return false }
+        let keyIsPressed = keyboardInput.button(forKeyCode: keyCode)?.isPressed == true
+        let currentModifiers = hardwareModifiers(from: keyboardInput)
+        return Self.shouldContinueModifiedKeyRepeat(
+            keyIsPressed: keyIsPressed,
+            currentModifiers: currentModifiers,
+            requiredModifiers: requiredModifiers
+        )
+    }
+
+    func hardwareModifiers(from keyboardInput: GCKeyboardInput) -> MirageModifierFlags {
+        var modifiers: MirageModifierFlags = []
+        if keyboardInput.button(forKeyCode: .leftShift)?.isPressed == true ||
+            keyboardInput.button(forKeyCode: .rightShift)?.isPressed == true {
+            modifiers.insert(.shift)
+        }
+        if keyboardInput.button(forKeyCode: .leftControl)?.isPressed == true ||
+            keyboardInput.button(forKeyCode: .rightControl)?.isPressed == true {
+            modifiers.insert(.control)
+        }
+        if keyboardInput.button(forKeyCode: .leftAlt)?.isPressed == true ||
+            keyboardInput.button(forKeyCode: .rightAlt)?.isPressed == true {
+            modifiers.insert(.option)
+        }
+        if keyboardInput.button(forKeyCode: .leftGUI)?.isPressed == true ||
+            keyboardInput.button(forKeyCode: .rightGUI)?.isPressed == true {
+            modifiers.insert(.command)
+        }
+        return modifiers
+    }
+
+    static func gcKeyCode(forMacKeyCode keyCode: UInt16) -> GCKeyCode? {
+        guard let hidUsage = macKeyCodeToHIDUsageMap[keyCode] else { return nil }
+        return GCKeyCode(rawValue: hidUsage.rawValue)
+    }
+
+    private static let macKeyCodeToHIDUsageMap: [UInt16: UIKeyboardHIDUsage] = [
+        0x00: .keyboardA,
+        0x0B: .keyboardB,
+        0x08: .keyboardC,
+        0x02: .keyboardD,
+        0x0E: .keyboardE,
+        0x03: .keyboardF,
+        0x05: .keyboardG,
+        0x04: .keyboardH,
+        0x22: .keyboardI,
+        0x26: .keyboardJ,
+        0x28: .keyboardK,
+        0x25: .keyboardL,
+        0x2E: .keyboardM,
+        0x2D: .keyboardN,
+        0x1F: .keyboardO,
+        0x23: .keyboardP,
+        0x0C: .keyboardQ,
+        0x0F: .keyboardR,
+        0x01: .keyboardS,
+        0x11: .keyboardT,
+        0x20: .keyboardU,
+        0x09: .keyboardV,
+        0x0D: .keyboardW,
+        0x07: .keyboardX,
+        0x10: .keyboardY,
+        0x06: .keyboardZ,
+        0x12: .keyboard1,
+        0x13: .keyboard2,
+        0x14: .keyboard3,
+        0x15: .keyboard4,
+        0x17: .keyboard5,
+        0x16: .keyboard6,
+        0x1A: .keyboard7,
+        0x1C: .keyboard8,
+        0x19: .keyboard9,
+        0x1D: .keyboard0,
+        0x2B: .keyboardComma,
+        0x2F: .keyboardPeriod,
+        0x2C: .keyboardSlash,
+        0x29: .keyboardSemicolon,
+        0x27: .keyboardQuote,
+        0x21: .keyboardOpenBracket,
+        0x1E: .keyboardCloseBracket,
+        0x2A: .keyboardBackslash,
+        0x1B: .keyboardHyphen,
+        0x18: .keyboardEqualSign,
+        0x32: .keyboardGraveAccentAndTilde,
+        0x31: .keyboardSpacebar,
+        0x30: .keyboardTab,
+        0x24: .keyboardReturnOrEnter,
+        0x33: .keyboardDeleteOrBackspace,
+        0x35: .keyboardEscape,
+        0x7B: .keyboardLeftArrow,
+        0x7C: .keyboardRightArrow,
+        0x7D: .keyboardDownArrow,
+        0x7E: .keyboardUpArrow,
+        0x75: .keyboardDeleteForward,
+    ]
+    #else
+    @discardableResult
+    func stopModifiedKeyRepeat(sendKeyUp _: Bool) -> Bool {
+        false
+    }
+
+    func stopModifiedKeyRepeatIfRequiredModifiersReleased() {}
+    #endif
 
     // MARK: - Intercepted Shortcut Repeat
 
@@ -115,25 +343,30 @@ extension InputCapturingView {
         baseModifiers: MirageModifierFlags
     ) -> Bool {
         guard shortcut.deliveryBehavior == .repeatable else { return false }
+        #if canImport(GameController)
+        guard let keyCode = Self.gcKeyCode(forMacKeyCode: shortcut.keyCode) else { return false }
         let eventModifiers = shortcut.forwardedModifiers(baseModifiers: baseModifiers)
 
-        if let existing = passthroughShortcutRepeatState {
-            if existing.keyCode == shortcut.keyCode,
-               existing.input == shortcut.input,
-               existing.modifiers == eventModifiers {
+        if let existing = modifiedKeyRepeatState {
+            if existing.keyCode == keyCode,
+               existing.keyEvent.keyCode == shortcut.keyCode,
+               existing.keyEvent.characters == shortcut.input,
+               existing.requiredModifiers == eventModifiers.normalizedForShortcutMatching {
                 return true
             }
-            stopPassthroughShortcutRepeat(sendKeyUp: true)
+            stopModifiedKeyRepeat(sendKeyUp: true)
         }
 
-        let requiresShift = shortcut.modifiers.contains(.shift)
         sendPassthroughShortcutKeyDown(
             shortcut: shortcut,
             baseModifiers: baseModifiers,
             isRepeat: false
         )
 
-        guard isPassthroughShortcutHeld(requiresShift: requiresShift) else {
+        guard isModifiedKeyRepeatHeld(
+            keyCode: keyCode,
+            requiredModifiers: eventModifiers.normalizedForShortcutMatching
+        ) else {
             sendPassthroughShortcutKeyUp(
                 shortcut: shortcut,
                 baseModifiers: baseModifiers
@@ -141,87 +374,12 @@ extension InputCapturingView {
             return true
         }
 
-        passthroughShortcutRepeatState = PassthroughShortcutRepeatState(
-            keyCode: shortcut.keyCode,
-            input: shortcut.input,
-            modifiers: eventModifiers,
-            requiresShift: requiresShift,
-            nextRepeatDeadline: Date.timeIntervalSinceReferenceDate + Self.keyRepeatInitialDelay
+        startModifiedKeyRepeat(
+            keyCode: keyCode,
+            keyEvent: shortcut.keyDownEvent(baseModifiers: baseModifiers),
+            requiredModifiers: eventModifiers.normalizedForShortcutMatching
         )
 
-        if passthroughShortcutRepeatTimer == nil {
-            passthroughShortcutRepeatTimer = Timer
-                .scheduledTimer(
-                    withTimeInterval: Self.passthroughShortcutRepeatPollInterval,
-                    repeats: true
-                ) { [weak self] _ in
-                    self?.tickPassthroughShortcutRepeat()
-                }
-        }
-
-        return true
-    }
-
-    func tickPassthroughShortcutRepeat() {
-        guard var state = passthroughShortcutRepeatState else {
-            passthroughShortcutRepeatTimer?.invalidate()
-            passthroughShortcutRepeatTimer = nil
-            return
-        }
-
-        guard isPassthroughShortcutHeld(requiresShift: state.requiresShift) else {
-            stopPassthroughShortcutRepeat(sendKeyUp: true)
-            return
-        }
-
-        let now = Date.timeIntervalSinceReferenceDate
-        guard now >= state.nextRepeatDeadline else { return }
-
-        let shortcut = MirageInterceptedShortcut(
-            input: state.input,
-            keyCode: state.keyCode,
-            modifiers: state.modifiers.normalizedForShortcutMatching,
-            deliveryBehavior: .repeatable
-        )
-        sendPassthroughShortcutKeyDown(
-            shortcut: shortcut,
-            baseModifiers: state.modifiers.subtracting(shortcut.modifiers),
-            isRepeat: true
-        )
-        state.nextRepeatDeadline = now + Self.keyRepeatInterval
-        passthroughShortcutRepeatState = state
-    }
-
-    func stopPassthroughShortcutRepeat(sendKeyUp: Bool) {
-        if sendKeyUp, let state = passthroughShortcutRepeatState {
-            let shortcut = MirageInterceptedShortcut(
-                input: state.input,
-                keyCode: state.keyCode,
-                modifiers: state.modifiers.normalizedForShortcutMatching,
-                deliveryBehavior: .repeatable
-            )
-            sendPassthroughShortcutKeyUp(
-                shortcut: shortcut,
-                baseModifiers: state.modifiers.subtracting(shortcut.modifiers)
-            )
-        }
-
-        passthroughShortcutRepeatState = nil
-        passthroughShortcutRepeatTimer?.invalidate()
-        passthroughShortcutRepeatTimer = nil
-    }
-
-    func isPassthroughShortcutHeld(requiresShift: Bool) -> Bool {
-        #if canImport(GameController)
-        guard let keyboardInput = GCKeyboard.coalesced?.keyboardInput else { return false }
-        let commandHeld = keyboardInput.button(forKeyCode: .leftGUI)?.isPressed == true
-            || keyboardInput.button(forKeyCode: .rightGUI)?.isPressed == true
-        let zHeld = keyboardInput.button(forKeyCode: .keyZ)?.isPressed == true
-        guard commandHeld, zHeld else { return false }
-        if requiresShift {
-            return keyboardInput.button(forKeyCode: .leftShift)?.isPressed == true
-                || keyboardInput.button(forKeyCode: .rightShift)?.isPressed == true
-        }
         return true
         #else
         return false

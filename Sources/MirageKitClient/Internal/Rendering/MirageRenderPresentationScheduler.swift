@@ -119,7 +119,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
 
     func requestImmediateSubmission(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
-        if submitsFramesImmediately {
+        if submitsOnFrameArrival {
             guard hasPendingFrame() else { return }
             performPass(
                 referenceTime: referenceTime,
@@ -177,7 +177,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     func handleFrameAvailable(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
 
-        if presentationTier == .activeLive, submitsFramesImmediately {
+        if presentationTier == .activeLive, submitsOnFrameArrival {
             displayClockFramePending = true
             let result = performPass(referenceTime: referenceTime)
             if result == .submitted {
@@ -201,9 +201,9 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         performPass(referenceTime: referenceTime)
     }
 
-    private var submitsFramesImmediately: Bool {
+    private var submitsOnFrameArrival: Bool {
         guard let streamID else { return false }
-        return MirageRenderStreamStore.shared.presentationTiming(for: streamID).displaysImmediately
+        return MirageRenderStreamStore.shared.presentationTiming(for: streamID).latencyMode == .lowestLatency
     }
 
     func handleDisplayTick(referenceTime: CFTimeInterval) {

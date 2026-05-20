@@ -377,6 +377,8 @@ extension MirageRenderStreamStore {
         recordSmoothestAgeDropsLocked(result.smoothestAgeDrops, state: state)
         recordSmoothestDropsUnder100msLocked(result.smoothestDropsUnder100ms, state: state)
         recordSmoothestDroppedFrameAgeMaxLocked(result.smoothestDroppedFrameAgeMaxMs, state: state)
+        recordSmoothestDisplayDebtDropsLocked(result.smoothestDisplayDebtDrops, state: state)
+        recordSmoothestFifoResetLocked(result.smoothestFifoResetCount, state: state)
         recordLateFrameDropsLocked(result.lateFrameDrops, state: state)
         recordCoalescedFramesLocked(result.coalescedFrames, state: state)
     }
@@ -412,6 +414,16 @@ extension MirageRenderStreamStore {
             state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot,
             ageMs
         )
+    }
+
+    private func recordSmoothestDisplayDebtDropsLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestDisplayDebtDropsSinceLastSnapshot &+= UInt64(count)
+    }
+
+    private func recordSmoothestFifoResetLocked(_ count: Int, state: MirageRenderStreamState) {
+        guard count > 0 else { return }
+        state.smoothestFifoResetCountSinceLastSnapshot &+= UInt64(count)
     }
 
     private func recordLateFrameDropsLocked(_ count: Int, state: MirageRenderStreamState) {

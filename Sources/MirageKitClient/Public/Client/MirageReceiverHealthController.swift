@@ -52,6 +52,7 @@ public struct MirageReceiverHealthController: Sendable {
     var nextProbeAllowedAt: CFAbsoluteTime = 0
     var promotionCeilingBps: Int?
     var pendingPromotion: ReceiverPendingPromotion?
+    var receiverMediaFailureTimes: [CFAbsoluteTime] = []
 
     /// Creates a receiver health controller.
     public init(
@@ -78,6 +79,7 @@ public struct MirageReceiverHealthController: Sendable {
         nextProbeAllowedAt = preservedNextProbeAllowedAt
         promotionCeilingBps = preservedPromotionCeilingBps
         pendingPromotion = nil
+        receiverMediaFailureTimes.removeAll(keepingCapacity: false)
     }
 
     /// Advances receiver-health policy using multiple stream snapshots.
@@ -138,6 +140,15 @@ public struct MirageReceiverHealthController: Sendable {
         let effectiveAllowsBackoff = allowsBackoff &&
             (!isFastStartActive(now: now) || sample.hasProvenTransportLoss)
         updateSampleCounters(sample: sample, now: now, allowsBackoff: effectiveAllowsBackoff)
+
+        if let receiverFailureAction = receiverMediaDeliveryFailureBackoffAction(
+            sample: sample,
+            currentBitrateBps: currentBitrateBps,
+            now: now,
+            allowsBackoff: effectiveAllowsBackoff
+        ) {
+            return receiverFailureAction
+        }
 
         if let promotionAction = advancePendingPromotion(
             sample: sample,
@@ -251,6 +262,47 @@ public struct MirageReceiverHealthController: Sendable {
         nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.backoffCooldownSeconds)
         guard nextBitrate < currentBitrateBps else { return .none }
         return .backoff(targetBitrateBps: nextBitrate)
+    }
+
+    private mutating func receiverMediaDeliveryFailureBackoffAction(
+        sample: ReceiverHealthSample,
+        currentBitrateBps: Int,
+        now: CFAbsoluteTime,
+        allowsBackoff: Bool
+    ) -> Action? {
+        guard sample.hasReceiverMediaDeliveryFailure else { return nil }
+        recordReceiverMediaDeliveryFailure(now: now)
+        guard allowsBackoff else { return nil }
+        if let lastTransitionAt,
+           now - lastTransitionAt < Self.receiverMediaBackoffCooldownSeconds {
+            return nil
+        }
+        let repeatedFailure = receiverMediaFailureTimes.count >= 2
+        let step = repeatedFailure
+            ? Self.receiverMediaRepeatedBackoffStep
+            : Self.receiverMediaFirstBackoffStep
+        let nextBitrate = max(Self.minimumBitrateBps, Int(Double(currentBitrateBps) * step))
+        let promotionCeilingStep = repeatedFailure
+            ? Self.severeBackoffPromotionCeilingStep
+            : Self.normalBackoffPromotionCeilingStep
+        rememberPromotionCeiling(
+            max(nextBitrate, Int(Double(currentBitrateBps) * promotionCeilingStep))
+        )
+        state = .backingOff
+        lastTransitionAt = now
+        resetSampleCounters()
+        pendingPromotion = nil
+        nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.receiverMediaBackoffCooldownSeconds)
+        guard nextBitrate < currentBitrateBps else { return nil }
+        return .backoff(targetBitrateBps: nextBitrate)
+    }
+
+    private mutating func recordReceiverMediaDeliveryFailure(now: CFAbsoluteTime) {
+        receiverMediaFailureTimes.append(now)
+        let cutoff = now - Self.receiverMediaFailureWindowSeconds
+        while let first = receiverMediaFailureTimes.first, first < cutoff {
+            receiverMediaFailureTimes.removeFirst()
+        }
     }
 
     private func shouldBackOff(

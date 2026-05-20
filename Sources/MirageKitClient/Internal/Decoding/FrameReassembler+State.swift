@@ -28,7 +28,10 @@ extension FrameReassembler {
             frameBufferPoolRetainedBytes: bufferPool.retainedByteCount,
             budgetEvictions: memoryBudgetEvictionCount,
             incompleteFrameTimeouts: incompleteFrameTimeoutCount,
-            missingFragmentTimeouts: missingFragmentTimeoutCount
+            incompleteFrameNoProgressTimeouts: incompleteFrameNoProgressTimeoutCount,
+            incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeoutCount,
+            missingFragmentTimeouts: missingFragmentTimeoutCount,
+            forwardGapTimeouts: forwardGapTimeoutCount
         )
     }
 
@@ -167,7 +170,10 @@ extension FrameReassembler {
             droppedFrameCount = 0
             memoryBudgetEvictionCount = 0
             incompleteFrameTimeoutCount = 0
+            incompleteFrameNoProgressTimeoutCount = 0
+            incompleteFrameLifetimeTimeoutCount = 0
             missingFragmentTimeoutCount = 0
+            forwardGapTimeoutCount = 0
             lastPacketReceivedTime = 0
             startupKeyframeTimeoutOverrideEnabled = false
         }

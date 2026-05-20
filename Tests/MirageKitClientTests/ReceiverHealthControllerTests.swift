@@ -296,6 +296,7 @@ struct ReceiverHealthControllerTests {
         var controller = MirageReceiverHealthController()
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.clientReassemblerIncompleteFrameTimeouts = 3
+        snapshot.clientReassemblerIncompleteFrameNoProgressTimeouts = 3
         snapshot.clientReassemblerMissingFragmentTimeouts = 160
 
         let firstAction = controller.advance(
@@ -306,14 +307,49 @@ struct ReceiverHealthControllerTests {
         )
         let secondAction = controller.advance(
             snapshots: [snapshot],
-            currentBitrateBps: 48_000_000,
+            currentBitrateBps: 40_800_000,
             ceilingBps: 80_000_000,
             now: 2
         )
 
-        #expect(firstAction == .none)
-        #expect(secondAction == .backoff(targetBitrateBps: 40_800_000))
-        #expect(controller.lastTransportPressureReason == "client fragment loss frames=3 missing=160")
+        #expect(firstAction == .backoff(targetBitrateBps: 40_800_000))
+        #expect(secondAction == .none)
+        #expect(
+            controller.lastTransportPressureReason ==
+                "client fragment loss frames=3 noProgress=3 lifetime=0 forwardGaps=0 missing=160"
+        )
+    }
+
+    @Test("Repeated receiver media delivery failures use stronger temporary backoff")
+    func repeatedReceiverMediaDeliveryFailuresUseStrongerTemporaryBackoff() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientReassemblerIncompleteFrameTimeouts = 1
+        snapshot.clientReassemblerIncompleteFrameNoProgressTimeouts = 1
+        snapshot.clientReassemblerMissingFragmentTimeouts = 8
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 80_000_000,
+            now: 0
+        )
+        let suppressedSecondFailure = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 40_800_000,
+            ceilingBps: 80_000_000,
+            now: 5
+        )
+        let strongerBackoff = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 40_800_000,
+            ceilingBps: 80_000_000,
+            now: 10.1
+        )
+
+        #expect(firstAction == .backoff(targetBitrateBps: 40_800_000))
+        #expect(suppressedSecondFailure == .none)
+        #expect(strongerBackoff == .backoff(targetBitrateBps: 30_600_000))
     }
 
     @Test("Delivery collapse without transport evidence does not back off")

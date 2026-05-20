@@ -265,6 +265,8 @@ extension MirageRenderStreamStore {
                 smoothestAgeDrops: 0,
                 smoothestDropsUnder100ms: 0,
                 smoothestDroppedFrameAgeMaxMs: 0,
+                smoothestDisplayDebtDrops: 0,
+                smoothestFifoResetCount: 0,
                 lateFrameDrops: 0,
                 coalescedBeforeSubmitCount: 0,
                 duplicateRemoteTimestampCount: 0,
@@ -350,6 +352,8 @@ extension MirageRenderStreamStore {
         let smoothestAgeDrops = state.smoothestAgeDropsSinceLastSnapshot
         let smoothestDropsUnder100ms = state.smoothestDropsUnder100msSinceLastSnapshot
         let smoothestDroppedFrameAgeMaxMs = state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot
+        let smoothestDisplayDebtDrops = state.smoothestDisplayDebtDropsSinceLastSnapshot
+        let smoothestFifoResetCount = state.smoothestFifoResetCountSinceLastSnapshot
         let lateFrameDrops = state.lateFrameDropsSinceLastSnapshot
         let coalescedBeforeSubmitCount = state.coalescedFramesSinceLastSnapshot
         let duplicateRemoteTimestampCount = state.duplicateRemoteTimestampsSinceLastSnapshot
@@ -380,6 +384,8 @@ extension MirageRenderStreamStore {
         state.smoothestAgeDropsSinceLastSnapshot = 0
         state.smoothestDropsUnder100msSinceLastSnapshot = 0
         state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
+        state.smoothestDisplayDebtDropsSinceLastSnapshot = 0
+        state.smoothestFifoResetCountSinceLastSnapshot = 0
         state.lateFrameDropsSinceLastSnapshot = 0
         state.coalescedFramesSinceLastSnapshot = 0
         state.duplicateRemoteTimestampsSinceLastSnapshot = 0
@@ -419,6 +425,8 @@ extension MirageRenderStreamStore {
             smoothestAgeDrops: smoothestAgeDrops,
             smoothestDropsUnder100ms: smoothestDropsUnder100ms,
             smoothestDroppedFrameAgeMaxMs: smoothestDroppedFrameAgeMaxMs,
+            smoothestDisplayDebtDrops: smoothestDisplayDebtDrops,
+            smoothestFifoResetCount: smoothestFifoResetCount,
             lateFrameDrops: lateFrameDrops,
             coalescedBeforeSubmitCount: coalescedBeforeSubmitCount,
             duplicateRemoteTimestampCount: duplicateRemoteTimestampCount,

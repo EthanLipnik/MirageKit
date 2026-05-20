@@ -90,6 +90,12 @@ struct ReceiverMediaFeedbackPolicyTests {
             pendingFrameAgeMs: 30,
             overwrittenPendingFrames: 3,
             smoothestQueueDrops: smoothestQueueDrops,
+            smoothestDisplayDebtDrops: 0,
+            smoothestFifoResetCount: 0,
+            smoothestDepthDrops: 0,
+            smoothestAgeDrops: 0,
+            smoothestDropsUnder100ms: 0,
+            smoothestDroppedFrameAgeMaxMs: 0,
             lateFrameDrops: 2,
             displayLayerNotReadyCount: 8,
             repeatedFrameCount: 0,
@@ -109,7 +115,10 @@ struct ReceiverMediaFeedbackPolicyTests {
             frameBufferPoolRetainedBytes: 2_000_000,
             reassemblerBudgetEvictions: reassemblerBudgetEvictions,
             reassemblerIncompleteFrameTimeouts: 0,
+            reassemblerIncompleteFrameNoProgressTimeouts: 0,
+            reassemblerIncompleteFrameLifetimeTimeouts: 0,
             reassemblerMissingFragmentTimeouts: 0,
+            reassemblerForwardGapTimeouts: 0,
             decoderOutputPixelFormat: "420v",
             usingHardwareDecoder: true
         )

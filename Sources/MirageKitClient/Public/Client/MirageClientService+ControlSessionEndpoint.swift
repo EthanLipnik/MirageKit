@@ -91,66 +91,92 @@ extension MirageClientService {
         }
 
         let proximityInterfaces = proximityPreferredDiscoveredInterfaces(for: host)
-        let shouldTryGenericProximity = proximityInterfaces.isEmpty && !host.resolvedAddresses.isEmpty
-        guard !proximityInterfaces.isEmpty || shouldTryGenericProximity else {
+        let scopedHosts = scopedProximityResolvedHosts(for: host)
+        guard !proximityInterfaces.isEmpty || !scopedHosts.isEmpty else {
+            if !host.resolvedAddresses.isEmpty {
+                let interfaces = host.discoveredInterfaces
+                    .map(\.name)
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ",")
+                MirageLogger.client(
+                    "Skipping proximity-preferred control attempts for \(host.name): " +
+                        "no proximity route evidence interfaces=\(interfaces.isEmpty ? "none" : interfaces)"
+                )
+            }
             return []
         }
 
-        if shouldTryGenericProximity {
-            let interfaces = host.discoveredInterfaces
-                .map(\.name)
-                .filter { !$0.isEmpty }
-                .joined(separator: ",")
-            MirageLogger.client(
-                "Trying optimistic proximity control attempts for \(host.name): no preferred Bonjour interface " +
-                    "interfaces=\(interfaces.isEmpty ? "none" : interfaces)"
-            )
-        }
-
         var attempts: [ControlSessionAttempt] = []
+        var attemptedInterfaceNames: Set<String> = []
         for discoveredInterface in proximityInterfaces {
-            let interfaceSelectedHost = scopedLinkLocalResolvedHost(
+            let scopedHost = scopedLinkLocalResolvedHost(
                 for: discoveredInterface,
                 host: host
-            ) ?? selectedHost
+            )
+            let interfaceSelectedHost = scopedHost
+                ?? interfaceScopedHost(selectedHost, interface: discoveredInterface.networkInterface)
+
+            guard scopedHost != nil ||
+                  discoveredInterface.networkInterface != nil ||
+                  discoveredInterface.type != .other else {
+                MirageLogger.client(
+                    "Skipping proximity-preferred control attempts for \(host.name): " +
+                        "\(discoveredInterface.name) has no concrete interface or scoped address"
+                )
+                continue
+            }
+
+            let normalizedName = discoveredInterface.name
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if !normalizedName.isEmpty {
+                attemptedInterfaceNames.insert(normalizedName)
+            }
             attempts.append(
                 contentsOf: proximityPreferredControlSessionAttempts(
                     for: host,
                     transportOrder: transportOrder,
                     selectedHost: interfaceSelectedHost,
-                    discoveredInterface: discoveredInterface
+                    discoveredInterface: discoveredInterface,
+                    endpointSource: scopedHost == nil ? "bonjour-proximity-interface" : "bonjour-proximity-scoped-address"
                 )
             )
         }
 
-        if shouldTryGenericProximity {
-            let scopedHosts = scopedProximityResolvedHosts(for: host)
-            if scopedHosts.isEmpty {
-                attempts.append(
-                    contentsOf: proximityPreferredControlSessionAttempts(
-                        for: host,
-                        transportOrder: transportOrder,
-                        selectedHost: selectedHost,
-                        discoveredInterface: nil
-                    )
-                )
-            } else {
-                for scopedHost in scopedHosts {
-                    let interfaceNames = Self.scopedLinkLocalIPv6InterfaceName(scopedHost).map { [$0] } ?? []
-                    attempts.append(
-                        contentsOf: proximityPreferredControlSessionAttempts(
-                            for: host,
-                            transportOrder: transportOrder,
-                            selectedHost: scopedHost,
-                            discoveredInterface: nil,
-                            proximityInterfaceNames: interfaceNames
-                        )
-                    )
-                }
+        for scopedHost in scopedHosts {
+            guard let interfaceName = Self.scopedLinkLocalIPv6InterfaceName(scopedHost),
+                  !attemptedInterfaceNames.contains(interfaceName) else {
+                continue
             }
+            let matchingInterface = host.discoveredInterfaces.first {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == interfaceName
+            }
+            attempts.append(
+                contentsOf: proximityPreferredControlSessionAttempts(
+                    for: host,
+                    transportOrder: transportOrder,
+                    selectedHost: scopedHost,
+                    discoveredInterface: matchingInterface,
+                    proximityInterfaceNames: [interfaceName],
+                    endpointSource: "bonjour-proximity-scoped-address"
+                )
+            )
         }
 
         return attempts
+    }
+
+    func interfaceScopedHost(
+        _ host: NWEndpoint.Host,
+        interface: NWInterface?
+    ) -> NWEndpoint.Host {
+        guard let interface else { return host }
+        switch host {
+        case let .name(value, _):
+            return .name(value, interface)
+        default:
+            return host
+        }
     }
 
     func scopedLinkLocalResolvedHost(
@@ -212,20 +238,21 @@ extension MirageClientService {
         transportOrder: [LoomTransportKind],
         selectedHost: NWEndpoint.Host,
         discoveredInterface: LoomDiscoveredInterface?,
-        proximityInterfaceNames: [String] = []
+        proximityInterfaceNames: [String] = [],
+        endpointSource: String
     ) -> [ControlSessionAttempt] {
         let requiredInterface = discoveredInterface?.networkInterface
         let requiredInterfaceType: NWInterface.InterfaceType?
-        if let discoveredInterface, discoveredInterface.networkInterface == nil {
+        if let discoveredInterface,
+           discoveredInterface.networkInterface == nil,
+           discoveredInterface.type != .other {
             requiredInterfaceType = discoveredInterface.type
-        } else if discoveredInterface == nil {
-            requiredInterfaceType = .other
         } else {
             requiredInterfaceType = nil
         }
         let source = discoveredInterface.map {
             "bonjour-proximity-\(proximityLogName(for: $0.kind))"
-        } ?? "bonjour-proximity-optimistic"
+        } ?? endpointSource
 
         return transportOrder.compactMap { transportKind in
             guard let endpoint = peerToPeerPreferredControlSessionEndpoint(
@@ -250,6 +277,7 @@ extension MirageClientService {
                 endpoint: endpoint,
                 transportKind: transportKind,
                 candidateKind: candidateKind,
+                endpointSource: source,
                 requiredInterface: requiredInterface,
                 requiredInterfaceType: requiredInterfaceType,
                 isPeerToPeerPreferred: true,

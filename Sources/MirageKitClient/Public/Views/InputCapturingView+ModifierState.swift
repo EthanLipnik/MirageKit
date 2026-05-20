@@ -118,6 +118,7 @@ extension InputCapturingView {
         heldModifierKeys = newHeldKeys
         capsLockEnabled = newCapsLockEnabled
         sendModifierStateIfNeeded(force: true)
+        stopModifiedKeyRepeatIfRequiredModifiersReleased()
         if heldModifierKeys.isEmpty { stopModifierRefresh() } else {
             startModifierRefreshIfNeeded()
         }
@@ -163,6 +164,7 @@ extension InputCapturingView {
                     if hardwareRefreshFailureCount >= 3 {
                         // Hardware unavailable, clear modifiers to prevent stuck state
                         MirageLogger.client("Hardware keyboard unavailable, clearing modifiers")
+                        stopAllKeyRepeats()
                         resetAllModifiers()
                         modifierRefreshTask = nil
                         return
@@ -212,6 +214,7 @@ extension InputCapturingView {
         guard refreshedKeys != heldModifierKeys else { return true }
         heldModifierKeys = refreshedKeys
         sendModifierStateIfNeeded(force: true)
+        stopModifiedKeyRepeatIfRequiredModifiersReleased()
         return true
         #else
         return false
@@ -274,13 +277,14 @@ extension InputCapturingView {
     static let pencilHoverMinimumInterval: CFTimeInterval = 1.0 / 120.0
     static let pencilHoverMinimumDistancePoints: CGFloat = 0.5
 
-    struct PassthroughShortcutRepeatState {
-        let keyCode: UInt16
-        let input: String
-        let modifiers: MirageModifierFlags
-        let requiresShift: Bool
+    #if canImport(GameController)
+    struct ModifiedKeyRepeatState {
+        let keyCode: GCKeyCode
+        let keyEvent: MirageKeyEvent
+        let requiredModifiers: MirageModifierFlags
         var nextRepeatDeadline: TimeInterval
     }
+    #endif
 
     enum ClientShortcutDispatchSource {
         case hardwareKey

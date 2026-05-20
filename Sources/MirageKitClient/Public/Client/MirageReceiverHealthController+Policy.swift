@@ -13,8 +13,12 @@ extension MirageReceiverHealthController {
     static let minimumBitrateBps = 12_000_000
     static let severeBackoffStep = 0.85
     static let normalBackoffStep = 0.90
-    static let backoffCooldownSeconds: CFAbsoluteTime = 8
-    static let recoveryHealthySampleThreshold = 3
+    static let receiverMediaFirstBackoffStep = 0.85
+    static let receiverMediaRepeatedBackoffStep = 0.75
+    static let receiverMediaFailureWindowSeconds: CFAbsoluteTime = 10
+    static let receiverMediaBackoffCooldownSeconds: CFAbsoluteTime = 10
+    static let backoffCooldownSeconds: CFAbsoluteTime = 10
+    static let recoveryHealthySampleThreshold = 5
     static let severeStressSampleThreshold = 2
     static let normalStressSampleThreshold = 3
     static let probeHealthySampleThreshold = 4
@@ -52,6 +56,7 @@ extension MirageReceiverHealthController {
     static let transportDropSevereCount: UInt64 = 24
     static let clientFragmentLossFrameStressCount: UInt64 = 2
     static let clientFragmentLossFrameSevereCount: UInt64 = 8
+    static let clientForwardGapTimeoutSevereCount: UInt64 = 2
     static let clientMissingFragmentStressCount: UInt64 = 32
     static let clientMissingFragmentSevereCount: UInt64 = 128
 }

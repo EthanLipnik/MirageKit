@@ -89,6 +89,56 @@ public extension MirageHostService {
         return nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3801
     }
 
+    /// Applies a live peer-to-peer advertising policy update without tearing down the full host service.
+    func updatePeerToPeerAdvertisingEnabled(_ enabled: Bool) async throws {
+        let previousConfiguration = loomNode.configuration
+        guard previousConfiguration.enablePeerToPeer != enabled else {
+            return
+        }
+
+        loomNode.configuration.enablePeerToPeer = enabled
+        guard case .advertising = state else {
+            MirageLogger.host("Updated Proximity Connect advertising policy for next host start: enabled=\(enabled)")
+            return
+        }
+
+        MirageLogger.host("Restarting Loom advertising for Proximity Connect policy change enabled=\(enabled)")
+        stopAdvertisementRefreshLoop()
+        await loomNode.stopAdvertising()
+        remoteControlPort = nil
+        remoteControlListenerReady = false
+        await updateRemoteControlListenerState()
+        state = .starting
+
+        do {
+            try await startListeners()
+            await updateRemoteControlListenerState()
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to restart Loom advertising after Proximity Connect policy change: "
+            )
+            loomNode.configuration = previousConfiguration
+            remoteControlPort = nil
+            remoteControlListenerReady = false
+            await updateRemoteControlListenerState()
+            state = .starting
+            do {
+                try await startListeners()
+                await updateRemoteControlListenerState()
+                MirageLogger.host("Restored previous Loom advertising policy after failed Proximity Connect update")
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Failed to restore previous Loom advertising policy after Proximity Connect update failure: "
+                )
+            }
+            throw error
+        }
+    }
+
     private func startListeners() async throws {
         do {
             MirageLogger.host("Starting Loom authenticated listeners...")
