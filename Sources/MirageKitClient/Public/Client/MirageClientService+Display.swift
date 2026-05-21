@@ -154,6 +154,28 @@ extension MirageClientService {
         return max(1.0, scale)
     }
 
+    func acceptedDesktopDisplayScaleFactor(
+        from started: DesktopStreamStartedMessage,
+        displayPixelSize: CGSize,
+        presentationSize: CGSize
+    ) -> CGFloat? {
+        if let acceptedScale = started.acceptedDisplayScaleFactor,
+           acceptedScale.isFinite,
+           acceptedScale > 0 {
+            return max(1.0, acceptedScale)
+        }
+
+        if let lastSentTarget = desktopResizeCoordinator.lastSentTarget,
+           lastSentTarget.displayPixelsMatchAccepted(displayPixelSize) {
+            return lastSentTarget.displayScaleFactor
+        }
+
+        return inferredDisplayScaleFactor(
+            displayPixelSize: displayPixelSize,
+            presentationSize: presentationSize
+        )
+    }
+
     func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
         let alignedViewSize = MirageStreamGeometry.normalizedLogicalSize(viewSize)
         guard alignedViewSize.width > 0, alignedViewSize.height > 0 else { return .zero }

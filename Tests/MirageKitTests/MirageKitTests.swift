@@ -37,6 +37,12 @@ struct MirageKitTests {
         #expect(capability.highestSustainedPixelCount == nil)
     }
 
+    @Test("AWDL media packet sizing uses wireless MTU budget")
+    func awdlMediaPacketSizingUsesWirelessMTUBudget() {
+        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == mirageDirectWiFiMaxPacketSize)
+        #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
+    }
+
     @Test("Protocol header serialization")
     func frameHeaderSerialization() {
         let header = FrameHeader(
@@ -259,6 +265,7 @@ struct MirageKitTests {
             displayCount: 1,
             captureSource: .mainDisplayFallback,
             allowsClientResize: false,
+            acceptedDisplayScaleFactor: 1.72,
             presentationWidth: 2732,
             presentationHeight: 1537
         )
@@ -269,6 +276,7 @@ struct MirageKitTests {
 
         #expect(decodedPayload.captureSource == .mainDisplayFallback)
         #expect(decodedPayload.allowsClientResize == false)
+        #expect(decodedPayload.acceptedDisplayScaleFactor == 1.72)
         #expect(decodedPayload.presentationSize == CGSize(width: 2732, height: 1537))
     }
 

@@ -52,7 +52,8 @@ extension MirageClientService {
         desktopStreamResolution = displaySize
         let presentationSize = started.presentationSize
         desktopStreamPresentationResolution = presentationSize
-        desktopStreamDisplayScaleFactor = inferredDisplayScaleFactor(
+        desktopStreamDisplayScaleFactor = acceptedDesktopDisplayScaleFactor(
+            from: started,
             displayPixelSize: displaySize,
             presentationSize: presentationSize
         )
@@ -60,6 +61,7 @@ extension MirageClientService {
             logicalResolution: presentationSize,
             displayPixelSize: displaySize
         )
+        desktopResizeCoordinator.clearQueuedTargetsMatchingAcceptedDisplayPixels(displaySize)
         desktopCaptureSource = started.captureSource
         desktopStreamAllowsClientResize = started.allowsClientResize
         updateObservedFrameRate(started.frameRate, for: streamID)

@@ -19,18 +19,22 @@ extension MirageClientService {
         let resolvedLocalNetwork = localNetwork ?? ControlSessionNetworkDiagnostics(
             snapshot: localNetworkMonitor.snapshot
         )
+        let explicitVPNRoute = isExplicitVPNConnection(host)
         var attempts: [ControlSessionAttempt] = []
-        let localTransportOrder: [LoomTransportKind] = [.udp, .quic, .tcp]
+        let transportOrder: [LoomTransportKind] = explicitVPNRoute ? [.quic, .udp, .tcp] : [.udp, .quic, .tcp]
 
-        attempts.append(
-            contentsOf: proximityPreferredControlSessionAttempts(
-                for: host,
-                transportOrder: localTransportOrder
+        if !explicitVPNRoute {
+            attempts.append(
+                contentsOf: proximityPreferredControlSessionAttempts(
+                    for: host,
+                    localNetwork: resolvedLocalNetwork,
+                    transportOrder: transportOrder
+                )
             )
-        )
+        }
 
         var resolvedAttempts: [ControlSessionAttempt] = []
-        for transportKind in localTransportOrder {
+        for transportKind in transportOrder {
             guard let endpoint = controlSessionEndpoint(
                 for: host,
                 transportKind: transportKind,
@@ -39,38 +43,57 @@ extension MirageClientService {
                 continue
             }
 
-            let candidateKind = controlSessionCandidateKind(for: endpoint, host: host)
+            let candidateKind: ControlSessionCandidateKind = explicitVPNRoute
+                ? .overlay
+                : controlSessionCandidateKind(for: endpoint, host: host)
             resolvedAttempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
                     endpoint: endpoint,
                     transportKind: transportKind,
                     candidateKind: candidateKind,
+                    routeTier: controlSessionRouteTier(
+                        for: candidateKind,
+                        host: host,
+                        localNetwork: resolvedLocalNetwork
+                    ),
                     requiredInterfaceType: candidateKind == .overlay ? nil : preferredNetworkType.requiredInterfaceType
                 )
             )
         }
-        attempts.append(contentsOf: orderedControlSessionAttempts(resolvedAttempts))
+        attempts.append(contentsOf: resolvedAttempts)
 
         if attempts.isEmpty {
-            let candidateKind = controlSessionCandidateKind(for: host.endpoint, host: host)
+            let candidateKind: ControlSessionCandidateKind = explicitVPNRoute
+                ? .overlay
+                : controlSessionCandidateKind(for: host.endpoint, host: host)
             attempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
                     endpoint: host.endpoint,
                     transportKind: .tcp,
                     candidateKind: candidateKind,
+                    routeTier: controlSessionRouteTier(
+                        for: candidateKind,
+                        host: host,
+                        localNetwork: resolvedLocalNetwork
+                    ),
                     requiredInterfaceType: candidateKind == .overlay ? nil : preferredNetworkType.requiredInterfaceType
                 )
             )
         }
 
-        return attempts
+        return orderedControlSessionAttempts(attempts)
     }
 
     func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
         attempts.enumerated()
             .sorted { lhs, rhs in
+                let leftRouteRank = lhs.element.routeTier.rank
+                let rightRouteRank = rhs.element.routeTier.rank
+                if leftRouteRank != rightRouteRank {
+                    return leftRouteRank < rightRouteRank
+                }
                 let leftRank = controlSessionTransportRank(
                     transportKind: lhs.element.transportKind,
                     candidateKind: lhs.element.candidateKind
@@ -102,11 +125,16 @@ extension MirageClientService {
         for host: LoomPeer,
         transportOrder: [LoomTransportKind]
     ) -> [ControlSessionAttempt] {
-        proximityPreferredControlSessionAttempts(for: host, transportOrder: transportOrder)
+        proximityPreferredControlSessionAttempts(
+            for: host,
+            localNetwork: ControlSessionNetworkDiagnostics(snapshot: localNetworkMonitor.snapshot),
+            transportOrder: transportOrder
+        )
     }
 
     func proximityPreferredControlSessionAttempts(
         for host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics,
         transportOrder: [LoomTransportKind]
     ) -> [ControlSessionAttempt] {
         guard networkConfig.enablePeerToPeer else {
@@ -122,7 +150,10 @@ extension MirageClientService {
             return []
         }
 
-        let proximityInterfaces = proximityPreferredDiscoveredInterfaces(for: host)
+        let proximityInterfaces = proximityPreferredDiscoveredInterfaces(
+            for: host,
+            localNetwork: localNetwork
+        )
         let scopedHosts = scopedProximityResolvedHosts(for: host)
         guard !proximityInterfaces.isEmpty || !scopedHosts.isEmpty else {
             if !host.resolvedAddresses.isEmpty {
@@ -140,7 +171,7 @@ extension MirageClientService {
 
         var attempts: [ControlSessionAttempt] = []
         var attemptedInterfaceNames: Set<String> = []
-        for discoveredInterface in proximityInterfaces {
+        for (discoveredInterface, routeTier) in proximityInterfaces {
             let scopedHost = scopedLinkLocalResolvedHost(
                 for: discoveredInterface,
                 host: host
@@ -150,7 +181,8 @@ extension MirageClientService {
 
             guard scopedHost != nil ||
                   discoveredInterface.networkInterface != nil ||
-                  discoveredInterface.type != .other else {
+                  discoveredInterface.type != .other ||
+                  routeTier != .other else {
                 MirageLogger.client(
                     "Skipping proximity-preferred control attempts for \(host.name): " +
                         "\(discoveredInterface.name) has no concrete interface or scoped address"
@@ -170,6 +202,7 @@ extension MirageClientService {
                     transportOrder: transportOrder,
                     selectedHost: interfaceSelectedHost,
                     discoveredInterface: discoveredInterface,
+                    routeTier: routeTier,
                     endpointSource: scopedHost == nil ? "bonjour-proximity-interface" : "bonjour-proximity-scoped-address"
                 )
             )
@@ -183,12 +216,18 @@ extension MirageClientService {
             let matchingInterface = host.discoveredInterfaces.first {
                 $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == interfaceName
             }
+            let routeTier = Self.proximityRouteTier(forInterfaceName: interfaceName) ?? .other
+            if routeTier == .awdl,
+               awdlProximityRouteIsSuppressed(for: host, interfaceName: interfaceName) {
+                continue
+            }
             attempts.append(
                 contentsOf: proximityPreferredControlSessionAttempts(
                     for: host,
                     transportOrder: transportOrder,
                     selectedHost: scopedHost,
                     discoveredInterface: matchingInterface,
+                    routeTier: routeTier,
                     proximityInterfaceNames: [interfaceName],
                     endpointSource: "bonjour-proximity-scoped-address"
                 )
@@ -249,19 +288,33 @@ extension MirageClientService {
         .map(\.host)
     }
 
-    func proximityPreferredDiscoveredInterfaces(for host: LoomPeer) -> [LoomDiscoveredInterface] {
+    func proximityPreferredDiscoveredInterfaces(
+        for host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> [(interface: LoomDiscoveredInterface, routeTier: ControlSessionRouteTier)] {
         host.discoveredInterfaces
-            .filter(\.isProximityPreferred)
+            .compactMap { discoveredInterface -> (interface: LoomDiscoveredInterface, routeTier: ControlSessionRouteTier)? in
+                if discoveredInterface.kind == .awdl,
+                   awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) {
+                    return nil
+                }
+                guard let routeTier = controlSessionRouteTier(
+                    for: discoveredInterface,
+                    host: host,
+                    localNetwork: localNetwork
+                ) else {
+                    return nil
+                }
+                return (interface: discoveredInterface, routeTier: routeTier)
+            }
             .sorted { lhs, rhs in
-                let leftPriority = lhs.proximityPriority ?? Int.max
-                let rightPriority = rhs.proximityPriority ?? Int.max
-                if leftPriority != rightPriority {
-                    return leftPriority < rightPriority
+                if lhs.routeTier.rank != rhs.routeTier.rank {
+                    return lhs.routeTier.rank < rhs.routeTier.rank
                 }
-                if lhs.index != rhs.index {
-                    return lhs.index < rhs.index
+                if lhs.interface.index != rhs.interface.index {
+                    return lhs.interface.index < rhs.interface.index
                 }
-                return lhs.name < rhs.name
+                return lhs.interface.name < rhs.interface.name
             }
     }
 
@@ -270,6 +323,7 @@ extension MirageClientService {
         transportOrder: [LoomTransportKind],
         selectedHost: NWEndpoint.Host,
         discoveredInterface: LoomDiscoveredInterface?,
+        routeTier: ControlSessionRouteTier,
         proximityInterfaceNames: [String] = [],
         endpointSource: String
     ) -> [ControlSessionAttempt] {
@@ -309,6 +363,7 @@ extension MirageClientService {
                 endpoint: endpoint,
                 transportKind: transportKind,
                 candidateKind: candidateKind,
+                routeTier: routeTier,
                 endpointSource: source,
                 requiredInterface: requiredInterface,
                 requiredInterfaceType: requiredInterfaceType,
@@ -436,13 +491,18 @@ extension MirageClientService {
     ) -> (host: NWEndpoint.Host?, source: String) {
         let preferredBonjourHost = preferredBonjourControlHost(for: host)
 
+        if isExplicitVPNConnection(host), let endpointHost {
+            return (endpointHost, "explicit-vpn-endpoint")
+        }
+
         // Prefer Bonjour-resolved IP addresses over hostname resolution.
         // This avoids platform-specific mDNS resolution failures (iOS) and
         // ensures we don't accidentally route through VPN/overlay interfaces
         // when a local path exists.
         if !host.resolvedAddresses.isEmpty {
             let usableResolvedAddresses = host.resolvedAddresses.filter {
-                !Self.isScopeLessLinkLocalIPv6Address($0)
+                !Self.isScopeLessLinkLocalIPv6Address($0) &&
+                    !awdlEndpointHostIsSuppressed($0, for: host)
             }
             let localAddresses = usableResolvedAddresses.filter { !Self.isOverlayAddress($0) }
             if shouldPreferBonjourHostForPeerToPeer(
@@ -463,13 +523,16 @@ extension MirageClientService {
             }
         }
 
-        if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
+        if let endpointHost,
+           shouldPreferEndpointHostForDirectConnection(endpointHost),
+           !awdlEndpointHostIsSuppressed(endpointHost, for: host) {
             return (endpointHost, "endpoint-host")
         }
 
         if let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
            shouldPreferEndpointHostForDirectConnection(rememberedHost),
-           !Self.isOverlayCandidateHost(rememberedHost) {
+           !Self.isOverlayCandidateHost(rememberedHost),
+           !awdlEndpointHostIsSuppressed(rememberedHost, for: host) {
             return (rememberedHost, "remembered-direct-host")
         }
 
@@ -524,6 +587,91 @@ extension MirageClientService {
             .isEmpty
     }
 
+    func controlSessionRouteTier(
+        for candidateKind: ControlSessionCandidateKind,
+        host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> ControlSessionRouteTier {
+        switch candidateKind {
+        case .overlay:
+            .vpn
+        case .local:
+            localLANRouteTier(for: host, localNetwork: localNetwork)
+        case .publicIPv6, .portMapped, .stun:
+            .other
+        }
+    }
+
+    func controlSessionRouteTier(
+        for discoveredInterface: LoomDiscoveredInterface,
+        host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> ControlSessionRouteTier? {
+        switch discoveredInterface.kind {
+        case .applePrivateNCM:
+            .applePrivateNCM
+        case .bridge:
+            .bridge
+        case .lowLatencyWireless:
+            .lowLatencyWireless
+        case .wiredEthernet:
+            hasSameWiredEthernetRoute(to: host, localNetwork: localNetwork) ? .sameWiredEthernet : nil
+        case .awdl:
+            awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) ? nil : .awdl
+        case .wifi, .cellular, .loopback, .overlay, .other:
+            nil
+        }
+    }
+
+    func localLANRouteTier(
+        for host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> ControlSessionRouteTier {
+        if hasSameWiredEthernetRoute(to: host, localNetwork: localNetwork) {
+            return .sameWiredEthernet
+        }
+        if hasMixedEthernetSameLANRoute(to: host, localNetwork: localNetwork) {
+            return .mixedEthernetSameLAN
+        }
+        return .wifiLAN
+    }
+
+    func hasSameWiredEthernetRoute(
+        to host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> Bool {
+        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+            from: host.advertisement
+        )
+        let localWired = Set(localNetwork.wiredSubnetSignatures)
+        let hostWired = Set(hostNetwork.wiredSubnetSignatures)
+        guard !localWired.isEmpty, !hostWired.isEmpty else { return false }
+        return !localWired.intersection(hostWired).isEmpty
+    }
+
+    func hasMixedEthernetSameLANRoute(
+        to host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> Bool {
+        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+            from: host.advertisement
+        )
+        let localWired = Set(localNetwork.wiredSubnetSignatures)
+        let hostWired = Set(hostNetwork.wiredSubnetSignatures)
+        let localHasWired = !localWired.isEmpty
+        let hostHasWired = !hostWired.isEmpty
+        guard localHasWired != hostHasWired else { return false }
+
+        if localHasWired {
+            return !localWired.intersection(hostNetwork.allSubnetSignatures).isEmpty
+        }
+        return !hostWired.intersection(localNetwork.allSubnetSignatures).isEmpty
+    }
+
+    func isExplicitVPNConnection(_ host: LoomPeer) -> Bool {
+        host.advertisement.metadata["mirage.connection-origin"] == "remote"
+    }
+
     func isBonjourDiscoveredHost(_ host: LoomPeer) -> Bool {
         if case .service = host.endpoint {
             return true
@@ -555,7 +703,14 @@ extension MirageClientService {
         for endpoint: NWEndpoint,
         host: LoomPeer
     ) -> ControlSessionCandidateKind {
+        if isExplicitVPNConnection(host) {
+            return .overlay
+        }
         guard case let .hostPort(endpointHost, _) = endpoint else {
+            if !host.resolvedAddresses.isEmpty,
+               host.resolvedAddresses.allSatisfy(Self.isOverlayAddress) {
+                return .overlay
+            }
             return .local
         }
         if Self.isOverlayCandidateHost(endpointHost) {
@@ -723,25 +878,120 @@ extension MirageClientService {
         proximityPriority(forInterfaceName: name) != nil
     }
 
-    static func proximityPriority(forInterfaceName name: String) -> Int? {
+    static func proximityRouteTier(forInterfaceName name: String) -> ControlSessionRouteTier? {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if normalized.hasPrefix("anpi") {
-            return 0
-        }
-        if normalized.hasPrefix("awdl") {
-            return 1
-        }
-        if normalized.hasPrefix("llw") {
-            return 2
+            return .applePrivateNCM
         }
         if normalized.hasPrefix("bridge") {
-            return 4
+            return .bridge
+        }
+        if normalized.hasPrefix("llw") {
+            return .lowLatencyWireless
+        }
+        if normalized.hasPrefix("awdl") {
+            return .awdl
         }
         return nil
+    }
+
+    static func proximityPriority(forInterfaceName name: String) -> Int? {
+        proximityRouteTier(forInterfaceName: name)?.rank
     }
 
     static func isScopeLessLinkLocalIPv6Name(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         return trimmed.hasPrefix("fe80:") && !trimmed.contains("%")
+    }
+
+    /// Temporarily prevents AWDL proximity attempts for one host/interface after active media degradation.
+    public func suppressAwdlProximityRoute(
+        for host: LoomPeer,
+        interfaceNames: [String],
+        duration: TimeInterval = 15 * 60,
+        reason: String
+    ) {
+        let normalizedNames = Self.normalizedAwdlSuppressionInterfaceNames(interfaceNames)
+        let expiry = CFAbsoluteTimeGetCurrent() + max(1, duration)
+        for interfaceName in normalizedNames {
+            awdlProximityRouteSuppressions[
+                AwdlProximityRouteSuppressionKey(
+                    deviceID: host.deviceID,
+                    interfaceName: interfaceName
+                )
+            ] = expiry
+        }
+        MirageLogger.client(
+            "Suppressing AWDL proximity route for \(host.name) " +
+                "interfaces=\(normalizedNames.joined(separator: ",")) duration=\(Int(duration))s reason=\(reason)"
+        )
+    }
+
+    func awdlProximityRouteIsSuppressed(
+        for host: LoomPeer,
+        interfaceName: String,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) -> Bool {
+        pruneExpiredAwdlProximityRouteSuppressions(now: now)
+        let wildcardKey = AwdlProximityRouteSuppressionKey(
+            deviceID: host.deviceID,
+            interfaceName: Self.awdlSuppressionWildcardInterfaceName
+        )
+        if awdlProximityRouteSuppressions[wildcardKey] != nil {
+            return true
+        }
+
+        let normalizedName = Self.normalizedAwdlInterfaceName(interfaceName)
+        guard !normalizedName.isEmpty else { return false }
+        let key = AwdlProximityRouteSuppressionKey(
+            deviceID: host.deviceID,
+            interfaceName: normalizedName
+        )
+        return awdlProximityRouteSuppressions[key] != nil
+    }
+
+    func awdlEndpointHostIsSuppressed(
+        _ endpointHost: NWEndpoint.Host,
+        for host: LoomPeer
+    ) -> Bool {
+        guard let interfaceName = Self.scopedAwdlInterfaceName(endpointHost) else { return false }
+        return awdlProximityRouteIsSuppressed(for: host, interfaceName: interfaceName)
+    }
+
+    func pruneExpiredAwdlProximityRouteSuppressions(
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) {
+        guard !awdlProximityRouteSuppressions.isEmpty else { return }
+        awdlProximityRouteSuppressions = awdlProximityRouteSuppressions.filter { _, expiry in
+            expiry > now
+        }
+    }
+
+    private static let awdlSuppressionWildcardInterfaceName = "*"
+
+    private static func normalizedAwdlSuppressionInterfaceNames(_ interfaceNames: [String]) -> [String] {
+        let normalizedNames = Set(interfaceNames.map(normalizedAwdlInterfaceName(_:)).filter { !$0.isEmpty })
+        guard !normalizedNames.isEmpty else {
+            return [awdlSuppressionWildcardInterfaceName]
+        }
+        return normalizedNames.sorted()
+    }
+
+    private static func normalizedAwdlInterfaceName(_ interfaceName: String) -> String {
+        interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func scopedAwdlInterfaceName(_ host: NWEndpoint.Host) -> String? {
+        if let interfaceName = scopedLinkLocalIPv6InterfaceName(host),
+           interfaceName.hasPrefix("awdl") {
+            return interfaceName
+        }
+
+        guard case let .name(_, interface) = host,
+              let interface else {
+            return nil
+        }
+        let interfaceName = interface.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return interfaceName.hasPrefix("awdl") ? interfaceName : nil
     }
 }

@@ -118,6 +118,34 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
+    @Test("Conservative proximity mode delays and shrinks bitrate probes")
+    func conservativeProximityModeDelaysAndShrinksBitrateProbes() {
+        var controller = MirageReceiverHealthController(
+            promotionRecoveryMode: .conservativeProximity
+        )
+        let snapshot = healthySnapshot(activeQuality: 0.62)
+        var action: MirageReceiverHealthController.Action = .none
+
+        for sampleIndex in 0 ..< 7 {
+            action = controller.advance(
+                snapshots: [snapshot],
+                currentBitrateBps: 60_000_000,
+                ceilingBps: 128_000_000,
+                now: Double(sampleIndex * 2)
+            )
+            #expect(action == .none)
+        }
+
+        action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 60_000_000,
+            ceilingBps: 128_000_000,
+            now: 14
+        )
+
+        #expect(action == .probe(targetBitrateBps: 64_800_000))
+    }
+
     @Test("Recent interaction defers probes while allowing severe backoff")
     func recentInteractionDefersProbesWhileAllowingSevereBackoff() {
         var controller = MirageReceiverHealthController()
@@ -465,6 +493,96 @@ struct ReceiverHealthControllerTests {
 
         #expect(action == .none)
         #expect(controller.state == .stable)
+    }
+
+    @Test("AWDL route health ignores non-AWDL starts")
+    func awdlRouteHealthIgnoresNonAwdlStarts() {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: false,
+            startupBitrateBps: 80_000_000,
+            now: 0
+        )
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientReassemblerForwardGapTimeouts = 2
+        snapshot.clientReceivedWorstGapMs = 1_500
+
+        let decision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 32_000_000,
+            now: 120
+        )
+
+        #expect(decision == nil)
+    }
+
+    @Test("AWDL route health demotes after sustained degradation")
+    func awdlRouteHealthDemotesAfterSustainedDegradation() throws {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: true,
+            startupBitrateBps: 80_000_000,
+            now: 0
+        )
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientPFrameCompletionLatencyP95Ms = 300
+
+        for sampleIndex in 0 ..< 3 {
+            let decision = controller.advance(
+                snapshots: [snapshot],
+                currentPathKind: .awdl,
+                currentBitrateBps: 40_000_000,
+                now: 92 + Double(sampleIndex * 2)
+            )
+            #expect(decision == nil)
+        }
+
+        let emittedDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 40_000_000,
+            now: 98
+        )
+        let decision = try #require(emittedDecision)
+
+        #expect(decision.degradedSampleCount == 4)
+        #expect(decision.reason.contains("bitrate collapsed"))
+    }
+
+    @Test("AWDL route health waits through early severe startup blips")
+    func awdlRouteHealthWaitsThroughEarlySevereStartupBlips() throws {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: true,
+            startupBitrateBps: 80_000_000,
+            now: 0
+        )
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientReassemblerForwardGapTimeouts = 2
+        snapshot.clientReceivedWorstGapMs = 1_500
+
+        let earlyDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 70_000_000,
+            now: 20
+        )
+        #expect(earlyDecision == nil)
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 70_000_000,
+            now: 32
+        )
+        let emittedDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 70_000_000,
+            now: 34
+        )
+        let decision = try #require(emittedDecision)
+
+        #expect(decision.severeSampleCount >= 2)
+        #expect(decision.reason.contains("receive gap"))
     }
 
     func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {

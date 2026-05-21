@@ -172,7 +172,7 @@ extension MirageHostService {
         applyMainDisplayDesktopCaptureFallback(fallback)
         let presentationResolution = aspectFitPixelSize(
             contentSize: fallback.resolution,
-            containerSize: request.virtualDisplayResolution
+            containerSize: request.displayResolution
         )
         if configureMirroring {
             let mirroringConfigured = await setupDisplayMirroring(
@@ -320,7 +320,7 @@ extension MirageHostService {
             colorSpace: context.colorSpace,
             captureSource: .virtualDisplay,
             allowsClientResize: true,
-            presentationResolution: context.resolution,
+            presentationResolution: request.displayResolution,
             virtualDisplaySnapshot: context,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )

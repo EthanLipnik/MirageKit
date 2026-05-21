@@ -336,6 +336,9 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Whether the client may request virtual-display resize transactions.
     package var allowsClientResize: Bool
 
+    /// Host-accepted display scale for interpreting presentation geometry.
+    package var acceptedDisplayScaleFactor: CGFloat?
+
     /// Client presentation/window sizing width, separate from capture pixels.
     package var presentationWidth: Int?
 
@@ -368,6 +371,7 @@ package struct DesktopStreamStartedMessage: Codable {
         desktopPresentationGeneration: UInt64? = nil,
         captureSource: MirageDesktopCaptureSource = .virtualDisplay,
         allowsClientResize: Bool = true,
+        acceptedDisplayScaleFactor: CGFloat? = nil,
         presentationWidth: Int? = nil,
         presentationHeight: Int? = nil
     ) {
@@ -387,6 +391,7 @@ package struct DesktopStreamStartedMessage: Codable {
         self.desktopPresentationGeneration = desktopPresentationGeneration
         self.captureSource = captureSource
         self.allowsClientResize = allowsClientResize
+        self.acceptedDisplayScaleFactor = acceptedDisplayScaleFactor
         self.presentationWidth = presentationWidth
         self.presentationHeight = presentationHeight
     }

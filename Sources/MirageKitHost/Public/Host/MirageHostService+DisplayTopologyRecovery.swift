@@ -138,6 +138,7 @@ extension MirageHostService {
                 desktopPresentationGeneration: desktopPresentationGeneration,
                 captureSource: desktopCaptureSource,
                 allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+                acceptedDisplayScaleFactor: sharedVirtualDisplayScaleFactor,
                 presentationWidth: Int(displayResolution.width.rounded()),
                 presentationHeight: Int(displayResolution.height.rounded())
             )

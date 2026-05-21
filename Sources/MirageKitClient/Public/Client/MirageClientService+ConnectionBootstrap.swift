@@ -36,12 +36,12 @@ extension MirageClientService {
         while attemptIndex < attempts.count {
             let attempt = attempts[attemptIndex]
             let groupedAttempts = controlSessionAttemptGroup(in: attempts, startingAt: attemptIndex)
-            let failureAttemptIndex = attemptIndex + groupedAttempts.count - 1
             try throwIfConnectAttemptIsStale(attemptID)
 
             var openedSession: LoomAuthenticatedSession?
             var openedChannel: MirageControlChannel?
             var activeAttempt = attempt
+            var activeAttemptIndex = attemptIndex
 
             do {
                 let session: LoomAuthenticatedSession
@@ -53,6 +53,11 @@ extension MirageClientService {
                     )
                     session = result.session
                     activeAttempt = result.attempt
+                    activeAttemptIndex = attemptIndex + (groupedAttempts.firstIndex {
+                        $0.endpoint.debugDescription == result.attempt.endpoint.debugDescription &&
+                            $0.transportKind == result.attempt.transportKind &&
+                            $0.routeTier == result.attempt.routeTier
+                    } ?? 0)
                 } else {
                     session = try await establishControlSession(
                         attempt: attempt,
@@ -107,6 +112,7 @@ extension MirageClientService {
                 lastFailureReason = failureReason
                 recordControlSessionAttemptFailed(activeAttempt, reason: failureReason)
 
+                let failureAttemptIndex = activeAttemptIndex
                 if Self.shouldRetryCurrentBootstrappedControlSessionAttempt(
                     classification: classification,
                     controlChannelOpened: openedChannel != nil,
@@ -191,15 +197,21 @@ extension MirageClientService {
                 group.addTask { [weak self] in
                     let delay = OverlayControlSessionRacePolicy.launchDelay(for: attempt.transportKind)
                     do {
-                        if delay > .milliseconds(0) {
-                            try await Task.sleep(for: delay)
-                        }
-                        guard await raceState.shouldLaunch(attempt.transportKind) else {
-                            return .suppressed(
-                                index: index,
-                                attempt: attempt,
-                                reason: "overlay hedge suppressed; another candidate reached remote hello or trust"
+                        let earliestLaunch = ContinuousClock.now.advanced(by: delay)
+                        launchWaitLoop: while true {
+                            let decision = await raceState.launchDecision(
+                                for: attempt.transportKind,
+                                now: ContinuousClock.now,
+                                earliestLaunch: earliestLaunch
                             )
+                            switch decision {
+                            case .launch:
+                                break launchWaitLoop
+                            case .wait:
+                                try await Task.sleep(for: Self.controlSessionConnectWatchdogPollingInterval)
+                            case let .suppress(reason):
+                                return .suppressed(index: index, attempt: attempt, reason: reason)
+                            }
                         }
                         await raceState.recordLaunched(attempt.transportKind)
                         await MainActor.run {
@@ -226,6 +238,7 @@ extension MirageClientService {
                     } catch is CancellationError {
                         return .cancelled(index: index, attempt: attempt)
                     } catch {
+                        await raceState.recordFailed(attempt.transportKind)
                         let classification = Self.classifyControlSessionFailure(error)
                         return .failed(
                             index: index,
@@ -295,7 +308,7 @@ extension MirageClientService {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
             "Starting \(attempt.transportKind) control session to \(attempt.hostName) " +
-                "candidate=\(attempt.candidateKind.rawValue) endpoint=\(attempt.endpoint) " +
+                "candidate=\(attempt.candidateKind.rawValue) route=\(attempt.routeTier.rawValue) endpoint=\(attempt.endpoint) " +
                 "interface=\(attempt.interfaceDescription)"
         )
         recordControlSessionAttemptStarted(attempt)

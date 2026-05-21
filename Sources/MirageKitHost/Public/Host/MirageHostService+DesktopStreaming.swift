@@ -173,6 +173,7 @@ async throws {
             clientContext: clientContext,
             startupRequestID: startupRequestID,
             mode: mode,
+            displayResolution: displayResolution,
             virtualDisplayResolution: virtualDisplayResolution,
             startupPlan: virtualDisplayStartupPlan,
             startupAttempts: virtualDisplayStartupAttempts,
@@ -290,7 +291,8 @@ async throws {
             captureResolution: captureResolution,
             captureSource: captureSource,
             allowsClientResize: allowsClientResize,
-            presentationResolution: presentationResolution
+            presentationResolution: presentationResolution,
+            acceptedDisplayScaleFactor: desktopBackingScale.scaleFactor
         ),
         logDesktopStartStep: logDesktopStartStep
     )

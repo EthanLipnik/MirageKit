@@ -233,6 +233,12 @@ extension MirageReceiverHealthController {
     }
 
     func probeCooldown(success: Bool, now: CFAbsoluteTime) -> CFAbsoluteTime {
+        if promotionRecoveryMode == .conservativeProximity {
+            return success
+                ? Self.conservativeSuccessfulProbeCooldownSeconds
+                : Self.conservativeFailedProbeCooldownSeconds
+        }
+
         let fastStartActive = isFastStartActive(now: now)
         return switch (success, fastStartActive) {
         case (true, true):

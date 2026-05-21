@@ -17,6 +17,7 @@ public struct MirageClientControlSessionAttemptSummary: Sendable, Equatable {
     public let transport: String
     public let endpoint: String
     public let candidateKind: String
+    public let routeTier: String
     public let endpointSource: String
     public let requiredInterface: String
     public let proximity: String
@@ -25,7 +26,7 @@ public struct MirageClientControlSessionAttemptSummary: Sendable, Equatable {
     public var supportSummaryLine: String {
         "\(observedAt.ISO8601Format()) phase=\(phase) host=\(hostName) " +
             "transport=\(transport) candidate=\(candidateKind) endpoint=\(endpoint) " +
-            "source=\(endpointSource) interface=\(requiredInterface) " +
+            "route=\(routeTier) source=\(endpointSource) interface=\(requiredInterface) " +
             "proximity=\(proximity) outcome=\(outcome)"
     }
 }
@@ -115,6 +116,7 @@ extension MirageClientService {
                 transport: attempt.transportKind.rawValue,
                 endpoint: attempt.endpoint.debugDescription,
                 candidateKind: attempt.candidateKind.rawValue,
+                routeTier: attempt.routeTier.rawValue,
                 endpointSource: attempt.endpointSource,
                 requiredInterface: attempt.interfaceDescription,
                 proximity: attempt.isPeerToPeerPreferred ? attempt.proximityDescription : "none",

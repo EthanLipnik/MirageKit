@@ -117,6 +117,7 @@ extension MirageHostService {
         let captureSource: MirageDesktopCaptureSource
         let allowsClientResize: Bool
         let presentationResolution: CGSize
+        let acceptedDisplayScaleFactor: CGFloat?
     }
 
     struct DesktopStreamActivation {
@@ -155,6 +156,7 @@ extension MirageHostService {
         let clientContext: ClientContext
         let startupRequestID: UUID
         let mode: MirageDesktopStreamMode
+        let displayResolution: CGSize
         let virtualDisplayResolution: CGSize
         let startupPlan: DesktopVirtualDisplayStartupPlan
         let startupAttempts: [DesktopVirtualDisplayStartupAttempt]

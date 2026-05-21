@@ -14,9 +14,9 @@ package func miragePreferredMediaMaxPacketSize(
     for pathKind: MirageNetworkPathKind?
 ) -> Int {
     switch pathKind {
-    case .awdl, .wired:
+    case .wired:
         return mirageDirectLocalMaxPacketSize
-    case .wifi:
+    case .awdl, .wifi:
         return mirageDirectWiFiMaxPacketSize
     default:
         return mirageDefaultMaxPacketSize

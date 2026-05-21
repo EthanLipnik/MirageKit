@@ -130,9 +130,14 @@ extension MirageReceiverHealthController {
         guard sample.isTransportClean else { return nil }
         guard sample.allowsProbePromotion else { return nil }
         let fastStartActive = isFastStartActive(now: now)
-        let healthySampleThreshold = fastStartActive
-            ? Self.fastStartProbeHealthySampleThreshold
-            : Self.probeHealthySampleThreshold
+        let conservativeProximity = promotionRecoveryMode == .conservativeProximity
+        let healthySampleThreshold = if conservativeProximity {
+            Self.conservativeProbeHealthySampleThreshold
+        } else if fastStartActive {
+            Self.fastStartProbeHealthySampleThreshold
+        } else {
+            Self.probeHealthySampleThreshold
+        }
         guard promotionHealthySampleCount >= healthySampleThreshold else { return nil }
         guard now >= nextProbeAllowedAt else { return nil }
         let effectiveCeilingBps = effectivePromotionCeiling(
@@ -142,15 +147,27 @@ extension MirageReceiverHealthController {
         )
         guard currentBitrateBps < effectiveCeilingBps else { return nil }
 
-        let increaseFloorBps = fastStartActive
-            ? Self.fastStartProbeIncreaseFloorBps
-            : Self.normalProbeIncreaseFloorBps
-        let increasePercent = fastStartActive
-            ? Self.fastStartProbeIncreasePercent
-            : Self.normalProbeIncreasePercent
-        let increaseMaximumStepBps = fastStartActive
-            ? Self.fastStartProbeIncreaseMaximumStepBps
-            : Self.normalProbeIncreaseMaximumStepBps
+        let increaseFloorBps = if conservativeProximity {
+            Self.conservativeProbeIncreaseFloorBps
+        } else if fastStartActive {
+            Self.fastStartProbeIncreaseFloorBps
+        } else {
+            Self.normalProbeIncreaseFloorBps
+        }
+        let increasePercent = if conservativeProximity {
+            Self.conservativeProbeIncreasePercent
+        } else if fastStartActive {
+            Self.fastStartProbeIncreasePercent
+        } else {
+            Self.normalProbeIncreasePercent
+        }
+        let increaseMaximumStepBps = if conservativeProximity {
+            Self.conservativeProbeIncreaseMaximumStepBps
+        } else if fastStartActive {
+            Self.fastStartProbeIncreaseMaximumStepBps
+        } else {
+            Self.normalProbeIncreaseMaximumStepBps
+        }
         let scaledIncrease = Int(
             (Int64(currentBitrateBps) * Int64(increasePercent) + 99) / 100
         )
@@ -211,9 +228,14 @@ extension MirageReceiverHealthController {
             configuredCeilingBps,
             max(Self.minimumBitrateBps, promotionCeilingBps, currentBitrateBps)
         )
-        let requiredHealthySamples = promotionRecoveryMode == .dynamicRoute
-            ? Self.dynamicRouteCeilingRecoveryHealthySamples
-            : Self.ceilingRecoveryHealthySamples
+        let requiredHealthySamples = switch promotionRecoveryMode {
+        case .dynamicRoute:
+            Self.dynamicRouteCeilingRecoveryHealthySamples
+        case .conservativeProximity:
+            Self.ceilingRecoveryHealthySamples + 4
+        case .settledCeiling:
+            Self.ceilingRecoveryHealthySamples
+        }
         if currentBitrateBps >= clampedCeiling,
            promotionHealthySampleCount >= requiredHealthySamples,
            now >= nextProbeAllowedAt {

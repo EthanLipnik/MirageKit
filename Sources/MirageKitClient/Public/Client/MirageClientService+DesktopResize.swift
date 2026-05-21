@@ -85,6 +85,24 @@ extension MirageClientService {
             coordinator.clearQueuedResizeRequest()
             return
         }
+        if let lastSentTarget = coordinator.lastSentTarget,
+           let acceptedDisplayPixelSize = desktopStreamResolution,
+           let session = sessionStore.sessionByStreamID(streamID),
+           session.clientRecoveryStatus == .startup,
+           target.isImmediateStartupDowngrade(
+               of: lastSentTarget,
+               acceptedDisplayPixelSize: acceptedDisplayPixelSize
+           ) {
+            coordinator.displayResolutionTask?.cancel()
+            coordinator.displayResolutionTask = nil
+            coordinator.clearQueuedResizeRequest()
+            MirageLogger.client(
+                "Desktop startup resize downgrade suppressed for stream \(streamID): " +
+                    "accepted=\(Int(acceptedDisplayPixelSize.width))x\(Int(acceptedDisplayPixelSize.height))px " +
+                    "target=\(Int(target.displayPixelSize.width))x\(Int(target.displayPixelSize.height))px"
+            )
+            return
+        }
         guard coordinator.resizeLifecycleState == .active else {
             coordinator.queueLatestTarget(
                 target,

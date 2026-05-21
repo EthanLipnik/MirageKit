@@ -40,6 +40,7 @@ extension MirageHostService {
             desktopPresentationGeneration: desktopPresentationGeneration,
             captureSource: notification.captureSource,
             allowsClientResize: notification.allowsClientResize,
+            acceptedDisplayScaleFactor: notification.acceptedDisplayScaleFactor,
             presentationWidth: Int(notification.presentationResolution.width.rounded()),
             presentationHeight: Int(notification.presentationResolution.height.rounded())
         )

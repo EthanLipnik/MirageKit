@@ -332,6 +332,7 @@ extension MirageHostService {
                     acceptedMediaMaxPacketSize: streamStart.mediaMaxPacketSize,
                     captureSource: desktopCaptureSource,
                     allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+                    acceptedDisplayScaleFactor: desktopRequestedScaleFactor,
                     presentationWidth: Int(presentationResolution.width.rounded()),
                     presentationHeight: Int(presentationResolution.height.rounded())
                 )

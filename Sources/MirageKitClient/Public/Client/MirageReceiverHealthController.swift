@@ -31,6 +31,8 @@ public struct MirageReceiverHealthController: Sendable {
     public enum PromotionRecoveryMode: String, Sendable, Equatable {
         /// Recover slowly once the current route has settled below the learned ceiling.
         case settledCeiling
+        /// Recover conservatively on proximity wireless routes that can remain connected while degrading.
+        case conservativeProximity
         /// Recover more aggressively when route changes suggest the ceiling may be stale.
         case dynamicRoute
     }

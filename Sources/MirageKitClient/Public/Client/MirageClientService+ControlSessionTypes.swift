@@ -17,6 +17,7 @@ extension MirageClientService {
         let endpoint: NWEndpoint
         let transportKind: LoomTransportKind
         let candidateKind: ControlSessionCandidateKind
+        let routeTier: ControlSessionRouteTier
         let endpointSource: String
         let requiredInterface: NWInterface?
         let requiredInterfaceType: NWInterface.InterfaceType?
@@ -56,6 +57,7 @@ extension MirageClientService {
             endpoint: NWEndpoint,
             transportKind: LoomTransportKind,
             candidateKind: ControlSessionCandidateKind,
+            routeTier: ControlSessionRouteTier? = nil,
             endpointSource: String = "automatic",
             requiredInterface: NWInterface? = nil,
             requiredInterfaceType: NWInterface.InterfaceType? = nil,
@@ -67,12 +69,26 @@ extension MirageClientService {
             self.endpoint = endpoint
             self.transportKind = transportKind
             self.candidateKind = candidateKind
+            self.routeTier = routeTier ?? Self.defaultRouteTier(candidateKind: candidateKind)
             self.endpointSource = endpointSource
             self.requiredInterface = requiredInterface
             self.requiredInterfaceType = requiredInterfaceType
             self.isPeerToPeerPreferred = isPeerToPeerPreferred
             self.proximityInterfaceKind = proximityInterfaceKind
             self.proximityInterfaceNames = proximityInterfaceNames
+        }
+
+        private static func defaultRouteTier(
+            candidateKind: ControlSessionCandidateKind
+        ) -> ControlSessionRouteTier {
+            switch candidateKind {
+            case .overlay:
+                .vpn
+            case .local:
+                .wifiLAN
+            case .publicIPv6, .portMapped, .stun:
+                .other
+            }
         }
 
         func acceptsProximityPath(_ snapshot: MirageNetworkPathSnapshot) -> Bool {
@@ -149,6 +165,41 @@ extension MirageClientService {
         case stun
     }
 
+    enum ControlSessionRouteTier: String, Sendable {
+        case applePrivateNCM = "anpi"
+        case bridge
+        case lowLatencyWireless = "llw"
+        case sameWiredEthernet = "same-wired-ethernet"
+        case awdl
+        case mixedEthernetSameLAN = "mixed-ethernet-same-lan"
+        case wifiLAN = "wifi-lan"
+        case vpn
+        case other
+
+        var rank: Int {
+            switch self {
+            case .applePrivateNCM:
+                0
+            case .bridge:
+                1
+            case .lowLatencyWireless:
+                2
+            case .sameWiredEthernet:
+                3
+            case .awdl:
+                4
+            case .mixedEthernetSameLAN:
+                5
+            case .wifiLAN:
+                6
+            case .vpn:
+                7
+            case .other:
+                8
+            }
+        }
+    }
+
     struct ControlSessionNetworkDiagnostics: Equatable {
         let currentPathKind: MirageNetworkPathKind
         let wifiSubnetSignatures: [String]
@@ -178,6 +229,19 @@ extension MirageClientService {
                 wiredSubnetSignatures: wiredSubnetSignatures
             )
         }
+
+        var hasWiFiEvidence: Bool {
+            !wifiSubnetSignatures.isEmpty
+        }
+
+        var hasWiredEvidence: Bool {
+            !wiredSubnetSignatures.isEmpty
+        }
+    }
+
+    struct AwdlProximityRouteSuppressionKey: Hashable {
+        let deviceID: UUID
+        let interfaceName: String
     }
 
     enum ControlSessionFailureClassification: String, Sendable {
@@ -347,6 +411,7 @@ extension MirageClientService {
     ) -> String {
         "Mirage bootstrap failed for \(attempt.hostName) endpoint=\(attempt.endpoint) " +
             "transport=\(attempt.transportKind.rawValue) candidate=\(attempt.candidateKind.rawValue) " +
+            "route=\(attempt.routeTier.rawValue) source=\(attempt.endpointSource) " +
             "interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
     }

@@ -320,6 +320,95 @@ struct DesktopStreamStartAcceptanceDecisionTests {
     }
 
     @MainActor
+    @Test("Accepted desktop startup scale clears matching queued resize and blocks one-x downgrade")
+    func acceptedDesktopStartupScaleClearsMatchingQueuedResizeAndBlocksOneXDowngrade() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 30
+        let desktopSessionID = UUID()
+        let startupTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.72,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        let matchingQueuedTarget = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.72,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+        service.desktopResizeCoordinator.lastSentTarget = startupTarget
+        service.desktopResizeCoordinator.queueLatestTarget(matchingQueuedTarget)
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2752,
+            height: 2064,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 1,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup,
+            acceptedDisplayScaleFactor: 1.72,
+            presentationWidth: 1600,
+            presentationHeight: 1200
+        )
+
+        await service.handleDesktopStreamStarted(try ControlMessage(type: .desktopStreamStarted, content: started))
+
+        #expect(service.desktopStreamDisplayScaleFactor == 1.72)
+        #expect(service.desktopResizeCoordinator.lastSentTarget == startupTarget)
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.latestRequestedTarget == nil)
+
+        service.sessionStore.registerSession(
+            streamID: streamID,
+            mediaStreamID: streamID,
+            window: MirageWindow(
+                id: WindowID(streamID),
+                title: "Desktop",
+                application: nil,
+                frame: CGRect(x: 0, y: 0, width: 1600, height: 1200),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            hostName: "Host",
+            streamKind: .desktop,
+            minSize: nil
+        )
+        service.sessionStore.setClientRecoveryStatus(for: streamID, status: .startup)
+
+        let oneXDowngrade = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 1.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: nil,
+            encoderMaxHeight: nil
+        )
+        service.queueDesktopResize(
+            streamID: streamID,
+            target: oneXDowngrade,
+            hasPresentedFrame: true,
+            useHostResolution: false
+        )
+
+        #expect(service.desktopResizeCoordinator.queuedTarget == nil)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.desktopResizeCoordinator.displayResolutionTask == nil)
+        #expect(!service.desktopResizeCoordinator.isResizing)
+        #expect(!service.desktopResizeCoordinator.maskActive)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
     @Test("Desktop start for a stopped session is ignored")
     func desktopStartForStoppedSessionIsIgnored() async throws {
         let service = MirageClientService()

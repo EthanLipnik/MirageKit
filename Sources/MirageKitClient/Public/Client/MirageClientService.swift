@@ -406,6 +406,8 @@ public final class MirageClientService {
     var runtimeWorkloadSafetyStallTimesByStream: [StreamID: [CFAbsoluteTime]] = [:]
     /// Last time AWDL telemetry was logged, used to rate-limit diagnostics.
     var lastAwdlTelemetryLogTime: CFAbsoluteTime = 0
+    /// Session-local AWDL route suppressions applied after active-stream media degradation.
+    var awdlProximityRouteSuppressions: [AwdlProximityRouteSuppressionKey: CFAbsoluteTime] = [:]
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
     let controlSessionConnectTimeout: Duration = .seconds(30)

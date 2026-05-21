@@ -50,6 +50,10 @@ final class DesktopResizeCoordinator {
             )
         }
 
+        var displayPixelSize: CGSize {
+            resolvedGeometry.displayPixelSize
+        }
+
         private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
             abs(lhs - rhs) <= 0.001
         }
@@ -69,6 +73,23 @@ final class DesktopResizeCoordinator {
             }
 
             return Self.pixelSizesEqual(resolvedGeometry.displayPixelSize, acceptedDisplayPixelSize)
+        }
+
+        func displayPixelsMatchAccepted(_ acceptedDisplayPixelSize: CGSize) -> Bool {
+            Self.pixelSizesEqual(resolvedGeometry.displayPixelSize, acceptedDisplayPixelSize)
+        }
+
+        func isImmediateStartupDowngrade(
+            of acceptedTarget: RequestGeometry,
+            acceptedDisplayPixelSize: CGSize
+        ) -> Bool {
+            guard Self.approximatelyEqual(logicalResolution.width, acceptedTarget.logicalResolution.width),
+                  Self.approximatelyEqual(logicalResolution.height, acceptedTarget.logicalResolution.height),
+                  displayPixelSize.width < acceptedDisplayPixelSize.width - 1 ||
+                    displayPixelSize.height < acceptedDisplayPixelSize.height - 1 else {
+                return false
+            }
+            return acceptedTarget.displayPixelsMatchAccepted(acceptedDisplayPixelSize)
         }
     }
 
@@ -162,6 +183,24 @@ final class DesktopResizeCoordinator {
             logicalResolution: acceptedLogicalResolution,
             displayPixelSize: acceptedDisplayPixelSize
         ) == true {
+            latestRequestedTarget = nil
+            latestRequestedDispatchPolicy = nil
+        }
+
+        if activeTransition == nil, queuedTarget == nil {
+            clearLocalPresentationState()
+        }
+    }
+
+    func clearQueuedTargetsMatchingAcceptedDisplayPixels(
+        _ acceptedDisplayPixelSize: CGSize
+    ) {
+        if queuedTarget?.displayPixelsMatchAccepted(acceptedDisplayPixelSize) == true {
+            queuedTarget = nil
+            queuedDispatchPolicy = nil
+        }
+
+        if latestRequestedTarget?.displayPixelsMatchAccepted(acceptedDisplayPixelSize) == true {
             latestRequestedTarget = nil
             latestRequestedDispatchPolicy = nil
         }
