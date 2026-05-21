@@ -405,6 +405,10 @@ public final class MirageHostService {
     @ObservationIgnored nonisolated(unsafe) var desktopDisplayTopologyRefreshTask: Task<Void, Never>?
     /// Deferred cleanup task for virtual displays created during desktop startup.
     @ObservationIgnored nonisolated(unsafe) var deferredDesktopStartupDisplayCleanupTask: Task<Void, Never>?
+    /// Cancellable cleanup task for display restoration after an established desktop stream stops.
+    @ObservationIgnored nonisolated(unsafe) var deferredDesktopDisplayCleanupTask: Task<Void, Never>?
+    /// Generation token invalidating stale deferred desktop display cleanup work.
+    var desktopDisplayCleanupGeneration: UInt64 = 0
 
     /// Request-scoped stream setups cancelled before a stream ID is established.
     var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []

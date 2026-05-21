@@ -233,7 +233,7 @@ extension MirageHostService {
         failedPrimaryDisplayID: CGDirectDisplayID?,
         reason: String
     ) async {
-        guard desktopStreamID == nil, desktopStreamContext == nil else {
+        guard !Task.isCancelled, desktopStreamID == nil, desktopStreamContext == nil else {
             MirageLogger.host("Skipped deferred desktop display cleanup because a newer desktop stream is active")
             deferredDesktopStartupDisplayCleanupTask = nil
             return
@@ -243,13 +243,137 @@ extension MirageHostService {
             if mode == .unified {
                 _ = await disableDisplayMirroring(displayID: vdID)
             }
+            guard !Task.isCancelled, desktopStreamID == nil, desktopStreamContext == nil else {
+                MirageLogger.host("Cancelled deferred desktop startup display cleanup after mirroring restore")
+                deferredDesktopStartupDisplayCleanupTask = nil
+                return
+            }
             await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
         } else if !desktopMirroringSnapshot.isEmpty {
             _ = await disableDisplayMirroring(displayID: failedPrimaryDisplayID ?? CGMainDisplayID())
         }
+        guard !Task.isCancelled, desktopStreamID == nil, desktopStreamContext == nil else {
+            MirageLogger.host("Cancelled deferred desktop startup display cleanup before Space restore")
+            deferredDesktopStartupDisplayCleanupTask = nil
+            return
+        }
         await finishDesktopSpaceRestoreAfterDisplayTeardown(reason: reason)
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
         deferredDesktopStartupDisplayCleanupTask = nil
+    }
+
+    func cancelDeferredDesktopDisplayCleanupForReuse(reason: String) {
+        guard let task = deferredDesktopDisplayCleanupTask else { return }
+        desktopDisplayCleanupGeneration &+= 1
+        task.cancel()
+        deferredDesktopDisplayCleanupTask = nil
+        MirageLogger.host("Cancelled deferred desktop display cleanup for reuse: \(reason)")
+    }
+
+    func scheduleDeferredDesktopDisplayCleanup(
+        mode: MirageDesktopStreamMode,
+        sharedDisplayID: CGDirectDisplayID?,
+        primaryDisplayID: CGDirectDisplayID?,
+        hadMirroringSnapshot: Bool,
+        reason: String
+    ) {
+        deferredDesktopDisplayCleanupTask?.cancel()
+        desktopDisplayCleanupGeneration &+= 1
+        let cleanupGeneration = desktopDisplayCleanupGeneration
+        deferredDesktopDisplayCleanupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(150))
+            } catch {
+                return
+            }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            await performDeferredDesktopDisplayCleanup(
+                mode: mode,
+                sharedDisplayID: sharedDisplayID,
+                primaryDisplayID: primaryDisplayID,
+                hadMirroringSnapshot: hadMirroringSnapshot,
+                reason: reason,
+                generation: cleanupGeneration
+            )
+        }
+    }
+
+    func performDeferredDesktopDisplayCleanup(
+        mode: MirageDesktopStreamMode,
+        sharedDisplayID: CGDirectDisplayID?,
+        primaryDisplayID: CGDirectDisplayID?,
+        hadMirroringSnapshot: Bool,
+        reason: String,
+        generation: UInt64
+    ) async {
+        defer {
+            if desktopDisplayCleanupGeneration == generation {
+                deferredDesktopDisplayCleanupTask = nil
+            }
+        }
+        guard shouldContinueDeferredDesktopDisplayCleanup(generation: generation) else {
+            MirageLogger.host("Skipped deferred desktop display cleanup because a newer desktop stream is active")
+            return
+        }
+
+        MirageLogger.host("Deferred desktop display cleanup started: reason=\(reason)")
+        beginDesktopSharedDisplayTransition()
+        defer { endDesktopSharedDisplayTransition() }
+
+        if mode == .unified {
+            if let sharedDisplayID {
+                _ = await disableDisplayMirroring(displayID: sharedDisplayID)
+            } else if hadMirroringSnapshot {
+                _ = await disableDisplayMirroring(displayID: primaryDisplayID ?? CGMainDisplayID())
+            }
+        }
+
+        await Task.yield()
+        guard shouldContinueDeferredDesktopDisplayCleanup(generation: generation) else {
+            MirageLogger.host("Deferred desktop display cleanup cancelled after mirroring restore")
+            return
+        }
+
+        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+
+        guard shouldContinueDeferredDesktopDisplayCleanup(generation: generation) else {
+            MirageLogger.host("Deferred desktop display cleanup cancelled after display release")
+            return
+        }
+
+        await finishDesktopSpaceRestoreAfterDisplayTeardown(reason: reason)
+
+        guard shouldContinueDeferredDesktopDisplayCleanup(generation: generation) else {
+            MirageLogger.host("Deferred desktop display cleanup cancelled after Space restore")
+            return
+        }
+
+        if activeStreams.isEmpty { await PowerAssertionManager.shared.disable() }
+        await syncAppListRequestDeferralForInteractiveWorkload()
+        await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
+        MirageLogger.host("Deferred desktop display cleanup finished")
+    }
+
+    func shouldContinueDeferredDesktopDisplayCleanup(generation: UInt64) -> Bool {
+        Self.shouldContinueDeferredDesktopDisplayCleanup(
+            cleanupGeneration: generation,
+            currentGeneration: desktopDisplayCleanupGeneration,
+            isCancelled: Task.isCancelled,
+            hasActiveDesktopStream: desktopStreamID != nil || desktopStreamContext != nil
+        )
+    }
+
+    nonisolated static func shouldContinueDeferredDesktopDisplayCleanup(
+        cleanupGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool,
+        hasActiveDesktopStream: Bool
+    ) -> Bool {
+        !isCancelled &&
+            cleanupGeneration == currentGeneration &&
+            !hasActiveDesktopStream
     }
 
     /// Stops the active desktop stream and restores host display state.
@@ -275,6 +399,7 @@ extension MirageHostService {
         let stoppedContext = desktopStreamContext
         let stoppedMode = desktopStreamMode
         let stoppedPrimaryDisplayID = desktopPrimaryPhysicalDisplayID
+        let hadMirroringSnapshot = !desktopMirroringSnapshot.isEmpty
         MirageLogger.host(
             "Stopping desktop stream: streamID=\(streamID), session=\(stoppedDesktopSessionID?.uuidString ?? "nil"), reason=\(reason)"
         )
@@ -304,14 +429,6 @@ extension MirageHostService {
 
         if let stoppedContext { await stoppedContext.stop() }
 
-        if stoppedMode == .unified {
-            if let sharedDisplayID {
-                _ = await disableDisplayMirroring(displayID: sharedDisplayID)
-            } else if !desktopMirroringSnapshot.isEmpty {
-                _ = await disableDisplayMirroring(displayID: stoppedPrimaryDisplayID ?? CGMainDisplayID())
-            }
-        }
-
         if let clientContext = stoppedClientContext,
            let stoppedDesktopSessionID {
             let message = DesktopStreamStoppedMessage(
@@ -339,19 +456,20 @@ extension MirageHostService {
         desktopCursorPresentation = .simulatedCursor
         await deactivateAudioSourceIfNeeded(streamID: streamID)
 
-        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
-        await finishDesktopSpaceRestoreAfterDisplayTeardown(reason: "desktop_stream_stop")
-
-        if activeStreams.isEmpty { await PowerAssertionManager.shared.disable() }
-
         await syncAppListRequestDeferralForInteractiveWorkload()
-        await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
 
         syncSharedClipboardState()
         await updateLightsOutState()
         lockHostIfStreamingStopped(triggeredByExplicitStreamStop: triggeredByExplicitStreamStop)
+        scheduleDeferredDesktopDisplayCleanup(
+            mode: stoppedMode,
+            sharedDisplayID: sharedDisplayID,
+            primaryDisplayID: stoppedPrimaryDisplayID,
+            hadMirroringSnapshot: hadMirroringSnapshot,
+            reason: "desktop_stream_stop"
+        )
 
-        MirageLogger.host("Desktop stream stopped")
+        MirageLogger.host("Desktop stream stopped; display cleanup deferred")
     }
 }
 

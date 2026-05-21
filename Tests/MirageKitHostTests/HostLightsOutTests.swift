@@ -36,6 +36,28 @@ struct HostLightsOutTests {
         ))
     }
 
+    @Test("Pending desktop restart reactivates Lights Out")
+    func pendingDesktopRestartReactivatesLightsOut() {
+        #expect(MirageHostService.shouldEnableLightsOut(
+            hasAppStreams: false,
+            hasDesktopStream: false,
+            hasPendingAppStreamStart: false,
+            hasPendingDesktopStreamStart: true,
+            lightsOutEnabled: true
+        ))
+    }
+
+    @Test("Stop-only desktop teardown leaves Lights Out inactive while display cleanup continues")
+    func stopOnlyDesktopTeardownLeavesLightsOutInactiveWhileDisplayCleanupContinues() {
+        #expect(!MirageHostService.shouldEnableLightsOut(
+            hasAppStreams: false,
+            hasDesktopStream: false,
+            hasPendingAppStreamStart: false,
+            hasPendingDesktopStreamStart: false,
+            lightsOutEnabled: true
+        ))
+    }
+
     @Test("Disabled preference keeps Lights Out inactive")
     func disabledPreferenceKeepsLightsOutInactive() {
         #expect(!MirageHostService.shouldEnableLightsOut(

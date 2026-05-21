@@ -67,6 +67,7 @@ extension MirageHostService {
                     resolution: attempt.backingScale.pixelResolution,
                     refreshRate: attempt.refreshRate,
                     colorSpace: attempt.colorSpace,
+                    allowActiveUpdate: true,
                     creationPolicy: .singleAttempt(hiDPI: attempt.backingScale.scaleFactor > 1.5),
                     startupBudget: startupBudget
                 )

@@ -19,6 +19,7 @@ extension MirageHostService {
 
         deferredDesktopStartupDisplayCleanupTask?.cancel()
         deferredDesktopStartupDisplayCleanupTask = nil
+        cancelDeferredDesktopDisplayCleanupForReuse(reason: "new_desktop_stream_start")
 
         if let currentOwnerClientID = desktopStreamClientContext?.client.id,
            desktopStreamContext != nil,

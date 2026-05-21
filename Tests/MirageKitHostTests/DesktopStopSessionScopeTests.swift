@@ -37,5 +37,41 @@ struct DesktopStopSessionScopeTests {
             )
         )
     }
+
+    @Test("Deferred display cleanup continues only for the current inactive generation")
+    func deferredDisplayCleanupContinuesOnlyForTheCurrentInactiveGeneration() {
+        #expect(MirageHostService.shouldContinueDeferredDesktopDisplayCleanup(
+            cleanupGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            hasActiveDesktopStream: false
+        ))
+    }
+
+    @Test("Deferred display cleanup cancels when a new desktop stream starts")
+    func deferredDisplayCleanupCancelsWhenANewDesktopStreamStarts() {
+        #expect(!MirageHostService.shouldContinueDeferredDesktopDisplayCleanup(
+            cleanupGeneration: 4,
+            currentGeneration: 5,
+            isCancelled: false,
+            hasActiveDesktopStream: false
+        ))
+        #expect(!MirageHostService.shouldContinueDeferredDesktopDisplayCleanup(
+            cleanupGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            hasActiveDesktopStream: true
+        ))
+    }
+
+    @Test("Deferred display cleanup stops immediately when its task is cancelled")
+    func deferredDisplayCleanupStopsImmediatelyWhenItsTaskIsCancelled() {
+        #expect(!MirageHostService.shouldContinueDeferredDesktopDisplayCleanup(
+            cleanupGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: true,
+            hasActiveDesktopStream: false
+        ))
+    }
 }
 #endif

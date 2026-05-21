@@ -275,6 +275,15 @@ extension WindowCaptureEngine {
 
         // Frame rate
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval
+        let configuredCaptureRate = minimumFrameIntervalRate
+        let displayRefreshText = currentDisplayRefreshRate
+            .map { $0.formatted(.number.precision(.fractionLength(1))) }
+            ?? "unknown"
+        MirageLogger.capture(
+            "event=capture_cadence_config mode=display targetFPS=\(currentFrameRate) " +
+                "sckFPS=\(configuredCaptureRate) displayRefresh=\(displayRefreshText) " +
+                "nativeDisplayCadence=\(usesNativeRefreshMinimumFrameInterval)"
+        )
 
         // Color and format
         streamConfig.pixelFormat = pixelFormatType
