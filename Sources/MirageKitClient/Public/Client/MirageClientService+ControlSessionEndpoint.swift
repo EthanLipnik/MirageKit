@@ -83,14 +83,35 @@ extension MirageClientService {
             )
         }
 
-        return orderedControlSessionAttempts(attempts)
+        let orderedAttempts = orderedControlSessionAttempts(attempts)
+        return applyDebugRouteOverrideIfNeeded(to: orderedAttempts, host: host)
+    }
+
+    func applyDebugRouteOverrideIfNeeded(
+        to attempts: [ControlSessionAttempt],
+        host: LoomPeer
+    ) -> [ControlSessionAttempt] {
+        guard let debugRouteOverride else { return attempts }
+        let forcedAttempts = attempts.filter { attempt in
+            debugRouteOverride.matches(attempt)
+        }
+        if forcedAttempts.isEmpty {
+            MirageLogger.client(
+                "Debug route override \(debugRouteOverride.displayName) found no matching attempts for \(host.name)"
+            )
+        } else {
+            MirageLogger.client(
+                "Debug route override \(debugRouteOverride.displayName) forced \(forcedAttempts.count)/\(attempts.count) attempts for \(host.name)"
+            )
+        }
+        return forcedAttempts
     }
 
     func orderedControlSessionAttempts(_ attempts: [ControlSessionAttempt]) -> [ControlSessionAttempt] {
         attempts.enumerated()
             .sorted { lhs, rhs in
-                let leftRouteRank = lhs.element.routeTier.rank
-                let rightRouteRank = rhs.element.routeTier.rank
+                let leftRouteRank = controlSessionRouteRank(for: lhs.element.routeTier)
+                let rightRouteRank = controlSessionRouteRank(for: rhs.element.routeTier)
                 if leftRouteRank != rightRouteRank {
                     return leftRouteRank < rightRouteRank
                 }
@@ -106,6 +127,33 @@ extension MirageClientService {
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
+    }
+
+    func controlSessionRouteRank(for routeTier: ControlSessionRouteTier) -> Int {
+        guard preferWiFiBeforeAwdlProximity else {
+            return routeTier.rank
+        }
+
+        return switch routeTier {
+        case .applePrivateNCM:
+            0
+        case .bridge:
+            1
+        case .lowLatencyWireless:
+            2
+        case .sameWiredEthernet:
+            3
+        case .mixedEthernetSameLAN:
+            4
+        case .wifiLAN:
+            5
+        case .awdl:
+            6
+        case .vpn:
+            7
+        case .other:
+            8
+        }
     }
 
     func controlSessionTransportRank(
@@ -932,6 +980,9 @@ extension MirageClientService {
         interfaceName: String,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Bool {
+        if debugRouteOverride?.interfaceKind == .awdl {
+            return false
+        }
         pruneExpiredAwdlProximityRouteSuppressions(now: now)
         let wildcardKey = AwdlProximityRouteSuppressionKey(
             deviceID: host.deviceID,
@@ -993,5 +1044,35 @@ extension MirageClientService {
         }
         let interfaceName = interface.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return interfaceName.hasPrefix("awdl") ? interfaceName : nil
+    }
+}
+
+private extension MirageDebugRouteOverride {
+    func matches(_ attempt: MirageClientService.ControlSessionAttempt) -> Bool {
+        guard attempt.transportKind == transportKind else { return false }
+        if let interfaceName {
+            let normalized = interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let names = ([attempt.requiredInterface?.name].compactMap { $0 } + attempt.proximityInterfaceNames)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            if !names.isEmpty, !names.contains(normalized) { return false }
+        }
+
+        guard let interfaceKind else { return true }
+        switch interfaceKind {
+        case .awdl:
+            return attempt.routeTier == .awdl ||
+                attempt.proximityInterfaceKind == .awdl ||
+                attempt.proximityInterfaceNames.contains { $0.lowercased().hasPrefix("awdl") } ||
+                attempt.requiredInterface?.name.lowercased().hasPrefix("awdl") == true
+        case .wifi:
+            return attempt.routeTier == .wifiLAN ||
+                attempt.requiredInterfaceType == .wifi
+        case .wired:
+            return attempt.routeTier == .sameWiredEthernet ||
+                attempt.routeTier == .mixedEthernetSameLAN ||
+                attempt.routeTier == .applePrivateNCM ||
+                attempt.routeTier == .bridge ||
+                attempt.requiredInterfaceType == .wiredEthernet
+        }
     }
 }

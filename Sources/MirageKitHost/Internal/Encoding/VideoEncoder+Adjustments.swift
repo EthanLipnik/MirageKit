@@ -140,6 +140,16 @@ extension VideoEncoder {
         applyBitrateSettingsToActiveSession()
     }
 
+    func encodedOutputSnapshot(since startTime: CFAbsoluteTime? = nil) -> EncodedOutputTelemetrySnapshot {
+        encodedOutputTelemetry.snapshot(since: startTime)
+    }
+
+    func recreateSessionForRateControlRetune() async throws {
+        guard currentWidth > 0, currentHeight > 0 else { return }
+        MirageLogger.encoder("Recreating encoder session for rate-control retune validation")
+        try await updateConfiguration(configuration)
+    }
+
     func forceKeyframe() {
         MirageLogger.encoder("Keyframe requested")
         forceNextKeyframe = true

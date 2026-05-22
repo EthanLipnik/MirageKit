@@ -86,15 +86,15 @@ extension StreamPacketSender {
     nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
     nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
-    nonisolated static let keyframeDependencyDropSuppressionSeconds: CFAbsoluteTime = 0.200
     nonisolated static let maxQueuedWorkItems: Int = 32
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
 
-    enum DependencyFrameDropReason: String {
+    enum DependencyFrameDropReason: String, Sendable {
         case expiredBeforeEnqueue = "expired-before-enqueue"
         case expiredBeforeSend = "expired-before-send"
         case expiredDuringSend = "expired-during-send"
         case expiredQueuedFrame = "expired-queued-frame"
+        case generationAbort = "generation-abort"
         case oversizedFrame = "oversized-frame"
         case queueEviction = "queue-eviction"
     }

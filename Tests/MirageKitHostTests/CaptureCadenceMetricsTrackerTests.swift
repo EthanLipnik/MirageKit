@@ -26,6 +26,8 @@ struct CaptureCadenceMetricsTrackerTests {
         let snapshot = tracker.snapshot
         #expect(snapshot.wallClockGapWorstMs > 99.9)
         #expect(snapshot.wallClockGapP95Ms > 99.9)
+        #expect(snapshot.displayTimeGapP50Ms >= 16)
+        #expect(snapshot.displayTimeGapP50Ms < 50)
         #expect(snapshot.displayTimeGapP99Ms > 99.9)
         #expect(snapshot.deliveredFrameGapWorstMs > 99.9)
         #expect(snapshot.longFrameGapCount == 2)

@@ -49,6 +49,24 @@ extension MirageClientService {
         controlPathHistory.removeAll(keepingCapacity: false)
     }
 
+    func suppressCurrentAwdlProximityRouteIfNeeded(
+        duration: TimeInterval = 15 * 60,
+        reason: String
+    ) {
+        guard let connectedHost,
+              let pathStatus = currentControlPathStatus,
+              Self.pathStatusIndicatesAwdl(pathStatus) else {
+            return
+        }
+
+        suppressAwdlProximityRoute(
+            for: connectedHost,
+            interfaceNames: Self.awdlInterfaceNames(from: pathStatus),
+            duration: duration,
+            reason: reason
+        )
+    }
+
     /// Appends a distinct control-path status sample, keeping only the most recent entries.
     func recordControlPathHistory(
         _ snapshot: MirageNetworkPathSnapshot,
@@ -71,7 +89,7 @@ extension MirageClientService {
     /// Reapplies transport-sensitive stream pacing after the control path changes.
     private func refreshActiveStreamTransportProfiles(for pathKind: MirageNetworkPathKind) {
         for (streamID, controller) in controllersByStream {
-            let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+            let latencyMode = renderLatencyModeByStream[streamID] ?? .balanced
             let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
             let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: pathKind)
@@ -91,5 +109,16 @@ extension MirageClientService {
                 )
             }
         }
+    }
+
+    private static func pathStatusIndicatesAwdl(_ status: MirageClientNetworkPathStatus) -> Bool {
+        if status.kind == .awdl { return true }
+        return !awdlInterfaceNames(from: status).isEmpty
+    }
+
+    private static func awdlInterfaceNames(from status: MirageClientNetworkPathStatus) -> [String] {
+        status.interfaceNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { $0.hasPrefix("awdl") }
     }
 }

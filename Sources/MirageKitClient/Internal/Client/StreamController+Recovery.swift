@@ -26,9 +26,9 @@ extension StreamController {
     }
 
     /// Records a local decode-queue drop for metrics and rate-limited logging.
-    func recordQueueDrop() {
-        queueDropsSinceLastLog += 1
-        metricsTracker.recordQueueDrop()
+    func recordQueueDrop(count: UInt64 = 1) {
+        queueDropsSinceLastLog &+= count
+        metricsTracker.recordQueueDrop(count: count)
     }
 
     /// Emits a decode-queue drop log when the rate limit allows it.
@@ -44,7 +44,7 @@ extension StreamController {
         }
     }
 
-    /// Logs a decode backpressure threshold event without forcing keyframe recovery.
+    /// Logs a decode backpressure threshold event.
     func maybeLogDecodeBackpressure(queueDepth: Int) {
         let now = currentTime
         if lastBackpressureLogTime > 0,
@@ -53,9 +53,31 @@ extension StreamController {
         }
         lastBackpressureLogTime = now
         MirageLogger.client(
-            "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "continuing decode without keyframe recovery"
+            "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID)"
         )
+    }
+
+    /// Handles compressed-frame queue overflow without feeding dependent P-frames into VideoToolbox.
+    func handleDecodeQueueDependencyBreak(droppedFrame: FrameData, queueDepth: Int) async {
+        droppedFrame.releaseBuffer()
+        let clearedQueuedFrames = clearQueuedDecodeFramesOnly()
+        let droppedCount = UInt64(clearedQueuedFrames + 1)
+        recordQueueDrop(count: droppedCount)
+        maybeLogDecodeBackpressure(queueDepth: queueDepth)
+        logQueueDropIfNeeded()
+
+        decodeQueueRequiresKeyframe = true
+        reassembler.beginKeyframeWait()
+        startFreezeMonitorIfNeeded()
+
+        MirageLogger.client(
+            "Decode backpressure broke compressed-frame dependency chain for stream \(streamID); " +
+                "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), requesting keyframe"
+        )
+        if presentationTier == .activeLive {
+            await startKeyframeRecoveryLoopIfNeeded()
+        }
+        await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
     }
 
     /// Handles frame reassembly loss by choosing bootstrap, passive, immediate, or delayed recovery.
@@ -186,6 +208,20 @@ extension StreamController {
            now - lastRecoveryRequestDispatchTime < coalesceInterval {
             return false
         }
+        trimRecoveryKeyframeDispatchWindow(now: now)
+        if recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit {
+            MirageLogger.client(
+                "Recovery keyframe request suppressed after \(recoveryKeyframeDispatchTimes.count) requests/" +
+                    "\(Int(Self.recoveryKeyframeDispatchWindow))s for stream \(streamID); signaling adaptation pressure"
+            )
+            if presentationTier == .activeLive {
+                let stallHandler = onStallEvent
+                await MainActor.run {
+                    stallHandler?(.keyframeStarved)
+                }
+            }
+            return false
+        }
         if shouldDeferKeyframeRequestForPendingProgress(now: now, reason: reason) {
             return false
         }
@@ -225,7 +261,13 @@ extension StreamController {
         }
         lastRecoveryRequestDispatchTime = now
         lastRecoveryRequestTime = now
+        recoveryKeyframeDispatchTimes.append(now)
         return true
+    }
+
+    private func trimRecoveryKeyframeDispatchWindow(now: CFAbsoluteTime) {
+        let oldestAllowed = now - Self.recoveryKeyframeDispatchWindow
+        recoveryKeyframeDispatchTimes.removeAll { $0 < oldestAllowed }
     }
 
     private func shouldDeferKeyframeRequestForPendingProgress(

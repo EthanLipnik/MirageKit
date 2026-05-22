@@ -278,7 +278,7 @@ extension FrameReassembler {
             let noProgressTimedOut: Bool
             let lifetimeTimedOut: Bool
             if frame.isKeyframe {
-                let timeout = startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+                let timeout = keyframeNoProgressTimeoutLocked(for: frame)
                 noProgressTimedOut = now.timeIntervalSince(frame.lastProgressAt) >= timeout
                 lifetimeTimedOut = false
             } else {
@@ -486,17 +486,8 @@ extension FrameReassembler {
     }
 
     func shouldBufferNonKeyframeWhileAwaitingKeyframeLocked(frameNumber: UInt32) -> Bool {
-        guard awaitingKeyframe else { return true }
-        return pendingFrames.contains { entry in
-            let pendingFrameNumber = entry.key
-            let pendingFrame = entry.value
-            guard pendingFrame.isKeyframe,
-                  !isStaleKeyframeLocked(pendingFrameNumber),
-                  pendingFrame.receivedCount > 0 else {
-                return false
-            }
-            return frameNumber == pendingFrameNumber || isFrameNewer(frameNumber, than: pendingFrameNumber)
-        }
+        _ = frameNumber
+        return !awaitingKeyframe
     }
 
     private func pFrameTimeoutLocked() -> TimeInterval {
@@ -511,7 +502,22 @@ extension FrameReassembler {
     }
 
     private func bufferedForwardGapTimeoutLocked() -> TimeInterval {
-        transportPathKind == .vpn ? 0.75 : pFrameTimeoutLocked()
+        transportPathKind == .vpn ? vpnBufferedForwardGapTimeout : pFrameTimeoutLocked()
+    }
+
+    private func keyframeNoProgressTimeoutLocked(for frame: PendingFrame) -> TimeInterval {
+        var timeout = startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+        if transportPathKind == .vpn {
+            timeout = max(timeout, vpnKeyframeTimeout)
+        }
+
+        let progressRatio = keyframeProgressRatioLocked(frame)
+        if progressRatio >= 0.90 {
+            timeout += nearCompleteKeyframeTimeoutBonus
+        } else if progressRatio >= pendingKeyframeProgressPreservationThreshold {
+            timeout += highProgressKeyframeTimeoutBonus
+        }
+        return timeout
     }
 
     private func severeForwardGapFrameThresholdLocked() -> UInt32 {

@@ -460,6 +460,25 @@ struct FrameReassemblerStaleKeyframeTests {
         )
 
         #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(lossReason.value == nil)
+        #expect(reassembler.isAwaitingKeyframe == false)
+
+        Thread.sleep(forTimeInterval: 0.760)
+
+        let expiredVPNGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x2C])
+        reassembler.processPacket(
+            expiredVPNGapPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 44,
+                payload: expiredVPNGapPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .forwardGapTimeout)
         #expect(reassembler.isAwaitingKeyframe == true)

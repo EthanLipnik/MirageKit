@@ -72,6 +72,35 @@ struct CaptureRateTests {
         )
     }
 
+    @Test("High refresh desktop capture starts with explicit target interval")
+    func highRefreshDesktopCaptureStartsWithExplicitTargetInterval() {
+        #expect(
+            WindowCaptureEngine.resolvedMinimumFrameInterval(
+                requestedFrameRate: 120,
+                displayRefreshRate: 120,
+                usesDisplayRefreshCadence: true,
+                prefersExplicitHighRefreshInterval: true
+            ) == CMTime(value: 1, timescale: 120)
+        )
+        #expect(
+            WindowCaptureEngine.usesNativeRefreshMinimumFrameInterval(
+                requestedFrameRate: 120,
+                displayRefreshRate: 120,
+                usesDisplayRefreshCadence: true,
+                prefersExplicitHighRefreshInterval: true
+            ) == false
+        )
+        #expect(
+            WindowCaptureEngine.resolvedMinimumFrameInterval(
+                requestedFrameRate: 120,
+                displayRefreshRate: 120,
+                usesDisplayRefreshCadence: true,
+                minimumFrameIntervalPolicy: .nativeRefresh,
+                prefersExplicitHighRefreshInterval: true
+            ) == .zero
+        )
+    }
+
     @Test("Virtual-display cadence falls back to native 60 Hz when refresh readback is missing")
     func virtualDisplayCadenceFallsBackToNative60Hz() {
         #expect(

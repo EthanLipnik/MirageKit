@@ -79,6 +79,9 @@ struct MirageRenderFrame: @unchecked Sendable {
     let dimensionToken: UInt16?
     let frameNumber: UInt32?
     let queueEpoch: UInt64?
+    let transportPathKind: MirageNetworkPathKind
+    let targetPlayoutTime: CFAbsoluteTime?
+    let targetPlayoutDelayMs: Double
     var timeline: FrameTimeline?
 
     var sequence: UInt64 {
@@ -97,6 +100,9 @@ struct MirageRenderFrame: @unchecked Sendable {
         dimensionToken: UInt16? = nil,
         frameNumber: UInt32? = nil,
         queueEpoch: UInt64? = nil,
+        transportPathKind: MirageNetworkPathKind = .unknown,
+        targetPlayoutTime: CFAbsoluteTime? = nil,
+        targetPlayoutDelayMs: Double = 0,
         timeline: FrameTimeline? = nil
     ) {
         self.pixelBuffer = pixelBuffer
@@ -113,6 +119,33 @@ struct MirageRenderFrame: @unchecked Sendable {
         self.dimensionToken = dimensionToken
         self.frameNumber = frameNumber
         self.queueEpoch = queueEpoch
+        self.transportPathKind = transportPathKind
+        self.targetPlayoutTime = targetPlayoutTime
+        self.targetPlayoutDelayMs = max(0, targetPlayoutDelayMs)
         self.timeline = timeline
+    }
+
+    func withPlayoutMetadata(
+        transportPathKind: MirageNetworkPathKind,
+        targetPlayoutTime: CFAbsoluteTime?,
+        targetPlayoutDelayMs: Double
+    ) -> MirageRenderFrame {
+        MirageRenderFrame(
+            pixelBuffer: pixelBuffer,
+            contentRect: contentRect,
+            sequence: cursor.sequence,
+            generation: cursor.generation,
+            decodeTime: decodeTime,
+            presentationTime: presentationTime,
+            remotePresentationTime: remotePresentationTime,
+            hostEpoch: hostEpoch,
+            dimensionToken: dimensionToken,
+            frameNumber: frameNumber,
+            queueEpoch: queueEpoch,
+            transportPathKind: transportPathKind,
+            targetPlayoutTime: targetPlayoutTime,
+            targetPlayoutDelayMs: targetPlayoutDelayMs,
+            timeline: timeline
+        )
     }
 }

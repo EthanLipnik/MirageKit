@@ -321,6 +321,7 @@ extension InputCapturingView {
 
     func stopTouchScrollDeceleration() {
         scrollPhysicsView?.cancelDirectTouchScrolling()
+        directTouchScrollAnchorLocation = nil
         touchScrollDecelerationLink?.invalidate()
         touchScrollDecelerationLink = nil
         touchScrollDecelerationVelocity = .zero

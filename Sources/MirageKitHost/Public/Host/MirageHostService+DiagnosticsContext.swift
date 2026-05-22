@@ -31,6 +31,9 @@ extension MirageHostService {
             "host.activeStreams": .int(activeStreams.count),
             "host.proximityConnect": .bool(loomNode.configuration.enablePeerToPeer),
             "host.bonjour": .bool(loomNode.configuration.enableBonjour),
+            "host.loom.nativeQUICSupported": .bool(LoomNode.nativeQUICAvailable),
+            "host.loom.directUDPServiceClass": .string(String(describing: loomNode.configuration.directUDPServiceClass)),
+            "host.loom.maxPacketSize": .int(loomNode.configuration.maxPacketSize),
             "host.serviceName": .string(serviceName),
             "host.advertisedHostName": advertisedPeerAdvertisement.hostName.map(LoomDiagnosticsValue.string) ?? .null,
             "host.directTransports": .string(

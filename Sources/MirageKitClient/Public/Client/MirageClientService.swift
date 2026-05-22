@@ -410,6 +410,11 @@ public final class MirageClientService {
     var awdlProximityRouteSuppressions: [AwdlProximityRouteSuppressionKey: CFAbsoluteTime] = [:]
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
+
+    /// Whether local Wi-Fi/LAN control attempts should be tried before AWDL proximity attempts.
+    public var preferWiFiBeforeAwdlProximity = false
+    /// Debug route override used to force one transport/interface for the next connection attempt.
+    public var debugRouteOverride: MirageDebugRouteOverride?
     let controlSessionConnectTimeout: Duration = .seconds(30)
     /// Manual trust approval happens before the authenticated control session reaches `.ready`.
     let trustPendingControlSessionConnectTimeout: Duration = .seconds(90)

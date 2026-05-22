@@ -31,9 +31,13 @@ actor StreamPacketSender {
     nonisolated(unsafe) var queuedWorkItems: [QueuedWorkItem] = []
     nonisolated(unsafe) var queuedBytes: Int = 0
     nonisolated(unsafe) var dropNonKeyframesUntilKeyframe: Bool = false
+    nonisolated(unsafe) var dependencyRecoveryRequiresKeyframe: Bool = false
     nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     nonisolated(unsafe) var latestKeyframeGeneration: UInt32 = 0
-    nonisolated(unsafe) var dependencyDropSuppressionDeadline: CFAbsoluteTime = 0
+    nonisolated(unsafe) var latestDependencyDropFrameNumber: UInt32 = 0
+    nonisolated(unsafe) var latestDependencyDropGeneration: UInt32 = 0
+    nonisolated(unsafe) var dependencyBaselineKeyframeFrameNumber: UInt32 = 0
+    nonisolated(unsafe) var dependencyBaselineKeyframeGeneration: UInt32 = 0
     nonisolated(unsafe) var queuedStalePacketDropCount: UInt64 = 0
     nonisolated(unsafe) var queuedSenderLocalDeadlineDropCount: UInt64 = 0
     nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
@@ -184,12 +188,12 @@ extension StreamPacketSender {
 
         if isExpiredNonKeyframe(item, now: now) {
             queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(item, reason: .expiredBeforeEnqueue, clientVisible: false)
+            markDependencyFrameDroppedLocked(item, reason: .expiredBeforeEnqueue)
             return .dropped
         }
 
         if item.isKeyframe {
-            extendDependencyDropSuppressionLocked(now: now)
+            recordDependencyBaselineKeyframeLocked(item)
             if latestKeyframeGeneration != item.generation || item.frameNumber >= latestKeyframeFrameNumber {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
@@ -197,7 +201,8 @@ extension StreamPacketSender {
             }
             discardQueuedNonKeyframesLocked(countAsHoldDrops: true)
             discardSupersededQueuedKeyframesLocked(newestFrameNumber: item.frameNumber, generation: item.generation)
-        } else if dropNonKeyframesUntilKeyframe, latestKeyframeGeneration == item.generation,
+        } else if dropNonKeyframesUntilKeyframe, !dependencyRecoveryRequiresKeyframe,
+                  latestKeyframeGeneration == item.generation,
                   !hasQueuedKeyframeLocked(frameNumber: latestKeyframeFrameNumber, generation: latestKeyframeGeneration) {
             resetKeyframeTrackingLocked()
         }
@@ -245,7 +250,7 @@ extension StreamPacketSender {
         if isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             stalePacketDropCount &+= 1
             queueLock.withLock {
-                markDependencyFrameDroppedLocked(item, reason: .expiredBeforeSend, clientVisible: false)
+                markDependencyFrameDroppedLocked(item, reason: .expiredBeforeSend)
             }
             reduceQueuedBytes(accountedBytes)
             return
@@ -265,8 +270,10 @@ extension StreamPacketSender {
 
         if item.isKeyframe {
             queueLock.withLock {
-                extendDependencyDropSuppressionLocked(now: CFAbsoluteTimeGetCurrent())
-                if latestKeyframeGeneration == item.generation, latestKeyframeFrameNumber == item.frameNumber {
+                recordDependencyBaselineKeyframeLocked(item)
+                if latestKeyframeGeneration == item.generation,
+                   latestKeyframeFrameNumber == item.frameNumber,
+                   keyframeSatisfiesDependencyRecoveryLocked(item) {
                     resetKeyframeTrackingLocked()
                 }
             }

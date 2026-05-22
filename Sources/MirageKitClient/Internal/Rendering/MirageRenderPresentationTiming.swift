@@ -31,8 +31,10 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
 
     var displaysImmediately: Bool {
         switch latencyMode {
-        case .lowestLatency, .smoothest:
+        case .lowestLatency, .balanced:
             true
+        case .smoothest:
+            false
         }
     }
 
@@ -48,9 +50,9 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
         referenceTime: CFTimeInterval,
         timescale: CMTimeScale
     ) -> CMTime {
-        let playoutDelay = displaysImmediately ? 0 : frameDurationSeconds * CFTimeInterval(playoutDelayFrames)
+        let schedulingLead = displaysImmediately ? 0 : min(frameDurationSeconds, 0.008)
         return CMTime(
-            seconds: referenceTime + playoutDelay,
+            seconds: referenceTime + schedulingLead,
             preferredTimescale: timescale
         )
     }

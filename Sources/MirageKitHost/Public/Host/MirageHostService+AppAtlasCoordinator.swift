@@ -139,7 +139,7 @@ extension MirageHostService {
         )
         atlasEncoderConfig = atlasEncoderConfig.withInternalOverrides(pixelFormat: .bgra8)
 
-        let latencyMode = selectRequest.latencyMode ?? .lowestLatency
+        let latencyMode = selectRequest.latencyMode ?? .balanced
         let hostBufferingPolicy = selectRequest.resolvedHostBufferingPolicy
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
@@ -159,6 +159,7 @@ extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            transportPathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
@@ -211,6 +212,7 @@ extension MirageHostService {
             throw error
         }
 
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         let coordinator = AppAtlasMediaCoordinator(
             mediaStreamID: mediaStreamID,
             context: context,
@@ -220,7 +222,7 @@ extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             targetFrameRate: targetFrameRate,
             sendPacket: { packetData, onComplete in
-                videoStream.sendUnreliableQueued(packetData, onComplete: onComplete)
+                videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
             },
             onSendError: { [weak self] error in
                 guard let self else { return }

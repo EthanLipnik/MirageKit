@@ -47,8 +47,13 @@ struct RenderPresentationSchedulerTests {
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
     }
 
-    @Test("Active live frame arrival coalesces until display clock starts")
-    func activeLiveFrameArrivalCoalescesUntilDisplayClockStarts() {
+    private func configureLowestLatencyPresentationTiming(for streamID: StreamID) {
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
+    }
+
+    @Test("Smoothest frame arrival waits until the display clock starts")
+    func smoothestFrameArrivalWaitsUntilDisplayClockStarts() {
         let streamID: StreamID = 901
         configureScheduledPresentationTiming(for: streamID)
         var submitCount = 0
@@ -73,11 +78,9 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleFrameAvailable(referenceTime: 3)
 
         #expect(submitCount == 0)
-        #expect(scheduledCallbacks.count == 1)
+        #expect(scheduledCallbacks.isEmpty)
 
         scheduler.setDisplayClockActive(true)
-        let callback = scheduledCallbacks.removeFirst()
-        callback()
         #expect(submitCount == 0)
 
         scheduler.handleDisplayTick(referenceTime: 4)
@@ -153,8 +156,8 @@ struct RenderPresentationSchedulerTests {
         #expect(submitReferences == [1, 3])
     }
 
-    @Test("Active live frame arrival suppresses immediate fallback but recovers after a missed-tick interval")
-    func activeLiveFrameArrivalSuppressesImmediateFallbackButRecoversAfterMissedTickInterval() {
+    @Test("Smoothest frame arrival does not recover outside display ticks after a missed interval")
+    func smoothestFrameArrivalDoesNotRecoverOutsideDisplayTicksAfterMissedInterval() {
         let streamID: StreamID = 909
         configureScheduledPresentationTiming(for: streamID)
         var submitReferences: [CFTimeInterval] = []
@@ -198,18 +201,18 @@ struct RenderPresentationSchedulerTests {
         wallTime += 0.002
         scheduler.handleFrameAvailable(referenceTime: 3)
 
-        #expect(scheduledCallbacks.count == 1)
-        scheduledCallbacks.removeFirst()()
-        #expect(submitReferences == [1, 3])
-        #expect(pendingFrames.submittedCount == 2)
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(submitReferences == [1])
+        #expect(pendingFrames.submittedCount == 1)
 
         pendingFrames.enqueue()
         scheduler.handleDisplayTick(referenceTime: 4)
-        #expect(submitReferences == [1, 3, 4])
+        #expect(submitReferences == [1, 4])
+        #expect(pendingFrames.submittedCount == 2)
     }
 
-    @Test("Active live frame arrival catches up after a no-frame display tick")
-    func activeLiveFrameArrivalCatchesUpAfterNoFrameDisplayTick() {
+    @Test("Smoothest records late arrival after an empty tick without catch-up")
+    func smoothestRecordsLateArrivalAfterEmptyTickWithoutCatchUp() {
         let streamID: StreamID = 915
         configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
@@ -236,22 +239,49 @@ struct RenderPresentationSchedulerTests {
         wallTime = 1.010
         scheduler.handleFrameAvailable(referenceTime: 1.001)
 
-        #expect(scheduledCallbacks.count == 1)
-        scheduledCallbacks.removeFirst()()
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(pendingFrames.submittedCount == 0)
+        #expect(pendingFrames.pendingCount == 1)
+
+        scheduler.handleDisplayTick(referenceTime: 1.016)
         #expect(pendingFrames.submittedCount == 1)
         #expect(pendingFrames.pendingCount == 0)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.displayTickNoFrameCount == 1)
-        #expect(telemetry.frameArrivalFallbackCount == 1)
-        #expect(telemetry.frameArrivalFallbackScheduledCount == 1)
-        #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
+        #expect(telemetry.frameArrivalFallbackCount == 0)
+        #expect(telemetry.frameArrivalFallbackScheduledCount == 0)
+        #expect(telemetry.frameArrivalFallbackSubmittedCount == 0)
         #expect(telemetry.frameArrivedAfterNoFrameTickCount == 1)
         #expect(telemetry.noFrameTickToFrameArrivalMaxMs >= 9)
     }
 
-    @Test("Active live frame arrival drains backlog but preserves a lone pending frame")
-    func activeLiveFrameArrivalDrainsBacklogButPreservesLonePendingFrame() {
+    @Test("Smoothest pending frame not ready is not counted as an empty display tick")
+    func smoothestPendingFrameNotReadyIsNotCountedAsEmptyDisplayTick() {
+        let streamID: StreamID = 919
+        configureScheduledPresentationTiming(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        let scheduler = MirageRenderPresentationScheduler(
+            submit: { _ in .pendingFrameNotReady },
+            hasPendingFrame: { true },
+            pendingFrameCount: { 1 }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleDisplayTick(referenceTime: 1)
+        scheduler.handleFrameAvailable(referenceTime: 1.001)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.displayTickNoFrameCount == 0)
+        #expect(telemetry.repeatedFrameCount == 0)
+        #expect(telemetry.frameArrivedAfterNoFrameTickCount == 0)
+    }
+
+    @Test("Smoothest frame arrival waits for display ticks and preserves pending frames")
+    func smoothestFrameArrivalWaitsForDisplayTicksAndPreservesPendingFrames() {
         let streamID: StreamID = 916
         configureScheduledPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
@@ -282,17 +312,20 @@ struct RenderPresentationSchedulerTests {
         pendingFrames.enqueue()
         wallTime = 1.05
         scheduler.handleFrameAvailable(referenceTime: 1.002)
-        #expect(scheduledCallbacks.count == 1)
-        scheduledCallbacks.removeFirst()()
+        #expect(scheduledCallbacks.isEmpty)
 
+        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.pendingCount == 2)
+
+        scheduler.handleDisplayTick(referenceTime: 1.016)
         #expect(pendingFrames.submittedCount == 2)
         #expect(pendingFrames.pendingCount == 1)
     }
 
-    @Test("Active live frame arrival falls back before the first active display tick")
-    func activeLiveFrameArrivalFallsBackBeforeFirstActiveDisplayTick() {
+    @Test("Lowest latency frame arrival submits before the first active display tick")
+    func lowestLatencyFrameArrivalSubmitsBeforeFirstActiveDisplayTick() {
         let streamID: StreamID = 908
-        configureScheduledPresentationTiming(for: streamID)
+        configureLowestLatencyPresentationTiming(for: streamID)
         var submitReferences: [CFTimeInterval] = []
         var scheduledCallbacks: [@Sendable () -> Void] = []
         let wallTime: CFTimeInterval = 20
@@ -315,9 +348,7 @@ struct RenderPresentationSchedulerTests {
 
         scheduler.handleFrameAvailable(referenceTime: 2)
 
-        #expect(scheduledCallbacks.count == 1)
-        let callback = scheduledCallbacks.removeFirst()
-        callback()
+        #expect(scheduledCallbacks.isEmpty)
         #expect(submitReferences == [2])
     }
 
@@ -522,7 +553,7 @@ struct RenderPresentationSchedulerTests {
     @Test("60Hz cadence with late 60fps arrivals catches up after no-frame ticks")
     func sixtyHertzCadenceWithLateSixtyFPSArrivalsCatchesUpAfterNoFrameTicks() {
         let streamID: StreamID = 918
-        configureScheduledPresentationTiming(for: streamID)
+        configureLowestLatencyPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var scheduledCallbacks: [@Sendable () -> Void] = []
         var wallTime: CFTimeInterval = 0
@@ -562,6 +593,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Display layer not-ready with no active display clock arms a readiness retry")
     func displayLayerNotReadyWithNoActiveDisplayClockArmsReadinessRetry() {
         let streamID: StreamID = 904
+        configureLowestLatencyPresentationTiming(for: streamID)
         var submitCount = 0
         var readinessRetryCount = 0
         var scheduledCallbacks: [@Sendable () -> Void] = []
@@ -620,6 +652,7 @@ struct RenderPresentationSchedulerTests {
     @Test("Renderer-ready recovery waits for display cadence unless ticks under-run")
     func rendererReadyRecoveryWaitsForDisplayCadenceUnlessTicksUnderrun() {
         let streamID: StreamID = 916
+        configureLowestLatencyPresentationTiming(for: streamID)
         let pendingFrames = SimulatedPendingFrames()
         var submitReferences: [CFTimeInterval] = []
         var wallTime: CFTimeInterval = 10

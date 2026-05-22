@@ -149,8 +149,9 @@ extension MirageHostService {
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: request.disableResolutionCap ?? false,
-            latencyMode: request.latencyMode ?? .lowestLatency,
+            latencyMode: request.latencyMode ?? .balanced,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,
+            transportPathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight
@@ -168,8 +169,9 @@ extension MirageHostService {
             throw error
         }
 
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
-            videoStream.sendUnreliableQueued(packetData, onComplete: onComplete)
+            videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
         }
         let onSendError: @Sendable (Error) -> Void = { [weak self] error in
             guard let self else { return }

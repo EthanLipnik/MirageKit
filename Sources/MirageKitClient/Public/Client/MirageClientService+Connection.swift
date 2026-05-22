@@ -63,20 +63,23 @@ public extension MirageClientService {
     func updateNetworkPolicy(
         enableBonjour: Bool,
         enablePeerToPeer: Bool,
+        preferWiFiBeforeAwdlProximity: Bool,
         requireEncryptedMediaOnLocalNetwork: Bool
     ) {
         guard networkConfig.enableBonjour != enableBonjour ||
             networkConfig.enablePeerToPeer != enablePeerToPeer ||
+            self.preferWiFiBeforeAwdlProximity != preferWiFiBeforeAwdlProximity ||
             networkConfig.requireEncryptedMediaOnLocalNetwork != requireEncryptedMediaOnLocalNetwork else {
             return
         }
 
         networkConfig.enableBonjour = enableBonjour
         networkConfig.enablePeerToPeer = enablePeerToPeer
+        self.preferWiFiBeforeAwdlProximity = preferWiFiBeforeAwdlProximity
         networkConfig.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
         loomNode.configuration = networkConfig
         MirageLogger.client(
-            "Updated network policy (bonjour=\(enableBonjour), p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
+            "Updated network policy (bonjour=\(enableBonjour), p2p=\(enablePeerToPeer), preferWiFiBeforeAwdl=\(preferWiFiBeforeAwdlProximity), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
         )
     }
 

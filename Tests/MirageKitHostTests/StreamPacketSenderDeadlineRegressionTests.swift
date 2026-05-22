@@ -186,8 +186,8 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Repeated local expired dependency frames stay local")
-    func repeatedLocalExpiredDependencyFramesStayLocal() async throws {
+    @Test("Repeated local expired dependency frames hold until keyframe")
+    func repeatedLocalExpiredDependencyFramesHoldUntilKeyframe() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
@@ -238,9 +238,10 @@ extension StreamPacketSenderRegressionTests {
                 generation: generation
             )
         )
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
+        try await Task.sleep(for: .milliseconds(50))
 
-        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(submittedPackets.read { $0.isEmpty })
+        #expect(dependencyDropCount.read { $0 == 1 })
 
         sender.enqueue(
             makeStreamPacketWorkItem(
@@ -252,7 +253,7 @@ extension StreamPacketSenderRegressionTests {
                 isKeyframe: true
             )
         )
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
 
         sender.enqueue(
             makeStreamPacketWorkItem(
@@ -263,15 +264,60 @@ extension StreamPacketSenderRegressionTests {
                 generation: generation
             )
         )
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 3)
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
 
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [404, 405, 406])
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [405, 406])
 
         await sender.stop()
     }
 
-    @Test("Expired P-frame behind queued keyframe stays local")
-    func expiredPFrameBehindQueuedKeyframeStaysLocal() async throws {
+    @Test("Started non-keyframes finish remaining fragments after deadline")
+    func startedNonKeyframesFinishRemainingFragmentsAfterDeadline() async throws {
+        let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                let isFirstSubmission = submittedPackets.withLock { packets in
+                    packets.append(StreamPacketSenderSubmittedPacket(frameNumber: header.frameNumber))
+                    return packets.count == 1
+                }
+                if isFirstSubmission {
+                    Thread.sleep(forTimeInterval: 0.030)
+                }
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        await sender.setTargetBitrateBps(2_000_000)
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 1024),
+                streamID: 47,
+                frameNumber: 410,
+                sequenceNumberStart: 4100,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() + 0.015
+            )
+        )
+
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.senderLocalDeadlineDrops == 0)
+        #expect(telemetry.stalePacketDrops == 0)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [410, 410])
+
+        await sender.stop()
+    }
+
+    @Test("Expired P-frame after queued keyframe holds later P-frames")
+    func expiredPFrameAfterQueuedKeyframeHoldsLaterPFrames() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
@@ -322,12 +368,13 @@ extension StreamPacketSenderRegressionTests {
             )
         )
 
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 3)
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
+        try await Task.sleep(for: .milliseconds(50))
         let telemetry = await sender.telemetrySnapshot
         #expect(telemetry.stalePacketDrops == 1)
-        #expect(telemetry.nonKeyframeHoldDrops == 0)
-        #expect(dependencyDropCount.read { $0 == 0 })
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [500, 500, 502])
+        #expect(telemetry.nonKeyframeHoldDrops == 1)
+        #expect(dependencyDropCount.read { $0 == 1 })
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [500, 500])
 
         await sender.stop()
     }

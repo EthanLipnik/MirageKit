@@ -210,6 +210,21 @@ extension InputCapturingView {
 
     // MARK: - Gesture Handlers
 
+    func moveTrackpadCursorToDirectScrollStartIfNeeded(
+        _ rawLocation: CGPoint,
+        modifiers: MirageModifierFlags
+    ) {
+        guard usesVirtualTrackpad else { return }
+
+        let location = normalizedLocation(rawLocation)
+        let previousLocation = trackpadCursorPosition()
+        updateTrackpadCursorPosition(location, updateVisibility: true)
+
+        if hypot(location.x - previousLocation.x, location.y - previousLocation.y) > 0.0001 {
+            sendTrackpadMovementEvent(modifiers: modifiers)
+        }
+    }
+
     func updatePointerLocationForScrollInteraction(_ rawLocation: CGPoint) -> CGPoint {
         let location = normalizedLocation(rawLocation)
 

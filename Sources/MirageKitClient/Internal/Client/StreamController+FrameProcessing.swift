@@ -34,6 +34,7 @@ extension StreamController {
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+        decodeQueueRequiresKeyframe = false
         await decoder.setDecodeSubmissionLimit(
             limit: decodeSubmissionBaselineLimit,
             reason: "stream pipeline start"
@@ -80,7 +81,7 @@ extension StreamController {
             CGRect,
             @escaping @Sendable () -> Void
         )
-            -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, _, _, contentRect, releaseBuffer in
+            -> Void = { [weak self] _, frameData, isKeyframe, frameNumber, timestamp, epoch, dimensionToken, contentRect, releaseBuffer in
                 metricsTrackerSnapshot.recordReceivedFrame()
                 let enqueueOrder = enqueueOrderAllocatorSnapshot.allocate()
 
@@ -94,6 +95,8 @@ extension StreamController {
                         frameNumber: frameNumber,
                         remoteTimestamp: timestamp,
                         isKeyframe: isKeyframe,
+                        hostEpoch: epoch,
+                        dimensionToken: dimensionToken,
                         contentRect: contentRect,
                         releaseBuffer: releaseBuffer,
                         enqueueOrder: enqueueOrder,
@@ -153,6 +156,8 @@ extension StreamController {
         frameNumber: UInt32,
         remoteTimestamp: UInt64,
         isKeyframe: Bool,
+        hostEpoch: UInt16,
+        dimensionToken: UInt16,
         contentRect: CGRect,
         releaseBuffer: @escaping @Sendable () -> Void,
         enqueueOrder: UInt64,
@@ -177,7 +182,11 @@ extension StreamController {
         )
         decodeFrameTimingCache.insert(
             streamPresentationTime: timing.streamPresentationTime,
-            remotePresentationTime: remotePresentationTime
+            remotePresentationTime: remotePresentationTime,
+            frameNumber: frameNumber,
+            hostEpoch: hostEpoch,
+            dimensionToken: dimensionToken,
+            queueEpoch: enqueueOrder
         )
         let frame = FrameData(
             data: data,
@@ -212,6 +221,28 @@ extension StreamController {
     }
 
     private func enqueueFrameInOrder(_ frame: FrameData) async {
+        if decodeQueueRequiresKeyframe {
+            if frame.isKeyframe {
+                let clearedFrames = clearQueuedDecodeFramesOnly()
+                decodeQueueRequiresKeyframe = false
+                if let continuation = dequeueContinuation {
+                    dequeueContinuation = nil
+                    continuation.resume(returning: frame)
+                } else {
+                    queuedFrames.append(frame)
+                }
+                MirageLogger.client(
+                    "Decode backpressure recovery accepted keyframe for stream \(streamID); " +
+                        "clearedQueuedFrames=\(clearedFrames)"
+                )
+            } else {
+                frame.releaseBuffer()
+                recordQueueDrop()
+                logQueueDropIfNeeded()
+            }
+            return
+        }
+
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
             continuation.resume(returning: frame)
@@ -235,10 +266,7 @@ extension StreamController {
                 return
             }
 
-            frame.releaseBuffer()
-            recordQueueDrop()
-            maybeLogDecodeBackpressure(queueDepth: queueDepth)
-            logQueueDropIfNeeded()
+            await handleDecodeQueueDependencyBreak(droppedFrame: frame, queueDepth: queueDepth)
             return
         }
 
@@ -276,6 +304,7 @@ extension StreamController {
         }
         decodeFrameTimingCache.clear()
         discardQueuedFramesForRecovery()
+        decodeQueueRequiresKeyframe = false
     }
 
     /// Releases and counts all compressed frames that have not reached the decoder yet.
@@ -288,6 +317,12 @@ extension StreamController {
     /// Releases pending compressed frames without reporting a trim count.
     func discardQueuedFramesForRecovery() {
         release(drainQueuedAndPendingFrames())
+    }
+
+    func clearQueuedDecodeFramesOnly() -> Int {
+        let frames = queuedFrames.drain()
+        release(frames)
+        return frames.count
     }
 
     private func drainQueuedAndPendingFrames() -> [FrameData] {

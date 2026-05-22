@@ -39,8 +39,17 @@ struct MirageKitTests {
 
     @Test("AWDL media packet sizing uses wireless MTU budget")
     func awdlMediaPacketSizingUsesWirelessMTUBudget() {
-        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == mirageDirectWiFiMaxPacketSize)
+        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == 1200)
+        #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == mirageDirectWiFiMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
+    }
+
+    @Test("Default stream cadence uses balanced latency")
+    func defaultStreamCadenceUsesBalancedLatency() {
+        let target = MirageStreamCadenceTarget(sourceFPS: 60)
+
+        #expect(target.latencyMode == .balanced)
+        #expect(target.playoutDelayFrames == 1)
     }
 
     @Test("Protocol header serialization")
@@ -63,7 +72,7 @@ struct MirageKitTests {
 
         let deserialized = FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
-        #expect(deserialized?.version == 260518)
+        #expect(deserialized?.version == 260523)
         #expect(deserialized?.version == MirageKit.protocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
@@ -86,7 +95,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.protocolVersion == 260518)
+        #expect(MirageKit.protocolVersion == 260523)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }
@@ -162,6 +171,14 @@ struct MirageKitTests {
         #expect(throws: Error.self) {
             try JSONDecoder().decode(MirageStreamLatencyMode.self, from: payload)
         }
+    }
+
+    @Test("Balanced latency mode round trips")
+    func balancedLatencyModeRoundTrips() throws {
+        let encoded = try JSONEncoder().encode(MirageStreamLatencyMode.balanced)
+        let decoded = try JSONDecoder().decode(MirageStreamLatencyMode.self, from: encoded)
+
+        #expect(decoded == .balanced)
     }
 
     @Test("Control parser rejects unknown control type")

@@ -12,6 +12,7 @@ import QuartzCore
 enum MirageRenderSubmissionResult: Equatable {
     case submitted
     case noPendingFrame
+    case pendingFrameNotReady
     case displayLayerNotReady
     case blocked
 }
@@ -131,12 +132,6 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             guard hasPendingFrame() else { return }
             displayClockFramePending = true
             displayClockNoFrameTickPending = false
-            if !displayClockActive || lastDisplayTickWallTime == 0 {
-                performPass(
-                    referenceTime: referenceTime,
-                    isDisplayTick: false
-                )
-            }
             return
         }
         performPass(
@@ -149,6 +144,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         guard !renderingSuspended else { return }
         if presentationTier == .activeLive {
             if !displayClockActive {
+                guard allowsFrameArrivalCatchUpFallback else { return }
                 schedulePass(referenceTime: referenceTime)
                 return
             }
@@ -162,6 +158,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     func requestRendererReadySubmission(referenceTime: CFTimeInterval) {
         guard !renderingSuspended else { return }
         guard hasPendingFrame() else { return }
+        guard allowsFrameArrivalCatchUpFallback else { return }
         if presentationTier == .activeLive, displayClockActive {
             guard lastDisplayTickWallTime == 0 ||
                 referenceTimeProvider() - lastDisplayTickWallTime >= activeLiveFallbackThreshold else {
@@ -191,6 +188,7 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
             if arrivedAfterNoFrameTick {
                 noteFrameArrivedAfterNoFrameTick(delayMs: max(0, referenceTimeProvider() - lastDisplayTickWallTime) * 1000)
             }
+            guard allowsFrameArrivalCatchUpFallback else { return }
             scheduleActiveLiveFallbackIfNeeded(
                 referenceTime: referenceTime,
                 bypassFreshTickGuard: arrivedAfterNoFrameTick
@@ -204,6 +202,10 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     private var submitsOnFrameArrival: Bool {
         guard let streamID else { return false }
         return MirageRenderStreamStore.shared.presentationTiming(for: streamID).latencyMode == .lowestLatency
+    }
+
+    private var allowsFrameArrivalCatchUpFallback: Bool {
+        submitsOnFrameArrival
     }
 
     func handleDisplayTick(referenceTime: CFTimeInterval) {
@@ -286,6 +288,9 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         runningPass = false
         if submissionResult == .submitted {
             displayClockFramePending = false
+            displayClockNoFrameTickPending = false
+        } else if isDisplayTick, submissionResult == .pendingFrameNotReady {
+            displayClockFramePending = true
             displayClockNoFrameTickPending = false
         } else if isDisplayTick, submissionResult == .noPendingFrame {
             MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)

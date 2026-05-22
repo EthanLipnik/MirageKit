@@ -101,9 +101,8 @@ final class HostPriorityInputRoute: @unchecked Sendable {
         let session = controlChannel.session
         Task.detached(priority: .high) { [weak self, session, pathSnapshot] in
             guard let self else { return }
-            guard await session.context?.transportKind == .udp else { return }
-            // TODO: Enable priority input for remote UDP once remote congestion
-            // and path-health behavior are validated.
+            let transportKind = await session.context?.transportKind
+            guard transportKind == .udp || transportKind == .quic else { return }
             guard ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: await session.remoteEndpoint,
                 pathSnapshot: pathSnapshot

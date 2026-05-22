@@ -13,6 +13,7 @@ struct CaptureCadenceMetricsSnapshot: Equatable {
     let wallClockGapP95Ms: Double
     let wallClockGapP99Ms: Double
     let displayTimeGapWorstMs: Double
+    let displayTimeGapP50Ms: Double
     let displayTimeGapP95Ms: Double
     let displayTimeGapP99Ms: Double
     let deliveredFrameGapWorstMs: Double
@@ -141,6 +142,7 @@ struct CaptureCadenceMetricsTracker: Equatable {
             wallClockGapP95Ms: wallStats.p95,
             wallClockGapP99Ms: wallStats.p99,
             displayTimeGapWorstMs: displayStats.worst,
+            displayTimeGapP50Ms: displayStats.p50,
             displayTimeGapP95Ms: displayStats.p95,
             displayTimeGapP99Ms: displayStats.p99,
             deliveredFrameGapWorstMs: deliveredStats.worst,
@@ -207,6 +209,7 @@ private struct CaptureDoubleSampleWindow: Equatable {
         samples.sort()
         return CaptureDoubleSampleStatistics(
             worst: samples.last ?? 0,
+            p50: Self.percentile(0.50, samples: samples),
             p95: Self.percentile(0.95, samples: samples),
             p99: Self.percentile(0.99, samples: samples)
         )
@@ -227,6 +230,7 @@ private struct CaptureDoubleSampleWindow: Equatable {
 
 private struct CaptureDoubleSampleStatistics: Equatable {
     var worst: Double = 0
+    var p50: Double = 0
     var p95: Double = 0
     var p99: Double = 0
 }

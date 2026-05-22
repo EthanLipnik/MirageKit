@@ -103,6 +103,10 @@ final class MirageAppAtlasRenderFanout: @unchecked Sendable {
         decodeTime: CFAbsoluteTime,
         presentationTime: CMTime,
         remotePresentationTime: CMTime,
+        hostEpoch: UInt16? = nil,
+        dimensionToken: UInt16? = nil,
+        frameNumber: UInt32? = nil,
+        queueEpoch: UInt64? = nil,
         for mediaStreamID: StreamID
     ) -> Bool {
         lock.lock()
@@ -139,6 +143,12 @@ final class MirageAppAtlasRenderFanout: @unchecked Sendable {
                 decodeTime: decodeTime,
                 presentationTime: presentationTime,
                 remotePresentationTime: remotePresentationTime,
+                generation: MirageRenderStreamStore.shared.currentGeneration(for: frame.streamID),
+                hostEpoch: hostEpoch,
+                dimensionToken: dimensionToken,
+                frameNumber: frameNumber,
+                queueEpoch: queueEpoch,
+                timeline: nil,
                 for: frame.streamID
             )
         }

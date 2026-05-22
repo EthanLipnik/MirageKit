@@ -45,8 +45,8 @@ struct RenderFrameQueueSPSCTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
     }
 
-    @Test("Smoothest takes retained pending frames in decode order")
-    func smoothestTakesRetainedPendingFramesInDecodeOrder() {
+    @Test("Smoothest retains pending frames until their playout target")
+    func smoothestRetainsPendingFramesUntilPlayoutTarget() {
         let streamID: StreamID = 302
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -62,25 +62,19 @@ struct RenderFrameQueueSPSCTests {
             )
         }
 
-        let firstFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        let secondFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        let thirdFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        let fourthFrame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
-        #expect(firstFrame?.sequence == 1)
-        #expect(secondFrame?.sequence == 2)
-        #expect(thirdFrame?.sequence == 3)
-        #expect(fourthFrame?.sequence == 4)
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(MirageRenderStreamStore.shared.takePendingFrame(for: streamID) == nil)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 4)
     }
 
-    @Test("Smoothest soft debt drops are tracked separately from overwritten frames")
-    func smoothestSoftDebtDropsAreTrackedSeparatelyFromOverwrittenFrames() {
+    @Test("Smoothest depth cap drops are tracked separately from overwritten frames")
+    func smoothestDepthCapDropsAreTrackedSeparatelyFromOverwrittenFrames() {
         let streamID: StreamID = 310
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
 
-        for index in 0 ..< 20 {
+        for index in 0 ..< 40 {
             let overwritten = MirageRenderStreamStore.shared.enqueue(
                 pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
@@ -91,15 +85,15 @@ struct RenderFrameQueueSPSCTests {
             #expect(overwritten == 0)
         }
 
-        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 10)
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 11)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 25)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 16)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.overwrittenPendingFrames == 0)
-        #expect(telemetry.smoothestQueueDrops == 10)
-        #expect(telemetry.smoothestDisplayDebtDrops == 10)
+        #expect(telemetry.smoothestQueueDrops == 15)
+        #expect(telemetry.smoothestDepthDrops == 15)
+        #expect(telemetry.smoothestDisplayDebtDrops == 0)
         #expect(telemetry.smoothestFifoResetCount == 0)
-        #expect(telemetry.smoothestDisplayDebtMs <= telemetry.smoothestDisplayDebtCapMs)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
     }
 
@@ -201,7 +195,7 @@ struct RenderFrameQueueSPSCTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.submitAttemptFPS >= 1)
         #expect(telemetry.layerAcceptedFPS >= 1)
-        #expect(telemetry.presentedFPS >= 1)
+        #expect(telemetry.visibleFrameFPS >= 1)
         #expect(telemetry.submittedFPS >= 1)
         #expect(telemetry.uniqueSubmittedFPS >= 1)
         #expect(telemetry.pendingFrameCount == 3)

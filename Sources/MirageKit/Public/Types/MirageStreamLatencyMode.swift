@@ -11,13 +11,16 @@ import Foundation
 public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
     /// Minimize buffering and presentation delay.
     case lowestLatency
+    /// Keep latency close to immediate presentation while smoothing one-tick jitter.
+    case balanced
     /// Favor smoother playback by allowing additional buffering.
     case smoothest
 
     /// Display label for stream settings UI.
     public var displayName: String {
         switch self {
-        case .lowestLatency: "Lowest Latency"
+        case .lowestLatency: "Most Responsive"
+        case .balanced: "Balanced"
         case .smoothest: "Smoothest"
         }
     }
@@ -25,6 +28,8 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
     /// Detailed explanation suitable for settings UI.
     public var detailDescription: String {
         switch self {
+        case .balanced:
+            "Keeps latency close to lowest-latency presentation while smoothing short receive jitter on display ticks."
         case .smoothest:
             "Targets steady visual cadence by presenting frames in order and dropping stale backlog when needed."
         case .lowestLatency:

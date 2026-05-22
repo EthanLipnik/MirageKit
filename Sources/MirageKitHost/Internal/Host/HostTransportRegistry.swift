@@ -16,7 +16,7 @@ final class HostTransportRegistry: @unchecked Sendable {
     /// Registered media streams keyed by the identifier that owns their lifecycle.
     private struct State {
         var videoByStream: [StreamID: LoomMultiplexedStream] = [:]
-        var audioByClientID: [UUID: LoomMultiplexedStream] = [:]
+        var audioByClientID: [UUID: (stream: LoomMultiplexedStream, profile: LoomQueuedUnreliableSendProfile)] = [:]
     }
 
     private let state = Locked(State())
@@ -36,8 +36,12 @@ final class HostTransportRegistry: @unchecked Sendable {
     }
 
     /// Registers a client-scoped audio transport.
-    func registerAudioStream(_ stream: LoomMultiplexedStream, clientID: UUID) {
-        state.withLock { $0.audioByClientID[clientID] = stream }
+    func registerAudioStream(
+        _ stream: LoomMultiplexedStream,
+        clientID: UUID,
+        profile: LoomQueuedUnreliableSendProfile
+    ) {
+        state.withLock { $0.audioByClientID[clientID] = (stream, profile) }
     }
 
     /// Removes a client-scoped audio transport.
@@ -58,12 +62,12 @@ final class HostTransportRegistry: @unchecked Sendable {
         data: Data,
         onComplete: @escaping @Sendable (Error?) -> Void
     ) {
-        let stream: LoomMultiplexedStream? = state.read { $0.audioByClientID[clientID] }
-        guard let stream else {
+        let registration = state.read { $0.audioByClientID[clientID] }
+        guard let registration else {
             onComplete(nil)
             return
         }
-        stream.sendUnreliableQueued(data, profile: .interactiveMedia, onComplete: onComplete)
+        registration.stream.sendUnreliableQueued(data, profile: registration.profile, onComplete: onComplete)
     }
 
     /// Returns whether a video transport is registered for the stream.

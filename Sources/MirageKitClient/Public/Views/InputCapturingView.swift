@@ -532,6 +532,8 @@ public class InputCapturingView: UIView {
     /// Track last cursor position for scroll events in stream space.
     /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
     var lastCursorPosition: CGPoint?
+    /// Normalized contact anchor used while native direct-touch scrolling is active.
+    var directTouchScrollAnchorLocation: CGPoint?
 
     // Track keyboard modifier state - single source of truth
     // Gesture events read modifiers directly from gesture.modifierFlags at event time

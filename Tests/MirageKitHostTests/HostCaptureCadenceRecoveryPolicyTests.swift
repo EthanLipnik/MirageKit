@@ -92,15 +92,15 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(action == .none)
     }
 
-    @Test("High refresh variable cadence above floor does not recover")
-    func highRefreshVariableCadenceAboveFloorDoesNotRecover() {
+    @Test("High refresh stable sixty hertz cadence recovers")
+    func highRefreshStableSixtyHertzCadenceRecovers() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         let action = policy.evaluate(
             sample(
                 now: 1,
                 targetFrameRate: 120,
-                captureFPS: 64,
+                captureFPS: 60,
                 captureCadence: StreamCaptureCadenceMetrics(
                     deliveredFrameGapWorstMs: 22,
                     deliveredFrameGapP99Ms: 21,
@@ -113,7 +113,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             )
         )
 
-        #expect(action == .none)
+        #expect(action == .restartCapture)
     }
 
     @Test("High refresh capture below floor restarts capture immediately")
@@ -371,6 +371,81 @@ struct HostCaptureCadenceRecoveryPolicyTests {
                 deliveredFrameGapP99Ms: 48,
                 longFrameGapCount: 1
             )
+        )
+    }
+}
+
+@Suite("ScreenCaptureKit Delivery Recovery")
+struct ScreenCaptureDeliveryRecoveryTests {
+    @Test("High refresh validation retries native, keepalive, then downgrades")
+    func highRefreshValidationRetriesThenDowngrades() {
+        var recovery = ScreenCaptureDeliveryRecovery()
+        recovery.configuration.actionCooldownSeconds = 0
+        let first = recovery.evaluate(sample(now: 1, observedSCKFPS: 60))
+        let second = recovery.evaluate(sample(now: 2, observedSCKFPS: 60))
+        let third = recovery.evaluate(
+            sample(
+                now: 3,
+                observedSCKFPS: 59.8,
+                topologyLimitReason: "external-display-cadence-limited"
+            )
+        )
+        let fourth = recovery.evaluate(sample(now: 4, observedSCKFPS: 60))
+
+        #expect(first == .retryNativeMinimumFrameInterval(reason: "sck-delivery-below-target"))
+        #expect(second == .restartStrengthenedKeepalive(reason: "sck-delivery-below-target"))
+        #expect(third == .downgradeFrameRate(fps: 60, reason: "external-display-cadence-limited"))
+        #expect(fourth == .none)
+    }
+
+    @Test("Validation waits for a real sample window")
+    func validationWaitsForSampleWindow() {
+        var recovery = ScreenCaptureDeliveryRecovery()
+        let action = recovery.evaluate(
+            sample(
+                now: 1,
+                durationSeconds: 0.50,
+                observedSCKFPS: 60
+            )
+        )
+
+        #expect(action == .none)
+    }
+
+    @Test("Healthy high refresh delivery does not recover")
+    func healthyHighRefreshDeliveryDoesNotRecover() {
+        var recovery = ScreenCaptureDeliveryRecovery()
+        let action = recovery.evaluate(sample(now: 1, observedSCKFPS: 116))
+
+        #expect(action == .none)
+    }
+
+    private func sample(
+        now: Double,
+        durationSeconds: Double = 1.0,
+        observedSCKFPS: Double?,
+        topologyLimitReason: String? = nil
+    ) -> ScreenCaptureDeliveryRecovery.Sample {
+        ScreenCaptureDeliveryRecovery.Sample(
+            now: now,
+            isDesktopDisplayStream: true,
+            startupSettled: true,
+            isResizing: false,
+            isEncodingSuspendedForResize: false,
+            targetFrameRate: 120,
+            durationSeconds: durationSeconds,
+            rawCallbackCount: UInt64(max(0, (observedSCKFPS ?? 0).rounded())),
+            completeFrameCount: UInt64(max(0, (observedSCKFPS ?? 0).rounded())),
+            renderableFrameCount: UInt64(max(0, (observedSCKFPS ?? 0).rounded())),
+            idleFrameCount: 0,
+            cadenceAdmittedFrameCount: UInt64(max(0, (observedSCKFPS ?? 0).rounded())),
+            observedSCKFPS: observedSCKFPS,
+            renderableSCKFPS: observedSCKFPS,
+            cadenceAdmittedFPS: observedSCKFPS,
+            displayTimeGapP50Ms: 16.7,
+            displayTimeGapP95Ms: 16.9,
+            displayTimeGapP99Ms: 17.2,
+            topologyLimitReason: topologyLimitReason
         )
     }
 }

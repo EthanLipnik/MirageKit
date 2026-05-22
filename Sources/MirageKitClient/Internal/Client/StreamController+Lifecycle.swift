@@ -37,6 +37,7 @@ extension StreamController {
         cancelMemoryBudgetRecoveryTask()
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
         resetStartupRecoveryTracking()
@@ -116,13 +117,14 @@ extension StreamController {
             displayTickFPS: renderTelemetry.displayTickFPS,
             submitAttemptFPS: renderTelemetry.submitAttemptFPS,
             layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,
-            presentedFPS: renderTelemetry.presentedFPS,
+            visibleFrameFPS: renderTelemetry.visibleFrameFPS,
             submittedFPS: renderTelemetry.submittedFPS,
             uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,
             pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
             smoothestDisplayDebtMs: renderTelemetry.smoothestDisplayDebtMs,
             smoothestDisplayDebtCapMs: renderTelemetry.smoothestDisplayDebtCapMs,
+            smoothestTargetDelayMs: renderTelemetry.smoothestTargetDelayMs,
             overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
             smoothestQueueDrops: renderTelemetry.smoothestQueueDrops,
             smoothestDisplayDebtDrops: renderTelemetry.smoothestDisplayDebtDrops,
@@ -134,6 +136,7 @@ extension StreamController {
             lateFrameDrops: renderTelemetry.lateFrameDrops,
             displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             repeatedFrameCount: renderTelemetry.repeatedFrameCount,
+            displayTickNoFrameCount: renderTelemetry.displayTickNoFrameCount,
             missedVSyncCount: renderTelemetry.missedVSyncCount,
             displayTickIntervalP95Ms: renderTelemetry.displayTickIntervalP95Ms,
             displayTickIntervalP99Ms: renderTelemetry.displayTickIntervalP99Ms,

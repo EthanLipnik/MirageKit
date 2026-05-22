@@ -323,8 +323,9 @@ extension MirageHostService {
         let audioStream = try await clientContext.controlChannel.session.openStream(
             label: "audio/\(sourceStreamID)"
         )
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         loomAudioStreamsByClientID[clientID] = audioStream
-        transportRegistry.registerAudioStream(audioStream, clientID: clientID)
+        transportRegistry.registerAudioStream(audioStream, clientID: clientID, profile: mediaSendProfile)
         audioSendErrorReportedByClientID.remove(clientID)
         _ = await sendPendingAudioStartedIfPossible(clientID: clientID)
         MirageLogger.host("Opened Loom audio stream for client \(clientID)")

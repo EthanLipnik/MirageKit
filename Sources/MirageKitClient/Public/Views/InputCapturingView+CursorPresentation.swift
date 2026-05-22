@@ -219,14 +219,32 @@ extension InputCapturingView {
     }
 
     func scrollEventLocation(source: ScrollPhysicsCapturingView.InputSource) -> CGPoint? {
-        guard !cursorLockEnabled else { return lockedCursorPosition }
-
         switch source {
         case .directTouch:
+            if let directTouchScrollAnchorLocation {
+                return directTouchScrollAnchorLocation
+            }
+            if cursorLockEnabled {
+                return lockedCursorPosition
+            }
             return lastCursorPosition
 
         case .indirectPointer:
+            guard !cursorLockEnabled else { return lockedCursorPosition }
             return lastCursorPosition
+        }
+    }
+
+    func clearDirectTouchScrollAnchorIfNeeded(
+        source: ScrollPhysicsCapturingView.InputSource,
+        phase: MirageScrollPhase,
+        momentumPhase: MirageScrollPhase
+    ) {
+        guard case .directTouch = source else { return }
+        let physicalScrollFinished = (phase == .ended || phase == .cancelled) && momentumPhase == .none
+        let momentumFinished = momentumPhase == .ended || momentumPhase == .cancelled
+        if physicalScrollFinished || momentumFinished {
+            directTouchScrollAnchorLocation = nil
         }
     }
 

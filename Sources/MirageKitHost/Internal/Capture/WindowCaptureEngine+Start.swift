@@ -282,7 +282,8 @@ extension WindowCaptureEngine {
         MirageLogger.capture(
             "event=capture_cadence_config mode=display targetFPS=\(currentFrameRate) " +
                 "sckFPS=\(configuredCaptureRate) displayRefresh=\(displayRefreshText) " +
-                "nativeDisplayCadence=\(usesNativeRefreshMinimumFrameInterval)"
+                "nativeDisplayCadence=\(usesNativeRefreshMinimumFrameInterval) " +
+                "intervalPolicy=\(minimumFrameIntervalPolicy.rawValue)"
         )
 
         // Color and format

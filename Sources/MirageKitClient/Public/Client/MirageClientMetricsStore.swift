@@ -52,6 +52,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         pendingFrameAgeMs: Double,
         smoothestDisplayDebtMs: Double = 0,
         smoothestDisplayDebtCapMs: Double = 0,
+        smoothestTargetDelayMs: Double = 0,
         overwrittenPendingFrames: UInt64,
         smoothestQueueDrops: UInt64 = 0,
         smoothestDisplayDebtDrops: UInt64 = 0,
@@ -63,6 +64,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         lateFrameDrops: UInt64 = 0,
         displayLayerNotReadyCount: UInt64,
         repeatedFrameCount: UInt64 = 0,
+        displayTickNoFrameCount: UInt64 = 0,
         missedVSyncCount: UInt64 = 0,
         displayTickIntervalP95Ms: Double = 0,
         displayTickIntervalP99Ms: Double = 0,
@@ -89,6 +91,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
             snapshot.clientSmoothestDisplayDebtMs = max(0, smoothestDisplayDebtMs)
             snapshot.clientSmoothestDisplayDebtCapMs = max(0, smoothestDisplayDebtCapMs)
+            snapshot.clientSmoothestTargetDelayMs = max(0, smoothestTargetDelayMs)
+            snapshot.clientSmoothestUnderflowCount = displayTickNoFrameCount
             snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
             snapshot.clientSmoothestQueueDrops = smoothestQueueDrops
             snapshot.clientSmoothestDisplayDebtDrops = smoothestDisplayDebtDrops

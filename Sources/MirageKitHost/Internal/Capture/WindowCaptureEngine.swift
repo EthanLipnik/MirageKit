@@ -26,6 +26,7 @@ actor WindowCaptureEngine {
     var currentFrameRate: Int
     let usesDisplayRefreshCadence: Bool
     var currentDisplayRefreshRate: Int?
+    var minimumFrameIntervalPolicy: MinimumFrameIntervalPolicy = .automatic
     var admissionDropper: (@Sendable () -> Bool)?
     var pendingKeyframeRequest: CaptureKeyframeRequestReason?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
@@ -96,7 +97,7 @@ actor WindowCaptureEngine {
     init(
         configuration: MirageEncoderConfiguration,
         capturePressureProfile: CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        latencyMode: MirageStreamLatencyMode = .balanced,
         hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         captureFrameRate: Int? = nil,
         usesDisplayRefreshCadence: Bool = false
@@ -171,6 +172,7 @@ actor WindowCaptureEngine {
             effectiveCaptureRate: captureRate,
             minimumFrameIntervalRate: captureRate,
             usesNativeRefreshMinimumFrameInterval: usesNativeRefreshInterval,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
             sckQueueDepth: sckQueueDepth,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence,
             displayRefreshRate: currentDisplayRefreshRate

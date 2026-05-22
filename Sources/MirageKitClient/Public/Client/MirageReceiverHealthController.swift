@@ -291,15 +291,20 @@ public struct MirageReceiverHealthController: Sendable {
         recordReceiverMediaDeliveryFailure(now: now)
         guard allowsBackoff else { return nil }
         if let lastTransitionAt,
-           now - lastTransitionAt < Self.receiverMediaBackoffCooldownSeconds {
+           now - lastTransitionAt < receiverMediaBackoffCooldownSeconds {
             return nil
         }
         let repeatedFailure = receiverMediaFailureTimes.count >= 2
-        let step = repeatedFailure
-            ? Self.receiverMediaRepeatedBackoffStep
-            : Self.receiverMediaFirstBackoffStep
         let floorBps = max(Self.minimumBitrateBps, minimumBitrateFloorBps)
-        let nextBitrate = max(floorBps, Int(Double(currentBitrateBps) * step))
+        let nextBitrate: Int
+        if promotionRecoveryMode == .conservativeProximity,
+           repeatedFailure,
+           sample.hasSevereTransportPressure {
+            nextBitrate = floorBps
+        } else {
+            let step = receiverMediaBackoffStep(repeatedFailure: repeatedFailure)
+            nextBitrate = max(floorBps, Int(Double(currentBitrateBps) * step))
+        }
         let promotionCeilingStep = repeatedFailure
             ? Self.severeBackoffPromotionCeilingStep
             : Self.normalBackoffPromotionCeilingStep
@@ -310,7 +315,7 @@ public struct MirageReceiverHealthController: Sendable {
         lastTransitionAt = now
         resetSampleCounters()
         pendingPromotion = nil
-        nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.receiverMediaBackoffCooldownSeconds)
+        nextProbeAllowedAt = max(nextProbeAllowedAt, now + receiverMediaProbeHoldSeconds)
         guard nextBitrate < currentBitrateBps else { return nil }
         return .backoff(targetBitrateBps: nextBitrate)
     }
@@ -321,6 +326,21 @@ public struct MirageReceiverHealthController: Sendable {
         while let first = receiverMediaFailureTimes.first, first < cutoff {
             receiverMediaFailureTimes.removeFirst()
         }
+    }
+
+    private var receiverMediaBackoffCooldownSeconds: CFAbsoluteTime {
+        promotionRecoveryMode == .conservativeProximity ? 2 : Self.receiverMediaBackoffCooldownSeconds
+    }
+
+    private var receiverMediaProbeHoldSeconds: CFAbsoluteTime {
+        promotionRecoveryMode == .conservativeProximity ? 30 : Self.receiverMediaBackoffCooldownSeconds
+    }
+
+    private func receiverMediaBackoffStep(repeatedFailure: Bool) -> Double {
+        if promotionRecoveryMode == .conservativeProximity {
+            return repeatedFailure ? 0.60 : 0.70
+        }
+        return repeatedFailure ? Self.receiverMediaRepeatedBackoffStep : Self.receiverMediaFirstBackoffStep
     }
 
     private func shouldBackOff(

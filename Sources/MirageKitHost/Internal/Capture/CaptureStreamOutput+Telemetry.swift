@@ -18,7 +18,9 @@ extension CaptureStreamOutput {
     /// Lifetime telemetry counters for capture diagnostics.
     var telemetrySnapshot: TelemetrySnapshot {
         poolLogLock.withLock {
-            TelemetrySnapshot(
+            let duration = max(0, CFAbsoluteTimeGetCurrent() - telemetryLifetimeStartTime)
+            return TelemetrySnapshot(
+                sampleDurationSeconds: duration,
                 rawScreenCallbackCount: rawScreenCallbackCountCumulative,
                 validScreenSampleCount: validScreenSampleCountCumulative,
                 renderableScreenSampleCount: renderableScreenSampleCountCumulative,
@@ -43,19 +45,22 @@ extension CaptureStreamOutput {
     /// Returns and clears the current diagnostics-window telemetry counters.
     func consumeTelemetrySnapshot() -> TelemetrySnapshot {
         poolLogLock.withLock {
+            let now = CFAbsoluteTimeGetCurrent()
+            let duration = max(0, now - telemetryWindowStartTime)
             let cadenceSnapshot = cadenceMetrics.consumeSnapshot()
             let snapshot = TelemetrySnapshot(
-                rawScreenCallbackCount: rawScreenCallbackCountCumulative,
-                validScreenSampleCount: validScreenSampleCountCumulative,
-                renderableScreenSampleCount: renderableScreenSampleCountCumulative,
-                completeFrameCount: completeFrameCountCumulative,
-                idleFrameCount: idleFrameCountCumulative,
-                blankFrameCount: blankFrameCountCumulative,
-                suspendedFrameCount: suspendedFrameCountCumulative,
-                startedFrameCount: startedFrameCountCumulative,
-                stoppedFrameCount: stoppedFrameCountCumulative,
-                cadenceAdmittedFrameCount: cadenceAdmittedFrameCountCumulative,
-                deliveredFrameCount: deliveredFrameCountCumulative,
+                sampleDurationSeconds: duration,
+                rawScreenCallbackCount: rawScreenCallbackCountWindow,
+                validScreenSampleCount: validScreenSampleCountWindow,
+                renderableScreenSampleCount: renderableScreenSampleCountWindow,
+                completeFrameCount: completeFrameCountWindow,
+                idleFrameCount: idleFrameCountWindow,
+                blankFrameCount: blankFrameCountWindow,
+                suspendedFrameCount: suspendedFrameCountWindow,
+                startedFrameCount: startedFrameCountWindow,
+                stoppedFrameCount: stoppedFrameCountWindow,
+                cadenceAdmittedFrameCount: cadenceAdmittedFrameCountWindow,
+                deliveredFrameCount: deliveredFrameCountWindow,
                 callbackDurationTotalMs: callbackDurationTotalMs,
                 callbackDurationMaxMs: callbackDurationMaxMs,
                 callbackSampleCount: callbackSampleCount,
@@ -68,6 +73,18 @@ extension CaptureStreamOutput {
             callbackSampleCount = 0
             cadenceDropCount = 0
             admissionDropCount = 0
+            rawScreenCallbackCountWindow = 0
+            validScreenSampleCountWindow = 0
+            renderableScreenSampleCountWindow = 0
+            completeFrameCountWindow = 0
+            idleFrameCountWindow = 0
+            blankFrameCountWindow = 0
+            suspendedFrameCountWindow = 0
+            startedFrameCountWindow = 0
+            stoppedFrameCountWindow = 0
+            cadenceAdmittedFrameCountWindow = 0
+            deliveredFrameCountWindow = 0
+            telemetryWindowStartTime = now
             return snapshot
         }
     }
@@ -145,6 +162,7 @@ extension CaptureStreamOutput {
 
     func recordRawScreenCallback(at captureTime: CFAbsoluteTime) {
         poolLogLock.withLock {
+            rawScreenCallbackCountWindow &+= 1
             rawScreenCallbackCountCumulative &+= 1
             cadenceMetrics.recordScreenCallback(at: captureTime)
         }
@@ -158,6 +176,7 @@ extension CaptureStreamOutput {
 
     func recordValidScreenSample() {
         poolLogLock.withLock {
+            validScreenSampleCountWindow &+= 1
             validScreenSampleCountCumulative &+= 1
         }
     }
@@ -166,18 +185,24 @@ extension CaptureStreamOutput {
         poolLogLock.withLock {
             switch status {
             case .complete:
+                completeFrameCountWindow &+= 1
                 completeFrameCountCumulative &+= 1
             case .idle:
+                idleFrameCountWindow &+= 1
                 idleFrameCountCumulative &+= 1
             case .blank:
+                blankFrameCountWindow &+= 1
                 blankFrameCountCumulative &+= 1
                 cadenceMetrics.recordLimitedStatus(.blank)
             case .suspended:
+                suspendedFrameCountWindow &+= 1
                 suspendedFrameCountCumulative &+= 1
                 cadenceMetrics.recordLimitedStatus(.suspended)
             case .started:
+                startedFrameCountWindow &+= 1
                 startedFrameCountCumulative &+= 1
             case .stopped:
+                stoppedFrameCountWindow &+= 1
                 stoppedFrameCountCumulative &+= 1
                 cadenceMetrics.recordLimitedStatus(.stopped)
             @unknown default:
@@ -188,18 +213,21 @@ extension CaptureStreamOutput {
 
     func recordRenderableScreenSample() {
         poolLogLock.withLock {
+            renderableScreenSampleCountWindow &+= 1
             renderableScreenSampleCountCumulative &+= 1
         }
     }
 
     func recordCadenceAdmittedFrame() {
         poolLogLock.withLock {
+            cadenceAdmittedFrameCountWindow &+= 1
             cadenceAdmittedFrameCountCumulative &+= 1
         }
     }
 
     func recordDeliveredFrame(at captureTime: CFAbsoluteTime) {
         poolLogLock.withLock {
+            deliveredFrameCountWindow &+= 1
             deliveredFrameCountCumulative &+= 1
             cadenceMetrics.recordDeliveredFrame(at: captureTime)
         }

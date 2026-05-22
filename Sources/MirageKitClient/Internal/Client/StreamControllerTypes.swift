@@ -15,6 +15,10 @@ import MirageKit
 extension StreamController {
     /// Maximum keyframe retries before escalating to a single hard reset.
     static let activeRecoveryMaxKeyframeAttempts = 3
+    /// Maximum recovery keyframe requests over the sliding pressure window.
+    static let recoveryKeyframeDispatchLimit = 3
+    /// Sliding window for recovery keyframe request limiting.
+    static let recoveryKeyframeDispatchWindow: CFAbsoluteTime = 10.0
     /// Grace period to let promotion continue with forward P-frames before forcing recovery.
     static let tierPromotionProbeDelay: Duration = .milliseconds(250)
     /// Minimum spacing between soft recoveries to avoid keyframe recovery storms.
@@ -107,13 +111,14 @@ extension StreamController {
         let displayTickFPS: Double
         let submitAttemptFPS: Double
         let layerAcceptedFPS: Double
-        let presentedFPS: Double
+        let visibleFrameFPS: Double
         let submittedFPS: Double
         let uniqueSubmittedFPS: Double
         let pendingFrameCount: Int
         let pendingFrameAgeMs: Double
         let smoothestDisplayDebtMs: Double
         let smoothestDisplayDebtCapMs: Double
+        let smoothestTargetDelayMs: Double
         let overwrittenPendingFrames: UInt64
         let smoothestQueueDrops: UInt64
         let smoothestDisplayDebtDrops: UInt64
@@ -125,6 +130,7 @@ extension StreamController {
         let lateFrameDrops: UInt64
         let displayLayerNotReadyCount: UInt64
         let repeatedFrameCount: UInt64
+        let displayTickNoFrameCount: UInt64
         let missedVSyncCount: UInt64
         let displayTickIntervalP95Ms: Double
         let displayTickIntervalP99Ms: Double

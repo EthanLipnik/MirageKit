@@ -75,6 +75,14 @@ public struct MirageAwdlRouteHealthController: Sendable {
             startupBitrateBps: startupBitrateBps
         )
         let age = now - streamStartedAt
+        let isAtBitrateFloor = currentBitrateBps.map {
+            $0 <= MirageReceiverHealthController.minimumBitrateBps
+        } ?? false
+        guard isAtBitrateFloor else {
+            degradedSampleCount = max(0, degradedSampleCount - 1)
+            severeSampleCount = max(0, severeSampleCount - 1)
+            return nil
+        }
 
         if assessment.isDegraded {
             degradedSampleCount += 1

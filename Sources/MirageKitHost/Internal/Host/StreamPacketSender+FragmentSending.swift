@@ -81,6 +81,11 @@ extension StreamPacketSender {
             let fragmentIndex = interleavedFragmentOrder.isEmpty ? sendIndex : interleavedFragmentOrder[sendIndex]
             if item.generation != generation {
                 generationAbortDropCount &+= 1
+                if progress.submittedFragmentCount > 0, !item.isKeyframe {
+                    queueLock.withLock {
+                        markDependencyFrameDroppedLocked(item, reason: .generationAbort)
+                    }
+                }
                 MirageLogger
                     .stream("Aborting send for frame \(item.frameNumber) (gen \(item.generation) != \(generation))")
                 transportCompletionTracker.recordDrop()
@@ -149,13 +154,15 @@ extension StreamPacketSender {
         progress: FragmentSendProgress
     ) async -> PacketPacingResult? {
         let item = context.item
-        let sendDeadline = !item.isKeyframe && item.sendDeadline.isFinite ? item.sendDeadline : nil
-        if sendDeadline != nil, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
+        let shouldCheckDeadline = !item.isKeyframe &&
+            item.sendDeadline.isFinite &&
+            progress.submittedFragmentCount == 0
+        let sendDeadline = shouldCheckDeadline ? item.sendDeadline : nil
+        if shouldCheckDeadline, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             dropStaleNonKeyframeDuringFragmentation(
                 item: item,
                 remainingQueuedBytes: progress.remainingQueuedBytes,
-                transportCompletionTracker: context.transportCompletionTracker,
-                fragmentsSubmitted: progress.submittedFragmentCount
+                transportCompletionTracker: context.transportCompletionTracker
             )
             return nil
         }
@@ -172,17 +179,15 @@ extension StreamPacketSender {
             dropStaleNonKeyframeDuringFragmentation(
                 item: item,
                 remainingQueuedBytes: progress.remainingQueuedBytes,
-                transportCompletionTracker: context.transportCompletionTracker,
-                fragmentsSubmitted: progress.submittedFragmentCount
+                transportCompletionTracker: context.transportCompletionTracker
             )
             return nil
         }
-        if sendDeadline != nil, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
+        if shouldCheckDeadline, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             dropStaleNonKeyframeDuringFragmentation(
                 item: item,
                 remainingQueuedBytes: progress.remainingQueuedBytes,
-                transportCompletionTracker: context.transportCompletionTracker,
-                fragmentsSubmitted: progress.submittedFragmentCount
+                transportCompletionTracker: context.transportCompletionTracker
             )
             return nil
         }

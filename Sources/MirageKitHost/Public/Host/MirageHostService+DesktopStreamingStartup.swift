@@ -113,6 +113,7 @@ extension MirageHostService {
             capturePressureProfile: request.capturePressureProfile,
             latencyMode: request.latencyMode,
             hostBufferingPolicy: request.hostBufferingPolicy,
+            transportPathKind: request.transportPathKind,
             enteredBitrate: request.enteredBitrate,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,

@@ -40,6 +40,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var clientSmoothestDisplayDebtMs: Double
     /// Active Smoothest-mode display debt cap, in milliseconds.
     public var clientSmoothestDisplayDebtCapMs: Double
+    /// Current Smoothest-mode target playout delay, in milliseconds.
+    public var clientSmoothestTargetDelayMs: Double
+    /// Number of Smoothest display ticks that found no frame ready for playout.
+    public var clientSmoothestUnderflowCount: UInt64
     /// Number of pending decoded frames overwritten before presentation.
     public var clientOverwrittenPendingFrames: UInt64
     /// Number of Smoothest-mode decoded frames dropped by local playout queue bounds.
@@ -126,6 +130,40 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostEnteredBitrate: Int?
     /// Current host encoder bitrate, in bits per second.
     public var hostCurrentBitrate: Int?
+    /// Host-requested encoder bitrate, in bits per second.
+    public var hostEncoderRequestedBitrateBps: Int?
+    /// Measured host encoded-output bitrate, in bits per second.
+    public var hostEncoderActualBitrateBps: Int?
+    /// Measurement window used for encoded-output bitrate, in milliseconds.
+    public var hostEncoderActualWindowMs: Int?
+    /// 50th percentile encoded frame size, in bytes.
+    public var hostEncodedFrameBytesP50: Int?
+    /// 95th percentile encoded frame size, in bytes.
+    public var hostEncodedFrameBytesP95: Int?
+    /// 99th percentile encoded frame size, in bytes.
+    public var hostEncodedFrameBytesP99: Int?
+    /// 50th percentile encoded keyframe size, in bytes.
+    public var hostEncodedKeyframeBytesP50: Int?
+    /// 95th percentile encoded keyframe size, in bytes.
+    public var hostEncodedKeyframeBytesP95: Int?
+    /// 99th percentile encoded keyframe size, in bytes.
+    public var hostEncodedKeyframeBytesP99: Int?
+    /// Active host encoder rate-control strategy.
+    public var hostEncoderRateControlStrategy: MirageEncoderRateControlStrategy?
+    /// Host encoder data-rate limit, in bytes.
+    public var hostEncoderRateLimitBytes: Int?
+    /// Host encoder data-rate limit window, in milliseconds.
+    public var hostEncoderRateLimitWindowMs: Int?
+    /// Effective encoded stream scale selected by the host.
+    public var hostEffectiveStreamScale: Double?
+    /// Most recent adaptive stream-scale reason.
+    public var hostAdaptiveStreamScaleReason: String?
+    /// Most recent host retune validation result.
+    public var hostEncoderRetuneValidationResult: String?
+    /// Number of keyframes forced for bitrate-retune validation.
+    public var hostEncoderKeyframeForRetuneCount: UInt64?
+    /// Number of VT session recreations forced for bitrate-retune validation.
+    public var hostEncoderSessionRecreationCount: UInt64?
     /// Most recent client-requested target bitrate, in bits per second.
     public var hostRequestedTargetBitrate: Int?
     /// Current host-side bitrate adaptation ceiling, in bits per second.
@@ -206,6 +244,28 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostCaptureDisplayTimeDriftCount: UInt64?
     /// Whether host capture timing appears suspicious for a virtual display.
     public var hostCaptureVirtualDisplayTimingSuspect: Bool?
+    /// ScreenCaptureKit telemetry sample duration, in seconds.
+    public var hostSCKSampleDurationSeconds: Double?
+    /// Raw ScreenCaptureKit screen callback rate, in frames per second.
+    public var hostRawScreenCallbackFPS: Double?
+    /// Complete ScreenCaptureKit frame rate, in frames per second.
+    public var hostCompleteFrameFPS: Double?
+    /// Renderable ScreenCaptureKit frame rate, in frames per second.
+    public var hostRenderableFrameFPS: Double?
+    /// Cadence-admitted ScreenCaptureKit frame rate, in frames per second.
+    public var hostCadenceAdmittedFrameFPS: Double?
+    /// Complete-frame ScreenCaptureKit rate used for post-capture validation.
+    public var hostObservedSCKFPS: Double?
+    /// Raw ScreenCaptureKit screen callback count in the host sample window.
+    public var hostRawScreenCallbackCount: UInt64?
+    /// Complete ScreenCaptureKit frame count in the host sample window.
+    public var hostCompleteFrameCount: UInt64?
+    /// Renderable ScreenCaptureKit frame count in the host sample window.
+    public var hostRenderableFrameCount: UInt64?
+    /// Idle ScreenCaptureKit frame count in the host sample window.
+    public var hostIdleFrameCount: UInt64?
+    /// Cadence-admitted ScreenCaptureKit frame count in the host sample window.
+    public var hostCadenceAdmittedFrameCount: UInt64?
     /// Whether host capture is paced by display refresh cadence.
     public var hostCaptureUsesDisplayRefreshCadence: Bool?
     /// Whether host capture uses the native refresh rate as its minimum frame interval.
@@ -236,6 +296,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostPacketPacerMaxSleepMs: Int?
     /// Maximum per-frame packet-pacer sleep duration on the host, in milliseconds.
     public var hostPacketPacerFrameMaxSleepMs: Int?
+    /// Host-selected maximum media packet size, including Mirage headers.
+    public var hostMediaMaxPacketSize: Int?
+    /// Host-selected Loom media send profile.
+    public var hostMediaSendProfile: String?
     /// Number of stale packets dropped by the host sender.
     public var hostStalePacketDrops: UInt64?
     package var hostSenderLocalDeadlineDrops: UInt64?
@@ -263,6 +327,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         clientPendingFrameAgeMs: Double = 0,
         clientSmoothestDisplayDebtMs: Double = 0,
         clientSmoothestDisplayDebtCapMs: Double = 0,
+        clientSmoothestTargetDelayMs: Double = 0,
+        clientSmoothestUnderflowCount: UInt64 = 0,
         clientOverwrittenPendingFrames: UInt64 = 0,
         clientSmoothestQueueDrops: UInt64 = 0,
         clientSmoothestDisplayDebtDrops: UInt64 = 0,
@@ -305,6 +371,23 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostTargetFrameRate: Int = 0,
         hostEnteredBitrate: Int? = nil,
         hostCurrentBitrate: Int? = nil,
+        hostEncoderRequestedBitrateBps: Int? = nil,
+        hostEncoderActualBitrateBps: Int? = nil,
+        hostEncoderActualWindowMs: Int? = nil,
+        hostEncodedFrameBytesP50: Int? = nil,
+        hostEncodedFrameBytesP95: Int? = nil,
+        hostEncodedFrameBytesP99: Int? = nil,
+        hostEncodedKeyframeBytesP50: Int? = nil,
+        hostEncodedKeyframeBytesP95: Int? = nil,
+        hostEncodedKeyframeBytesP99: Int? = nil,
+        hostEncoderRateControlStrategy: MirageEncoderRateControlStrategy? = nil,
+        hostEncoderRateLimitBytes: Int? = nil,
+        hostEncoderRateLimitWindowMs: Int? = nil,
+        hostEffectiveStreamScale: Double? = nil,
+        hostAdaptiveStreamScaleReason: String? = nil,
+        hostEncoderRetuneValidationResult: String? = nil,
+        hostEncoderKeyframeForRetuneCount: UInt64? = nil,
+        hostEncoderSessionRecreationCount: UInt64? = nil,
         hostRequestedTargetBitrate: Int? = nil,
         hostBitrateAdaptationCeiling: Int? = nil,
         hostStartupBitrate: Int? = nil,
@@ -348,6 +431,8 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
         self.clientSmoothestDisplayDebtMs = max(0, clientSmoothestDisplayDebtMs)
         self.clientSmoothestDisplayDebtCapMs = max(0, clientSmoothestDisplayDebtCapMs)
+        self.clientSmoothestTargetDelayMs = max(0, clientSmoothestTargetDelayMs)
+        self.clientSmoothestUnderflowCount = clientSmoothestUnderflowCount
         self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
         self.clientSmoothestQueueDrops = clientSmoothestQueueDrops
         self.clientSmoothestDisplayDebtDrops = clientSmoothestDisplayDebtDrops
@@ -392,6 +477,23 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostTargetFrameRate = hostTargetFrameRate
         self.hostEnteredBitrate = hostEnteredBitrate
         self.hostCurrentBitrate = hostCurrentBitrate
+        self.hostEncoderRequestedBitrateBps = hostEncoderRequestedBitrateBps
+        self.hostEncoderActualBitrateBps = hostEncoderActualBitrateBps
+        self.hostEncoderActualWindowMs = hostEncoderActualWindowMs
+        self.hostEncodedFrameBytesP50 = hostEncodedFrameBytesP50
+        self.hostEncodedFrameBytesP95 = hostEncodedFrameBytesP95
+        self.hostEncodedFrameBytesP99 = hostEncodedFrameBytesP99
+        self.hostEncodedKeyframeBytesP50 = hostEncodedKeyframeBytesP50
+        self.hostEncodedKeyframeBytesP95 = hostEncodedKeyframeBytesP95
+        self.hostEncodedKeyframeBytesP99 = hostEncodedKeyframeBytesP99
+        self.hostEncoderRateControlStrategy = hostEncoderRateControlStrategy
+        self.hostEncoderRateLimitBytes = hostEncoderRateLimitBytes
+        self.hostEncoderRateLimitWindowMs = hostEncoderRateLimitWindowMs
+        self.hostEffectiveStreamScale = hostEffectiveStreamScale
+        self.hostAdaptiveStreamScaleReason = hostAdaptiveStreamScaleReason
+        self.hostEncoderRetuneValidationResult = hostEncoderRetuneValidationResult
+        self.hostEncoderKeyframeForRetuneCount = hostEncoderKeyframeForRetuneCount
+        self.hostEncoderSessionRecreationCount = hostEncoderSessionRecreationCount
         self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
         self.hostBitrateAdaptationCeiling = hostBitrateAdaptationCeiling
         self.hostStartupBitrate = hostStartupBitrate
@@ -418,6 +520,19 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostUltra444Validated = hostUltra444Validated
         self.clientDecoderOutputPixelFormat = clientDecoderOutputPixelFormat
         self.clientUsingHardwareDecoder = clientUsingHardwareDecoder
+        hostSCKSampleDurationSeconds = nil
+        hostRawScreenCallbackFPS = nil
+        hostCompleteFrameFPS = nil
+        hostRenderableFrameFPS = nil
+        hostCadenceAdmittedFrameFPS = nil
+        hostObservedSCKFPS = nil
+        hostRawScreenCallbackCount = nil
+        hostCompleteFrameCount = nil
+        hostRenderableFrameCount = nil
+        hostIdleFrameCount = nil
+        hostCadenceAdmittedFrameCount = nil
+        hostMediaMaxPacketSize = nil
+        hostMediaSendProfile = nil
         self.hasHostMetrics = hasHostMetrics
     }
 
@@ -437,6 +552,17 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostCaptureLongFrameGapCount = cadence?.longFrameGapCount
         hostCaptureDisplayTimeDriftCount = cadence?.displayTimeDriftCount
         hostCaptureVirtualDisplayTimingSuspect = cadence?.virtualDisplayTimingSuspect
+        hostSCKSampleDurationSeconds = cadence?.sampleDurationSeconds
+        hostRawScreenCallbackFPS = cadence?.rawScreenCallbackFPS
+        hostCompleteFrameFPS = cadence?.completeFrameFPS
+        hostRenderableFrameFPS = cadence?.renderableFrameFPS
+        hostCadenceAdmittedFrameFPS = cadence?.cadenceAdmittedFrameFPS
+        hostObservedSCKFPS = cadence?.observedSCKFPS
+        hostRawScreenCallbackCount = cadence?.rawScreenCallbackCount
+        hostCompleteFrameCount = cadence?.completeFrameCount
+        hostRenderableFrameCount = cadence?.renderableFrameCount
+        hostIdleFrameCount = cadence?.idleFrameCount
+        hostCadenceAdmittedFrameCount = cadence?.cadenceAdmittedFrameCount
         hostCaptureUsesDisplayRefreshCadence = cadence?.usesDisplayRefreshCadence
         hostCaptureUsesNativeRefreshMinimumFrameInterval = cadence?.usesNativeRefreshMinimumFrameInterval
         hostCaptureMinimumFrameIntervalRate = cadence?.minimumFrameIntervalRate

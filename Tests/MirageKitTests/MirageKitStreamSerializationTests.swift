@@ -69,6 +69,24 @@ struct MirageKitStreamSerializationTests {
             droppedFrames: 12,
             activeQuality: 0.74,
             targetFrameRate: 60,
+            currentBitrate: 12_000_000,
+            encoderRequestedBitrateBps: 12_000_000,
+            encoderActualBitrateBps: 18_500_000,
+            encoderActualWindowMs: 1500,
+            encodedFrameBytesP50: 18_000,
+            encodedFrameBytesP95: 48_000,
+            encodedFrameBytesP99: 62_000,
+            encodedKeyframeBytesP50: 420_000,
+            encodedKeyframeBytesP95: 580_000,
+            encodedKeyframeBytesP99: 640_000,
+            encoderRateControlStrategy: .averageBitRateDataRateLimits,
+            encoderRateLimitBytes: 750_000,
+            encoderRateLimitWindowMs: 500,
+            effectiveStreamScale: 0.75,
+            adaptiveStreamScaleReason: "adaptive-downscale-client-requested",
+            encoderRetuneValidationResult: "session-recreation-overshoot-structural-adaptation-needed",
+            encoderKeyframeForRetuneCount: 1,
+            encoderSessionRecreationCount: 1,
             averageEncodeMs: 13.2,
             captureCadence: captureCadence,
             sendQueueBytes: 262_144,
@@ -101,6 +119,19 @@ struct MirageKitStreamSerializationTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
         #expect(decoded.averageEncodeMs == 13.2)
+        #expect(decoded.encoderRequestedBitrateBps == 12_000_000)
+        #expect(decoded.encoderActualBitrateBps == 18_500_000)
+        #expect(decoded.encoderActualWindowMs == 1500)
+        #expect(decoded.encodedFrameBytesP95 == 48_000)
+        #expect(decoded.encodedKeyframeBytesP99 == 640_000)
+        #expect(decoded.encoderRateControlStrategy == .averageBitRateDataRateLimits)
+        #expect(decoded.encoderRateLimitBytes == 750_000)
+        #expect(decoded.encoderRateLimitWindowMs == 500)
+        #expect(decoded.effectiveStreamScale == 0.75)
+        #expect(decoded.adaptiveStreamScaleReason == "adaptive-downscale-client-requested")
+        #expect(decoded.encoderRetuneValidationResult == "session-recreation-overshoot-structural-adaptation-needed")
+        #expect(decoded.encoderKeyframeForRetuneCount == 1)
+        #expect(decoded.encoderSessionRecreationCount == 1)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)

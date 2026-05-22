@@ -37,6 +37,28 @@ struct HEVCEncoderRateLimitTests {
         #expect(refreshedLimit.bytes == 2_500_000)
     }
 
+    @Test("Rate-limit windows use short windows at high frame rates")
+    func rateLimitWindowsUseShortWindowsAtHighFrameRates() {
+        let sixtyFPS = VideoEncoder.dataRateLimit(
+            targetBitrateBps: 12_000_000,
+            targetFrameRate: 60
+        )
+        let ninetyFPS = VideoEncoder.dataRateLimit(
+            targetBitrateBps: 12_000_000,
+            targetFrameRate: 90
+        )
+
+        #expect(sixtyFPS.windowSeconds == 0.5)
+        #expect(sixtyFPS.bytes == 750_000)
+        #expect(ninetyFPS.windowSeconds == 0.25)
+        #expect(ninetyFPS.bytes == 375_000)
+    }
+
+    @Test("Realtime encoder rate control uses constrained VBR")
+    func realtimeRateControlUsesConstrainedVBR() {
+        #expect(VideoEncoder.LowLatencyBitrateStrategy.averageBitRateDataRateLimits.publicStrategy == .averageBitRateDataRateLimits)
+    }
+
     @Test("Smoothest encoder specification keeps baseline hardware requirements")
     func smoothestEncoderSpecificationKeepsBaselineHardwareRequirements() {
         let spec = VideoEncoder.encoderSpecification(
@@ -53,6 +75,18 @@ struct HEVCEncoderRateLimitTests {
     func standardLowestLatencyEncoderSpecification() {
         let spec = VideoEncoder.encoderSpecification(
             latencyMode: .lowestLatency,
+            streamKind: .desktop
+        )
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
+    }
+
+    @Test("Standard balanced desktop specification enables low-latency rate control")
+    func standardBalancedDesktopEncoderSpecification() {
+        let spec = VideoEncoder.encoderSpecification(
+            latencyMode: .balanced,
             streamKind: .desktop
         )
 

@@ -37,11 +37,11 @@ extension MirageReceiverHealthController {
     static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
     static let fastStartFailedProbeCooldownSeconds: CFAbsoluteTime = 8
     static let fastStartDurationSeconds: CFAbsoluteTime = 12
-    static let conservativeProbeHealthySampleThreshold = 8
-    static let conservativeProbeIncreaseFloorBps = 4_000_000
-    static let conservativeProbeIncreasePercent = 108
-    static let conservativeProbeIncreaseMaximumStepBps = 10_000_000
-    static let conservativeSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 20
+    static let conservativeProbeHealthySampleThreshold = 30
+    static let conservativeProbeIncreaseFloorBps = 1_000_000
+    static let conservativeProbeIncreasePercent = 110
+    static let conservativeProbeIncreaseMaximumStepBps = 6_000_000
+    static let conservativeSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 30
     static let conservativeFailedProbeCooldownSeconds: CFAbsoluteTime = 30
     static let normalBackoffPromotionCeilingStep = 0.95
     static let severeBackoffPromotionCeilingStep = 0.90

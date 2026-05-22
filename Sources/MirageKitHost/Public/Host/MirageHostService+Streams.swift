@@ -35,7 +35,7 @@ public extension MirageHostService {
         colorDepth: MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        latencyMode: MirageStreamLatencyMode = .balanced,
         hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = false,
@@ -132,6 +132,8 @@ public extension MirageHostService {
 
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let resolvedAudioConfiguration = audioConfiguration ?? .default
+        let transportPathKind = startupClientContext.pathSnapshot
+            .map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown
         let context = StreamContext(
             streamID: streamID,
             windowID: updatedWindow.id,
@@ -148,6 +150,7 @@ public extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            transportPathKind: transportPathKind,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
@@ -234,8 +237,9 @@ public extension MirageHostService {
 
         let applicationWrapper = SCApplicationWrapper(application: scApplication)
         let displayWrapper = SCDisplayWrapper(display: captureSource.display)
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
-            videoStream.sendUnreliableQueued(packetData, onComplete: onComplete)
+            videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
         }
         let onSendError: @Sendable (Error) -> Void = { [weak self] error in
             guard let self else { return }

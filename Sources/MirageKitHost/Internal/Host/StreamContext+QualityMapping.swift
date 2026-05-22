@@ -55,7 +55,7 @@ extension StreamContext {
         frameRate: Int
     ) -> LowLatencyHighResolutionQualityBoost {
         guard lowLatencyHighResolutionCompressionBoostEnabled,
-              latencyMode == .lowestLatency else {
+              latencyMode == .lowestLatency || latencyMode == .balanced else {
             return LowLatencyHighResolutionQualityBoost(
                 frameQuality: frameQuality,
                 keyframeQuality: keyframeQuality,

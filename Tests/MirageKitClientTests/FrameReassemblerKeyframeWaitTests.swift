@@ -12,6 +12,66 @@ import Testing
 
 #if os(macOS)
 extension FrameReassemblerStaleKeyframeTests {
+    @Test("VPN keyframes wait past the default no-progress timeout")
+    func vpnKeyframeWaitsPastDefaultNoProgressTimeout() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        reassembler.setTransportPathKind(.vpn)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+        let lossCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+
+        let anchorKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            anchorKeyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: anchorKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let partialKeyframe = Data(repeating: 0xAB, count: 1200)
+        reassembler.processPacket(
+            partialKeyframe,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 1,
+                payload: partialKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(5200))
+
+        let laterPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
+        reassembler.processPacket(
+            laterPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: laterPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe == false)
+    }
+
     @Test("P-frame timeout enters keyframe wait until new anchor arrives")
     func pFrameTimeoutEntersKeyframeWait() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)

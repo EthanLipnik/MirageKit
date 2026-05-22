@@ -98,6 +98,74 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
+    @Test("Client can prefer Wi-Fi LAN attempts before AWDL while keeping other proximity routes first")
+    func controlSessionAttemptsPreferWiFiBeforeAwdlWhenRequested() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61046))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61047))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61048))
+        let anpiAddress = try #require(IPv6Address("fe80::1%anpi0"))
+        let awdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
+        let llwAddress = try #require(IPv6Address("fe80::3%llw0"))
+        let bridgeAddress = try #require(IPv6Address("fe80::4%bridge100"))
+        let wifiAddress = try #require(IPv4Address("192.168.1.50"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(wifiAddress),
+                .ipv6(anpiAddress),
+                .ipv6(awdlAddress),
+                .ipv6(llwAddress),
+                .ipv6(bridgeAddress),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "anpi0", type: .other, index: 9),
+                LoomDiscoveredInterface(name: "bridge100", type: .other, index: 14),
+                LoomDiscoveredInterface(name: "llw0", type: .other, index: 13),
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.preferWiFiBeforeAwdlProximity = true
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.map(\.routeTier) == [
+            .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
+            .bridge, .bridge, .bridge,
+            .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
+            .wifiLAN, .wifiLAN, .wifiLAN,
+            .awdl, .awdl, .awdl,
+        ])
+        #expect(attempts.prefix(9).allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(attempts[9..<12].allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.suffix(3).allSatisfy { $0.isPeerToPeerPreferred })
+    }
+
+    @MainActor
     @Test("Client ranks same wired Ethernet before AWDL")
     func controlSessionAttemptsRankSameWiredEthernetBeforeAwdl() throws {
         let deviceID = UUID()
@@ -456,6 +524,165 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(!attempts.contains { $0.routeTier == .awdl })
         #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
         #expect(attempts[0].endpoint.debugDescription == expectedFallbackUDPEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Forced AWDL route ignores active AWDL suppression")
+    func forcedAwdlRouteIgnoresActiveSuppression() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61055))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61056))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61057))
+        let awdlAddress = try #require(IPv6Address("fe80::5%awdl0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv6(awdlAddress),
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.suppressAwdlProximityRoute(
+            for: host,
+            interfaceNames: ["awdl0"],
+            duration: 900,
+            reason: "unit test"
+        )
+        service.debugRouteOverride = MirageDebugRouteOverride(
+            transportKind: .udp,
+            interfaceKind: .awdl,
+            interfaceName: "awdl0"
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.count == 1)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].routeTier == .awdl)
+        #expect(attempts[0].isPeerToPeerPreferred)
+        #expect(attempts[0].proximityInterfaceNames == ["awdl0"])
+    }
+
+    @MainActor
+    @Test("Forced unavailable interface produces no connection attempts")
+    func forcedUnavailableInterfaceProducesNoAttempts() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61058))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61059))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61060))
+        let awdlAddress = try #require(IPv6Address("fe80::6%awdl0"))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv6(awdlAddress)],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.debugRouteOverride = MirageDebugRouteOverride(
+            transportKind: .udp,
+            interfaceKind: .awdl,
+            interfaceName: "awdl99"
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.isEmpty)
+    }
+
+    @MainActor
+    @Test("Forced Wi-Fi route falls back to route kind when exact interface evidence is unavailable")
+    func forcedWiFiRouteMatchesRouteKindWithoutExactInterfaceEvidence() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61061))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.debugRouteOverride = MirageDebugRouteOverride(
+            transportKind: .udp,
+            interfaceKind: .wifi,
+            interfaceName: "en0"
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(attempts.count == 1)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].routeTier == .wifiLAN)
     }
 
     @MainActor

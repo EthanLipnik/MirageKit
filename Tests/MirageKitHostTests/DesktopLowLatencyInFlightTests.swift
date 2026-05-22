@@ -77,6 +77,37 @@ struct DesktopLowLatencyInFlightTests {
         #expect(await context.frameBufferDepth == 1)
     }
 
+    @Test("60 Hz desktop freshest-frame balanced keeps two-frame cushion")
+    func desktopFreshestFrameBalancedKeepsTwoFrameCushion() async {
+        let context = makeContext(
+            latencyMode: .balanced,
+            hostBufferingPolicy: .freshestFrame
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 28, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 1)
+        #expect(await context.maxInFlightFrames == 2)
+        #expect(await context.maxInFlightFramesCap == 2)
+        #expect(await context.frameBufferDepth == 2)
+    }
+
+    @Test("120 Hz desktop freshest-frame balanced keeps three-frame cushion")
+    func desktopFreshestFrame120HzBalancedKeepsThreeFrameCushion() async {
+        let context = makeContext(
+            latencyMode: .balanced,
+            targetFrameRate: 120,
+            hostBufferingPolicy: .freshestFrame
+        )
+
+        await context.updateInFlightLimitIfNeeded(averageEncodeMs: 40, pendingCount: 4)
+
+        #expect(await context.minInFlightFrames == 2)
+        #expect(await context.maxInFlightFrames == 3)
+        #expect(await context.maxInFlightFramesCap == 3)
+        #expect(await context.frameBufferDepth == 3)
+    }
+
     @Test("60 Hz desktop smoothest keeps smoothing capacity")
     func desktopSmoothestKeepsSmoothingCapacity() async {
         let context = makeContext(latencyMode: .smoothest)

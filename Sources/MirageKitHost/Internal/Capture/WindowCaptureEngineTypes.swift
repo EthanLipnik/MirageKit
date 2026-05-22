@@ -41,11 +41,22 @@ extension WindowCaptureEngine {
         let cancellationGrace: CFAbsoluteTime
     }
 
+    /// ScreenCaptureKit frame-interval strategy in force for the active stream.
+    enum MinimumFrameIntervalPolicy: String, Sendable, Equatable {
+        /// Use the normal resolver, except high-refresh desktop display capture starts with an explicit target interval.
+        case automatic
+        /// Force `minimumFrameInterval` to `1 / requestedFrameRate`.
+        case explicitTarget
+        /// Force native display-cadence delivery with `.zero`.
+        case nativeRefresh
+    }
+
     /// Snapshot of effective capture settings exposed to benchmark reporting.
     struct CapturePolicySnapshot: Equatable {
         let effectiveCaptureRate: Int
         let minimumFrameIntervalRate: Int
         let usesNativeRefreshMinimumFrameInterval: Bool
+        let minimumFrameIntervalPolicy: MinimumFrameIntervalPolicy
         let sckQueueDepth: Int
         let usesDisplayRefreshCadence: Bool
         let displayRefreshRate: Int?

@@ -43,6 +43,11 @@ extension WindowCaptureEngine {
         if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
             return 3
         }
+        if latencyMode == .balanced, hostBufferingPolicy == .freshestFrame {
+            if frameRate >= 120 { return 8 }
+            if frameRate >= 90 { return 6 }
+            return 4
+        }
 
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
@@ -67,6 +72,8 @@ extension WindowCaptureEngine {
         switch latencyMode {
         case .lowestLatency:
             break
+        case .balanced:
+            depth += 0
         case .smoothest:
             depth += 1
         }
@@ -93,6 +100,10 @@ extension WindowCaptureEngine {
                 soft = min(max(safeConfiguredSoft, 0.60), 1.00)
                 hard = min(max(max(soft + 5.00, soft * 6.00), 5.50), 8.00)
                 debounce = 0.60
+            case .balanced:
+                soft = min(max(safeConfiguredSoft, 0.80), 1.40)
+                hard = min(max(max(soft + 4.00, soft * 5.00), 5.00), 7.00)
+                debounce = 0.45
             case .lowestLatency:
                 soft = min(max(safeConfiguredSoft, 1.20), 2.00)
                 hard = min(max(max(soft + 3.00, soft * 4.00), 4.50), 6.00)
@@ -171,9 +182,28 @@ extension WindowCaptureEngine {
     nonisolated static func resolvedEffectiveCaptureRate(
         requestedFrameRate: Int,
         displayRefreshRate: Int?,
-        usesDisplayRefreshCadence: Bool
+        usesDisplayRefreshCadence: Bool,
+        minimumFrameIntervalPolicy: MinimumFrameIntervalPolicy = .automatic,
+        prefersExplicitHighRefreshInterval: Bool = false
     ) -> Int {
         let requestedFrameRate = max(1, requestedFrameRate)
+        switch minimumFrameIntervalPolicy {
+        case .explicitTarget:
+            return requestedFrameRate
+        case .nativeRefresh:
+            guard let displayRefreshRate = resolvedDisplayRefreshRateForCadence(
+                requestedFrameRate: requestedFrameRate,
+                displayRefreshRate: displayRefreshRate,
+                usesDisplayRefreshCadence: true
+            ) else {
+                return requestedFrameRate
+            }
+            return max(1, min(requestedFrameRate, displayRefreshRate))
+        case .automatic:
+            if prefersExplicitHighRefreshInterval {
+                return requestedFrameRate
+            }
+        }
         guard usesDisplayRefreshCadence else {
             return requestedFrameRate
         }
@@ -188,8 +218,20 @@ extension WindowCaptureEngine {
     nonisolated static func usesNativeRefreshMinimumFrameInterval(
         requestedFrameRate: Int,
         displayRefreshRate: Int?,
-        usesDisplayRefreshCadence: Bool
+        usesDisplayRefreshCadence: Bool,
+        minimumFrameIntervalPolicy: MinimumFrameIntervalPolicy = .automatic,
+        prefersExplicitHighRefreshInterval: Bool = false
     ) -> Bool {
+        switch minimumFrameIntervalPolicy {
+        case .explicitTarget:
+            return false
+        case .nativeRefresh:
+            return true
+        case .automatic:
+            if prefersExplicitHighRefreshInterval {
+                return false
+            }
+        }
         guard usesDisplayRefreshCadence,
               let displayRefreshRate = resolvedDisplayRefreshRateForCadence(
                   requestedFrameRate: requestedFrameRate,
@@ -218,19 +260,25 @@ extension WindowCaptureEngine {
     nonisolated static func resolvedMinimumFrameInterval(
         requestedFrameRate: Int,
         displayRefreshRate: Int?,
-        usesDisplayRefreshCadence: Bool
+        usesDisplayRefreshCadence: Bool,
+        minimumFrameIntervalPolicy: MinimumFrameIntervalPolicy = .automatic,
+        prefersExplicitHighRefreshInterval: Bool = false
     ) -> CMTime {
         if usesNativeRefreshMinimumFrameInterval(
             requestedFrameRate: requestedFrameRate,
             displayRefreshRate: displayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
+            prefersExplicitHighRefreshInterval: prefersExplicitHighRefreshInterval
         ) {
             return .zero
         }
         let effectiveRate = resolvedEffectiveCaptureRate(
             requestedFrameRate: requestedFrameRate,
             displayRefreshRate: displayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
+            prefersExplicitHighRefreshInterval: prefersExplicitHighRefreshInterval
         )
         return CMTime(value: 1, timescale: CMTimeScale(effectiveRate))
     }
@@ -239,7 +287,9 @@ extension WindowCaptureEngine {
         Self.resolvedEffectiveCaptureRate(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
+            prefersExplicitHighRefreshInterval: prefersExplicitHighRefreshInterval
         )
     }
 
@@ -247,7 +297,9 @@ extension WindowCaptureEngine {
         Self.usesNativeRefreshMinimumFrameInterval(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
+            prefersExplicitHighRefreshInterval: prefersExplicitHighRefreshInterval
         )
     }
 
@@ -255,8 +307,19 @@ extension WindowCaptureEngine {
         Self.resolvedMinimumFrameInterval(
             requestedFrameRate: currentFrameRate,
             displayRefreshRate: currentDisplayRefreshRate,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            minimumFrameIntervalPolicy: minimumFrameIntervalPolicy,
+            prefersExplicitHighRefreshInterval: prefersExplicitHighRefreshInterval
         )
+    }
+
+    var prefersExplicitHighRefreshInterval: Bool {
+        guard captureMode == .display,
+              currentFrameRate >= 120 else {
+            return false
+        }
+        let windowID = captureSessionConfig?.windowID ?? 0
+        return windowID == 0
     }
 
     func frameGapThreshold(for frameRate: Int) -> CFAbsoluteTime {

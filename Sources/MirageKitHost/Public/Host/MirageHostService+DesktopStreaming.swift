@@ -25,7 +25,7 @@ extension MirageHostService {
         ) else {
             return nil
         }
-        guard latencyMode == .lowestLatency,
+        guard (latencyMode == .lowestLatency || latencyMode == .balanced),
               allowRuntimeQualityAdjustment == false,
               normalizedBitrate > desktopLowestLatencyFixedQualityBitrateCapBps else {
             return normalizedBitrate
@@ -46,7 +46,7 @@ func startDesktopStream(
     captureQueueDepth: Int?,
     enteredBitrate: Int?,
     bitrate: Int?,
-    latencyMode: MirageStreamLatencyMode = .lowestLatency,
+    latencyMode: MirageStreamLatencyMode = .balanced,
     hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
     allowRuntimeQualityAdjustment: Bool?,
     lowLatencyHighResolutionCompressionBoost: Bool,
@@ -219,6 +219,7 @@ async throws {
         encoderMaxHeight: encoderMaxHeight,
         disableResolutionCap: disableResolutionCap
     ).resolvedStreamScale
+    let transportPathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown
 
     let streamContext = await makeDesktopStreamContext(
         DesktopStreamContextRequest(
@@ -233,6 +234,7 @@ async throws {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
+            transportPathKind: transportPathKind,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,

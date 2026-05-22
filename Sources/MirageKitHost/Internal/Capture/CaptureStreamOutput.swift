@@ -80,6 +80,19 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     let expectationLock = NSLock()
     /// Protects delivery timestamp and stall state updates.
     let deliveryStateLock = NSLock()
+    let telemetryLifetimeStartTime: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    var telemetryWindowStartTime: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    var rawScreenCallbackCountWindow: UInt64 = 0
+    var validScreenSampleCountWindow: UInt64 = 0
+    var renderableScreenSampleCountWindow: UInt64 = 0
+    var completeFrameCountWindow: UInt64 = 0
+    var idleFrameCountWindow: UInt64 = 0
+    var blankFrameCountWindow: UInt64 = 0
+    var suspendedFrameCountWindow: UInt64 = 0
+    var startedFrameCountWindow: UInt64 = 0
+    var stoppedFrameCountWindow: UInt64 = 0
+    var cadenceAdmittedFrameCountWindow: UInt64 = 0
+    var deliveredFrameCountWindow: UInt64 = 0
     var rawScreenCallbackCountCumulative: UInt64 = 0
     var validScreenSampleCountCumulative: UInt64 = 0
     var renderableScreenSampleCountCumulative: UInt64 = 0

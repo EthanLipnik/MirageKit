@@ -44,6 +44,8 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var cachedFormatDescription: CMVideoFormatDescription?
     private var lastSubmittedCursor: MirageRenderCursor = .zero
     private var lastMappedPresentationTime: CMTime = .invalid
+    private var scheduledTimebase: CMTimebase?
+    private var usesScheduledTimebase = false
     var loggedLayerFailure = false
     var lastFrameSubmissionTime: CFTimeInterval = 0
     var displayLayerNotReadyStartTime: CFTimeInterval = 0
@@ -170,7 +172,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             for: streamID,
             after: lastSubmittedCursor
         ) else {
-            return .noPendingFrame
+            return MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) > 0
+                ? .pendingFrameNotReady
+                : .noPendingFrame
         }
 
         if !frame.cursor.isAfter(lastSubmittedCursor) {
@@ -324,18 +328,50 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         }
 
         if timing.displaysImmediately {
+            disableScheduledTimebaseIfNeeded()
             CMSetAttachment(
                 sampleBuffer,
                 key: kCMSampleAttachmentKey_DisplayImmediately,
                 value: kCFBooleanTrue,
                 attachmentMode: kCMAttachmentMode_ShouldNotPropagate
             )
+        } else {
+            guard enableScheduledTimebaseIfNeeded() else { return nil }
         }
 
         return PreparedSampleBuffer(
             sampleBuffer: sampleBuffer,
             mappedPresentationTime: samplePresentationTime
         )
+    }
+
+    private func enableScheduledTimebaseIfNeeded() -> Bool {
+        guard let displayLayer else { return false }
+        if scheduledTimebase == nil {
+            let hostClock = CMClockGetHostTimeClock()
+            var createdTimebase: CMTimebase?
+            let status = CMTimebaseCreateWithSourceClock(
+                allocator: kCFAllocatorDefault,
+                sourceClock: hostClock,
+                timebaseOut: &createdTimebase
+            )
+            guard status == noErr, let createdTimebase else {
+                MirageLogger.error(.renderer, "CMTimebaseCreateWithSourceClock failed: \(status)")
+                return false
+            }
+            CMTimebaseSetTime(createdTimebase, time: CMClockGetTime(hostClock))
+            CMTimebaseSetRate(createdTimebase, rate: 1)
+            scheduledTimebase = createdTimebase
+        }
+        displayLayer.controlTimebase = scheduledTimebase
+        usesScheduledTimebase = true
+        return true
+    }
+
+    private func disableScheduledTimebaseIfNeeded() {
+        guard usesScheduledTimebase else { return }
+        displayLayer?.controlTimebase = nil
+        usesScheduledTimebase = false
     }
 
     private func mappedPresentationTime(

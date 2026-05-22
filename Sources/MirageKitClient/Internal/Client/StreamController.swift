@@ -88,6 +88,8 @@ actor StreamController {
     var nextExpectedEnqueueOrder: UInt64 = 0
     let enqueueOrderAllocator = FrameEnqueueOrderAllocator()
     var framePipelineGeneration: UInt64 = 0
+    /// True after the compressed decode queue has dropped an inter-dependent frame.
+    var decodeQueueRequiresKeyframe = false
 
     /// Continuation resumed when the decode task is waiting for a frame.
     var dequeueContinuation: CheckedContinuation<FrameData?, Never>?
@@ -107,6 +109,7 @@ actor StreamController {
     var lastDecodeErrorSignature: String?
     var lastDecodeErrorLogTime: CFAbsoluteTime = 0
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
+    var recoveryKeyframeDispatchTimes: [CFAbsoluteTime] = []
     var lastSoftRecoveryRequestTime: CFAbsoluteTime = 0
     var lastHardRecoveryStartTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
@@ -250,6 +253,7 @@ extension StreamController {
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         lastRecoveryRequestDispatchTime = 0
+        recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
         resetStartupRecoveryTracking()
@@ -296,6 +300,10 @@ extension StreamController {
                     decodeTime: decodeTime,
                     presentationTime: presentationTime,
                     remotePresentationTime: remotePresentationTime,
+                    hostEpoch: timingEntry?.hostEpoch,
+                    dimensionToken: timingEntry?.dimensionToken,
+                    frameNumber: timingEntry?.frameNumber,
+                    queueEpoch: timingEntry?.queueEpoch,
                     for: capturedStreamID
                 )
                 if !handledByAppAtlasFanout {
@@ -305,6 +313,12 @@ extension StreamController {
                         decodeTime: decodeTime,
                         presentationTime: presentationTime,
                         remotePresentationTime: remotePresentationTime,
+                        generation: MirageRenderStreamStore.shared.currentGeneration(for: capturedStreamID),
+                        hostEpoch: timingEntry?.hostEpoch,
+                        dimensionToken: timingEntry?.dimensionToken,
+                        frameNumber: timingEntry?.frameNumber,
+                        queueEpoch: timingEntry?.queueEpoch,
+                        timeline: nil,
                         for: capturedStreamID
                     )
                 }

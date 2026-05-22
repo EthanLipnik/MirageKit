@@ -29,6 +29,11 @@ extension MirageClientService {
 
         let attempts = controlSessionAttempts(for: host)
         recordControlSessionAttemptPlan(attempts, host: host)
+        if attempts.isEmpty, let debugRouteOverride {
+            throw MirageError.protocolError(
+                "Debug route override \(debugRouteOverride.displayName) matched no available connection route for \(host.name); forced routes do not fall back automatically."
+            )
+        }
         var lastFailureReason: String?
         var retriedCurrentBootstrapTransportLossAttemptIndices: Set<Int> = []
         var attemptIndex = 0

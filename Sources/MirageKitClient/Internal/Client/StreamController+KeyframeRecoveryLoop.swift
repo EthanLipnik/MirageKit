@@ -15,6 +15,7 @@ extension StreamController {
         guard keyframeRecoveryTask == nil else { return }
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         if clientRecoveryStatus != .postResizeAwaitingFirstFrame,
            clientRecoveryStatus != .hardRecovery {
             await setClientRecoveryStatus(.keyframeRecovery)
@@ -30,6 +31,7 @@ extension StreamController {
         keyframeRecoveryTask = nil
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         recoveryCoordinator.recordProgress()
         if clientRecoveryStatus == .keyframeRecovery {
             await setClientRecoveryStatus(.idle)
@@ -83,13 +85,23 @@ extension StreamController {
             if didDispatch {
                 keyframeRecoveryAttempt &+= 1
             } else {
+                let nextDelay = keyframeRecoveryDispatchRetryDelay(now: currentTime)
                 do {
-                    try await Task.sleep(for: .milliseconds(20))
+                    try await Task.sleep(for: Self.duration(seconds: nextDelay))
                 } catch {
                     return
                 }
             }
         }
+    }
+
+    private func keyframeRecoveryDispatchRetryDelay(now: CFAbsoluteTime) -> CFAbsoluteTime {
+        guard recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit,
+              let oldest = recoveryKeyframeDispatchTimes.first else {
+            return 0.02
+        }
+        let nextWindowTime = oldest + Self.recoveryKeyframeDispatchWindow
+        return max(0.02, min(1.0, nextWindowTime - now))
     }
 
     private func escalateKeyframeRecoveryAfterExhaustion(

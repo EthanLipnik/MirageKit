@@ -14,6 +14,10 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
     struct Entry: Sendable {
         /// Presentation timestamp originally supplied by the host.
         let remotePresentationTime: CMTime
+        let frameNumber: UInt32?
+        let hostEpoch: UInt16?
+        let dimensionToken: UInt16?
+        let queueEpoch: UInt64?
     }
 
     /// Hashable representation of `CMTime` that preserves the fields used for equality.
@@ -43,7 +47,11 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
     /// Stores the host timestamp for a client presentation timestamp.
     func insert(
         streamPresentationTime: CMTime,
-        remotePresentationTime: CMTime
+        remotePresentationTime: CMTime,
+        frameNumber: UInt32? = nil,
+        hostEpoch: UInt16? = nil,
+        dimensionToken: UInt16? = nil,
+        queueEpoch: UInt64? = nil
     ) {
         let key = Key(streamPresentationTime)
         lock.lock()
@@ -51,7 +59,13 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
         if entries[key] == nil {
             order.append(key)
         }
-        entries[key] = Entry(remotePresentationTime: remotePresentationTime)
+        entries[key] = Entry(
+            remotePresentationTime: remotePresentationTime,
+            frameNumber: frameNumber,
+            hostEpoch: hostEpoch,
+            dimensionToken: dimensionToken,
+            queueEpoch: queueEpoch
+        )
         trimLocked()
     }
 

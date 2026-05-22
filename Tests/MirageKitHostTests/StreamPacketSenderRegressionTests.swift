@@ -15,8 +15,8 @@ import Testing
 
 @Suite("Stream Packet Sender Regression")
 struct StreamPacketSenderRegressionTests {
-    @Test("Sender-local stale P-frames do not enter dependency loss")
-    func senderLocalStalePFramesDoNotEnterDependencyLoss() async {
+    @Test("Sender-local stale P-frames enter dependency recovery")
+    func senderLocalStalePFramesEnterDependencyRecovery() async {
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
@@ -51,7 +51,7 @@ struct StreamPacketSenderRegressionTests {
             )
         )
 
-        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(dependencyDropCount.read { $0 == 1 })
         let localSnapshot = await sender.telemetrySnapshot
         #expect(localSnapshot.senderLocalDeadlineDrops == 3)
         #expect(localSnapshot.stalePacketDrops == 3)

@@ -96,6 +96,10 @@ extension VideoEncoder {
         setPropertyOutcome(session, key: key, value: value) == .applied
     }
 
+    func clearPropertyIfPresent(_ session: VTCompressionSession, key: CFString) -> Bool {
+        clearPropertyIfPresentOutcome(session, key: key) == .applied
+    }
+
     func setPropertyOutcome(
         _ session: VTCompressionSession,
         key: CFString,
@@ -123,6 +127,67 @@ extension VideoEncoder {
         return .applied
     }
 
+    func clearPropertyOutcome(
+        _ session: VTCompressionSession,
+        key: CFString
+    ) -> PropertyApplyOutcome {
+        if didQuerySupportedProperties, !supportedPropertyKeys.contains(key) {
+            if !loggedUnsupportedKeys.contains(key) {
+                loggedUnsupportedKeys.insert(key)
+                MirageLogger.encoder("Encoder property unsupported: \(key)")
+            }
+            return .unsupported
+        }
+        let status = VTSessionSetProperty(session, key: key, value: nil)
+        if Self.unsupportedEncoderPropertyStatuses.contains(status) {
+            if !loggedUnsupportedKeys.contains(key) {
+                loggedUnsupportedKeys.insert(key)
+                MirageLogger.encoder("Encoder property unsupported: \(key) (status \(status))")
+            }
+            return .unsupported
+        }
+        guard status == noErr else {
+            MirageLogger.error(.encoder, "VTSessionSetProperty \(key)=nil failed: \(status)")
+            return .failed
+        }
+        return .applied
+    }
+
+    func clearPropertyIfPresentOutcome(
+        _ session: VTCompressionSession,
+        key: CFString
+    ) -> PropertyApplyOutcome {
+        if didQuerySupportedProperties, !supportedPropertyKeys.contains(key) {
+            if !loggedUnsupportedKeys.contains(key) {
+                loggedUnsupportedKeys.insert(key)
+                MirageLogger.encoder("Encoder property unsupported: \(key)")
+            }
+            return .unsupported
+        }
+
+        var existingValue: Unmanaged<CFTypeRef>?
+        let copyStatus = VTSessionCopyProperty(
+            session,
+            key: key,
+            allocator: kCFAllocatorDefault,
+            valueOut: &existingValue
+        )
+        if Self.unsupportedEncoderPropertyStatuses.contains(copyStatus) {
+            if !loggedUnsupportedKeys.contains(key) {
+                loggedUnsupportedKeys.insert(key)
+                MirageLogger.encoder("Encoder property unsupported: \(key) (status \(copyStatus))")
+            }
+            return .unsupported
+        }
+        guard copyStatus == noErr else {
+            MirageLogger.encoder("Encoder property not active: \(key) (status \(copyStatus))")
+            return .applied
+        }
+        guard let existingValue else { return .applied }
+        _ = existingValue.takeRetainedValue()
+        return clearPropertyOutcome(session, key: key)
+    }
+
     nonisolated static let unsupportedEncoderPropertyStatuses: Set<OSStatus> = [
         -12900,
     ]
@@ -135,6 +200,17 @@ extension VideoEncoder {
         status: inout SessionPolicyStatus
     ) -> Bool {
         let outcome = setPropertyOutcome(session, key: key, value: value)
+        status.record(propertyName, outcome: outcome)
+        return outcome == .applied
+    }
+
+    func clearPropertyIfPresentTracked(
+        _ session: VTCompressionSession,
+        key: CFString,
+        propertyName: String,
+        status: inout SessionPolicyStatus
+    ) -> Bool {
+        let outcome = clearPropertyIfPresentOutcome(session, key: key)
         status.record(propertyName, outcome: outcome)
         return outcome == .applied
     }

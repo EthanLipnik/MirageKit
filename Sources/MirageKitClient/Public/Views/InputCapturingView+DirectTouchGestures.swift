@@ -16,6 +16,7 @@ extension InputCapturingView {
 
         let location = normalizedLocation(rawLocation)
         updatePointerLocationForLocalContact(location)
+        directTouchScrollAnchorLocation = cursorLockEnabled ? lockedCursorPosition : location
         syncModifiersForInput()
         let eventModifiers = keyboardModifiers
         sendModifierSnapshotIfNeeded(eventModifiers)

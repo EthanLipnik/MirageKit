@@ -373,8 +373,8 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(metrics.incompleteFrameLifetimeTimeouts == 1)
     }
 
-    @Test("Pending keyframe progress preserves dependent P-frames for post-keyframe drain")
-    func pendingKeyframeProgressPreservesDependentPFramesForPostKeyframeDrain() {
+    @Test("Keyframe wait drops dependent P-frames before reassembly")
+    func keyframeWaitDropsDependentPFramesBeforeReassembly() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -433,7 +433,7 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(lossCounter.value == 0)
         #expect(reassembler.isAwaitingKeyframe == true)
         #expect(metrics.pendingKeyframeCount == 1)
-        #expect(metrics.pendingFrameCount == 2)
+        #expect(metrics.pendingFrameCount == 1)
 
         for fragmentIndex in UInt16(1) ..< UInt16(8) {
             let payload = Data([UInt8(fragmentIndex), 0x30, 0x30, 0x30])
@@ -451,7 +451,7 @@ struct FrameReassemblerRecoveryProgressTests {
         }
 
         metrics = reassembler.snapshotMetrics
-        #expect(deliveredCounter.value == 3)
+        #expect(deliveredCounter.value == 2)
         #expect(lossCounter.value == 0)
         #expect(reassembler.isAwaitingKeyframe == false)
         #expect(metrics.pendingFrameCount == 0)

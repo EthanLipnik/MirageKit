@@ -28,6 +28,9 @@ extension MirageClientService {
         let primaryStreamID = desktopStreamID ?? activeStreams.first?.id
         let primarySnapshot = primaryStreamID.flatMap { metricsStore.snapshot(for: $0) }
         let processPhysicalFootprintBytes = Self.processPhysicalFootprintBytes
+        let selectedControlAttempt = recentControlSessionAttemptSummaries.reversed().first { summary in
+            summary.phase == "succeeded" || summary.phase == "winner"
+        }
         return [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
             "client.authorizationState": .string(authorizationState.rawValue),
@@ -47,6 +50,14 @@ extension MirageClientService {
                 .map(LoomDiagnosticsValue.int) ?? .null,
             "client.runtimeWorkloadFallbackReason": runtimeWorkloadSafetyLastFallbackReason.map(LoomDiagnosticsValue.string) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
+            "client.debugRouteOverride": debugRouteOverride.map { .string($0.displayName) } ?? .null,
+            "client.debugRouteOverride.transport": debugRouteOverride.map { .string($0.transportKind.rawValue) } ?? .null,
+            "client.debugRouteOverride.interfaceName": debugRouteOverride?.interfaceName.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.debugRouteOverride.interfaceKind": debugRouteOverride?.interfaceKind.map { .string($0.rawValue) } ?? .null,
+            "client.control.selectedTransport": selectedControlAttempt.map { .string($0.transport) } ?? .null,
+            "client.control.selectedInterface": selectedControlAttempt.map { .string($0.requiredInterface) } ?? .null,
+            "client.control.selectedRouteTier": selectedControlAttempt.map { .string($0.routeTier) } ?? .null,
+            "client.control.selectedEndpointSource": selectedControlAttempt.map { .string($0.endpointSource) } ?? .null,
             "client.primaryStreamID": primaryStreamID.map { .int(Int($0)) } ?? .null,
             "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,
             "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
@@ -82,10 +93,20 @@ extension MirageClientService {
             "client.primaryStream.hostPacketPacerTotalSleepMs": primarySnapshot?.hostPacketPacerTotalSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
             "client.primaryStream.hostPacketPacerMaxSleepMs": primarySnapshot?.hostPacketPacerMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
             "client.primaryStream.hostPacketPacerFrameMaxSleepMs": primarySnapshot?.hostPacketPacerFrameMaxSleepMs.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.hostMediaPacketSize": primarySnapshot?.hostMediaMaxPacketSize.map(LoomDiagnosticsValue.int) ?? .null,
+            "client.primaryStream.hostSenderLocalDeadlineDrops": primarySnapshot?.hostSenderLocalDeadlineDrops.map { .int(Int(clamping: $0)) } ?? .null,
+            "client.primaryStream.smoothestTargetDelayMs": primarySnapshot
+                .map { LoomDiagnosticsValue.double($0.clientSmoothestTargetDelayMs) } ?? .null,
+            "client.primaryStream.smoothestUnderflows": primarySnapshot
+                .map { LoomDiagnosticsValue.int(Int(clamping: $0.clientSmoothestUnderflowCount)) } ?? .null,
             "client.primaryStream.hostCaptureDeliveredGapP99Ms": primarySnapshot?.hostCaptureDeliveredFrameGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostCaptureDeliveredGapWorstMs": primarySnapshot?.hostCaptureDeliveredFrameGapWorstMs.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostCaptureWallGapP99Ms": primarySnapshot?.hostCaptureWallClockGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostCaptureDisplayTimeGapP99Ms": primarySnapshot?.hostCaptureDisplayTimeGapP99Ms.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostSCKObservedFPS": primarySnapshot?.hostObservedSCKFPS.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostSCKRawCallbackFPS": primarySnapshot?.hostRawScreenCallbackFPS.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostSCKCompleteFrameFPS": primarySnapshot?.hostCompleteFrameFPS.map(LoomDiagnosticsValue.double) ?? .null,
+            "client.primaryStream.hostSCKCadenceAdmittedFPS": primarySnapshot?.hostCadenceAdmittedFrameFPS.map(LoomDiagnosticsValue.double) ?? .null,
             "client.primaryStream.hostCaptureLongFrameGaps": primarySnapshot?.hostCaptureLongFrameGapCount.map { .int(Int($0)) } ?? .null,
             "client.primaryStream.hostCaptureDisplayTimeDrifts": primarySnapshot?.hostCaptureDisplayTimeDriftCount.map { .int(Int($0)) } ?? .null,
             "client.primaryStream.hostCaptureVirtualTimingSuspect": primarySnapshot?.hostCaptureVirtualDisplayTimingSuspect.map(LoomDiagnosticsValue.bool) ?? .null,

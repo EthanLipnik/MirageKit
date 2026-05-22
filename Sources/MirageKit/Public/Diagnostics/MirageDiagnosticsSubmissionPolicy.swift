@@ -87,15 +87,6 @@ public enum MirageDiagnosticsSubmissionPolicy {
             )
         }
 
-        if lowercasedMessage.contains("target is not foreground") ||
-            lowercasedMessage.contains("not foreground") && lowercasedMessage.contains("live activity") {
-            return breadcrumbOnly(
-                issueKind: "live-activity-foreground",
-                failureStage: "activity-request",
-                recoveryOutcome: "expected-lifecycle"
-            )
-        }
-
         if containsAny(
             lowercasedMessage,
             [

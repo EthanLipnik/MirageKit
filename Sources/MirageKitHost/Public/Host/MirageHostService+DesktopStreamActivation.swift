@@ -60,11 +60,13 @@ extension MirageHostService {
             mode: activation.mode,
             startupRequestID: activation.startupRequestID
         )
+        let mediaSendProfile = await activeClientContext.controlChannel.session.mirageMediaSendProfile()
 
         do {
             try await startDesktopDisplayCapture(
                 activation,
                 activeVideoStream: activeVideoStream,
+                mediaSendProfile: mediaSendProfile,
                 excludedWindows: excludedWindows,
                 audioConfiguration: &effectiveAudioConfiguration
             )
@@ -197,6 +199,7 @@ extension MirageHostService {
     func startDesktopDisplayCapture(
         _ activation: DesktopStreamActivation,
         activeVideoStream: LoomMultiplexedStream,
+        mediaSendProfile: LoomQueuedUnreliableSendProfile,
         excludedWindows: [SCWindowWrapper],
         audioConfiguration: inout MirageAudioConfiguration
     ) async throws {
@@ -207,7 +210,7 @@ extension MirageHostService {
                 resolution: activation.captureResolution,
                 excludedWindows: excludedWindows,
                 sendPacket: { packetData, onComplete in
-                    activeVideoStream.sendUnreliableQueued(packetData) { error in
+                    activeVideoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile) { error in
                         if error == nil {
                             self.markDesktopFirstVideoPacketIfNeeded(
                                 streamID: activation.streamID,

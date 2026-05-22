@@ -11,6 +11,17 @@ import Foundation
 
 /// Capture cadence metrics sampled on the host and reported with stream telemetry.
 package struct StreamCaptureCadenceMetrics: Codable, Equatable {
+    package let sampleDurationSeconds: Double?
+    package let rawScreenCallbackCount: UInt64?
+    package let completeFrameCount: UInt64?
+    package let renderableFrameCount: UInt64?
+    package let idleFrameCount: UInt64?
+    package let cadenceAdmittedFrameCount: UInt64?
+    package let rawScreenCallbackFPS: Double?
+    package let completeFrameFPS: Double?
+    package let renderableFrameFPS: Double?
+    package let cadenceAdmittedFrameFPS: Double?
+    package let observedSCKFPS: Double?
     package let wallClockGapWorstMs: Double
     package let wallClockGapP95Ms: Double
     package let wallClockGapP99Ms: Double
@@ -38,6 +49,17 @@ package struct StreamCaptureCadenceMetrics: Codable, Equatable {
     package let virtualDisplayTimingSuspect: Bool?
 
     package init(
+        sampleDurationSeconds: Double? = nil,
+        rawScreenCallbackCount: UInt64? = nil,
+        completeFrameCount: UInt64? = nil,
+        renderableFrameCount: UInt64? = nil,
+        idleFrameCount: UInt64? = nil,
+        cadenceAdmittedFrameCount: UInt64? = nil,
+        rawScreenCallbackFPS: Double? = nil,
+        completeFrameFPS: Double? = nil,
+        renderableFrameFPS: Double? = nil,
+        cadenceAdmittedFrameFPS: Double? = nil,
+        observedSCKFPS: Double? = nil,
         wallClockGapWorstMs: Double = 0,
         wallClockGapP95Ms: Double = 0,
         wallClockGapP99Ms: Double = 0,
@@ -64,6 +86,17 @@ package struct StreamCaptureCadenceMetrics: Codable, Equatable {
         virtualDisplayScaleFactor: Double? = nil,
         virtualDisplayTimingSuspect: Bool? = nil
     ) {
+        self.sampleDurationSeconds = sampleDurationSeconds
+        self.rawScreenCallbackCount = rawScreenCallbackCount
+        self.completeFrameCount = completeFrameCount
+        self.renderableFrameCount = renderableFrameCount
+        self.idleFrameCount = idleFrameCount
+        self.cadenceAdmittedFrameCount = cadenceAdmittedFrameCount
+        self.rawScreenCallbackFPS = rawScreenCallbackFPS
+        self.completeFrameFPS = completeFrameFPS
+        self.renderableFrameFPS = renderableFrameFPS
+        self.cadenceAdmittedFrameFPS = cadenceAdmittedFrameFPS
+        self.observedSCKFPS = observedSCKFPS
         self.wallClockGapWorstMs = wallClockGapWorstMs
         self.wallClockGapP95Ms = wallClockGapP95Ms
         self.wallClockGapP99Ms = wallClockGapP99Ms
@@ -102,6 +135,23 @@ package struct StreamMetricsMessage: Codable {
     package let targetFrameRate: Int
     package let enteredBitrate: Int?
     package let currentBitrate: Int?
+    package let encoderRequestedBitrateBps: Int?
+    package let encoderActualBitrateBps: Int?
+    package let encoderActualWindowMs: Int?
+    package let encodedFrameBytesP50: Int?
+    package let encodedFrameBytesP95: Int?
+    package let encodedFrameBytesP99: Int?
+    package let encodedKeyframeBytesP50: Int?
+    package let encodedKeyframeBytesP95: Int?
+    package let encodedKeyframeBytesP99: Int?
+    package let encoderRateControlStrategy: MirageEncoderRateControlStrategy?
+    package let encoderRateLimitBytes: Int?
+    package let encoderRateLimitWindowMs: Int?
+    package let effectiveStreamScale: Double?
+    package let adaptiveStreamScaleReason: String?
+    package let encoderRetuneValidationResult: String?
+    package let encoderKeyframeForRetuneCount: UInt64?
+    package let encoderSessionRecreationCount: UInt64?
     package let requestedTargetBitrate: Int?
     package let bitrateAdaptationCeiling: Int?
     package let startupBitrate: Int?
@@ -123,6 +173,8 @@ package struct StreamMetricsMessage: Codable {
     package let packetPacerTotalSleepMs: Int?
     package let packetPacerMaxSleepMs: Int?
     package let packetPacerFrameMaxSleepMs: Int?
+    package let mediaMaxPacketSize: Int?
+    package let mediaSendProfile: String?
     package let stalePacketDrops: UInt64?
     package let senderLocalDeadlineDrops: UInt64?
     package let generationAbortDrops: UInt64?
@@ -152,6 +204,23 @@ package struct StreamMetricsMessage: Codable {
         targetFrameRate: Int,
         enteredBitrate: Int? = nil,
         currentBitrate: Int? = nil,
+        encoderRequestedBitrateBps: Int? = nil,
+        encoderActualBitrateBps: Int? = nil,
+        encoderActualWindowMs: Int? = nil,
+        encodedFrameBytesP50: Int? = nil,
+        encodedFrameBytesP95: Int? = nil,
+        encodedFrameBytesP99: Int? = nil,
+        encodedKeyframeBytesP50: Int? = nil,
+        encodedKeyframeBytesP95: Int? = nil,
+        encodedKeyframeBytesP99: Int? = nil,
+        encoderRateControlStrategy: MirageEncoderRateControlStrategy? = nil,
+        encoderRateLimitBytes: Int? = nil,
+        encoderRateLimitWindowMs: Int? = nil,
+        effectiveStreamScale: Double? = nil,
+        adaptiveStreamScaleReason: String? = nil,
+        encoderRetuneValidationResult: String? = nil,
+        encoderKeyframeForRetuneCount: UInt64? = nil,
+        encoderSessionRecreationCount: UInt64? = nil,
         requestedTargetBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         startupBitrate: Int? = nil,
@@ -173,6 +242,8 @@ package struct StreamMetricsMessage: Codable {
         packetPacerTotalSleepMs: Int? = nil,
         packetPacerMaxSleepMs: Int? = nil,
         packetPacerFrameMaxSleepMs: Int? = nil,
+        mediaMaxPacketSize: Int? = nil,
+        mediaSendProfile: String? = nil,
         stalePacketDrops: UInt64? = nil,
         senderLocalDeadlineDrops: UInt64? = nil,
         generationAbortDrops: UInt64? = nil,
@@ -201,6 +272,23 @@ package struct StreamMetricsMessage: Codable {
         self.targetFrameRate = targetFrameRate
         self.enteredBitrate = enteredBitrate
         self.currentBitrate = currentBitrate
+        self.encoderRequestedBitrateBps = encoderRequestedBitrateBps
+        self.encoderActualBitrateBps = encoderActualBitrateBps
+        self.encoderActualWindowMs = encoderActualWindowMs
+        self.encodedFrameBytesP50 = encodedFrameBytesP50
+        self.encodedFrameBytesP95 = encodedFrameBytesP95
+        self.encodedFrameBytesP99 = encodedFrameBytesP99
+        self.encodedKeyframeBytesP50 = encodedKeyframeBytesP50
+        self.encodedKeyframeBytesP95 = encodedKeyframeBytesP95
+        self.encodedKeyframeBytesP99 = encodedKeyframeBytesP99
+        self.encoderRateControlStrategy = encoderRateControlStrategy
+        self.encoderRateLimitBytes = encoderRateLimitBytes
+        self.encoderRateLimitWindowMs = encoderRateLimitWindowMs
+        self.effectiveStreamScale = effectiveStreamScale
+        self.adaptiveStreamScaleReason = adaptiveStreamScaleReason
+        self.encoderRetuneValidationResult = encoderRetuneValidationResult
+        self.encoderKeyframeForRetuneCount = encoderKeyframeForRetuneCount
+        self.encoderSessionRecreationCount = encoderSessionRecreationCount
         self.requestedTargetBitrate = requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.startupBitrate = startupBitrate
@@ -222,6 +310,8 @@ package struct StreamMetricsMessage: Codable {
         self.packetPacerTotalSleepMs = packetPacerTotalSleepMs
         self.packetPacerMaxSleepMs = packetPacerMaxSleepMs
         self.packetPacerFrameMaxSleepMs = packetPacerFrameMaxSleepMs
+        self.mediaMaxPacketSize = mediaMaxPacketSize
+        self.mediaSendProfile = mediaSendProfile
         self.stalePacketDrops = stalePacketDrops
         self.senderLocalDeadlineDrops = senderLocalDeadlineDrops
         self.generationAbortDrops = generationAbortDrops

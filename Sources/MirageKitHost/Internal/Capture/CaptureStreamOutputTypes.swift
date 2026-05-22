@@ -31,6 +31,7 @@ extension CaptureStreamOutput {
     }
 
     struct TelemetrySnapshot: Equatable {
+        let sampleDurationSeconds: Double
         let rawScreenCallbackCount: UInt64
         let validScreenSampleCount: UInt64
         let renderableScreenSampleCount: UInt64
@@ -48,6 +49,35 @@ extension CaptureStreamOutput {
         let cadenceDropCount: UInt64
         let admissionDropCount: UInt64
         let cadenceMetrics: CaptureCadenceMetricsSnapshot
+
+        var rawScreenCallbackFPS: Double? {
+            rate(for: rawScreenCallbackCount)
+        }
+
+        var completeFrameFPS: Double? {
+            rate(for: completeFrameCount)
+        }
+
+        var renderableFrameFPS: Double? {
+            rate(for: renderableScreenSampleCount)
+        }
+
+        var cadenceAdmittedFrameFPS: Double? {
+            rate(for: cadenceAdmittedFrameCount)
+        }
+
+        /// SCK delivery rate used for post-capture validation.
+        ///
+        /// Complete frames are the signal that the keepalive is actually dirtying the captured display.
+        /// Renderable/idle counts are still tracked separately for diagnostics.
+        var observedSCKFPS: Double? {
+            completeFrameFPS
+        }
+
+        private func rate(for count: UInt64) -> Double? {
+            guard sampleDurationSeconds >= 0.75 else { return nil }
+            return Double(count) / sampleDurationSeconds
+        }
     }
 
     struct CadenceDecision: Equatable {

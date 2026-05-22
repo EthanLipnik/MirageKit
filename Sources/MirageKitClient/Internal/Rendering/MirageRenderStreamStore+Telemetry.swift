@@ -251,7 +251,7 @@ extension MirageRenderStreamStore {
                 displayTickFPS: 0,
                 submitAttemptFPS: 0,
                 layerAcceptedFPS: 0,
-                presentedFPS: 0,
+                visibleFrameFPS: 0,
                 submittedFPS: 0,
                 uniqueSubmittedFPS: 0,
                 pendingFrameCount: 0,
@@ -261,6 +261,7 @@ extension MirageRenderStreamStore {
                 pendingFrameDepthMax: 0,
                 smoothestDisplayDebtMs: 0,
                 smoothestDisplayDebtCapMs: 0,
+                smoothestTargetDelayMs: 0,
                 overwrittenPendingFrames: 0,
                 smoothestQueueDrops: 0,
                 smoothestDepthDrops: 0,
@@ -354,8 +355,11 @@ extension MirageRenderStreamStore {
             policy: latencyPolicy,
             now: now
         )
-        let smoothestDisplayDebtCapMs = latencyPolicy.latencyMode == .smoothest
+        let smoothestDisplayDebtCapMs = latencyPolicy.usesBufferedPlayout
             ? latencyPolicy.smoothestDisplayDebtCapMs
+            : 0
+        let smoothestTargetDelayMs = latencyPolicy.usesBufferedPlayout
+            ? state.presentationController.smoothestTargetDelayMs(policy: latencyPolicy)
             : 0
         let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
         let smoothestQueueDrops = state.smoothestQueueDropsSinceLastSnapshot
@@ -422,7 +426,7 @@ extension MirageRenderStreamStore {
             displayTickFPS: displayTickFPS,
             submitAttemptFPS: submitAttemptFPS,
             layerAcceptedFPS: submittedFPS,
-            presentedFPS: uniqueSubmittedFPS,
+            visibleFrameFPS: uniqueSubmittedFPS,
             submittedFPS: submittedFPS,
             uniqueSubmittedFPS: uniqueSubmittedFPS,
             pendingFrameCount: pendingFrameCount,
@@ -432,6 +436,7 @@ extension MirageRenderStreamStore {
             pendingFrameDepthMax: pendingFrameDepthMax,
             smoothestDisplayDebtMs: smoothestDisplayDebtMs,
             smoothestDisplayDebtCapMs: smoothestDisplayDebtCapMs,
+            smoothestTargetDelayMs: smoothestTargetDelayMs,
             overwrittenPendingFrames: overwrittenPendingFrames,
             smoothestQueueDrops: smoothestQueueDrops,
             smoothestDepthDrops: smoothestDepthDrops,
@@ -466,14 +471,24 @@ extension MirageRenderStreamStore {
 
     func noteDisplayTickWithoutFrame(for streamID: StreamID) {
         let state = streamState(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
         state.lock.lock()
+        state.presentationController.recordDisplayTickWithoutFrame(
+            policy: presentationLatencyPolicyLocked(state: state, now: now),
+            now: now
+        )
         state.displayTickNoFrameCountSinceLastSnapshot &+= 1
         state.lock.unlock()
     }
 
     func noteFrameArrivedAfterNoFrameTick(for streamID: StreamID, delayMs: Double) {
         let state = streamState(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
         state.lock.lock()
+        state.presentationController.recordFrameArrivedAfterEmptyTick(
+            policy: presentationLatencyPolicyLocked(state: state, now: now),
+            now: now
+        )
         state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot &+= 1
         state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot = max(
             state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot,
@@ -615,10 +630,10 @@ extension MirageRenderStreamStore {
         policy: MiragePresentationLatencyPolicy,
         now: CFAbsoluteTime
     ) -> Double {
-        MirageFramePlayoutQueue.smoothestDisplayDebtMs(
-            frameCount: state.pendingFrames.count,
-            oldestFrameAgeMs: pendingFrameAgeMsLocked(state: state, now: now),
-            policy: policy
+        state.presentationController.smoothestDisplayDebtMs(
+            frames: state.pendingFrames,
+            policy: policy,
+            now: now
         )
     }
 }
