@@ -34,6 +34,11 @@ extension StreamController {
         if let dimensionToken {
             reassembler.updateExpectedDimensionToken(dimensionToken)
         }
+        _ = MirageRenderStreamStore.shared.resetPresentation(
+            for: streamID,
+            dropPendingFrames: true,
+            reason: "incoming-resize"
+        )
         reassembler.beginKeyframeWait()
         await decoder.prepareForDimensionChange(
             expectedWidth: streamDimensions?.width,
@@ -99,6 +104,11 @@ extension StreamController {
         reassembler.reset()
         streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
         discardQueuedFramesForRecovery()
+        _ = MirageRenderStreamStore.shared.resetPresentation(
+            for: streamID,
+            dropPendingFrames: true,
+            reason: "prepare-resize"
+        )
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastPresentedProgressTime = 0
         lastPresentedSequenceObserved = 0
@@ -111,6 +121,11 @@ extension StreamController {
     func beginPostResizeTransition() async {
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         discardQueuedFramesForRecovery()
+        _ = MirageRenderStreamStore.shared.resetPresentation(
+            for: streamID,
+            dropPendingFrames: true,
+            reason: "post-resize-transition"
+        )
         reassembler.beginKeyframeWait()
         await armPostResizeRecoveryWindow(reason: "post-resize")
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-gated decode admission)")

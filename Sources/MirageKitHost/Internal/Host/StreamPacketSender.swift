@@ -52,6 +52,8 @@ actor StreamPacketSender {
     var pacerFrameSleepMaxMs: Int = 0
     var pacerSleepPacketCount: Int = 0
     var pacerLastLogTime: CFAbsoluteTime = 0
+    var awdlPressurePacingDeadline: CFAbsoluteTime = 0
+    var awdlPressurePacingReason: String?
     var sendStartDelayTotalMs: Double = 0
     var sendStartDelayMaxMs: Double = 0
     var sendStartDelayCount: UInt64 = 0
@@ -95,6 +97,8 @@ extension StreamPacketSender {
             resetQueueStorageLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        awdlPressurePacingDeadline = 0
+        awdlPressurePacingReason = nil
         resetTelemetryWindow()
         sendTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -116,6 +120,8 @@ extension StreamPacketSender {
             resetQueueStorageLocked()
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        awdlPressurePacingDeadline = 0
+        awdlPressurePacingReason = nil
         resetTelemetryWindow()
     }
 
@@ -144,6 +150,52 @@ extension StreamPacketSender {
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
         MirageLogger.stream("Packet send queue reset (gen \(generation), \(reason))")
+    }
+
+    /// Drops queued sender work and advances generation for a freshness recovery transaction.
+    func resetQueueForFreshnessRecovery(reason: String) async -> QueueFreshnessResetResult {
+        generation &+= 1
+        let currentGeneration = generation
+        let result = queueLock.withLock {
+            let droppedItemCount = queuedWorkItems.count
+            let droppedNonKeyframeCount = queuedWorkItems.filter { !$0.item.isKeyframe }.count
+            let droppedKeyframeCount = droppedItemCount - droppedNonKeyframeCount
+            let droppedBytes = queuedBytes
+            resetQueueStorageLocked()
+            return QueueFreshnessResetResult(
+                generation: currentGeneration,
+                droppedItemCount: droppedItemCount,
+                droppedNonKeyframeCount: droppedNonKeyframeCount,
+                droppedKeyframeCount: droppedKeyframeCount,
+                droppedBytes: droppedBytes
+            )
+        }
+        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        MirageLogger.stream(
+            "Packet send queue freshness reset (gen \(currentGeneration), \(reason), " +
+                "items=\(result.droppedItemCount), bytes=\(result.droppedBytes))"
+        )
+        return result
+    }
+
+    /// Holds AWDL media pacing in a low-burst profile while receiver feedback indicates burst sensitivity.
+    func activateAwdlPressurePacing(until deadline: CFAbsoluteTime, reason: String) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard deadline > now else { return }
+
+        let wasInactive = awdlPressurePacingDeadline <= now
+        let shouldLog = wasInactive || awdlPressurePacingReason != reason
+        awdlPressurePacingDeadline = max(awdlPressurePacingDeadline, deadline)
+        awdlPressurePacingReason = reason
+        if wasInactive {
+            resetPacketPacerState(now: now)
+        }
+
+        guard shouldLog else { return }
+        let holdMs = Int(max(0, awdlPressurePacingDeadline - now) * 1000)
+        MirageLogger.network(
+            "AWDL pressure pacing active for stream sender: reason=\(reason), hold=\(holdMs)ms"
+        )
     }
 
     /// Current queued byte count used by tests and telemetry.

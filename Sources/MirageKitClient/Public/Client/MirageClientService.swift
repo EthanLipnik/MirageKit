@@ -563,7 +563,7 @@ public final class MirageClientService {
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
 
     /// Delay that lets host-side desktop resize settle before reconciling the window.
-    @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .milliseconds(350)
+    @ObservationIgnored var desktopResizeWindowSettlingDelay: Duration = .milliseconds(750)
 
     /// Maximum time to keep post-resize transition UI before clearing it locally.
     @ObservationIgnored var desktopPostResizeTransitionTimeout: Duration = .seconds(10)

@@ -115,6 +115,42 @@ struct HostStreamTransportControllerTests {
         #expect(secondSample == nil)
     }
 
+    @Test("AWDL receiver jitter enables pacing without frame admission")
+    func awdlReceiverJitterEnablesPacingWithoutFrameAdmission() {
+        var controller = HostStreamTransportController()
+
+        let firstSample = controller.update(
+            with: feedback(sequence: 1, targetFPS: 60, jitterP99Ms: 90),
+            currentFrameRate: 60,
+            transportPathKind: .awdl,
+            now: 60
+        )
+        #expect(firstSample == nil)
+
+        let pressure = controller.update(
+            with: feedback(sequence: 2, targetFPS: 60, jitterP99Ms: 90),
+            currentFrameRate: 60,
+            transportPathKind: .awdl,
+            now: 60.5
+        )
+
+        #expect(pressure?.frameAdmissionTargetFPS == nil)
+        #expect(pressure?.frameAdmissionDeadline == 0)
+        #expect(pressure?.frameAdmissionTrigger == .clientJitter)
+        #expect(pressure?.awdlPacingDeadline == 62.5)
+        #expect(pressure?.awdlPacingTrigger == .clientJitter)
+
+        let cleared = controller.update(
+            with: feedback(sequence: 3, targetFPS: 60),
+            currentFrameRate: 60,
+            transportPathKind: .awdl,
+            now: 62.6
+        )
+
+        #expect(cleared?.awdlPacingDeadline == 0)
+        #expect(cleared?.awdlPacingTrigger == .clear)
+    }
+
     @Test("Receiver transport loss requires sustained samples before admission")
     func receiverTransportLossRequiresSustainedSamplesBeforeAdmission() {
         var controller = HostStreamTransportController()

@@ -203,28 +203,9 @@ extension MirageStreamContentView {
     }
 
     func desktopResizeDispatchPolicy(
-        for target: DesktopResizeCoordinator.RequestGeometry?
+        for _: DesktopResizeCoordinator.RequestGeometry?
     ) -> DesktopResizeCoordinator.DispatchPolicy {
-        guard let target,
-              let lastSentTarget = desktopResizeCoordinator.lastSentTarget else {
-            return .settledWindowMetrics
-        }
-
-        let previousPixels = pixelArea(lastSentTarget.logicalResolution)
-        let targetPixels = pixelArea(target.logicalResolution)
-        guard previousPixels > 0, targetPixels > 0 else { return .settledWindowMetrics }
-
-        let areaRatio = targetPixels / previousPixels
-        let widthDelta = abs(target.logicalResolution.width - lastSentTarget.logicalResolution.width)
-        let heightDelta = abs(target.logicalResolution.height - lastSentTarget.logicalResolution.height)
-        if areaRatio >= 1.35 || areaRatio <= 0.75 || widthDelta >= 320 || heightDelta >= 240 {
-            return .immediate
-        }
         return .settledWindowMetrics
-    }
-
-    private func pixelArea(_ size: CGSize) -> CGFloat {
-        max(0, size.width) * max(0, size.height)
     }
 
     func enqueueImmediateAppDisplayResolutionChange(_ targetDisplaySize: CGSize) {

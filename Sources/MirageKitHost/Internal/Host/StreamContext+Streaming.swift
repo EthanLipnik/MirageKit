@@ -137,7 +137,12 @@ extension StreamContext {
                     )
                 }
                 let contentRect = pinnedContentRect ?? currentContentRect
-                let pacingOverride = isKeyframe ? Self.keyframePacingOverride() : nil
+                let pacingOverride = Self.mediaPacingOverride(
+                    isKeyframe: isKeyframe,
+                    transportPathKind: transportPathKind,
+                    targetBitrateBps: currentTargetBitrateBps,
+                    maxPayloadSize: maxPayloadSize
+                )
                 let frameByteCount = encodedData.count
 
                 let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)

@@ -49,6 +49,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     var loggedLayerFailure = false
     var lastFrameSubmissionTime: CFTimeInterval = 0
     var displayLayerNotReadyStartTime: CFTimeInterval = 0
+    var lastPendingFrameNotReadyLogTime: CFTimeInterval = 0
     #if os(iOS) || os(visionOS)
     private(set) var currentContentReferenceSize: CGSize?
     #endif
@@ -172,9 +173,11 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             for: streamID,
             after: lastSubmittedCursor
         ) else {
-            return MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) > 0
-                ? .pendingFrameNotReady
-                : .noPendingFrame
+            if MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) > 0 {
+                logPendingFrameNotReadyIfNeeded(streamID: streamID, now: now)
+                return .pendingFrameNotReady
+            }
+            return .noPendingFrame
         }
 
         if !frame.cursor.isAfter(lastSubmittedCursor) {
@@ -255,6 +258,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         lastMappedPresentationTime = .invalid
         lastFrameSubmissionTime = 0
         displayLayerNotReadyStartTime = 0
+        lastPendingFrameNotReadyLogTime = 0
     }
 
     private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {

@@ -122,6 +122,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             )
         )
         let now = CFAbsoluteTimeGetCurrent()
+        resetPresentationEpochIfMetadataChangedLocked(
+            state: state,
+            hostEpoch: hostEpoch,
+            dimensionToken: dimensionToken,
+            now: now
+        )
         let trimResult = state.presentationController.enqueue(
             frame,
             into: &state.pendingFrames,
@@ -215,8 +221,47 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         let count = state.pendingFrames.count
         state.pendingFrames.removeAll(keepingCapacity: false)
+        state.presentationController.resetPresentationEpoch(
+            policy: presentationLatencyPolicyLocked(state: state),
+            now: CFAbsoluteTimeGetCurrent()
+        )
         state.lock.unlock()
         return count
+    }
+
+    /// Resets local playout state after presentation recovery while retaining stream identity.
+    @discardableResult
+    func resetPresentation(
+        for streamID: StreamID,
+        dropPendingFrames: Bool,
+        reason: String
+    ) -> Int {
+        guard let state = streamStateIfPresent(for: streamID) else { return 0 }
+        let now = CFAbsoluteTimeGetCurrent()
+        state.lock.lock()
+        let droppedFrameCount: Int
+        if dropPendingFrames {
+            droppedFrameCount = state.pendingFrames.count
+            state.pendingFrames.removeAll(keepingCapacity: false)
+        } else {
+            droppedFrameCount = 0
+        }
+        state.presentationController.resetPresentationEpoch(
+            policy: presentationLatencyPolicyLocked(state: state, now: now),
+            now: now
+        )
+        if dropPendingFrames, droppedFrameCount > 0 {
+            state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)
+            state.smoothestDisplayDebtDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)
+            state.smoothestFifoResetCountSinceLastSnapshot &+= 1
+        }
+        recordPendingQueueSampleLocked(state: state, now: now)
+        state.lock.unlock()
+
+        MirageLogger.renderer(
+            "Reset presentation playout for stream \(streamID) reason=\(reason) dropped=\(droppedFrameCount)"
+        )
+        return droppedFrameCount
     }
 
     /// Returns the latest decoded-frame cursor for the stream.
@@ -383,6 +428,47 @@ extension MirageRenderStreamStore {
             now: now
         )
         recordPendingFrameTrimLocked(result, state: state)
+    }
+
+    private func resetPresentationEpochIfMetadataChangedLocked(
+        state: MirageRenderStreamState,
+        hostEpoch: UInt16?,
+        dimensionToken: UInt16?,
+        now: CFAbsoluteTime
+    ) {
+        let hostEpochChanged = if let hostEpoch,
+                                  let previous = state.lastEnqueuedHostEpoch {
+            hostEpoch != previous
+        } else {
+            false
+        }
+        let dimensionTokenChanged = if let dimensionToken,
+                                       let previous = state.lastEnqueuedDimensionToken {
+            dimensionToken != previous
+        } else {
+            false
+        }
+
+        if hostEpochChanged || dimensionTokenChanged {
+            let droppedFrameCount = state.pendingFrames.count
+            state.pendingFrames.removeAll(keepingCapacity: false)
+            state.presentationController.resetPresentationEpoch(
+                policy: presentationLatencyPolicyLocked(state: state, now: now),
+                now: now
+            )
+            if droppedFrameCount > 0 {
+                state.smoothestQueueDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)
+                state.smoothestDisplayDebtDropsSinceLastSnapshot &+= UInt64(droppedFrameCount)
+                state.smoothestFifoResetCountSinceLastSnapshot &+= 1
+            }
+        }
+
+        if let hostEpoch {
+            state.lastEnqueuedHostEpoch = hostEpoch
+        }
+        if let dimensionToken {
+            state.lastEnqueuedDimensionToken = dimensionToken
+        }
     }
 
     private func recordPendingFrameTrimLocked(

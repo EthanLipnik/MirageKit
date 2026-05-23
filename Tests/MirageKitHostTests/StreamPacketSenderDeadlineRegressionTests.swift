@@ -271,8 +271,8 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Started non-keyframes finish remaining fragments after deadline")
-    func startedNonKeyframesFinishRemainingFragmentsAfterDeadline() async throws {
+    @Test("Started non-keyframes stop remaining fragments after deadline")
+    func startedNonKeyframesStopRemainingFragmentsAfterDeadline() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
@@ -307,11 +307,16 @@ extension StreamPacketSenderRegressionTests {
             )
         )
 
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
-        let telemetry = await sender.telemetrySnapshot
-        #expect(telemetry.senderLocalDeadlineDrops == 0)
-        #expect(telemetry.stalePacketDrops == 0)
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [410, 410])
+        let telemetry = try await waitForStreamPacketTelemetry(
+            sender,
+            timeout: .seconds(2)
+        ) { snapshot in
+            snapshot.senderLocalDeadlineDrops == 1 &&
+                snapshot.stalePacketDrops == 1
+        }
+        #expect(telemetry.senderLocalDeadlineDrops == 1)
+        #expect(telemetry.stalePacketDrops == 1)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [410])
 
         await sender.stop()
     }

@@ -15,6 +15,16 @@ struct MirageClientPresentationController {
         playoutBuffer.reset()
     }
 
+    mutating func resetPresentationEpoch(
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime
+    ) {
+        playoutBuffer.resetPresentationEpoch(
+            policy: policy,
+            now: now
+        )
+    }
+
     mutating func enqueue(
         _ frame: MirageRenderFrame,
         into frames: inout [MirageRenderFrame],

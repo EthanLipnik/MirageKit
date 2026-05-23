@@ -101,6 +101,34 @@ struct RecoveryCoordinatorTests {
         #expect(attempt == 1)
     }
 
+    @Test("Deferred unsent dispatch preserves retry pacing")
+    func deferredUnsentDispatchPreservesRetryPacing() {
+        var coordinator = RecoveryCoordinator()
+        let first = coordinator.requestAction(now: 12, reason: "frame-loss", targetFPS: 120)
+
+        guard case let .dispatch(_, firstAttempt) = first else {
+            Issue.record("Expected first recovery action to dispatch")
+            return
+        }
+        #expect(firstAttempt == 1)
+
+        coordinator.recordDispatchDeferred(until: 12.75)
+
+        let waiting = coordinator.requestAction(now: 12.20, reason: "frame-loss", targetFPS: 120)
+        guard case let .wait(deadline) = waiting else {
+            Issue.record("Expected recovery action to wait after unsent dispatch")
+            return
+        }
+        #expect(deadline >= 12.75)
+
+        let retry = coordinator.requestAction(now: 12.80, reason: "frame-loss", targetFPS: 120)
+        guard case let .dispatch(_, retryAttempt) = retry else {
+            Issue.record("Expected retry after deferred deadline")
+            return
+        }
+        #expect(retryAttempt == 1)
+    }
+
     @Test("Recovery coordinator clears episode on progress")
     func clearsEpisodeOnProgress() {
         var coordinator = RecoveryCoordinator()

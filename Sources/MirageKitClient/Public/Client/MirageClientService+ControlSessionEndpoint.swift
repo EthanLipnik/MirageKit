@@ -21,7 +21,7 @@ extension MirageClientService {
         )
         let explicitVPNRoute = isExplicitVPNConnection(host)
         var attempts: [ControlSessionAttempt] = []
-        let transportOrder: [LoomTransportKind] = explicitVPNRoute ? [.quic, .udp, .tcp] : [.udp, .quic, .tcp]
+        let transportOrder = controlSessionTransportOrder(explicitVPNRoute: explicitVPNRoute)
 
         if !explicitVPNRoute {
             attempts.append(
@@ -167,6 +167,13 @@ extension MirageClientService {
             [.udp, .quic, .tcp]
         }
         return transportOrder.firstIndex(of: transportKind) ?? transportOrder.count
+    }
+
+    func controlSessionTransportOrder(explicitVPNRoute: Bool) -> [LoomTransportKind] {
+        let preferredOrder: [LoomTransportKind] = explicitVPNRoute ? [.quic, .udp, .tcp] : [.udp, .quic, .tcp]
+        return preferredOrder.filter { transportKind in
+            transportKind != .quic || LoomNode.quicAvailable
+        }
     }
 
     func peerToPeerPreferredControlSessionAttempts(

@@ -38,11 +38,15 @@ extension StreamPacketSender {
             )
         }
 
+        let now = CFAbsoluteTimeGetCurrent()
+        let pressurePacingActive = awdlPressurePacingIsActive(now: now)
         let bytesPerSecond = parameters.bytesPerSecond
         let bytesPerMillisecond = max(1.0, bytesPerSecond / 1000.0)
-        let burstBytes = parameters.burstBytes
+        let burstBytes = pressurePacingActive ?
+            min(parameters.burstBytes, Double(max(packetBytes, maxPayloadSize))) :
+            parameters.burstBytes
         refillPacketPacerTokens(
-            now: CFAbsoluteTimeGetCurrent(),
+            now: now,
             bytesPerSecond: bytesPerSecond,
             burstBytes: burstBytes
         )
@@ -107,6 +111,17 @@ extension StreamPacketSender {
         pacerLastRefillTime = 0
         resetPacketPacerTelemetryCounters()
         pacerLastLogTime = now
+    }
+
+    /// Returns true while receiver feedback asks AWDL media pacing to avoid multi-packet bursts.
+    func awdlPressurePacingIsActive(now: CFAbsoluteTime) -> Bool {
+        guard awdlPressurePacingDeadline > 0 else { return false }
+        guard now < awdlPressurePacingDeadline else {
+            awdlPressurePacingDeadline = 0
+            awdlPressurePacingReason = nil
+            return false
+        }
+        return true
     }
 
     /// Refills pacing tokens based on elapsed time and clamps the token bucket.

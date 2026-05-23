@@ -39,7 +39,11 @@ extension StreamContext {
         transportPathKind == .awdl ? 1.5 : keyframeInFlightCap
     }
 
-    func shouldThrottleKeyframeRequest(requestLabel: String, checkInFlight: Bool) -> Bool {
+    func shouldThrottleKeyframeRequest(
+        requestLabel: String,
+        checkInFlight: Bool,
+        countsAgainstRecoveryBudget: Bool = true
+    ) -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
         if checkInFlight, now < keyframeSendDeadline {
             let remaining = Int(((keyframeSendDeadline - now) * 1000).rounded())
@@ -53,7 +57,7 @@ extension StreamContext {
             MirageLogger.stream("\(requestLabel) skipped (cooldown \(remaining)ms)")
             return true
         }
-        if transportPathKind == .awdl {
+        if transportPathKind == .awdl, countsAgainstRecoveryBudget {
             recentKeyframeRequestTimes.removeAll { now - $0 > 10.0 }
             if recentKeyframeRequestTimes.count >= 3 {
                 MirageLogger.stream("\(requestLabel) skipped (AWDL recovery keyframe budget exhausted)")
@@ -71,10 +75,18 @@ extension StreamContext {
         requiresFlush: Bool = false,
         requiresReset: Bool = false,
         advanceEpochOnReset: Bool = true,
-        urgent: Bool = false
+        urgent: Bool = false,
+        countsAgainstRecoveryBudget: Bool = true
     )
     -> Bool {
-        guard !shouldThrottleKeyframeRequest(requestLabel: reason, checkInFlight: checkInFlight) else { return false }
+        let effectiveCountsAgainstRecoveryBudget = countsAgainstRecoveryBudget && !requiresReset
+        guard !shouldThrottleKeyframeRequest(
+            requestLabel: reason,
+            checkInFlight: checkInFlight,
+            countsAgainstRecoveryBudget: effectiveCountsAgainstRecoveryBudget
+        ) else {
+            return false
+        }
         let now = CFAbsoluteTimeGetCurrent()
         pendingKeyframeReason = reason
         if urgent {
@@ -98,7 +110,8 @@ extension StreamContext {
         requiresFlush: Bool = false,
         requiresReset: Bool = false,
         advanceEpochOnReset: Bool = true,
-        urgent: Bool = false
+        urgent: Bool = false,
+        countsAgainstRecoveryBudget: Bool = true
     ) {
         _ = queueKeyframe(
             reason: reason,
@@ -106,7 +119,8 @@ extension StreamContext {
             requiresFlush: requiresFlush,
             requiresReset: requiresReset,
             advanceEpochOnReset: advanceEpochOnReset,
-            urgent: urgent
+            urgent: urgent,
+            countsAgainstRecoveryBudget: countsAgainstRecoveryBudget
         )
     }
 
@@ -120,7 +134,8 @@ extension StreamContext {
             checkInFlight: transportPathKind == .awdl,
             requiresFlush: false,
             requiresReset: false,
-            urgent: true
+            urgent: true,
+            countsAgainstRecoveryBudget: false
         )
         if !queued { MirageLogger.stream("Fallback resume keyframe skipped (unable to queue)") }
     }
@@ -138,7 +153,8 @@ extension StreamContext {
             checkInFlight: transportPathKind == .awdl,
             requiresFlush: true,
             requiresReset: shouldEscalateRecovery,
-            urgent: true
+            urgent: true,
+            countsAgainstRecoveryBudget: false
         )
         if shouldEscalateRecovery {
             MirageLogger.stream("Capture restart escalation active (streak \(restartStreak))")
@@ -281,7 +297,8 @@ extension StreamContext {
             requiresFlush: requiresFlush,
             requiresReset: requiresReset,
             advanceEpochOnReset: advanceEpochOnReset,
-            urgent: true
+            urgent: true,
+            countsAgainstRecoveryBudget: false
         )
         guard queued else {
             MirageLogger.stream("\(reason) skipped (recovery keyframe already pending or in flight)")
@@ -306,7 +323,8 @@ extension StreamContext {
         let queued = queueKeyframe(
             reason: reason,
             checkInFlight: true,
-            urgent: true
+            urgent: true,
+            countsAgainstRecoveryBudget: false
         )
         guard queued else {
             MirageLogger.stream("\(reason) skipped (startup keyframe already pending or in flight)")
@@ -389,7 +407,19 @@ extension StreamContext {
 
         if highMotion || queueBackedUp, !allowDespitePressure { return false }
 
-        return !shouldThrottleKeyframeRequest(requestLabel: "Scheduled keyframe", checkInFlight: true)
+        if now < keyframeSendDeadline {
+            let remaining = Int(((keyframeSendDeadline - now) * 1000).rounded())
+            MirageLogger.stream("Scheduled keyframe skipped (keyframe in flight, \(remaining)ms remaining)")
+            return false
+        }
+        let requestElapsed = now - lastKeyframeRequestTime
+        let requestCooldown = activeKeyframeRequestCooldown
+        if requestElapsed < requestCooldown {
+            let remaining = Int(((requestCooldown - requestElapsed) * 1000).rounded())
+            MirageLogger.stream("Scheduled keyframe skipped (cooldown \(remaining)ms)")
+            return false
+        }
+        return true
     }
 
     func markKeyframeSent() {
@@ -463,8 +493,49 @@ extension StreamContext {
         return isPFrameFECActive(now: now) ? 16 : 0
     }
 
+    nonisolated static func mediaPacingOverride(
+        isKeyframe: Bool,
+        transportPathKind: MirageNetworkPathKind,
+        targetBitrateBps: Int?,
+        maxPayloadSize: Int
+    ) -> StreamPacketSender.PacingOverride? {
+        if isKeyframe {
+            return keyframePacingOverride(
+                transportPathKind: transportPathKind,
+                targetBitrateBps: targetBitrateBps,
+                maxPayloadSize: maxPayloadSize
+            )
+        }
+
+        guard transportPathKind == .awdl else { return nil }
+        let packetBudget = max(1, maxPayloadSize)
+        return StreamPacketSender.PacingOverride(
+            rateBps: max(1, targetBitrateBps ?? 24_000_000),
+            burstBytes: packetBudget * 2
+        )
+    }
+
     nonisolated static func keyframePacingOverride() -> StreamPacketSender.PacingOverride {
-        StreamPacketSender.PacingOverride(
+        keyframePacingOverride(
+            transportPathKind: .unknown,
+            targetBitrateBps: nil,
+            maxPayloadSize: miragePayloadSize(maxPacketSize: mirageDefaultMaxPacketSize)
+        )
+    }
+
+    nonisolated static func keyframePacingOverride(
+        transportPathKind: MirageNetworkPathKind,
+        targetBitrateBps: Int?,
+        maxPayloadSize: Int
+    ) -> StreamPacketSender.PacingOverride {
+        if transportPathKind == .awdl {
+            return StreamPacketSender.PacingOverride(
+                rateBps: max(1, targetBitrateBps ?? 24_000_000),
+                burstBytes: max(1, maxPayloadSize) * 4
+            )
+        }
+
+        return StreamPacketSender.PacingOverride(
             rateBps: 48_000_000,
             burstBytes: 16 * 1024
         )

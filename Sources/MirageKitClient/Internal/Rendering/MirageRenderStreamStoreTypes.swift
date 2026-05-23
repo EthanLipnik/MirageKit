@@ -181,6 +181,8 @@ final class MirageRenderStreamState {
     var lastSubmittedTime: CFAbsoluteTime = 0
     var lastSelectedFrameNumber: UInt32?
     var lastSubmittedFrameNumber: UInt32?
+    var lastEnqueuedHostEpoch: UInt16?
+    var lastEnqueuedDimensionToken: UInt16?
     var lastSubmittedRemotePresentationTime: CMTime = .invalid
     var lastSubmittedMappedPresentationTime: CMTime = .invalid
     var lastAcceptedFrameTimeline: FrameTimeline?
@@ -248,6 +250,8 @@ final class MirageRenderStreamState {
         lastSubmittedTime = 0
         lastSelectedFrameNumber = nil
         lastSubmittedFrameNumber = nil
+        lastEnqueuedHostEpoch = nil
+        lastEnqueuedDimensionToken = nil
         lastSubmittedRemotePresentationTime = .invalid
         lastSubmittedMappedPresentationTime = .invalid
         lastAcceptedFrameTimeline = nil

@@ -113,6 +113,15 @@ struct MirageVideoPlayoutBuffer {
         lastDelayIncreaseTime = 0
     }
 
+    mutating func resetPresentationEpoch(policy: MiragePresentationLatencyPolicy, now: CFAbsoluteTime) {
+        configureIfNeeded(policy: policy, now: now)
+        playbackStarted = false
+        resetPlayoutAnchors()
+        consecutiveBurstFrames = 0
+        stableWindowStartTime = now
+        lastInstabilityTime = now
+    }
+
     mutating func enqueue(
         _ frame: MirageRenderFrame,
         into frames: inout [MirageRenderFrame],
@@ -189,6 +198,21 @@ struct MirageVideoPlayoutBuffer {
                 return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
             }
             guard frameIsReadyForPlayout(frame, policy: policy, now: now) else {
+                if policy.latencyMode == .balanced,
+                   let recoveryFrame = selectBalancedRecoveryFrame(
+                       from: &frames,
+                       policy: policy,
+                       now: now,
+                       trimResult: &trimResult
+                   ) {
+                    playbackStarted = true
+                    noteStableSample(policy: policy, now: now)
+                    return Selection(
+                        frame: recoveryFrame,
+                        trimResult: trimResult,
+                        selectedFrameNumber: recoveryFrame.frameNumber
+                    )
+                }
                 return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
             }
 
@@ -308,7 +332,9 @@ struct MirageVideoPlayoutBuffer {
         if frame.remotePresentationTime.isValid,
            anchorRemotePresentationTime.isValid {
             let remoteDelta = CMTimeGetSeconds(CMTimeSubtract(frame.remotePresentationTime, anchorRemotePresentationTime))
-            if remoteDelta.isFinite, remoteDelta >= 0, remoteDelta < 10 {
+            if remoteDelta.isFinite,
+               remoteDelta >= 0,
+               remoteDelta <= maximumRemoteDeltaSeconds(policy: policy) {
                 target = anchorTargetPlayoutTime + remoteDelta
             } else {
                 target = lastEnqueuedTargetPlayoutTime + policy.sourceFrameIntervalMs / 1000
@@ -320,6 +346,10 @@ struct MirageVideoPlayoutBuffer {
         let minimumTarget = max(now, frame.decodeTime)
         let resolvedTarget: CFAbsoluteTime
         if target + 0.001 < minimumTarget {
+            resolvedTarget = minimumTarget + delaySeconds
+            anchorTargetPlayoutTime = resolvedTarget
+            anchorRemotePresentationTime = frame.remotePresentationTime
+        } else if target > maximumFutureTarget(policy: policy, now: now, decodeTime: frame.decodeTime) {
             resolvedTarget = minimumTarget + delaySeconds
             anchorTargetPlayoutTime = resolvedTarget
             anchorRemotePresentationTime = frame.remotePresentationTime
@@ -368,6 +398,33 @@ struct MirageVideoPlayoutBuffer {
             result.recordSmoothestFifoReset()
         }
         return result
+    }
+
+    private mutating func selectBalancedRecoveryFrame(
+        from frames: inout [MirageRenderFrame],
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime,
+        trimResult: inout TrimResult
+    ) -> MirageRenderFrame? {
+        guard policy.latencyMode == .balanced,
+              let first = frames.first else {
+            return nil
+        }
+
+        let oldestAgeMs = frameAgeMs(first, now: now)
+        let effectiveTarget = effectiveTargetPlayoutTime(for: first, policy: policy)
+        let futureWaitMs = max(0, effectiveTarget - now) * 1000
+        let shouldRecover = oldestAgeMs >= policy.smoothestDisplayDebtCapMs ||
+            futureWaitMs > policy.maximumTargetPlayoutDelayMs
+        guard shouldRecover else { return nil }
+
+        while frames.count > 1 {
+            let ageMs = frameAgeMs(frames.removeFirst(), now: now)
+            trimResult.recordSmoothestDisplayDebtDrop(ageMs: ageMs)
+        }
+        trimResult.recordSmoothestFifoReset()
+        resetPresentationEpoch(policy: policy, now: now)
+        return frames.first
     }
 
     private mutating func removeSubmittedFrames(
@@ -480,6 +537,22 @@ struct MirageVideoPlayoutBuffer {
             return max(0.025, min(0.080, policy.maximumTargetPlayoutDelayMs / 1000))
         }
         return max(0.050, min(0.150, policy.effectiveTargetPlayoutDelayMs(adaptedDelayMs: adaptedDelayMs) / 2000))
+    }
+
+    private func maximumRemoteDeltaSeconds(policy: MiragePresentationLatencyPolicy) -> CFTimeInterval {
+        let frameInterval = policy.sourceFrameIntervalMs / 1000
+        if policy.latencyMode == .balanced {
+            return max(frameInterval * 6, policy.maximumTargetPlayoutDelayMs / 1000)
+        }
+        return max(frameInterval * 12, policy.maximumTargetPlayoutDelayMs / 1000)
+    }
+
+    private func maximumFutureTarget(
+        policy: MiragePresentationLatencyPolicy,
+        now: CFAbsoluteTime,
+        decodeTime: CFAbsoluteTime
+    ) -> CFAbsoluteTime {
+        max(now, decodeTime) + policy.maximumTargetPlayoutDelayMs / 1000
     }
 
     private func minimumDelayIncreaseSpacing(reason: DelayIncreaseReason) -> CFTimeInterval {

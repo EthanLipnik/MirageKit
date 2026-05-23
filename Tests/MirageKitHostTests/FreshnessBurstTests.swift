@@ -173,10 +173,54 @@ struct FreshnessBurstTests {
         #expect(!(await context.latencyBurstDrainsNewestFrames))
     }
 
+    @Test("AWDL freshness burst resets sender queue and requests flush keyframe")
+    func awdlFreshnessBurstResetsSenderQueueAndRequestsFlushKeyframe() async throws {
+        let context = makeContext(
+            bitrate: 24_000_000,
+            captureQueueDepth: 8,
+            transportPathKind: .awdl
+        )
+        let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
+        await context.setupPacketSender(sendPacket: { _, onComplete in
+            pendingCompletions.withLock {
+                $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
+            }
+        })
+        let sender = try #require(await context.packetSender)
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 4096),
+                streamID: 88,
+                frameNumber: 1,
+                sequenceNumberStart: 10,
+                generation: generation
+            )
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(sender.queuedByteCount > 0)
+
+        let severeQueueBytes = (await context.maxQueuedBytes) + 256_000
+        _ = await context.enterFreshnessBurstIfNeeded(
+            queueBytes: severeQueueBytes,
+            reason: "unit test awdl recovery"
+        )
+
+        #expect(await context.pendingKeyframeReason == "AWDL freshness burst")
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(await context.pendingKeyframeUrgent)
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(sender.queuedByteCount == 0)
+
+        completePendingStreamPacketSends(pendingCompletions)
+        await sender.stop()
+    }
+
     private func makeContext(
         bitrate: Int,
         captureQueueDepth: Int,
-        latencyMode: MirageStreamLatencyMode = .lowestLatency
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        transportPathKind: MirageNetworkPathKind = .unknown
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: 60,
@@ -193,6 +237,7 @@ struct FreshnessBurstTests {
             runtimeQualityAdjustmentEnabled: true,
             capturePressureProfile: .tuned,
             latencyMode: latencyMode,
+            transportPathKind: transportPathKind,
             enteredBitrate: bitrate
         )
     }

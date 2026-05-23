@@ -117,6 +117,11 @@ extension StreamController {
     func resetReassemblerForDimensionChange(streamID capturedStreamID: StreamID) {
         reassembler.reset()
         streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
+        _ = MirageRenderStreamStore.shared.resetPresentation(
+            for: streamID,
+            dropPendingFrames: true,
+            reason: "dimension-change"
+        )
         MirageLogger.client("Reassembler reset due to dimension change for stream \(capturedStreamID)")
     }
 
@@ -169,6 +174,19 @@ extension StreamController {
             return
         }
 
+        if isKeyframe, shouldResetPresentationForRecoveryKeyframe {
+            let droppedFrames = MirageRenderStreamStore.shared.resetPresentation(
+                for: streamID,
+                dropPendingFrames: true,
+                reason: "recovery-keyframe"
+            )
+            if droppedFrames > 0 {
+                MirageLogger.client(
+                    "Dropped \(droppedFrames) pending render frame(s) before recovery keyframe \(frameNumber) for stream \(streamID)"
+                )
+            }
+        }
+
         let remotePresentationTime = CMTime(value: CMTimeValue(remoteTimestamp), timescale: 1_000_000_000)
         let timing = streamCadenceClock.timing(
             frameNumber: frameNumber,
@@ -200,6 +218,15 @@ extension StreamController {
             enqueueOrder: enqueueOrder,
             pipelineGeneration: pipelineGeneration
         )
+    }
+
+    private var shouldResetPresentationForRecoveryKeyframe: Bool {
+        clientRecoveryStatus == .keyframeRecovery ||
+            clientRecoveryStatus == .hardRecovery ||
+            clientRecoveryStatus == .postResizeAwaitingFirstFrame ||
+            awaitingFirstFrameAfterResize ||
+            awaitingFirstPresentedFrameAfterResize ||
+            decodeQueueRequiresKeyframe
     }
 
     private func enqueueFrame(

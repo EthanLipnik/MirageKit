@@ -275,6 +275,8 @@ actor StreamContext {
 
     /// Frame rate for cadence and queue limits
     nonisolated(unsafe) var currentFrameRate: Int
+    /// Bitrate snapshot read from encoder callbacks for packet pacing policy.
+    nonisolated(unsafe) var currentTargetBitrateBps: Int?
     /// Effective capture cadence reported by ScreenCaptureKit.
     var captureFrameRate: Int
     /// Optional override for capture frame rate.
@@ -388,6 +390,7 @@ actor StreamContext {
         mediaMaxPacketSize = maxPacketSize
         self.mediaSecurityContext = mediaSecurityContext
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
+        currentTargetBitrateBps = resolvedEncoderConfig.bitrate
         captureFrameRateOverride = nil
         captureFrameRate = resolvedEncoderConfig.targetFrameRate
         self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled

@@ -27,6 +27,7 @@ extension StreamContext {
         )
 
         await enterLatencyBurst(reason: "freshness burst (\(reason))")
+        let recoveryResult = await enterAwdlFreshnessRecoveryIfNeeded(reason: reason)
 
         backpressureActive = true
         backpressureActiveSnapshot = true
@@ -34,9 +35,48 @@ extension StreamContext {
 
         MirageLogger.metrics(
             "Freshness burst local drain active for stream \(streamID): " +
-                "reason=\(reason), queueReset=false, recoveryKeyframe=false"
+                "reason=\(reason), queueReset=\(recoveryResult.queueReset), " +
+                "recoveryKeyframe=\(recoveryResult.recoveryKeyframe)"
         )
         return true
+    }
+
+    private func enterAwdlFreshnessRecoveryIfNeeded(reason: String) async -> (
+        queueReset: Bool,
+        recoveryKeyframe: Bool
+    ) {
+        guard transportPathKind == .awdl else {
+            return (queueReset: false, recoveryKeyframe: false)
+        }
+
+        let resetResult = await packetSender?.resetQueueForFreshnessRecovery(reason: reason)
+        suppressEncodedNonKeyframesUntilKeyframe = true
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+
+        let recoveryReason = "AWDL freshness burst"
+        let queued = queueKeyframe(
+            reason: recoveryReason,
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: false,
+            urgent: true,
+            countsAgainstRecoveryBudget: false
+        )
+        if queued {
+            noteLossEvent(reason: recoveryReason, enablePFrameFEC: true)
+            markKeyframeRequestIssued()
+            scheduleProcessingIfNeeded()
+        }
+
+        let droppedItems = resetResult?.droppedItemCount ?? 0
+        let droppedKB = Self.roundedKilobytes(resetResult?.droppedBytes ?? 0)
+        MirageLogger.metrics(
+            "AWDL freshness recovery for stream \(streamID): " +
+                "reason=\(reason), queuedKeyframe=\(queued), droppedItems=\(droppedItems), " +
+                "droppedQueue=\(droppedKB)KB"
+        )
+        return (queueReset: resetResult != nil, recoveryKeyframe: queued)
     }
 
     var usesSoftSenderDelaySmoothing: Bool {

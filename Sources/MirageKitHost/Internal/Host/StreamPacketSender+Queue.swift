@@ -132,7 +132,7 @@ extension StreamPacketSender {
             return
         }
 
-        let wasAlreadyHolding = dropNonKeyframesUntilKeyframe &&
+        let wasAlreadyHolding = dependencyRecoveryRequiresKeyframe &&
             latestDependencyDropGeneration == item.generation
         dropNonKeyframesUntilKeyframe = true
         dependencyRecoveryRequiresKeyframe = true

@@ -17,6 +17,9 @@ struct HostStreamTransportController: Equatable {
         case pacerDebt
         case clientTransportLoss
         case clientReassemblyBacklog
+        case clientJitter
+        case clientPFrameLatency
+        case clientRecovery
         case clear
     }
 
@@ -25,21 +28,26 @@ struct HostStreamTransportController: Equatable {
         var frameAdmissionDeadline: CFAbsoluteTime
         var qualityRaiseSuppressionDeadline: CFAbsoluteTime
         var frameAdmissionTrigger: FrameAdmissionTrigger
+        var awdlPacingDeadline: CFAbsoluteTime
+        var awdlPacingTrigger: FrameAdmissionTrigger
     }
 
     private static let frameAdmissionHoldSeconds: CFAbsoluteTime = 2.0
+    private static let awdlPacingHoldSeconds: CFAbsoluteTime = 2.0
     private static let qualityRaiseRecoverySuppressionSeconds: CFAbsoluteTime = 2.0
     private static let pressureSamplesRequired = 2
 
     private(set) var latestFeedbackSequence: UInt64 = 0
     private(set) var frameAdmissionTargetFPS: Int?
     private(set) var frameAdmissionDeadline: CFAbsoluteTime = 0
+    private(set) var awdlPacingDeadline: CFAbsoluteTime = 0
     private(set) var qualityRaiseSuppressionDeadline: CFAbsoluteTime = 0
     private var consecutivePressureSamples = 0
 
     mutating func update(
         with feedback: ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
+        transportPathKind: MirageNetworkPathKind = .unknown,
         now: CFAbsoluteTime
     ) -> Decision? {
         guard feedback.sequence > latestFeedbackSequence else { return nil }
@@ -53,30 +61,45 @@ struct HostStreamTransportController: Equatable {
                 frameAdmissionTargetFPS = nil
                 frameAdmissionDeadline = 0
             }
+            let awdlDeadline = activateAwdlPacingIfNeeded(
+                pathKind: transportPathKind,
+                now: now
+            )
             return Decision(
                 frameAdmissionTargetFPS: frameAdmissionTargetFPS,
                 frameAdmissionDeadline: frameAdmissionDeadline,
                 qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: .clear
+                frameAdmissionTrigger: .clear,
+                awdlPacingDeadline: awdlDeadline,
+                awdlPacingTrigger: awdlDeadline > 0 ? .clientRecovery : .clear
             )
         }
 
-        let reassemblyBacklogStress = feedback.reassemblyBacklogFrames >= 8 ||
-            feedback.reassemblyBacklogBytes >= 2_000_000
-        let droppedStress = feedback.lostFrameCount >= 6 ||
-            feedback.discardedPacketCount >= 6 ||
-            feedback.lostFrameCount + feedback.discardedPacketCount >= 6
-        let pressureTrigger: FrameAdmissionTrigger? = if droppedStress {
-            .clientTransportLoss
-        } else if reassemblyBacklogStress {
-            .clientReassemblyBacklog
-        } else {
-            nil
-        }
+        let pressureTrigger = Self.pressureTrigger(
+            feedback: feedback,
+            currentFrameRate: currentFrameRate,
+            transportPathKind: transportPathKind
+        )
 
         if let pressureTrigger {
             consecutivePressureSamples += 1
             guard consecutivePressureSamples >= Self.pressureSamplesRequired else { return nil }
+            if transportPathKind == .awdl {
+                frameAdmissionTargetFPS = nil
+                frameAdmissionDeadline = 0
+                let awdlDeadline = activateAwdlPacingIfNeeded(
+                    pathKind: transportPathKind,
+                    now: now
+                )
+                return Decision(
+                    frameAdmissionTargetFPS: nil,
+                    frameAdmissionDeadline: 0,
+                    qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
+                    frameAdmissionTrigger: pressureTrigger,
+                    awdlPacingDeadline: awdlDeadline,
+                    awdlPacingTrigger: pressureTrigger
+                )
+            }
             let reliefFPS = Self.reliefFrameRate(
                 currentFrameRate: currentFrameRate,
                 activeTargetFPS: frameAdmissionTargetFPS,
@@ -88,11 +111,27 @@ struct HostStreamTransportController: Equatable {
                 frameAdmissionTargetFPS: reliefFPS,
                 frameAdmissionDeadline: frameAdmissionDeadline,
                 qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: pressureTrigger
+                frameAdmissionTrigger: pressureTrigger,
+                awdlPacingDeadline: 0,
+                awdlPacingTrigger: .clear
             )
         }
 
         consecutivePressureSamples = 0
+        if transportPathKind == .awdl {
+            if awdlPacingDeadline > 0, now >= awdlPacingDeadline {
+                awdlPacingDeadline = 0
+                return Decision(
+                    frameAdmissionTargetFPS: nil,
+                    frameAdmissionDeadline: 0,
+                    qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
+                    frameAdmissionTrigger: .clear,
+                    awdlPacingDeadline: 0,
+                    awdlPacingTrigger: .clear
+                )
+            }
+            return nil
+        }
         if frameAdmissionDeadline > 0, now >= frameAdmissionDeadline {
             frameAdmissionTargetFPS = nil
             frameAdmissionDeadline = 0
@@ -100,10 +139,57 @@ struct HostStreamTransportController: Equatable {
                 frameAdmissionTargetFPS: nil,
                 frameAdmissionDeadline: 0,
                 qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: .clear
+                frameAdmissionTrigger: .clear,
+                awdlPacingDeadline: 0,
+                awdlPacingTrigger: .clear
             )
         }
 
+        return nil
+    }
+
+    private mutating func activateAwdlPacingIfNeeded(
+        pathKind: MirageNetworkPathKind,
+        now: CFAbsoluteTime
+    ) -> CFAbsoluteTime {
+        guard pathKind == .awdl else {
+            awdlPacingDeadline = 0
+            return 0
+        }
+        awdlPacingDeadline = max(awdlPacingDeadline, now + Self.awdlPacingHoldSeconds)
+        return awdlPacingDeadline
+    }
+
+    private static func pressureTrigger(
+        feedback: ReceiverMediaFeedbackMessage,
+        currentFrameRate: Int,
+        transportPathKind: MirageNetworkPathKind
+    ) -> FrameAdmissionTrigger? {
+        let reassemblyBacklogStress = feedback.reassemblyBacklogFrames >= 8 ||
+            feedback.reassemblyBacklogBytes >= 2_000_000
+        let droppedStress = feedback.lostFrameCount >= 6 ||
+            feedback.discardedPacketCount >= 6 ||
+            feedback.lostFrameCount + feedback.discardedPacketCount >= 6
+        let targetFrameIntervalMs = 1_000.0 / Double(max(1, max(currentFrameRate, feedback.targetFPS)))
+        let awdlJitterStress = transportPathKind == .awdl &&
+            feedback.jitterP99Ms >= max(60.0, targetFrameIntervalMs * 4.0)
+        let pFrameLatencyP95 = feedback.pFrameCompletionLatencyP95Ms ?? 0
+        let awdlPFrameLatencyStress = transportPathKind == .awdl &&
+            (pFrameLatencyP95 >= max(50.0, targetFrameIntervalMs * 3.0) ||
+                (feedback.latePFrameCount ?? 0) >= 4)
+
+        if droppedStress {
+            return .clientTransportLoss
+        }
+        if reassemblyBacklogStress {
+            return .clientReassemblyBacklog
+        }
+        if awdlPFrameLatencyStress {
+            return .clientPFrameLatency
+        }
+        if awdlJitterStress {
+            return .clientJitter
+        }
         return nil
     }
 

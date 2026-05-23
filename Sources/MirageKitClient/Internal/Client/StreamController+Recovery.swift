@@ -244,7 +244,7 @@ extension StreamController {
             return false
         }
         guard let handler = onKeyframeNeeded else {
-            recoveryCoordinator.recordDispatchNotSent()
+            recoveryCoordinator.recordDispatchDeferred(until: now + coalesceInterval)
             return false
         }
         MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
@@ -252,7 +252,7 @@ extension StreamController {
             handler()
         }
         guard didSend else {
-            recoveryCoordinator.recordDispatchNotSent()
+            recoveryCoordinator.recordDispatchDeferred(until: now + coalesceInterval)
             MirageLogger.client("Recovery keyframe request not sent by client service for stream \(streamID)")
             return false
         }

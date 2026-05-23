@@ -314,7 +314,11 @@ extension StreamContext {
             }
 
             if shouldQueueScheduledKeyframe(queueBytes: queueBytes) {
-                queueKeyframeIfPossible(reason: "Scheduled keyframe", checkInFlight: true)
+                queueKeyframeIfPossible(
+                    reason: "Scheduled keyframe",
+                    checkInFlight: true,
+                    countsAgainstRecoveryBudget: false
+                )
             }
 
             let isIdleFrame = frame.info.isIdleFrame

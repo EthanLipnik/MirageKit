@@ -219,6 +219,15 @@ extension StreamPacketSender {
         let accountedBytes: Int
     }
 
+    /// Summary returned after freshness recovery drops queued sender work.
+    struct QueueFreshnessResetResult: Equatable {
+        let generation: UInt32
+        let droppedItemCount: Int
+        let droppedNonKeyframeCount: Int
+        let droppedKeyframeCount: Int
+        let droppedBytes: Int
+    }
+
     /// Shared context passed through data and parity fragment send helpers.
     struct FragmentSendContext {
         let item: WorkItem

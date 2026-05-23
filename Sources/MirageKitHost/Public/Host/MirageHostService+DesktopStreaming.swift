@@ -261,7 +261,7 @@ async throws {
         stage: "before stream activation"
     )
 
-    let activeClientContext = try await activateAndStartDesktopStream(
+    let activationResult = try await activateAndStartDesktopStream(
         DesktopStreamActivation(
             streamID: streamID,
             clientContext: clientContext,
@@ -275,7 +275,7 @@ async throws {
         ),
         virtualDisplaySetupGuardToken: &virtualDisplaySetupGuardToken
     )
-    logDesktopStartStep("capture and encoder started")
+    logDesktopStartStep("display capture started")
     try await ensureDesktopStreamStartupCanContinue(
         streamID: streamID,
         clientSessionID: clientContext.sessionID,
@@ -288,7 +288,7 @@ async throws {
         DesktopStreamStartedNotification(
             streamID: streamID,
             desktopSessionID: desktopSessionID,
-            activeClientContext: activeClientContext,
+            activeClientContext: activationResult.activeClientContext,
             streamContext: streamContext,
             captureResolution: captureResolution,
             captureSource: captureSource,
@@ -304,6 +304,24 @@ async throws {
         startedDisplayResolution: startedDisplayResolution,
         captureResolution: captureResolution
     )
+
+    do {
+        _ = try await waitForDesktopCaptureStartupReadiness(
+            streamContext: streamContext,
+            mode: mode,
+            clientID: activationResult.activeClientContext.client.id,
+            audioConfiguration: activationResult.audioConfiguration
+        )
+        logDesktopStartStep("capture readiness satisfied")
+    } catch {
+        MirageLogger.error(
+            .host,
+            error: error,
+            message: "Desktop display capture readiness failed after stream start; cleaning up stream state: "
+        )
+        await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
+        throw error
+    }
     clearDesktopStartupMarkerOnExit = false
 }
 }

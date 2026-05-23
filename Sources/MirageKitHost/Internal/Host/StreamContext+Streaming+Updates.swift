@@ -64,6 +64,7 @@ extension StreamContext {
         if (bitrateChanged || bitrateAdaptationCeilingChanged), !colorDepthChanged, !frameRateChanged {
             let previousBitrate = encoderConfig.bitrate
             encoderConfig = updatedConfig
+            currentTargetBitrateBps = encoderConfig.bitrate
             requestedTargetBitrate = updatedRequestedTargetBitrate
             if bitrateChanged {
                 await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
@@ -94,6 +95,7 @@ extension StreamContext {
         resetPipelineStateForReconfiguration(reason: "encoder settings update")
 
         encoderConfig = updatedConfig
+        currentTargetBitrateBps = encoderConfig.bitrate
         requestedTargetBitrate = updatedRequestedTargetBitrate
         ultraValidationFailureHandled = false
         ultraValidationSuccessLogged = false

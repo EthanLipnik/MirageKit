@@ -122,7 +122,7 @@ extension StreamContext {
             deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
             state = accepted ? .accepted : .inFlight
         } else {
-            deadlineMs = Int((keyframeRequestCooldown * 1000).rounded(.up))
+            deadlineMs = Int((activeKeyframeRequestCooldown * 1000).rounded(.up))
             state = accepted ? .accepted : .cooldown
         }
         return KeyframeRecoveryAckMessage(

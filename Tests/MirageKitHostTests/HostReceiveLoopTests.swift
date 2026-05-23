@@ -135,6 +135,85 @@ struct HostReceiveLoopTests {
         controlCompletion.read { $0 }?()
     }
 
+    @Test("Stream ready lifecycle signal bypasses in-flight desktop start dispatch")
+    func streamReadyLifecycleSignalBypassesInFlightDesktopStartDispatch() async throws {
+        let streamID: StreamID = 7
+        let start = ControlMessage(type: .startDesktopStream)
+        let ready = try ControlMessage(
+            type: .streamReady,
+            content: StreamReadyMessage(
+                streamID: streamID,
+                startupAttemptID: UUID(),
+                kind: .desktop
+            )
+        )
+        let trailing = try ControlMessage(
+            type: .keyframeRequest,
+            content: KeyframeRequestMessage(streamID: streamID)
+        )
+
+        var readyAndTrailing = Data()
+        readyAndTrailing.append(ready.serialize())
+        readyAndTrailing.append(trailing.serialize())
+
+        struct ReceiveEvent {
+            var data: Data?
+            var isComplete: Bool
+            var error: NWError?
+        }
+
+        let receiveEvents = Locked([
+            ReceiveEvent(data: start.serialize(), isComplete: false, error: nil),
+            ReceiveEvent(data: readyAndTrailing, isComplete: false, error: nil),
+        ])
+        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let lifecycleTypes = Locked<[ControlMessageType]>([])
+        let startCompletion = Locked<(@Sendable () -> Void)?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "stream-ready-lifecycle-test",
+            receiveChunk: { completion in
+                let next: ReceiveEvent? = receiveEvents.withLock { events in
+                    if events.isEmpty { return nil }
+                    return events.removeFirst()
+                }
+                guard let next else { return }
+                completion(next.data, nil, next.isComplete, next.error)
+            },
+            onInputMessage: { _ in },
+            onPingMessage: { },
+            onLifecycleSignal: { signal in
+                if case let .streamReady(message) = signal {
+                    lifecycleTypes.withLock { $0.append(message.type) }
+                }
+            },
+            dispatchControlMessage: { message, completion in
+                dispatchedTypes.withLock { $0.append(message.type) }
+                if message.type == .startDesktopStream {
+                    startCompletion.withLock { $0 = completion }
+                } else {
+                    completion()
+                }
+            },
+            onTerminal: { _ in },
+            isFatalError: { _ in false }
+        )
+
+        loop.start()
+
+        try await waitUntil { lifecycleTypes.read { $0 } == [.streamReady] }
+
+        #expect(dispatchedTypes.read { $0 } == [.startDesktopStream])
+        #expect(lifecycleTypes.read { $0 } == [.streamReady])
+
+        startCompletion.read { $0 }?()
+
+        try await waitUntil { dispatchedTypes.read { $0.contains(.keyframeRequest) } }
+
+        #expect(dispatchedTypes.read { $0 } == [.startDesktopStream, .keyframeRequest])
+        loop.stop()
+    }
+
     @Test("Terminal lifecycle signal bypasses in-flight control dispatch")
     func terminalLifecycleSignalBypassesInFlightControlDispatch() async throws {
         let control = try ControlMessage(

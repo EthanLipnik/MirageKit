@@ -20,6 +20,11 @@ extension StreamController {
            clientRecoveryStatus != .hardRecovery {
             await setClientRecoveryStatus(.keyframeRecovery)
         }
+        _ = MirageRenderStreamStore.shared.resetPresentation(
+            for: streamID,
+            dropPendingFrames: true,
+            reason: "keyframe-recovery-start"
+        )
         keyframeRecoveryTask = Task { [weak self] in
             await self?.runKeyframeRecoveryLoop()
         }
@@ -96,6 +101,9 @@ extension StreamController {
     }
 
     private func keyframeRecoveryDispatchRetryDelay(now: CFAbsoluteTime) -> CFAbsoluteTime {
+        if recoveryCoordinator.retryDeadline > now {
+            return max(0.02, min(1.0, recoveryCoordinator.retryDeadline - now))
+        }
         guard recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit,
               let oldest = recoveryKeyframeDispatchTimes.first else {
             return 0.02

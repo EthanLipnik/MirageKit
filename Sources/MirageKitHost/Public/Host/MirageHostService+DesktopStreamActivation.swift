@@ -18,7 +18,7 @@ extension MirageHostService {
         _ activation: DesktopStreamActivation,
         virtualDisplaySetupGuardToken: inout UUID?
     )
-    async throws -> ClientContext {
+    async throws -> DesktopStreamActivationResult {
         let streamID = activation.streamID
         let clientContext = activation.clientContext
         let streamContext = activation.streamContext
@@ -79,7 +79,10 @@ extension MirageHostService {
             await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
             throw error
         }
-        return activeClientContext
+        return DesktopStreamActivationResult(
+            activeClientContext: activeClientContext,
+            audioConfiguration: effectiveAudioConfiguration
+        )
     }
 
     /// Activates desktop audio when requested, falling back to video-only startup on failure.
@@ -244,13 +247,6 @@ extension MirageHostService {
             await activation.streamContext.setCapturedAudioHandler(nil)
             try await startDesktopDisplay()
         }
-
-        audioConfiguration = try await waitForDesktopCaptureStartupReadiness(
-            streamContext: activation.streamContext,
-            mode: activation.mode,
-            clientID: activation.clientContext.client.id,
-            audioConfiguration: audioConfiguration
-        )
     }
 
     /// Marks the desktop stream once its first video packet is queued successfully.

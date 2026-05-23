@@ -54,6 +54,17 @@ extension MirageSampleBufferPresenter {
         registerFrameListener(for: streamID)
     }
 
+    /// Logs playout withholding separately from display-layer backpressure.
+    func logPendingFrameNotReadyIfNeeded(streamID: StreamID, now: CFTimeInterval) {
+        guard now - lastPendingFrameNotReadyLogTime >= 0.5 else { return }
+        lastPendingFrameNotReadyLogTime = now
+        let pendingCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        let pendingAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
+        MirageLogger.renderer(
+            "Presentation pending frame not ready: stream=\(streamID) pending=\(pendingCount) ageMs=\(Int(pendingAgeMs.rounded()))"
+        )
+    }
+
     /// Resets presentation if the display layer stays back-pressured while frames are available.
     func recoverDisplayLayerLivenessIfNeeded(
         now: CFTimeInterval,

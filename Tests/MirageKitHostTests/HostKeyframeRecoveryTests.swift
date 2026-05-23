@@ -281,6 +281,26 @@ struct HostKeyframeRecoveryTests {
             (startupParameters?.bytesPerSecond ?? 0) / 1_000.0 * StreamPacketSender.packetPacerBurstWindowMs)
     }
 
+    @Test("AWDL media pacing keeps bitrate target but narrows burst budget")
+    func awdlMediaPacingKeepsBitrateTargetButNarrowsBurstBudget() {
+        let keyframeOverride = StreamContext.keyframePacingOverride(
+            transportPathKind: .awdl,
+            targetBitrateBps: 24_000_000,
+            maxPayloadSize: 1_200
+        )
+        let pFrameOverride = StreamContext.mediaPacingOverride(
+            isKeyframe: false,
+            transportPathKind: .awdl,
+            targetBitrateBps: 24_000_000,
+            maxPayloadSize: 1_200
+        )
+
+        #expect(keyframeOverride.rateBps == 24_000_000)
+        #expect(keyframeOverride.burstBytes == 4_800)
+        #expect(pFrameOverride?.rateBps == 24_000_000)
+        #expect(pFrameOverride?.burstBytes == 2_400)
+    }
+
     private func makeContext(
         frameRate: Int = 60,
         bitrate: Int = 600_000_000,

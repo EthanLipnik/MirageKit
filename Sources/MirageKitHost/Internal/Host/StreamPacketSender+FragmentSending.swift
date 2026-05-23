@@ -154,9 +154,7 @@ extension StreamPacketSender {
         progress: FragmentSendProgress
     ) async -> PacketPacingResult? {
         let item = context.item
-        let shouldCheckDeadline = !item.isKeyframe &&
-            item.sendDeadline.isFinite &&
-            progress.submittedFragmentCount == 0
+        let shouldCheckDeadline = !item.isKeyframe && item.sendDeadline.isFinite
         let sendDeadline = shouldCheckDeadline ? item.sendDeadline : nil
         if shouldCheckDeadline, isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             dropStaleNonKeyframeDuringFragmentation(

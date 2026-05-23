@@ -132,6 +132,11 @@ extension MirageHostService {
         let captureResolution: CGSize
     }
 
+    struct DesktopStreamActivationResult {
+        let activeClientContext: ClientContext
+        let audioConfiguration: MirageAudioConfiguration
+    }
+
     struct DesktopCaptureContext {
         let display: SCDisplayWrapper
         let resolution: CGSize
