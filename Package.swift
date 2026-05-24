@@ -12,9 +12,9 @@ import PackageDescription
 let package = Package(
     name: "MirageKit",
     platforms: [
-        .macOS(.v14),
-        .iOS("17.4"),
-        .visionOS(.v26),
+        .macOS("26.0"),
+        .iOS("26.0"),
+        .visionOS("26.0"),
     ],
     products: [
         .library(
@@ -39,7 +39,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "1.9.0"),
+        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "2.0.0"),
     ],
     targets: [
         .target(

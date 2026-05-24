@@ -356,7 +356,7 @@ extension MirageClientService {
                 fallbackSender: fallbackSender
             )
             inputEventSender.updatePriorityRoute(route)
-            MirageLogger.client("Priority input lane enabled on local UDP control session")
+            MirageLogger.client("Priority input lane enabled on local datagram control session")
         } catch {
             inputEventSender.updatePriorityRoute(nil)
             MirageLogger.client(

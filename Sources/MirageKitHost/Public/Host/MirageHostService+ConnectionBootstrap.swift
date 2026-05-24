@@ -86,7 +86,7 @@ extension MirageHostService {
                     hostID: hostID,
                     hostName: hostName,
                     mediaEncryptionEnabled: false,
-                    udpRegistrationToken: Data(),
+                    datagramRegistrationToken: Data(),
                     rejectionReason: .protocolVersionMismatch,
                     protocolMismatchHostVersion: Int(MirageKit.protocolVersion),
                     protocolMismatchClientVersion: request.protocolVersion
@@ -111,7 +111,7 @@ extension MirageHostService {
             ),
             clientRequiresMediaEncryption: request.clientRequiresMediaEncryption
         )
-        let udpRegistrationToken = MirageMediaSecurity.makeRegistrationToken()
+        let datagramRegistrationToken = MirageMediaSecurity.makeRegistrationToken()
         let mediaSecurity = try MirageMediaSecurity.deriveContextForAuthenticatedSession(
             identityManager: identityManager,
             peerPublicKey: clientPublicKey,
@@ -119,7 +119,7 @@ extension MirageHostService {
             clientID: peerIdentity.deviceID,
             hostKeyID: hostIdentity.keyID,
             clientKeyID: clientKeyID,
-            udpRegistrationToken: udpRegistrationToken
+            datagramRegistrationToken: datagramRegistrationToken
         )
 
         let response = MirageSessionBootstrapResponse(
@@ -127,7 +127,7 @@ extension MirageHostService {
             hostID: hostID,
             hostName: hostName,
             mediaEncryptionEnabled: mediaEncryptionEnabled,
-            udpRegistrationToken: udpRegistrationToken,
+            datagramRegistrationToken: datagramRegistrationToken,
             autoTrustGranted: autoTrustGranted,
             remoteAccessAllowed: MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: advertisedPeerAdvertisement)
         )
@@ -165,7 +165,7 @@ extension MirageHostService {
                 hostID: hostID,
                 hostName: serviceName,
                 mediaEncryptionEnabled: false,
-                udpRegistrationToken: Data(),
+                datagramRegistrationToken: Data(),
                 rejectionReason: reason
             )
             do {
@@ -189,7 +189,7 @@ extension MirageHostService {
             hostID: hostID,
             hostName: serviceName,
             mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
+            datagramRegistrationToken: Data(),
             rejectionReason: reason
         )
     }

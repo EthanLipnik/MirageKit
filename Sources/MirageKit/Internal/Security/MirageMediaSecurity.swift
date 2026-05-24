@@ -69,9 +69,9 @@ package enum MirageMediaSecurity {
         clientKeyID: String,
         hostNonce: String,
         clientNonce: String,
-        udpRegistrationToken: Data
+        datagramRegistrationToken: Data
     ) throws -> MirageMediaSecurityContext {
-        guard udpRegistrationToken.count == registrationTokenLength else {
+        guard datagramRegistrationToken.count == registrationTokenLength else {
             throw MirageMediaSecurityError.invalidRegistrationTokenLength
         }
         let salt = derivationSalt(
@@ -101,7 +101,7 @@ package enum MirageMediaSecurity {
         clientID: UUID,
         hostKeyID: String,
         clientKeyID: String,
-        udpRegistrationToken: Data
+        datagramRegistrationToken: Data
     ) throws -> MirageMediaSecurityContext {
         try deriveContext(
             identityManager: identityManager,
@@ -112,7 +112,7 @@ package enum MirageMediaSecurity {
             clientKeyID: clientKeyID,
             hostNonce: "loom-authenticated-host",
             clientNonce: "loom-authenticated-client",
-            udpRegistrationToken: udpRegistrationToken
+            datagramRegistrationToken: datagramRegistrationToken
         )
     }
 

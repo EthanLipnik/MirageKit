@@ -307,8 +307,6 @@ public class InputCapturingView: UIView {
     var dictationAudioEngine: AVAudioEngine?
     var dictationAnalyzer: AnyObject?
     var dictationAnalyzerInputSink: AnyObject?
-    var dictationRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    var dictationRecognitionTask: SFSpeechRecognitionTask?
     var dictationReservedLocale: Locale?
     var dictationResultBuffer = MirageDictationResultBuffer()
     var dictationInputLevelMeter = MirageDictationInputLevelMeter()

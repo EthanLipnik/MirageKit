@@ -16,15 +16,10 @@ public enum MirageDictationLocaleSupport {
     /// Returns unique supported dictation locales sorted by locale identifier.
     public static func supportedLocales() async -> [Locale] {
         let locales: [Locale]
-
-        if #available(iOS 26.0, visionOS 26.0, *) {
-            if SpeechTranscriber.isAvailable {
-                locales = await SpeechTranscriber.supportedLocales
-            } else {
-                locales = await DictationTranscriber.supportedLocales
-            }
+        if SpeechTranscriber.isAvailable {
+            locales = await SpeechTranscriber.supportedLocales
         } else {
-            locales = Array(SFSpeechRecognizer.supportedLocales())
+            locales = await DictationTranscriber.supportedLocales
         }
 
         return MirageDictationLocaleMatcher
@@ -41,26 +36,19 @@ public enum MirageDictationLocaleSupport {
     ) async -> Locale? {
         let requestedLocale = preference.locale ?? currentLocale
 
-        if #available(iOS 26.0, visionOS 26.0, *) {
-            if SpeechTranscriber.isAvailable {
-                if let equivalentLocale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale) {
-                    return equivalentLocale
-                }
-                let supportedLocales = await SpeechTranscriber.supportedLocales
-                return MirageDictationLocaleMatcher.bestSupportedLocale(for: requestedLocale, within: supportedLocales)
-            }
-
-            if let equivalentLocale = await DictationTranscriber.supportedLocale(equivalentTo: requestedLocale) {
+        if SpeechTranscriber.isAvailable {
+            if let equivalentLocale = await SpeechTranscriber.supportedLocale(equivalentTo: requestedLocale) {
                 return equivalentLocale
             }
-            let supportedLocales = await DictationTranscriber.supportedLocales
+            let supportedLocales = await SpeechTranscriber.supportedLocales
             return MirageDictationLocaleMatcher.bestSupportedLocale(for: requestedLocale, within: supportedLocales)
         }
 
-        return MirageDictationLocaleMatcher.bestSupportedLocale(
-            for: requestedLocale,
-            within: SFSpeechRecognizer.supportedLocales()
-        )
+        if let equivalentLocale = await DictationTranscriber.supportedLocale(equivalentTo: requestedLocale) {
+            return equivalentLocale
+        }
+        let supportedLocales = await DictationTranscriber.supportedLocales
+        return MirageDictationLocaleMatcher.bestSupportedLocale(for: requestedLocale, within: supportedLocales)
     }
 }
 #endif

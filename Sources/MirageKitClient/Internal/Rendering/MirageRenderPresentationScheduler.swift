@@ -130,6 +130,13 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
         }
         if presentationTier == .activeLive {
             guard hasPendingFrame() else { return }
+            guard displayClockActive, lastDisplayTickWallTime > 0 else {
+                performPass(
+                    referenceTime: referenceTime,
+                    isDisplayTick: false
+                )
+                return
+            }
             displayClockFramePending = true
             displayClockNoFrameTickPending = false
             return
@@ -205,7 +212,13 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
     }
 
     private var allowsFrameArrivalCatchUpFallback: Bool {
-        submitsOnFrameArrival
+        guard let streamID else { return false }
+        switch MirageRenderStreamStore.shared.presentationTiming(for: streamID).latencyMode {
+        case .lowestLatency, .balanced:
+            return true
+        case .smoothest:
+            return false
+        }
     }
 
     func handleDisplayTick(referenceTime: CFTimeInterval) {

@@ -61,7 +61,7 @@ extension StreamContext {
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }
 
-    /// Releases the startup gate after UDP registration and primes the encoder before any frames drain.
+    /// Releases the startup gate after datagram registration and primes the encoder before any frames drain.
     func allowEncodingAfterRegistration() async {
         guard !shouldEncodeFrames else { return }
         let now = CFAbsoluteTimeGetCurrent()
@@ -69,7 +69,7 @@ extension StreamContext {
         smoothedDirtyPercentage = 0
         if !startupRegistrationLogged {
             startupRegistrationLogged = true
-            logStartupEvent("UDP registration confirmed")
+            logStartupEvent("datagram registration confirmed")
         }
         enableStartupTransportProtection(now: now)
 
@@ -107,7 +107,7 @@ extension StreamContext {
 
         shouldEncodeFrames = true
         MirageLogger.signpostEvent(.stream, "Startup.EncodingEnabled", "stream=\(streamID)")
-        MirageLogger.stream("UDP registration confirmed, encoding resumed")
+        MirageLogger.stream("datagram registration confirmed, encoding resumed")
         if requiresExplicitDrainKick {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
         } else {

@@ -55,7 +55,7 @@ struct ClientHelloHandshakeStateTests {
             hostID: acceptedHostID,
             hostName: "Accepted Host",
             mediaEncryptionEnabled: true,
-            udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
+            datagramRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
         )
 
         let acceptedHost = await service.finalizeAcceptedBootstrap(
@@ -87,23 +87,6 @@ struct ClientHelloHandshakeStateTests {
         #expect(service.connectedHost?.advertisement.metadata["source"] == "bonjour")
         #expect(service.connectedHost?.resolvedAddresses == provisionalHost.resolvedAddresses)
         #expect(service.connectedHost?.discoveredInterfaces == provisionalHost.discoveredInterfaces)
-    }
-
-    @MainActor
-    @Test("Loom transport parameters use best-effort service class for control connections")
-    func loomTransportParametersUseBestEffortServiceClass() throws {
-        let tcpParameters = try LoomTransportParametersFactory.makeParameters(
-            for: .tcp,
-            enablePeerToPeer: false
-        )
-        let quicParameters = try LoomTransportParametersFactory.makeParameters(
-            for: .quic,
-            enablePeerToPeer: false,
-            quicALPN: ["mirage-v2"]
-        )
-
-        #expect(tcpParameters.serviceClass == .bestEffort)
-        #expect(quicParameters.serviceClass == .bestEffort)
     }
 
     @MainActor

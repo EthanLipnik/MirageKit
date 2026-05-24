@@ -23,7 +23,8 @@ extension MirageClientService {
         to host: LoomPeer,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
-        requestTakeoverIfBusy: Bool = false
+        requestTakeoverIfBusy: Bool = false,
+        bootstrapProtocolVersionOverride: Int? = nil
     ) async throws -> BootstrappedControlSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
@@ -82,7 +83,8 @@ extension MirageClientService {
                 try await performBootstrap(
                     over: controlChannel,
                     provisionalHost: host,
-                    requestTakeoverIfBusy: requestTakeoverIfBusy
+                    requestTakeoverIfBusy: requestTakeoverIfBusy,
+                    protocolVersionOverride: bootstrapProtocolVersionOverride
                 )
                 try Task.checkCancellation()
                 try throwIfConnectAttemptIsStale(attemptID)

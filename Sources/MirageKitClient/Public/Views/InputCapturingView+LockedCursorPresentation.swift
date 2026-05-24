@@ -161,16 +161,12 @@ extension InputCapturingView {
 
     func configureInteractionDisplayLink(_ displayLink: CADisplayLink) {
         let targetFPS = MirageInteractionCadence.targetFPS120
-        if #available(iOS 15.0, visionOS 1.0, *) {
-            let preferred = Float(targetFPS)
-            displayLink.preferredFrameRateRange = CAFrameRateRange(
-                minimum: preferred,
-                maximum: preferred,
-                preferred: preferred
-            )
-        } else {
-            displayLink.preferredFramesPerSecond = targetFPS
-        }
+        let preferred = Float(targetFPS)
+        displayLink.preferredFrameRateRange = CAFrameRateRange(
+            minimum: preferred,
+            maximum: preferred,
+            preferred: preferred
+        )
     }
 
     func stopLockedCursorSmoothing() {

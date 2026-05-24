@@ -21,11 +21,7 @@ extension InputCapturingView {
         let tiltY = min(max(azimuthUnitVector.dy * tiltMagnitude, -1), 1)
         let rollAngle: CGFloat?
         #if os(iOS)
-        if #available(iOS 17.5, *) {
-            rollAngle = gesture.rollAngle
-        } else {
-            rollAngle = nil
-        }
+        rollAngle = gesture.rollAngle
         #else
         rollAngle = nil
         #endif

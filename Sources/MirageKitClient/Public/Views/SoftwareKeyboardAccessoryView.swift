@@ -113,12 +113,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
         #if os(visionOS)
         var configuration = isSelected ? UIButton.Configuration.borderedProminent() : UIButton.Configuration.bordered()
         #else
-        var configuration: UIButton.Configuration
-        if #available(iOS 26.0, *) {
-            configuration = isSelected ? .prominentGlass() : .glass()
-        } else {
-            configuration = isSelected ? .borderedProminent() : .bordered()
-        }
+        var configuration = isSelected ? UIButton.Configuration.prominentGlass() : UIButton.Configuration.glass()
         #endif
         configuration.title = title
         configuration.cornerStyle = .capsule

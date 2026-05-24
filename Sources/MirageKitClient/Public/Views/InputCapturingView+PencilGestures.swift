@@ -82,7 +82,6 @@ extension InputCapturingView {
 #if os(iOS)
 extension InputCapturingView: UIPencilInteractionDelegate {
     /// Handles the Apple Pencil double-tap interaction.
-    @available(iOS 17.5, *)
     public func pencilInteraction(
         _: UIPencilInteraction,
         didReceiveTap tap: UIPencilInteraction.Tap
@@ -91,7 +90,6 @@ extension InputCapturingView: UIPencilInteractionDelegate {
     }
 
     /// Handles the Apple Pencil squeeze interaction when the gesture ends.
-    @available(iOS 17.5, *)
     public func pencilInteraction(
         _: UIPencilInteraction,
         didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze

@@ -49,7 +49,7 @@ struct MirageKitTests {
         let target = MirageStreamCadenceTarget(sourceFPS: 60)
 
         #expect(target.latencyMode == .balanced)
-        #expect(target.playoutDelayFrames == 1)
+        #expect(target.playoutDelayFrames == 0)
     }
 
     @Test("Protocol header serialization")
@@ -395,7 +395,7 @@ struct MirageKitTests {
             hostID: UUID(),
             hostName: "Host",
             mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
+            datagramRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
             protocolMismatchClientVersion: 2
@@ -416,7 +416,7 @@ struct MirageKitTests {
             hostID: UUID(),
             hostName: "Host",
             mediaEncryptionEnabled: true,
-            udpRegistrationToken: Data(
+            datagramRegistrationToken: Data(
                 repeating: 0xAB,
                 count: MirageMediaSecurity.registrationTokenLength
             ),

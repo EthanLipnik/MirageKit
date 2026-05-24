@@ -170,10 +170,7 @@ extension MirageClientService {
     }
 
     func controlSessionTransportOrder(explicitVPNRoute: Bool) -> [LoomTransportKind] {
-        let preferredOrder: [LoomTransportKind] = explicitVPNRoute ? [.quic, .udp, .tcp] : [.udp, .quic, .tcp]
-        return preferredOrder.filter { transportKind in
-            transportKind != .quic || LoomNode.quicAvailable
-        }
+        explicitVPNRoute ? [.quic, .udp, .tcp] : [.udp, .quic, .tcp]
     }
 
     func peerToPeerPreferredControlSessionAttempts(

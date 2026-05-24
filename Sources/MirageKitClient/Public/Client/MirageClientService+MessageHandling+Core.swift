@@ -197,8 +197,8 @@ extension MirageClientService {
                     "Host media encryption disabled (client policy blocks unencrypted media)"
                 )
             }
-            guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
-                throw MirageError.protocolError("Invalid UDP registration token")
+            guard response.datagramRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
+                throw MirageError.protocolError("Invalid datagram registration token")
             }
 
             let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
@@ -210,7 +210,7 @@ extension MirageClientService {
                 clientID: deviceID,
                 hostKeyID: hostIdentityKeyID,
                 clientKeyID: localIdentity.keyID,
-                udpRegistrationToken: response.udpRegistrationToken
+                datagramRegistrationToken: response.datagramRegistrationToken
             )
 
             setMediaSecurityContext(mediaContext)

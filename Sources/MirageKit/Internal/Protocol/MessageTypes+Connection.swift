@@ -69,8 +69,8 @@ package struct MirageSessionBootstrapResponse: Codable {
     /// Whether media payload encryption is required for this session.
     package let mediaEncryptionEnabled: Bool
 
-    /// Auth token required for UDP registration packets.
-    package let udpRegistrationToken: Data
+    /// Auth token required for datagram registration packets.
+    package let datagramRegistrationToken: Data
 
     /// True when the host trust provider indicates a one-time auto-trust notice is appropriate.
     package let autoTrustGranted: Bool
@@ -93,7 +93,7 @@ package struct MirageSessionBootstrapResponse: Codable {
         hostID: UUID,
         hostName: String,
         mediaEncryptionEnabled: Bool,
-        udpRegistrationToken: Data,
+        datagramRegistrationToken: Data,
         autoTrustGranted: Bool = false,
         remoteAccessAllowed: Bool = false,
         rejectionReason: MirageSessionBootstrapRejectionReason? = nil,
@@ -104,7 +104,7 @@ package struct MirageSessionBootstrapResponse: Codable {
         self.hostID = hostID
         self.hostName = hostName
         self.mediaEncryptionEnabled = mediaEncryptionEnabled
-        self.udpRegistrationToken = udpRegistrationToken
+        self.datagramRegistrationToken = datagramRegistrationToken
         self.autoTrustGranted = autoTrustGranted
         self.remoteAccessAllowed = remoteAccessAllowed
         self.rejectionReason = rejectionReason

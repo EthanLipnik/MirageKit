@@ -47,6 +47,11 @@ struct RenderPresentationSchedulerTests {
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
     }
 
+    private func configureBalancedPresentationTiming(for streamID: StreamID) {
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .balanced)
+    }
+
     private func configureLowestLatencyPresentationTiming(for streamID: StreamID) {
         MirageRenderStreamStore.shared.clear(for: streamID)
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
@@ -209,6 +214,43 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleDisplayTick(referenceTime: 4)
         #expect(submitReferences == [1, 4])
         #expect(pendingFrames.submittedCount == 2)
+    }
+
+    @Test("Balanced catches up after an empty display tick")
+    func balancedCatchesUpAfterEmptyDisplayTick() {
+        let streamID: StreamID = 920
+        configureBalancedPresentationTiming(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let pendingFrames = SimulatedPendingFrames()
+        var scheduledCallbacks: [@Sendable () -> Void] = []
+        var wallTime: CFTimeInterval = 1
+
+        let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { _ in pendingFrames.submit() },
+            hasPendingFrame: { pendingFrames.hasPendingFrame },
+            pendingFrameCount: { pendingFrames.pendingCount }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleDisplayTick(referenceTime: 1)
+        pendingFrames.enqueue()
+        wallTime += 0.010
+        scheduler.handleFrameAvailable(referenceTime: 1.010)
+
+        #expect(scheduledCallbacks.count == 1)
+        scheduledCallbacks.removeFirst()()
+        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.pendingCount == 0)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.displayTickNoFrameCount == 1)
+        #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
     }
 
     @Test("Smoothest records late arrival after an empty tick without catch-up")

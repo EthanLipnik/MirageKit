@@ -82,7 +82,7 @@ extension MirageHostService {
         loop?.stop()
     }
 
-    /// Stores the priority input route that owns local-UDP input for a session.
+    /// Stores the priority input route that owns local datagram input for a session.
     nonisolated func storePriorityInputRoute(
         _ route: HostPriorityInputRoute,
         sessionID: UUID

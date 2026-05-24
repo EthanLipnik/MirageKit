@@ -119,7 +119,7 @@ extension ClientLoomControlPlaneTests {
                 hostID: UUID(),
                 hostName: "Loopback Host",
                 mediaEncryptionEnabled: false,
-                udpRegistrationToken: Data(),
+                datagramRegistrationToken: Data(),
                 rejectionReason: .hostBusy
             )
             try await serverControl.send(.sessionBootstrapResponse, content: rejection)

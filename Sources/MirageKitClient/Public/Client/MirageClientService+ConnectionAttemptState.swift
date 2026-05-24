@@ -88,7 +88,8 @@ extension MirageClientService {
     func performBootstrap(
         over controlChannel: MirageControlChannel,
         provisionalHost: LoomPeer,
-        requestTakeoverIfBusy: Bool = false
+        requestTakeoverIfBusy: Bool = false,
+        protocolVersionOverride: Int? = nil
     ) async throws {
         connectionState = .handshaking(host: provisionalHost.name)
         MirageInstrumentation.record(.clientHelloSent)
@@ -96,7 +97,8 @@ extension MirageClientService {
         try await controlChannel.send(
             .sessionBootstrapRequest,
             content: makeBootstrapRequest(
-                requestTakeoverIfBusy: requestTakeoverIfBusy
+                requestTakeoverIfBusy: requestTakeoverIfBusy,
+                protocolVersionOverride: protocolVersionOverride
             )
         )
 

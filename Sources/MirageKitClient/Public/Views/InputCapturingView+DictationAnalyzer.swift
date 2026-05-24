@@ -13,7 +13,6 @@ import Speech
 
 extension InputCapturingView {
     /// Starts dictation through the modern SpeechAnalyzer pipeline.
-    @available(iOS 26.0, visionOS 26.0, *)
     func startSpeechAnalyzerDictationModern(
         locale: Locale,
         inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?

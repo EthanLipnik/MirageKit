@@ -53,10 +53,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 1
         case .balanced:
-            return min(
-                8,
-                max(2, Int((maximumTargetPlayoutDelayMs / displayFrameIntervalMs).rounded(.up)) + 1)
-            )
+            return 3
         case .smoothest:
             return min(
                 32,
@@ -70,7 +67,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return sourceFrameIntervalMs
         case .balanced:
-            return max(60, maximumTargetPlayoutDelayMs + displayFrameIntervalMs * 2)
+            return max(45, displayFrameIntervalMs * 3)
         case .smoothest:
             return max(300, baseTargetPlayoutDelayMs + 250)
         }
@@ -95,7 +92,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return sourceFrameIntervalMs
         case .balanced:
-            return max(120, maximumTargetPlayoutDelayMs + 80)
+            return max(80, displayFrameIntervalMs * 4)
         case .smoothest:
             return max(300, baseTargetPlayoutDelayMs + 250)
         }
@@ -114,7 +111,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            return displayFrameIntervalMs
+            return 0
         case .smoothest:
             switch transportPathKind {
             case .wired, .loopback:
@@ -134,7 +131,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            return hasRecentInteraction ? displayFrameIntervalMs * 0.5 : displayFrameIntervalMs
+            return 0
         case .smoothest:
             switch transportPathKind {
             case .awdl:
@@ -154,17 +151,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            let frame = displayFrameIntervalMs
-            switch transportPathKind {
-            case .wired, .loopback:
-                return frame * 2
-            case .wifi:
-                return frame * 3
-            case .awdl:
-                return frame * 5
-            case .vpn, .cellular, .other, .unknown:
-                return frame * 6
-            }
+            return displayFrameIntervalMs
         case .smoothest:
             return max(350, baseTargetPlayoutDelayMs * 2)
         }

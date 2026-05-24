@@ -49,10 +49,11 @@ public extension MirageClientService {
     }
 
     package func makeBootstrapRequest(
-        requestTakeoverIfBusy: Bool = false
+        requestTakeoverIfBusy: Bool = false,
+        protocolVersionOverride: Int? = nil
     ) -> MirageSessionBootstrapRequest {
         MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
+            protocolVersion: protocolVersionOverride ?? Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: networkConfig.requireEncryptedMediaOnLocalNetwork,
             requestTakeoverIfBusy: requestTakeoverIfBusy
         )
@@ -184,6 +185,18 @@ public extension MirageClientService {
         to host: LoomPeer,
         requestTakeoverIfBusy: Bool = false
     ) async throws {
+        try await connect(
+            to: host,
+            requestTakeoverIfBusy: requestTakeoverIfBusy,
+            bootstrapProtocolVersionOverride: nil
+        )
+    }
+
+    package func connect(
+        to host: LoomPeer,
+        requestTakeoverIfBusy: Bool = false,
+        bootstrapProtocolVersionOverride: Int?
+    ) async throws {
         guard connectionState.canConnect else {
             throw MirageError.protocolError("Already connected or connecting")
         }
@@ -213,7 +226,8 @@ public extension MirageClientService {
                 to: host,
                 hello: helloRequest,
                 attemptID: attemptID,
-                requestTakeoverIfBusy: requestTakeoverIfBusy
+                requestTakeoverIfBusy: requestTakeoverIfBusy,
+                bootstrapProtocolVersionOverride: bootstrapProtocolVersionOverride
             )
             let session = bootstrappedSession.session
             let controlChannel = bootstrappedSession.controlChannel

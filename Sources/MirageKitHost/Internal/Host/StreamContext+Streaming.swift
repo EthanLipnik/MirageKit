@@ -80,7 +80,7 @@ extension StreamContext {
         shouldEncodeFrames = false
         startupFrameCachingEnabled = true
         cachedStartupFrame = nil
-        MirageLogger.stream("Waiting for UDP registration before encoding")
+        MirageLogger.stream("Waiting for datagram registration before encoding")
     }
 
     /// Starts the encoder with a shared encoding callback. The callback handles frame

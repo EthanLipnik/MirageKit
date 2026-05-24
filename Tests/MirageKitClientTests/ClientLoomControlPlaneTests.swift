@@ -46,7 +46,7 @@ struct ClientLoomControlPlaneTests {
                 hostID: UUID(),
                 hostName: "Loopback Host",
                 mediaEncryptionEnabled: true,
-                udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
+                datagramRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
             )
             try await serverControl.send(.sessionBootstrapResponse, content: bootstrapResponse)
 
@@ -307,14 +307,12 @@ func makeLoopbackControlPair() async throws -> LoopbackControlPair {
     }))
 
     let client = LoomAuthenticatedSession(
-        rawSession: LoomSession(connection: clientConnection),
-        role: .initiator,
-        transportKind: .tcp
+        connection: .tcp(clientConnection),
+        role: .initiator
     )
     let server = LoomAuthenticatedSession(
-        rawSession: LoomSession(connection: serverConnection),
-        role: .receiver,
-        transportKind: .tcp
+        connection: .tcp(serverConnection),
+        role: .receiver
     )
 
     let clientHello = LoomSessionHelloRequest(

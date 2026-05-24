@@ -247,11 +247,13 @@ struct MirageVideoPlayoutBuffer {
     ) {
         configureIfNeeded(policy: policy, now: now)
         guard policy.usesBufferedPlayout, playbackStarted else { return }
+        guard policy.latencyMode != .balanced else {
+            resetPlayoutAnchors()
+            return
+        }
         increaseDelay(
             reason: .underflow,
-            amountMs: policy.latencyMode == .balanced
-                ? max(8, policy.displayFrameIntervalMs)
-                : max(20, policy.displayFrameIntervalMs * 2),
+            amountMs: max(20, policy.displayFrameIntervalMs * 2),
             policy: policy,
             now: now
         )
@@ -264,11 +266,10 @@ struct MirageVideoPlayoutBuffer {
     ) {
         configureIfNeeded(policy: policy, now: now)
         guard policy.usesBufferedPlayout, playbackStarted else { return }
+        guard policy.latencyMode != .balanced else { return }
         increaseDelay(
             reason: .frameAfterEmptyTick,
-            amountMs: policy.latencyMode == .balanced
-                ? max(8, policy.displayFrameIntervalMs)
-                : max(15, policy.displayFrameIntervalMs * 1.5),
+            amountMs: max(15, policy.displayFrameIntervalMs * 1.5),
             policy: policy,
             now: now
         )
@@ -472,6 +473,7 @@ struct MirageVideoPlayoutBuffer {
             }
         }
 
+        guard policy.latencyMode != .balanced else { return }
         let expectedDepth = max(1, Int((effectiveDelayMs(policy: policy) / policy.displayFrameIntervalMs).rounded(.up)))
         guard consecutiveBurstFrames >= 2 || queuedFrameCount > expectedDepth + 3 else { return }
         increaseDelay(

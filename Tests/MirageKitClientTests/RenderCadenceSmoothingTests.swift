@@ -234,8 +234,8 @@ struct RenderCadenceSmoothingTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 96)
     }
 
-    @Test("Balanced uses one-frame playout and immediate display timing")
-    func balancedUsesOneFramePlayoutAndImmediateDisplayTiming() {
+    @Test("Balanced uses zero playout hold and immediate display timing")
+    func balancedUsesZeroPlayoutHoldAndImmediateDisplayTiming() {
         let streamID: StreamID = 414
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -258,11 +258,51 @@ struct RenderCadenceSmoothingTests {
         )
 
         let pendingDelayMs = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs
-        #expect(abs((pendingDelayMs ?? 0) - (1000.0 / 60.0)) < 0.5)
+        #expect(pendingDelayMs == 0)
 
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         #expect(timing.latencyMode == .balanced)
         #expect(timing.displaysImmediately)
+    }
+
+    @Test("Balanced empty ticks do not grow playout delay")
+    func balancedEmptyTicksDoNotGrowPlayoutDelay() throws {
+        let streamID: StreamID = 415
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .balanced
+            )
+        )
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+        let first = try #require(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero))
+        MirageRenderStreamStore.shared.markSubmitted(cursor: first.cursor, for: streamID)
+
+        MirageRenderStreamStore.shared.noteDisplayTickWithoutFrame(for: streamID)
+        MirageRenderStreamStore.shared.noteFrameArrivedAfterNoFrameTick(for: streamID, delayMs: 12)
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: CMTime(value: 1, timescale: 60),
+            for: streamID
+        )
+
+        let next = try #require(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: first.cursor))
+        #expect(next.targetPlayoutDelayMs == 0)
+        #expect(MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID).smoothestTargetDelayMs == 0)
     }
 
     @Test("Smoothest hard resets only beyond the path debt limit")
@@ -378,7 +418,7 @@ struct RenderCadenceSmoothingTests {
 
         let balancedTiming = MirageRenderPresentationTiming(
             targetFPS: 60,
-            playoutDelayFrames: 1,
+            playoutDelayFrames: 0,
             latencyMode: .balanced
         )
         #expect(balancedTiming.displaysImmediately)

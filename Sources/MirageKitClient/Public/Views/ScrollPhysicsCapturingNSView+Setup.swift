@@ -250,7 +250,7 @@ extension ScrollPhysicsCapturingNSView {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 self?.handleKeyboardActivationStateChange()
             }
         }
@@ -260,7 +260,7 @@ extension ScrollPhysicsCapturingNSView {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 self?.handleKeyboardActivationStateChange()
             }
         }
@@ -270,7 +270,7 @@ extension ScrollPhysicsCapturingNSView {
             object: NSApp,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 self?.handleKeyboardActivationStateChange()
             }
         }
@@ -280,7 +280,7 @@ extension ScrollPhysicsCapturingNSView {
             object: NSApp,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            Task { @MainActor [weak self] in
                 self?.handleKeyboardActivationStateChange()
             }
         }

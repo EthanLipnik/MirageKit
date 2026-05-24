@@ -44,20 +44,11 @@ extension InputCapturingView {
                 try await configureAudioSessionForDictation()
                 let dictationLocale = try await resolveDictationLocale()
                 MirageLogger.client("Dictation permissions and audio session ready")
-
-                if #available(iOS 26.0, visionOS 26.0, *) {
-                    MirageLogger.client("Starting modern dictation analyzer locale=\(dictationLocale.identifier)")
-                    try await startSpeechAnalyzerDictationModern(
-                        locale: dictationLocale,
-                        inputLevelHandler: inputLevelHandler
-                    )
-                } else {
-                    MirageLogger.client("Starting Speech recognizer dictation locale=\(dictationLocale.identifier)")
-                    try startSpeechRecognizerDictation(
-                        locale: dictationLocale,
-                        inputLevelHandler: inputLevelHandler
-                    )
-                }
+                MirageLogger.client("Starting modern dictation analyzer locale=\(dictationLocale.identifier)")
+                try await startSpeechAnalyzerDictationModern(
+                    locale: dictationLocale,
+                    inputLevelHandler: inputLevelHandler
+                )
 
                 isDictationActive = true
                 onDictationStateChanged?(true)
@@ -79,24 +70,18 @@ extension InputCapturingView {
         let analyzerObject = dictationAnalyzer
         let analyzerInputSinkObject = dictationAnalyzerInputSink
         let reservedLocale = dictationReservedLocale
-        let recognitionTask = dictationRecognitionTask
-        let recognitionRequest = dictationRecognitionRequest
-        var hasModernAnalyzer = false
+        let hasAnalyzer = analyzerObject is SpeechAnalyzer
 
-        if #available(iOS 26.0, visionOS 26.0, *) {
-            (analyzerInputSinkObject as? AnalyzerInputSink)?.finish()
-            hasModernAnalyzer = analyzerObject is SpeechAnalyzer
-        }
+        (analyzerInputSinkObject as? AnalyzerInputSink)?.finish()
         dictationAnalyzerInputSink = nil
         dictationAnalyzer = nil
         dictationReservedLocale = nil
 
-        if dictationMode == .best, hasModernAnalyzer {
+        if dictationMode == .best, hasAnalyzer {
             // Keep listening for final result until analyzer flush completes.
             dictationFinalizeTask = Task { @MainActor [weak self] in
                 defer { self?.dictationFinalizeTask = nil }
-                if #available(iOS 26.0, visionOS 26.0, *),
-                   let analyzer = analyzerObject as? SpeechAnalyzer {
+                if let analyzer = analyzerObject as? SpeechAnalyzer {
                     do {
                         try await analyzer.finalizeAndFinishThroughEndOfInput()
                     } catch {
@@ -109,7 +94,7 @@ extension InputCapturingView {
                 self?.flushBufferedDictationFinalSegments()
                 self?.dictationResultTask = nil
                 activeDictationTask?.cancel()
-                if #available(iOS 26.0, visionOS 26.0, *), let reservedLocale {
+                if let reservedLocale {
                     _ = await AssetInventory.release(reservedLocale: reservedLocale)
                 }
             }
@@ -117,8 +102,7 @@ extension InputCapturingView {
             activeDictationTask?.cancel()
             dictationResultTask?.cancel()
             dictationResultTask = nil
-            if #available(iOS 26.0, visionOS 26.0, *),
-               let analyzer = analyzerObject as? SpeechAnalyzer {
+            if let analyzer = analyzerObject as? SpeechAnalyzer {
                 Task {
                     do {
                         try await analyzer.finalizeAndFinishThroughEndOfInput()
@@ -127,28 +111,9 @@ extension InputCapturingView {
                     }
                 }
             }
-            if #available(iOS 26.0, visionOS 26.0, *), let reservedLocale {
+            if let reservedLocale {
                 Task { _ = await AssetInventory.release(reservedLocale: reservedLocale) }
             }
-        }
-
-        dictationRecognitionTask = nil
-        dictationRecognitionRequest = nil
-
-        if dictationMode == .best, !hasModernAnalyzer, let recognitionTask {
-            recognitionRequest?.endAudio()
-            dictationFinalizeTask = Task { @MainActor [weak self] in
-                defer { self?.dictationFinalizeTask = nil }
-                do {
-                    try await Task.sleep(for: .milliseconds(350))
-                } catch {
-                    return
-                }
-                recognitionTask.cancel()
-            }
-        } else {
-            recognitionTask?.cancel()
-            recognitionRequest?.endAudio()
         }
 
         if let engine = dictationAudioEngine {
@@ -158,7 +123,7 @@ extension InputCapturingView {
         dictationAudioEngine = nil
         endDictationInputLevelSession()
 
-        if !(dictationMode == .best && hasModernAnalyzer) {
+        if !(dictationMode == .best && hasAnalyzer) {
             dictationResultBuffer.reset()
         }
 
@@ -195,7 +160,7 @@ extension InputCapturingView {
     private func resolveDictationLocale() async throws -> Locale {
         guard let locale = await MirageDictationLocaleSupport.resolvedLocale(for: dictationLocalePreference) else {
             MirageLogger.client("Dictation locale resolution failed preference=\(dictationLocalePreference.rawValue)")
-            throw DictationError.recognizerUnavailable
+            throw DictationError.dictationUnavailable
         }
         return locale
     }
@@ -269,8 +234,8 @@ extension InputCapturingView {
                 return "Microphone permission is required for dictation."
             case .speechPermissionDenied:
                 return "Speech recognition permission is required for dictation."
-            case .recognizerUnavailable:
-                return "Speech recognizer is unavailable for the current locale."
+            case .dictationUnavailable:
+                return "Dictation is unavailable for the current locale."
             case .streamInitializationFailed:
                 return "Dictation input stream could not be created."
             case .audioSessionUnavailable:

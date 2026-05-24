@@ -11,7 +11,6 @@ import AVFAudio
 import Speech
 
 /// Chooses the modern speech module that best matches the requested dictation mode.
-@available(iOS 26.0, visionOS 26.0, *)
 enum DictationModuleChoice {
     case speechTranscriber(SpeechTranscriber)
     case dictationTranscriber(DictationTranscriber)
@@ -59,7 +58,7 @@ enum DictationModuleChoice {
 enum DictationError: Error {
     case microphonePermissionDenied
     case speechPermissionDenied
-    case recognizerUnavailable
+    case dictationUnavailable
     case streamInitializationFailed
     case audioSessionUnavailable
 }
@@ -76,7 +75,6 @@ enum SpeechAuthorizationBridge {
 }
 
 /// Thread-safe sink that feeds converted audio buffers into a speech analyzer stream.
-@available(iOS 26.0, visionOS 26.0, *)
 final class AnalyzerInputSink: @unchecked Sendable {
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
     private let queue = DispatchQueue(label: "io.miragekit.client.dictation.analyzer-input", qos: .userInitiated)
@@ -104,7 +102,6 @@ final class AnalyzerInputSink: @unchecked Sendable {
 }
 
 /// Converts microphone buffers into the PCM format required by the modern speech analyzer.
-@available(iOS 26.0, visionOS 26.0, *)
 final class DictationAnalyzerConverter: @unchecked Sendable {
     let sourceFormat: AVAudioFormat
     let targetFormat: AVAudioFormat
@@ -169,7 +166,6 @@ final class DictationAnalyzerConverter: @unchecked Sendable {
 }
 
 /// Builds an audio tap that copies, converts, and forwards analyzer input.
-@available(iOS 26.0, visionOS 26.0, *)
 func makeAnalyzerInputTapBlock(
     sink: AnalyzerInputSink,
     converter: DictationAnalyzerConverter,
@@ -180,17 +176,6 @@ func makeAnalyzerInputTapBlock(
         guard let copiedBuffer = copyPCMBufferForDictation(buffer) else { return }
         guard let convertedBuffer = converter.convert(copiedBuffer) else { return }
         sink.yield(convertedBuffer)
-    }
-}
-
-/// Builds an audio tap that appends microphone buffers to a speech-recognition request.
-func makeSpeechRecognitionTapBlock(
-    request: SFSpeechAudioBufferRecognitionRequest,
-    inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
-) -> AVAudioNodeTapBlock {
-    { buffer, _ in
-        inputLevelHandler?(buffer)
-        request.append(buffer)
     }
 }
 

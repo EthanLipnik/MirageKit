@@ -22,7 +22,7 @@ struct ClientSoftwareUpdateHandlingTests {
             hostID: UUID(),
             hostName: "Host",
             mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
+            datagramRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
             protocolMismatchClientVersion: 2
@@ -43,7 +43,7 @@ struct ClientSoftwareUpdateHandlingTests {
             hostID: UUID(),
             hostName: "Host",
             mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
+            datagramRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 3,
             protocolMismatchClientVersion: 4
@@ -92,7 +92,7 @@ struct ClientSoftwareUpdateHandlingTests {
             hostID: UUID(),
             hostName: "Host",
             mediaEncryptionEnabled: false,
-            udpRegistrationToken: Data(),
+            datagramRegistrationToken: Data(),
             rejectionReason: .hostUpdateInProgress
         )
 
@@ -101,6 +101,17 @@ struct ClientSoftwareUpdateHandlingTests {
             service.bootstrapRejectionDescription(for: response, mismatchInfo: nil) ==
                 "Host update is in progress."
         )
+    }
+
+    @MainActor
+    @Test("Compatibility update bootstrap can use advertised host protocol")
+    func compatibilityUpdateBootstrapCanUseAdvertisedHostProtocol() {
+        let service = MirageClientService()
+        let request = service.makeBootstrapRequest(protocolVersionOverride: 7)
+        let defaultRequest = service.makeBootstrapRequest()
+
+        #expect(request.protocolVersion == 7)
+        #expect(defaultRequest.protocolVersion == Int(MirageKit.protocolVersion))
     }
 
     @MainActor
