@@ -160,6 +160,7 @@ extension FrameReassembler {
         frame.buffer.write(recovered, at: offset)
         frame.receivedMap[recoverIndex] = true
         frame.receivedCount += 1
+        fecRecoveredFragmentCount += 1
         if frame.isKeyframe || recoverIndex != 0 || parityIndex != 0 {
             MirageLogger.log(.frameAssembly, "Recovered fragment \(recoverIndex) via FEC (block \(parityIndex))")
         }

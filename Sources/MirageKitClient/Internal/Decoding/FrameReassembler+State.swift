@@ -36,7 +36,8 @@ extension FrameReassembler {
             pFrameCompletionLatencyP50Ms: pFrameLatency.p50,
             pFrameCompletionLatencyP95Ms: pFrameLatency.p95,
             pFrameCompletionLatencyMaxMs: pFrameLatency.max,
-            latePFrameCompletionCount: pFrameLatency.lateCount
+            latePFrameCompletionCount: pFrameLatency.lateCount,
+            fecRecoveredFragmentCount: fecRecoveredFragmentCount
         )
     }
 
@@ -145,6 +146,7 @@ extension FrameReassembler {
             latestPacketReceivedTime: lastPacketReceivedTime,
             latestPendingKeyframeProgress: latestPendingKeyframeProgressLocked(now: now),
             transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile,
             pendingFrameCount: pendingFrames.count,
             pendingKeyframeCount: pendingKeyframeCountLocked(),
             incompleteFrameTimeouts: incompleteFrameTimeoutCount,
@@ -180,11 +182,50 @@ extension FrameReassembler {
             incompleteFrameLifetimeTimeoutCount = 0
             missingFragmentTimeoutCount = 0
             forwardGapTimeoutCount = 0
+            fecRecoveredFragmentCount = 0
             pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
             lastPacketReceivedTime = 0
+            mediaPathProfile = MirageMediaPathProfile.classify(pathKind: transportPathKind, interfaceNames: [])
             startupKeyframeTimeoutOverrideEnabled = false
         }
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")
+    }
+
+    func pollTimeouts() {
+        var shouldSignalFrameLoss = false
+        var frameLossReason: FrameLossReason?
+        var handler: FrameLossHandler?
+        lock.lock()
+        let timeoutResult = cleanupOldFramesLocked()
+        if timeoutResult.shouldEnterAwaitingKeyframe {
+            beginKeyframeWaitLocked()
+            MirageLogger.log(
+                .frameAssembly,
+                "Entering keyframe wait after timeout poll: pFrame=\(timeoutResult.timedOutPFrames), " +
+                    "keyframe=\(timeoutResult.timedOutKeyframes), " +
+                    "incomplete=\(timeoutResult.incompleteFrameTimeouts), " +
+                    "noProgress=\(timeoutResult.incompleteFrameNoProgressTimeouts), " +
+                    "lifetime=\(timeoutResult.incompleteFrameLifetimeTimeouts), " +
+                    "missingFragments=\(timeoutResult.missingFragmentTimeouts), " +
+                    "forwardGap=\(timeoutResult.forwardGapTimeouts), " +
+                    "anchor=\(hasDeliveredKeyframeAnchor)"
+            )
+        }
+        if timeoutResult.timedOutPFrames + timeoutResult.timedOutKeyframes > 0 {
+            shouldSignalFrameLoss = true
+            frameLossReason = frameLossReason ?? timeoutResult.frameLossReason
+        }
+        if timeoutResult.missingExpectedPFrameGapTimedOut, !hasSignaledGapFrameLoss {
+            shouldSignalFrameLoss = true
+            hasSignaledGapFrameLoss = true
+            frameLossReason = frameLossReason ?? .forwardGapTimeout
+        }
+        handler = onFrameLoss
+        lock.unlock()
+
+        if shouldSignalFrameLoss, let handler {
+            handler(streamID: streamID, reason: frameLossReason ?? .timeout)
+        }
     }
 
     func beginAwaitingKeyframe() {
@@ -248,7 +289,7 @@ extension FrameReassembler {
         trimPFrameCompletionLatencySamplesLocked(now: now)
     }
 
-    private func pFrameCompletionLatencyMetricsLocked(
+    func pFrameCompletionLatencyMetricsLocked(
         now: Date
     ) -> (p50: Double, p95: Double, max: Double, lateCount: UInt64) {
         trimPFrameCompletionLatencySamplesLocked(now: now)

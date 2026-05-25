@@ -135,6 +135,7 @@ extension MirageHostService {
         )
         config = config.withInternalOverrides(pixelFormat: .bgra8)
 
+        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
         let context = StreamContext(
             streamID: streamID,
             windowID: 0,
@@ -151,7 +152,8 @@ extension MirageHostService {
             disableResolutionCap: request.disableResolutionCap ?? false,
             latencyMode: request.latencyMode ?? .lowestLatency,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,
-            transportPathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown,
+            transportPathKind: pathSnapshot?.kind ?? .unknown,
+            mediaPathProfile: pathSnapshot?.mediaProfile,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight
@@ -170,6 +172,7 @@ extension MirageHostService {
         }
 
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
+        await context.setMediaSendProfile(mediaSendProfile)
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
             videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
         }

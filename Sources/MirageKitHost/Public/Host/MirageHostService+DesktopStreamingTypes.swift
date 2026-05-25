@@ -195,6 +195,7 @@ extension MirageHostService {
         let latencyMode: MirageStreamLatencyMode
         let hostBufferingPolicy: MirageHostBufferingPolicy
         let transportPathKind: MirageNetworkPathKind
+        let mediaPathProfile: MirageMediaPathProfile
         let enteredBitrate: Int?
         let bitrateAdaptationCeiling: Int?
         let encoderMaxWidth: Int?

@@ -168,7 +168,8 @@ public extension MirageClientService {
                 await existingController.beginPostResizeTransition()
             }
             let tier = sessionStore.presentationTier(for: streamID)
-            let latencyMode = renderLatencyModeByStream[streamID]
+            let requestedLatencyMode = renderLatencyModeByStream[streamID]
+            let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
             let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             await existingController.updateCadenceTarget(
                 sourceFPS: resolvedTargetFrameRate,
@@ -178,9 +179,11 @@ public extension MirageClientService {
                 reason: "controller reset"
             )
             await existingController.updatePresentationTier(tier, targetFPS: resolvedTargetFrameRate)
-            if let kind = controlPathSnapshot?.kind {
-                MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: kind)
-                await existingController.setTransportPathKind(kind)
+            if let controlPathSnapshot {
+                MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: controlPathSnapshot.kind)
+                MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: controlPathSnapshot.mediaProfile)
+                await existingController.setTransportPathKind(controlPathSnapshot.kind)
+                await existingController.setMediaPathProfile(controlPathSnapshot.mediaProfile)
             }
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
@@ -211,7 +214,8 @@ public extension MirageClientService {
 
         await configureCallbacks(for: controller, streamID: streamID)
 
-        let latencyMode = renderLatencyModeByStream[streamID]
+        let requestedLatencyMode = renderLatencyModeByStream[streamID]
+        let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
         let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         await controller.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
@@ -220,9 +224,11 @@ public extension MirageClientService {
             playoutDelayFrames: playoutDelayFrames,
             reason: "controller setup"
         )
-        if let kind = controlPathSnapshot?.kind {
-            MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: kind)
-            await controller.setTransportPathKind(kind)
+        if let controlPathSnapshot {
+            MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: controlPathSnapshot.kind)
+            MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: controlPathSnapshot.mediaProfile)
+            await controller.setTransportPathKind(controlPathSnapshot.kind)
+            await controller.setMediaPathProfile(controlPathSnapshot.mediaProfile)
         }
         if beginPostResizeTransition {
             await controller.beginPostResizeTransition()
@@ -300,7 +306,8 @@ public extension MirageClientService {
             streamDimensions: streamDimensions
         )
         await existingController.beginPostResizeTransition()
-        let latencyMode = renderLatencyModeByStream[streamID]
+        let requestedLatencyMode = renderLatencyModeByStream[streamID]
+        let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
         let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         await existingController.updateCadenceTarget(
             sourceFPS: resolvedTargetFrameRate,
@@ -323,9 +330,10 @@ public extension MirageClientService {
         to streamID: StreamID,
         preferredLatencyMode: MirageStreamLatencyMode? = nil
     ) {
-        let latencyMode = preferredLatencyMode ??
+        let requestedLatencyMode = preferredLatencyMode ??
             renderLatencyModeByStream[streamID] ??
             .lowestLatency
+        let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
         renderLatencyModeByStream[streamID] = latencyMode
         MirageRenderStreamStore.shared.setLatencyMode(
             for: streamID,
@@ -364,7 +372,8 @@ public extension MirageClientService {
     func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
         for policy in policies {
             guard let controller = controllersByStream[policy.streamID] else { continue }
-            let latencyMode = renderLatencyModeByStream[policy.streamID]
+            let requestedLatencyMode = renderLatencyModeByStream[policy.streamID]
+            let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
             let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             let targetFPS = Self.runtimeWorkloadSafetyCappedFrameRate(
                 policy.targetFPS,

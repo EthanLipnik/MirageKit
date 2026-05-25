@@ -71,11 +71,24 @@ final class FrameReassembler: @unchecked Sendable {
         let pFrameCompletionLatencyP95Ms: Double
         let pFrameCompletionLatencyMaxMs: Double
         let latePFrameCompletionCount: UInt64
+        let fecRecoveredFragmentCount: UInt64
     }
 
     struct PFrameCompletionLatencySample: Sendable {
         let completedAt: Date
         let latencyMs: Double
+    }
+
+    final class FrameLossHandler: @unchecked Sendable {
+        private let handler: @Sendable (StreamID, FrameLossReason) -> Void
+
+        init(_ handler: @escaping @Sendable (StreamID, FrameLossReason) -> Void) {
+            self.handler = handler
+        }
+
+        func callAsFunction(streamID: StreamID, reason: FrameLossReason) {
+            handler(streamID, reason)
+        }
     }
 
     struct MemoryTrimResult: Sendable, Equatable {
@@ -104,6 +117,7 @@ final class FrameReassembler: @unchecked Sendable {
     var incompleteFrameLifetimeTimeoutCount: UInt64 = 0
     var missingFragmentTimeoutCount: UInt64 = 0
     var forwardGapTimeoutCount: UInt64 = 0
+    var fecRecoveredFragmentCount: UInt64 = 0
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0
@@ -121,12 +135,14 @@ final class FrameReassembler: @unchecked Sendable {
     let pFrameAbsoluteLifetimeCapDefault: TimeInterval = 0.60
     let pFrameAbsoluteLifetimeCapRemoteSmoothest: TimeInterval = 0.90
     let pFrameAbsoluteLifetimeCapRemoteLowestLatency: TimeInterval = 2.50
+    let pFrameAbsoluteLifetimeCapAwdl: TimeInterval = 0.80
     let remoteBufferedForwardGapTimeout: TimeInterval = 2.50
     let pFrameCompletionLatencySampleWindow: TimeInterval = 5.0
     let pFrameLateCompletionThresholdMs: Double = 250
     var targetFrameRate: Int = 60
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var transportPathKind: MirageNetworkPathKind = .unknown
+    var mediaPathProfile: MirageMediaPathProfile = .unknown
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token; frames with mismatched tokens are silently discarded.
@@ -158,7 +174,7 @@ final class FrameReassembler: @unchecked Sendable {
     var packetsDiscardedCRC: UInt64 = 0
 
     /// Callback for loss events such as frame timeouts or pathological forward gaps.
-    var onFrameLoss: (@Sendable (StreamID, FrameLossReason) -> Void)?
+    var onFrameLoss: FrameLossHandler?
 
     /// Prevents repeated frame-loss signals for the same forward gap.
     var hasSignaledGapFrameLoss: Bool = false

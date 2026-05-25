@@ -114,7 +114,7 @@ struct FrameReassemblerRecoveryProgressTests {
     }
 
     @Test("Keyframe timeout tracks assembly progress instead of first-fragment age")
-    func keyframeTimeoutTracksAssemblyProgress() async throws {
+    func keyframeTimeoutTracksAssemblyProgress() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -140,7 +140,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(2500))
+        Thread.sleep(forTimeInterval: 2.5)
 
         let fragment1 = Data([0x26, 0x30, 0x30, 0x30])
         reassembler.processPacket(
@@ -155,7 +155,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(1000))
+        Thread.sleep(forTimeInterval: 1.0)
 
         let timeoutProbe = Data([0x00, 0x00, 0x00, 0x02])
         reassembler.processPacket(
@@ -191,7 +191,7 @@ struct FrameReassemblerRecoveryProgressTests {
     }
 
     @Test("P-frame timeout tracks fragment progress instead of first-fragment age")
-    func pFrameTimeoutTracksFragmentProgress() async throws {
+    func pFrameTimeoutTracksFragmentProgress() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
         reassembler.setLatencyMode(.smoothest)
         let deliveredCounter = FrameReassemblerLockedCounter()
@@ -231,7 +231,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(220))
+        Thread.sleep(forTimeInterval: 0.22)
 
         let fragment1 = Data([0x22, 0x22, 0x22, 0x22])
         reassembler.processPacket(
@@ -246,7 +246,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(220))
+        Thread.sleep(forTimeInterval: 0.22)
 
         reassembler.processPacket(
             fragment0,
@@ -281,7 +281,7 @@ struct FrameReassemblerRecoveryProgressTests {
     }
 
     @Test("P-frame absolute lifetime cap eventually triggers recovery")
-    func pFrameAbsoluteLifetimeCapTriggersRecovery() async throws {
+    func pFrameAbsoluteLifetimeCapTriggersRecovery() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -320,7 +320,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(230))
+        Thread.sleep(forTimeInterval: 0.23)
 
         let fragment1 = Data([0x22, 0x22, 0x22, 0x22])
         reassembler.processPacket(
@@ -335,7 +335,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(230))
+        Thread.sleep(forTimeInterval: 0.23)
 
         let fragment2 = Data([0x33, 0x33, 0x33, 0x33])
         reassembler.processPacket(
@@ -350,7 +350,7 @@ struct FrameReassemblerRecoveryProgressTests {
             )
         )
 
-        try await Task.sleep(for: .milliseconds(180))
+        Thread.sleep(forTimeInterval: 0.18)
 
         reassembler.processPacket(
             fragment2,

@@ -48,6 +48,7 @@ extension StreamController {
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
 
         let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        reassembler.pollTimeouts()
         if reassembler.isAwaitingKeyframe {
             let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
             let snapshot = reassembler.keyframeWaitSnapshot
@@ -73,7 +74,8 @@ extension StreamController {
                     return
                 }
             case .deferPacketsFlowing,
-                 .deferKeyframeProgress:
+                 .deferKeyframeProgress,
+                 .deferRetryGrace:
                 return
             case .requestKeyframe:
                 await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor")

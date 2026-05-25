@@ -24,6 +24,7 @@ public enum MirageNetworkPathKind: String, Sendable, Equatable {
 
 package struct MirageNetworkPathSnapshot: Sendable, Equatable {
     package let kind: MirageNetworkPathKind
+    package let mediaProfile: MirageMediaPathProfile
     package let status: String
     package let signature: String
     package let interfaceNames: [String]
@@ -132,10 +133,20 @@ package enum MirageNetworkPathClassifier {
         } else {
             kind = .unknown
         }
+        let mediaProfile = MirageMediaPathProfile.classify(
+            pathKind: kind,
+            interfaceNames: interfaces.names,
+            usesWiFi: usesWiFi,
+            usesWired: usesWired,
+            usesCellular: usesCellular,
+            usesLoopback: usesLoopback,
+            usesOther: usesOther
+        )
 
         let signature =
             "status=\(status)" +
             "|kind=\(kind.rawValue)" +
+            "|media=\(mediaProfile.rawValue)" +
             "|if=\(interfaces.names.joined(separator: ","))" +
             "|exp=\(isExpensive)" +
             "|con=\(isConstrained)" +
@@ -146,6 +157,7 @@ package enum MirageNetworkPathClassifier {
 
         return MirageNetworkPathSnapshot(
             kind: kind,
+            mediaProfile: mediaProfile,
             status: status,
             signature: signature,
             interfaceNames: interfaces.names,

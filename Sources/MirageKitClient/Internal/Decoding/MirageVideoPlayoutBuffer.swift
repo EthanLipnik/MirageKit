@@ -12,10 +12,11 @@ import MirageKit
 
 /// Stateful client playout buffer for decoded video frames.
 ///
-/// Lowest Latency remains newest-frame coalescing. Buffered modes anchor host
-/// presentation timestamps to a local playout clock, releases frames only after
-/// their playout target, and adapts delay based on observed underflow and burst
-/// pressure.
+/// Immediate modes remain newest-frame coalescing. Buffered modes anchor host
+/// presentation timestamps to a local playout clock, release frames only after
+/// their playout target, and adapt delay based on observed underflow and burst
+/// pressure. AWDL radio paths use bounded buffered playout even with the
+/// lowest-latency latency preference.
 struct MirageVideoPlayoutBuffer {
     struct TrimResult: Equatable, Sendable {
         var overwrittenPendingFrames: Int = 0
@@ -89,6 +90,7 @@ struct MirageVideoPlayoutBuffer {
 
     private var latencyMode: MirageStreamLatencyMode = .lowestLatency
     private var transportPathKind: MirageNetworkPathKind = .unknown
+    private var mediaPathProfile: MirageMediaPathProfile = .unknown
     private var adaptedDelayMs: Double = 0
     private var playbackStarted = false
 
@@ -104,6 +106,7 @@ struct MirageVideoPlayoutBuffer {
     mutating func reset() {
         latencyMode = .lowestLatency
         transportPathKind = .unknown
+        mediaPathProfile = .unknown
         adaptedDelayMs = 0
         playbackStarted = false
         resetPlayoutAnchors()
@@ -130,8 +133,7 @@ struct MirageVideoPlayoutBuffer {
     ) -> TrimResult {
         configureIfNeeded(policy: policy, now: now)
 
-        switch policy.latencyMode {
-        case .lowestLatency:
+        if !policy.usesBufferedPlayout {
             frames.append(
                 frame.withPlayoutMetadata(
                     transportPathKind: policy.transportPathKind,
@@ -145,23 +147,23 @@ struct MirageVideoPlayoutBuffer {
                 result.recordLowestLatencyDrop(count: 1)
             }
             return result
-        case .balanced, .smoothest:
-            let previousEnqueuedDecodeTime = lastEnqueuedDecodeTime
-            let scheduledFrame = frame.withPlayoutMetadata(
-                transportPathKind: policy.transportPathKind,
-                targetPlayoutTime: targetPlayoutTime(for: frame, policy: policy, now: now),
-                targetPlayoutDelayMs: effectiveDelayMs(policy: policy)
-            )
-            frames.append(scheduledFrame)
-            recordBurstPressureIfNeeded(
-                frame: scheduledFrame,
-                queuedFrameCount: frames.count,
-                previousEnqueuedDecodeTime: previousEnqueuedDecodeTime,
-                policy: policy,
-                now: now
-            )
-            return trimSmoothestFrames(from: &frames, policy: policy, now: now)
         }
+
+        let previousEnqueuedDecodeTime = lastEnqueuedDecodeTime
+        let scheduledFrame = frame.withPlayoutMetadata(
+            transportPathKind: policy.transportPathKind,
+            targetPlayoutTime: targetPlayoutTime(for: frame, policy: policy, now: now),
+            targetPlayoutDelayMs: effectiveDelayMs(policy: policy)
+        )
+        frames.append(scheduledFrame)
+        recordBurstPressureIfNeeded(
+            frame: scheduledFrame,
+            queuedFrameCount: frames.count,
+            previousEnqueuedDecodeTime: previousEnqueuedDecodeTime,
+            policy: policy,
+            now: now
+        )
+        return trimSmoothestFrames(from: &frames, policy: policy, now: now)
     }
 
     mutating func selectFrame(
@@ -180,8 +182,7 @@ struct MirageVideoPlayoutBuffer {
             return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
         }
 
-        switch policy.latencyMode {
-        case .lowestLatency:
+        if !policy.usesBufferedPlayout {
             let removed = max(0, frames.count - 1)
             if removed > 0 {
                 frames.removeFirst(removed)
@@ -190,36 +191,36 @@ struct MirageVideoPlayoutBuffer {
             }
             let frame = frames.first
             return Selection(frame: frame, trimResult: trimResult, selectedFrameNumber: frame?.frameNumber)
-        case .balanced, .smoothest:
-            let trim = trimSmoothestFrames(from: &frames, policy: policy, now: now)
-            trimResult.absorb(trim)
-            guard let frame = frames.first else {
-                resetPlayoutAnchors()
-                return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
-            }
-            guard frameIsReadyForPlayout(frame, policy: policy, now: now) else {
-                if policy.latencyMode == .balanced,
-                   let recoveryFrame = selectBalancedRecoveryFrame(
-                       from: &frames,
-                       policy: policy,
-                       now: now,
-                       trimResult: &trimResult
-                   ) {
-                    playbackStarted = true
-                    noteStableSample(policy: policy, now: now)
-                    return Selection(
-                        frame: recoveryFrame,
-                        trimResult: trimResult,
-                        selectedFrameNumber: recoveryFrame.frameNumber
-                    )
-                }
-                return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
-            }
-
-            playbackStarted = true
-            noteStableSample(policy: policy, now: now)
-            return Selection(frame: frame, trimResult: trimResult, selectedFrameNumber: frame.frameNumber)
         }
+
+        let trim = trimSmoothestFrames(from: &frames, policy: policy, now: now)
+        trimResult.absorb(trim)
+        guard let frame = frames.first else {
+            resetPlayoutAnchors()
+            return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
+        }
+        guard frameIsReadyForPlayout(frame, policy: policy, now: now) else {
+            if policy.latencyMode == .balanced,
+               let recoveryFrame = selectBalancedRecoveryFrame(
+                   from: &frames,
+                   policy: policy,
+                   now: now,
+                   trimResult: &trimResult
+               ) {
+                playbackStarted = true
+                noteStableSample(policy: policy, now: now)
+                return Selection(
+                    frame: recoveryFrame,
+                    trimResult: trimResult,
+                    selectedFrameNumber: recoveryFrame.frameNumber
+                )
+            }
+            return Selection(frame: nil, trimResult: trimResult, selectedFrameNumber: nil)
+        }
+
+        playbackStarted = true
+        noteStableSample(policy: policy, now: now)
+        return Selection(frame: frame, trimResult: trimResult, selectedFrameNumber: frame.frameNumber)
     }
 
     mutating func trimAfterPolicyChange(
@@ -228,17 +229,15 @@ struct MirageVideoPlayoutBuffer {
         now: CFAbsoluteTime
     ) -> TrimResult {
         configureIfNeeded(policy: policy, now: now)
-        switch policy.latencyMode {
-        case .lowestLatency:
+        if !policy.usesBufferedPlayout {
             var result = TrimResult.empty
             while frames.count > policy.maximumQueueDepth {
                 frames.removeFirst()
                 result.recordLowestLatencyDrop(count: 1)
             }
             return result
-        case .balanced, .smoothest:
-            return trimSmoothestFrames(from: &frames, policy: policy, now: now)
         }
+        return trimSmoothestFrames(from: &frames, policy: policy, now: now)
     }
 
     mutating func recordDisplayTickWithoutFrame(
@@ -301,9 +300,12 @@ struct MirageVideoPlayoutBuffer {
         policy: MiragePresentationLatencyPolicy,
         now: CFAbsoluteTime
     ) {
-        guard latencyMode != policy.latencyMode || transportPathKind != policy.transportPathKind else { return }
+        guard latencyMode != policy.latencyMode ||
+            transportPathKind != policy.transportPathKind ||
+            mediaPathProfile != policy.mediaPathProfile else { return }
         latencyMode = policy.latencyMode
         transportPathKind = policy.transportPathKind
+        mediaPathProfile = policy.mediaPathProfile
         adaptedDelayMs = policy.baseTargetPlayoutDelayMs
         playbackStarted = false
         resetPlayoutAnchors()

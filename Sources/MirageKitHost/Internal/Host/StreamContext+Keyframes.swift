@@ -22,7 +22,7 @@ extension StreamContext {
     }
 
     var usesConstrainedKeyframeInFlightWindow: Bool {
-        transportPathKind == .awdl || transportPathKind == .cellular
+        mediaPathProfile.usesAwdlRadioPolicy || transportPathKind == .cellular
     }
 
     func markKeyframeInFlight(frameNumber: UInt32? = nil) {
@@ -56,9 +56,9 @@ extension StreamContext {
         keyframeSendDeadline = extendedDeadline
         let deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded())
         MirageLogger.stream(
-            "\(requestLabel) extended constrained-path keyframe in-flight deadline "
+                "\(requestLabel) extended constrained-path keyframe in-flight deadline "
                 + "frame=\(keyframeInFlightFrameNumber.map { String($0) } ?? "nil") "
-                + "deadlineMs=\(deadlineMs) path=\(transportPathKind.rawValue)"
+                + "deadlineMs=\(deadlineMs) path=\(transportPathKind.rawValue) media=\(mediaPathProfile.rawValue)"
         )
     }
 
@@ -84,7 +84,7 @@ extension StreamContext {
             MirageLogger.stream("\(requestLabel) skipped (cooldown \(remaining)ms)")
             return true
         }
-        if transportPathKind == .awdl, countsAgainstRecoveryBudget {
+        if mediaPathProfile.usesAwdlRadioPolicy, countsAgainstRecoveryBudget {
             recentKeyframeRequestTimes.removeAll { now - $0 > 10.0 }
             if recentKeyframeRequestTimes.count >= 3 {
                 MirageLogger.stream("\(requestLabel) skipped (AWDL recovery keyframe budget exhausted)")
@@ -153,7 +153,7 @@ extension StreamContext {
 
     func forceKeyframeAfterFallbackResume() {
         let now = CFAbsoluteTimeGetCurrent()
-        if transportPathKind != .awdl, now >= keyframeSendDeadline {
+        if !mediaPathProfile.usesAwdlRadioPolicy, now >= keyframeSendDeadline {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
         }
@@ -173,7 +173,7 @@ extension StreamContext {
         shouldEscalateRecovery: Bool
     ) {
         let now = CFAbsoluteTimeGetCurrent()
-        if transportPathKind != .awdl, now >= keyframeSendDeadline {
+        if !mediaPathProfile.usesAwdlRadioPolicy, now >= keyframeSendDeadline {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
         }
@@ -274,7 +274,7 @@ extension StreamContext {
         }
 
         var budgetDelay: CFAbsoluteTime = 0
-        if transportPathKind == .awdl {
+        if mediaPathProfile.usesAwdlRadioPolicy {
             recentKeyframeRequestTimes.removeAll { now - $0 > 10.0 }
             if recentKeyframeRequestTimes.count >= 3,
                let oldestRequest = recentKeyframeRequestTimes.first {
@@ -554,16 +554,18 @@ extension StreamContext {
         frameByteCount: Int = 0,
         now: CFAbsoluteTime
     ) -> Int {
-        if transportPathKind == .awdl {
+        if mediaPathProfile.usesAwdlRadioPolicy {
             if isKeyframe, isStartupTransportProtectionActive(now: now) {
                 return startupKeyframeFECBlockSize
             }
             if isLossModeActive(now: now) || isKeyframe {
-                return 4
+                return MirageAwdlMediaController.keyframeFECBlockSize()
             }
-            let safePayload = max(1, maxPayloadSize)
-            let dataFragmentCount = max(0, frameByteCount + safePayload - 1) / safePayload
-            return dataFragmentCount > 32 ? 8 : 0
+            return MirageAwdlMediaController.pFrameFECBlockSize(
+                frameByteCount: frameByteCount,
+                maxPayloadSize: maxPayloadSize,
+                isLossModeActive: false
+            )
         }
         if isKeyframe, isStartupTransportProtectionActive(now: now) {
             return startupKeyframeFECBlockSize
@@ -576,28 +578,31 @@ extension StreamContext {
     nonisolated static func mediaPacingOverride(
         isKeyframe: Bool,
         transportPathKind: MirageNetworkPathKind,
+        mediaPathProfile: MirageMediaPathProfile,
         targetBitrateBps: Int?,
         maxPayloadSize: Int
     ) -> StreamPacketSender.PacingOverride? {
         if isKeyframe {
             return keyframePacingOverride(
                 transportPathKind: transportPathKind,
+                mediaPathProfile: mediaPathProfile,
                 targetBitrateBps: targetBitrateBps,
                 maxPayloadSize: maxPayloadSize
             )
         }
 
-        guard transportPathKind == .awdl else { return nil }
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return nil }
         let packetBudget = max(1, maxPayloadSize)
         return StreamPacketSender.PacingOverride(
-            rateBps: max(1, targetBitrateBps ?? 24_000_000),
-            burstBytes: packetBudget * 2
+            rateBps: MirageAwdlMediaController.pacingBudgetBps(targetBitrateBps: targetBitrateBps),
+            burstBytes: packetBudget * MirageAwdlMediaController.pFramePacketBurst
         )
     }
 
     nonisolated static func keyframePacingOverride() -> StreamPacketSender.PacingOverride {
         keyframePacingOverride(
             transportPathKind: .unknown,
+            mediaPathProfile: .unknown,
             targetBitrateBps: nil,
             maxPayloadSize: miragePayloadSize(maxPacketSize: mirageDefaultMaxPacketSize)
         )
@@ -605,13 +610,14 @@ extension StreamContext {
 
     nonisolated static func keyframePacingOverride(
         transportPathKind: MirageNetworkPathKind,
+        mediaPathProfile: MirageMediaPathProfile,
         targetBitrateBps: Int?,
         maxPayloadSize: Int
     ) -> StreamPacketSender.PacingOverride {
-        if transportPathKind == .awdl {
+        if mediaPathProfile.usesAwdlRadioPolicy {
             return StreamPacketSender.PacingOverride(
-                rateBps: max(1, targetBitrateBps ?? 24_000_000),
-                burstBytes: max(1, maxPayloadSize) * 4
+                rateBps: MirageAwdlMediaController.pacingBudgetBps(targetBitrateBps: targetBitrateBps),
+                burstBytes: max(1, maxPayloadSize) * MirageAwdlMediaController.keyframePacketBurst
             )
         }
 

@@ -157,6 +157,7 @@ extension StreamController {
             reassemblerPFrameCompletionLatencyP95Ms: reassemblerMetrics.pFrameCompletionLatencyP95Ms,
             reassemblerPFrameCompletionLatencyMaxMs: reassemblerMetrics.pFrameCompletionLatencyMaxMs,
             reassemblerLatePFrameCompletionCount: reassemblerMetrics.latePFrameCompletionCount,
+            reassemblerFECRecoveredFragmentCount: reassemblerMetrics.fecRecoveredFragmentCount,
             decoderOutputPixelFormat: decoder.decodedOutputPixelFormatName,
             usingHardwareDecoder: decoder.currentHardwareDecoderStatus
         )

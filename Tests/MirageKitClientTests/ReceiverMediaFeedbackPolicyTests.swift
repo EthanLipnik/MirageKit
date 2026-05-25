@@ -165,6 +165,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             reassemblerPFrameCompletionLatencyP95Ms: 0,
             reassemblerPFrameCompletionLatencyMaxMs: 0,
             reassemblerLatePFrameCompletionCount: 0,
+            reassemblerFECRecoveredFragmentCount: 0,
             decoderOutputPixelFormat: "420v",
             usingHardwareDecoder: true
         )

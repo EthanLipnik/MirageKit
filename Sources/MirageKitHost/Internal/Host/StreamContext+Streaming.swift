@@ -66,6 +66,7 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             streamKind: streamKind,
+            mediaPathProfile: mediaPathProfile,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
@@ -140,6 +141,7 @@ extension StreamContext {
                 let pacingOverride = Self.mediaPacingOverride(
                     isKeyframe: isKeyframe,
                     transportPathKind: transportPathKind,
+                    mediaPathProfile: mediaPathProfile,
                     targetBitrateBps: currentTargetBitrateBps,
                     maxPayloadSize: maxPayloadSize
                 )
@@ -153,6 +155,7 @@ extension StreamContext {
                     isKeyframe: isKeyframe,
                     latencyMode: latencyMode,
                     transportPathKind: transportPathKind,
+                    mediaPathProfile: mediaPathProfile,
                     targetFrameRate: currentFrameRate
                 )
 
@@ -307,19 +310,24 @@ extension StreamContext {
         isKeyframe: Bool,
         latencyMode: MirageStreamLatencyMode,
         transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile? = nil,
         targetFrameRate: Int
     ) -> CFAbsoluteTime? {
         guard !isKeyframe else { return nil }
+        let profile = mediaPathProfile ?? MirageMediaPathProfile.classify(
+            pathKind: transportPathKind,
+            interfaceNames: []
+        )
         let frameInterval = 1.0 / Double(max(1, targetFrameRate))
         let deadlineOffset = switch latencyMode {
         case .lowestLatency:
-            if transportPathKind == .awdl {
+            if profile.usesAwdlRadioPolicy {
                 clamp(frameInterval * 5.0, min: 0.080, max: 0.120)
             } else {
                 clamp(frameInterval * 2.0, min: 0.016, max: 0.050)
             }
         case .balanced:
-            if transportPathKind == .awdl {
+            if profile.usesAwdlRadioPolicy {
                 clamp(frameInterval * 5.0, min: 0.080, max: 0.120)
             } else {
                 clamp(frameInterval * 3.0, min: 0.033, max: 0.080)

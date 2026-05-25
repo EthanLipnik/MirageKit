@@ -231,6 +231,17 @@ public extension MirageClientService {
             sizePreset: encoderRequest.sizePreset,
             mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
         )
+        if controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true {
+            let requestedLatency = request.latencyMode
+            request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
+            request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
+            if requestedLatency != request.latencyMode {
+                MirageLogger.client(
+                    "AWDL media policy overriding requested app latency " +
+                        "\(requestedLatency?.rawValue ?? "default") -> \(request.latencyMode?.rawValue ?? "default")"
+                )
+            }
+        }
         request.bitrateAdaptationCeiling = encoderRequest.bitrateAdaptationCeiling
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight

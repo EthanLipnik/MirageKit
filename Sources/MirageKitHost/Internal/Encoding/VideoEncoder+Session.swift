@@ -101,7 +101,8 @@ extension VideoEncoder {
         }
         let rateLimit = Self.dataRateLimit(
             targetBitrateBps: targetBitrate,
-            targetFrameRate: configuration.targetFrameRate
+            targetFrameRate: configuration.targetFrameRate,
+            mediaPathProfile: mediaPathProfile
         )
         _ = clearPropertyIfPresent(session, key: kVTCompressionPropertyKey_ConstantBitRate)
         let averageApplied = setProperty(
@@ -153,7 +154,8 @@ extension VideoEncoder {
         let targetFrameRate = max(1, targetFrameRate)
         let rateLimit = Self.dataRateLimit(
             targetBitrateBps: targetBitrate,
-            targetFrameRate: targetFrameRate
+            targetFrameRate: targetFrameRate,
+            mediaPathProfile: mediaPathProfile
         )
         let strategy: LowLatencyBitrateStrategy
         let rateLimitForTelemetry: (bytes: Int, windowSeconds: Double)?
@@ -228,10 +230,18 @@ extension VideoEncoder {
 
     static func dataRateLimit(
         targetBitrateBps: Int,
-        targetFrameRate: Int
+        targetFrameRate: Int,
+        mediaPathProfile: MirageMediaPathProfile = .unknown
     ) -> (bytes: Int, windowSeconds: Double) {
         let clampedFrameRate = max(1, targetFrameRate)
-        let windowSeconds = clampedFrameRate >= 90 ? 0.25 : 0.5
+        let windowSeconds: Double
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            windowSeconds = MirageAwdlMediaController.videoToolboxDataRateWindowSeconds(
+                targetFrameRate: clampedFrameRate
+            )
+        } else {
+            windowSeconds = clampedFrameRate >= 90 ? 0.25 : 0.5
+        }
         let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
         let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))
         return (bytes: bytes, windowSeconds: windowSeconds)

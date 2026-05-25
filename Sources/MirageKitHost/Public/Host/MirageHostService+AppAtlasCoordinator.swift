@@ -143,6 +143,7 @@ extension MirageHostService {
         let hostBufferingPolicy = selectRequest.resolvedHostBufferingPolicy
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
+        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
         let context = StreamContext(
             streamID: mediaStreamID,
             windowID: 0,
@@ -159,7 +160,8 @@ extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
-            transportPathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown,
+            transportPathKind: pathSnapshot?.kind ?? .unknown,
+            mediaPathProfile: pathSnapshot?.mediaProfile,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
@@ -213,6 +215,7 @@ extension MirageHostService {
         }
 
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
+        await context.setMediaSendProfile(mediaSendProfile)
         let coordinator = AppAtlasMediaCoordinator(
             mediaStreamID: mediaStreamID,
             context: context,

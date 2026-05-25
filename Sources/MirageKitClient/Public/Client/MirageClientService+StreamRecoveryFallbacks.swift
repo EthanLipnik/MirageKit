@@ -67,13 +67,15 @@ extension MirageClientService {
                     continue
                 }
 
+                reassembler.pollTimeouts()
                 let snapshot = reassembler.keyframeWaitSnapshot
                 if let progress = snapshot.latestPendingKeyframeProgress,
-                   now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot.transportPathKind) {
+                   now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot) {
                     continue
                 }
-                if snapshot.latestPacketReceivedTime > 0,
-                   now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot.transportPathKind) {
+                if !snapshot.isAwaitingKeyframe,
+                   snapshot.latestPacketReceivedTime > 0,
+                   now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot) {
                     continue
                 }
 
@@ -90,7 +92,7 @@ extension MirageClientService {
                 }
 
                 let noProgressDuration = max(0, now - max(startedAt, snapshot.awaitingSince))
-                if noProgressDuration >= hardRecoveryNoProgressFloor(for: snapshot.transportPathKind) {
+                if noProgressDuration >= hardRecoveryNoProgressFloor(for: snapshot) {
                     MirageLogger.client(
                         "Foreground recovery escalating to hard recovery for stream \(streamID) " +
                             "noProgressMs=\(Int((noProgressDuration * 1000).rounded())) trigger=\(trigger.logLabel)"
@@ -114,6 +116,13 @@ extension MirageClientService {
         foregroundRecoveryMonitorTasks.removeValue(forKey: streamID)
     }
 
+    private func packetProgressFreshThreshold(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        if snapshot.mediaPathProfile.usesAwdlRadioPolicy {
+            return 0.25
+        }
+        return packetProgressFreshThreshold(for: snapshot.transportPathKind)
+    }
+
     private func packetProgressFreshThreshold(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
         switch pathKind {
         case .vpn, .cellular:
@@ -121,6 +130,13 @@ extension MirageClientService {
         case .awdl, .wired, .wifi, .loopback, .other, .unknown:
             2.0
         }
+    }
+
+    private func hardRecoveryNoProgressFloor(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        if snapshot.mediaPathProfile.usesAwdlRadioPolicy {
+            return 8.0
+        }
+        return hardRecoveryNoProgressFloor(for: snapshot.transportPathKind)
     }
 
     private func hardRecoveryNoProgressFloor(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {

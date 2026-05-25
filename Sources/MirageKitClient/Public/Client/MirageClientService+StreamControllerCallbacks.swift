@@ -89,7 +89,7 @@ extension MirageClientService {
                     activeJitterHoldMs = metrics.activeJitterHoldMs
                 }
                 sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
-                logAwdlExperimentTelemetryIfNeeded()
+                logAwdlExperimentTelemetryIfNeeded(streamID: streamID, metrics: metrics)
             },
             videoIngressMetricsProvider: { [videoIngressTelemetryStore] streamID in
                 videoIngressTelemetryStore.snapshot(for: streamID)
@@ -190,6 +190,16 @@ extension MirageClientService {
             pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
             pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
             latePFrameCount: metrics.reassemblerLatePFrameCompletionCount,
+            receivedWorstGapMs: metrics.receivedWorstGapMs,
+            presentationStallCount: metrics.presentationStallCount,
+            displayTickNoFrameCount: metrics.displayTickNoFrameCount,
+            worstPresentationGapMs: metrics.worstPresentationGapMs,
+            playoutDelayFrames: metrics.playoutDelayFrames,
+            playoutDelayTargetMs: metrics.smoothestTargetDelayMs,
+            reassemblerIncompleteFrameTimeouts: metrics.reassemblerIncompleteFrameTimeouts,
+            reassemblerMissingFragmentTimeouts: metrics.reassemblerMissingFragmentTimeouts,
+            reassemblerForwardGapTimeouts: metrics.reassemblerForwardGapTimeouts,
+            fecRecoveredFragmentCount: metrics.reassemblerFECRecoveredFragmentCount,
             reliabilityCauses: receiverReliabilityCauses(
                 recoveryState: recoveryState,
                 metrics: metrics

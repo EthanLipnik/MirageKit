@@ -210,6 +210,18 @@ extension StreamController {
         }
     }
 
+    func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
+        reassembler.setMediaPathProfile(profile)
+        let awdlActive = awdlExperimentEnabled && profile.usesAwdlRadioPolicy
+        guard awdlTransportActive != awdlActive else { return }
+        awdlTransportActive = awdlActive
+        if !awdlActive {
+            adaptiveJitterHoldMs = 0
+            adaptiveJitterStressStreak = 0
+            adaptiveJitterStableStreak = 0
+        }
+    }
+
     func evaluateAdaptiveJitterHold(receivedFPS: Double) {
         guard awdlExperimentEnabled, awdlTransportActive else {
             guard adaptiveJitterHoldMs != 0 ||

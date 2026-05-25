@@ -127,6 +127,17 @@ public extension MirageClientService {
         request.bitrate = bitrateSemantics.requestedTargetBitrateBps
         request.latencyMode = encoderRequest.latencyMode
         request.hostBufferingPolicy = encoderRequest.hostBufferingPolicy
+        if controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true {
+            let requestedLatency = request.latencyMode
+            request.latencyMode = effectiveLatencyModeForCurrentMediaPath(request.latencyMode)
+            request.hostBufferingPolicy = effectiveHostBufferingPolicyForCurrentMediaPath(request.hostBufferingPolicy)
+            if requestedLatency != request.latencyMode {
+                MirageLogger.client(
+                    "AWDL media policy overriding requested desktop latency " +
+                        "\(requestedLatency?.rawValue ?? "default") -> \(request.latencyMode?.rawValue ?? "default")"
+                )
+            }
+        }
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
         request.disableResolutionCap = encoderRequest.disableResolutionCap

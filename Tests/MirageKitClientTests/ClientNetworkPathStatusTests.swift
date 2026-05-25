@@ -30,7 +30,10 @@ struct ClientNetworkPathStatusTests {
         )
 
         #expect(snapshot.kind == .awdl)
-        #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "AWDL")
+        #expect(snapshot.mediaProfile == .awdlRadio)
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+        #expect(status.displayName == "AWDL")
+        #expect(status.usesFixedRealtimeDisplayPolicy)
     }
 
     @Test("Tunnel interface names win over Wi-Fi path flags")
@@ -50,6 +53,7 @@ struct ClientNetworkPathStatusTests {
         )
 
         #expect(snapshot.kind == .vpn)
+        #expect(snapshot.mediaProfile == .vpnOrOverlay)
         #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
     }
 
@@ -71,6 +75,8 @@ struct ClientNetworkPathStatusTests {
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
         #expect(snapshot.kind == .awdl)
+        #expect(snapshot.mediaProfile == .proximityWiredLike)
+        #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(status.displayName == "USB-C Proximity")
         #expect(status.transportDiagnosticNote?.contains("USB-C proximity") == true)
     }
@@ -93,7 +99,19 @@ struct ClientNetworkPathStatusTests {
         let status = MirageClientNetworkPathStatus(snapshot: snapshot)
 
         #expect(snapshot.kind == .awdl)
+        #expect(snapshot.mediaProfile == .proximityWiredLike)
+        #expect(!status.usesFixedRealtimeDisplayPolicy)
         #expect(status.displayName == "Low-Latency Wireless")
+    }
+
+    @Test("Legacy AWDL path kind defaults to radio media policy")
+    func legacyAwdlPathKindDefaultsToRadioMediaPolicy() {
+        let profile = MirageMediaPathProfile.classify(
+            pathKind: .awdl,
+            interfaceNames: []
+        )
+
+        #expect(profile == .awdlRadio)
     }
 
     @Test("Local default route keeps Wi-Fi ahead of available tunnel interfaces")

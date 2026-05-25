@@ -87,12 +87,14 @@ extension FrameReassembler {
                         "severe_forward_gap_buffered expected=\(expectedNextFrame) received=\(frameNumber) " +
                             "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
                             "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
-                            "graceMs=\(Int((severeGapGrace * 1000).rounded()))"
+                            "graceMs=\(Int((severeGapGrace * 1000).rounded())), " +
+                            "media=\(mediaPathProfile.rawValue)"
                     )
                 } else {
                     MirageLogger.log(
                         .frameAssembly,
-                        "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
+                        "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) " +
+                            "gapFrames=\(gapFrames) media=\(mediaPathProfile.rawValue)"
                     )
                 }
                 shouldDeliver = false
@@ -365,7 +367,9 @@ extension FrameReassembler {
                 let gapFrames = earliestBufferedFrame &- expectedFrame
                 MirageLogger.log(
                     .frameAssembly,
-                    "Forward gap timed out: expected=\(expectedFrame) earliestBuffered=\(earliestBufferedFrame) gapFrames=\(gapFrames)"
+                    "Forward gap timed out: expected=\(expectedFrame) earliestBuffered=\(earliestBufferedFrame) " +
+                        "gapFrames=\(gapFrames) timeoutMs=\(Int((bufferedForwardGapTimeout * 1000).rounded())) " +
+                        "media=\(mediaPathProfile.rawValue)"
                 )
             }
         }
@@ -501,6 +505,9 @@ extension FrameReassembler {
         if isLenientRemotePathLocked {
             return pFrameAbsoluteLifetimeCapRemoteLowestLatency
         }
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return pFrameAbsoluteLifetimeCapAwdl
+        }
         if latencyMode == .smoothest || transportPathKind == .vpn {
             return pFrameAbsoluteLifetimeCapRemoteSmoothest
         }
@@ -508,7 +515,10 @@ extension FrameReassembler {
     }
 
     private func bufferedForwardGapTimeoutLocked() -> TimeInterval {
-        isLenientRemotePathLocked ? remoteBufferedForwardGapTimeout : pFrameTimeoutLocked()
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return awdlBufferedForwardGapTimeoutLocked()
+        }
+        return isLenientRemotePathLocked ? remoteBufferedForwardGapTimeout : pFrameTimeoutLocked()
     }
 
     private func keyframeNoProgressTimeoutLocked(for frame: PendingFrame) -> TimeInterval {
@@ -527,7 +537,15 @@ extension FrameReassembler {
     }
 
     private var isLenientRemotePathLocked: Bool {
-        transportPathKind == .vpn || transportPathKind == .cellular
+        mediaPathProfile.usesRemoteTolerance || transportPathKind == .vpn || transportPathKind == .cellular
+    }
+
+    private func awdlBufferedForwardGapTimeoutLocked() -> TimeInterval {
+        let metrics = pFrameCompletionLatencyMetricsLocked(now: Date())
+        return MirageAwdlMediaController.continuityWindowMs(
+            pFrameCompletionLatencyP95Ms: metrics.p95,
+            latePFrameCount: metrics.lateCount
+        ) / 1000.0
     }
 
     private func severeForwardGapFrameThresholdLocked() -> UInt32 {

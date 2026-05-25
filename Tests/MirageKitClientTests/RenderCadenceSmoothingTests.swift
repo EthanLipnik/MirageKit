@@ -176,13 +176,13 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.pendingFrameCount == 3)
     }
 
-    @Test("Smoothest uses path-specific initial playout targets")
-    func smoothestUsesPathSpecificInitialPlayoutTargets() {
+    @Test("Smoothest uses path-specific initial playout targets except fixed AWDL")
+    func smoothestUsesPathSpecificInitialPlayoutTargetsExceptFixedAwdl() {
         let streamID: StreamID = 412
         for (pathKind, expectedDelayMs) in [
             (MirageNetworkPathKind.wired, 50.0),
             (.wifi, 100.0),
-            (.awdl, 160.0),
+            (.awdl, 24.0),
             (.vpn, 250.0),
         ] {
             MirageRenderStreamStore.shared.clear(for: streamID)
@@ -207,8 +207,8 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Smoothest recent input reduces playout delay with AWDL floor")
-    func smoothestRecentInputReducesPlayoutDelayWithAwdlFloor() {
+    @Test("Fixed AWDL recent input uses lowest latency floor")
+    func fixedAwdlRecentInputUsesLowestLatencyFloor() {
         let streamID: StreamID = 413
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -231,15 +231,15 @@ struct RenderCadenceSmoothingTests {
             for: streamID
         )
 
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 96)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 16)
     }
 
-    @Test("Balanced uses zero playout hold and immediate display timing")
-    func balancedUsesZeroPlayoutHoldAndImmediateDisplayTiming() {
+    @Test("Balanced Wi-Fi uses zero playout hold and immediate display timing")
+    func balancedWifiUsesZeroPlayoutHoldAndImmediateDisplayTiming() {
         let streamID: StreamID = 414
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
-        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .wifi)
         MirageRenderStreamStore.shared.setCadenceTarget(
             for: streamID,
             target: MirageStreamCadenceTarget(
@@ -263,6 +263,37 @@ struct RenderCadenceSmoothingTests {
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         #expect(timing.latencyMode == .balanced)
         #expect(timing.displaysImmediately)
+    }
+
+    @Test("Lowest latency AWDL uses bounded playout hold")
+    func lowestLatencyAwdlUsesBoundedPlayoutHold() {
+        let streamID: StreamID = 416
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: .awdl)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
+        MirageRenderStreamStore.shared.setCadenceTarget(
+            for: streamID,
+            target: MirageStreamCadenceTarget(
+                sourceFPS: 60,
+                displayFPS: 60,
+                latencyMode: .lowestLatency
+            )
+        )
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        #expect(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero) == nil)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 24)
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        #expect(timing.latencyMode == .lowestLatency)
+        #expect(!timing.displaysImmediately)
     }
 
     @Test("Balanced empty ticks do not grow playout delay")

@@ -24,6 +24,10 @@ private extension StreamController {
         self.startupHardRecoveryCount = startupHardRecoveryCount
         self.hasTriggeredTerminalStartupFailure = hasTriggeredTerminalStartupFailure
     }
+
+    func testSeedLastRecoveryRequestDispatchTime(_ time: CFAbsoluteTime) {
+        lastRecoveryRequestDispatchTime = time
+    }
 }
 
 @Suite("Stream Controller Recovery", .serialized)
@@ -194,6 +198,177 @@ struct StreamControllerRecoveryTests {
 
         #expect(didDispatch == false)
         #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+    }
+
+    @Test("Fresh non-keyframe traffic does not suppress recovery while awaiting keyframe")
+    func freshNonKeyframeTrafficDoesNotSuppressAwaitingKeyframeRecovery() async {
+        let clock = StreamControllerManualTimeProvider(start: 1000)
+        let cases: [(MirageNetworkPathKind, MirageMediaPathProfile)] = [
+            (.awdl, .awdlRadio),
+            (.wifi, .localWiFi),
+            (.vpn, .vpnOrOverlay)
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let controller = StreamController(
+                streamID: StreamID(98 + index),
+                maxPayloadSize: 1200,
+                nowProvider: { clock.now }
+            )
+
+            await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - 10)
+            let snapshot = FrameReassembler.KeyframeWaitSnapshot(
+                isAwaitingKeyframe: true,
+                awaitingSince: clock.now - 1,
+                latestPacketReceivedTime: clock.now - 0.05,
+                latestPendingKeyframeProgress: nil,
+                transportPathKind: testCase.0,
+                mediaPathProfile: testCase.1,
+                pendingFrameCount: 4,
+                pendingKeyframeCount: 0,
+                incompleteFrameTimeouts: 0,
+                incompleteFrameNoProgressTimeouts: 0,
+                incompleteFrameLifetimeTimeouts: 0,
+                forwardGapTimeouts: 0
+            )
+
+            let decision = await controller.keyframeRequestDecision(
+                now: clock.now,
+                reason: .frameLoss,
+                snapshot: snapshot
+            )
+
+            #expect(decision == .requestKeyframe)
+
+            await controller.stop()
+        }
+    }
+
+    @Test("Awaiting keyframe with no progress retries on bounded local and overlay grace")
+    func awaitingKeyframeWithoutProgressUsesBoundedRetryGrace() async {
+        let clock = StreamControllerManualTimeProvider(start: 1200)
+        let cases: [(MirageNetworkPathKind, MirageMediaPathProfile, CFAbsoluteTime)] = [
+            (.wifi, .localWiFi, StreamController.localAwaitingKeyframeNoProgressRetryGrace),
+            (.vpn, .vpnOrOverlay, StreamController.remoteAwaitingKeyframeNoProgressRetryGrace)
+        ]
+
+        for (index, testCase) in cases.enumerated() {
+            let controller = StreamController(
+                streamID: StreamID(108 + index),
+                maxPayloadSize: 1200,
+                nowProvider: { clock.now }
+            )
+            let snapshot = FrameReassembler.KeyframeWaitSnapshot(
+                isAwaitingKeyframe: true,
+                awaitingSince: clock.now - 1,
+                latestPacketReceivedTime: clock.now - 0.05,
+                latestPendingKeyframeProgress: nil,
+                transportPathKind: testCase.0,
+                mediaPathProfile: testCase.1,
+                pendingFrameCount: 2,
+                pendingKeyframeCount: 0,
+                incompleteFrameTimeouts: 0,
+                incompleteFrameNoProgressTimeouts: 0,
+                incompleteFrameLifetimeTimeouts: 0,
+                forwardGapTimeouts: 0
+            )
+
+            await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - testCase.2 + 0.1)
+            let deferredDecision = await controller.keyframeRequestDecision(
+                now: clock.now,
+                reason: .frameLoss,
+                snapshot: snapshot
+            )
+            #expect(deferredDecision == .deferRetryGrace)
+
+            await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - testCase.2 - 0.1)
+            let retryDecision = await controller.keyframeRequestDecision(
+                now: clock.now,
+                reason: .frameLoss,
+                snapshot: snapshot
+            )
+            #expect(retryDecision == .requestKeyframe)
+
+            await controller.stop()
+        }
+    }
+
+    @Test("Freeze recovery skips stale presenter frames while awaiting keyframe")
+    func freezeRecoverySkipsStalePresenterFramesWhileAwaitingKeyframe() async {
+        let clock = StreamControllerManualTimeProvider(start: 1400)
+        let controller = StreamController(
+            streamID: 118,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        let snapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: true,
+            awaitingSince: clock.now - 1,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi,
+            pendingFrameCount: 2,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let freshDecision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: snapshot,
+            pendingRenderFrameCount: 1,
+            pendingRenderFrameAgeMs: StreamController.stalePendingRenderFrameRecoveryAgeMs - 1
+        )
+        #expect(freshDecision == .presenterRecovery)
+
+        let staleDecision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: snapshot,
+            pendingRenderFrameCount: 1,
+            pendingRenderFrameAgeMs: StreamController.stalePendingRenderFrameRecoveryAgeMs + 1
+        )
+        #expect(staleDecision == .requestKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("Freeze recovery hard-recovers after no-progress floor")
+    func freezeRecoveryHardRecoversAfterNoProgressFloor() async {
+        let clock = StreamControllerManualTimeProvider(start: 1600)
+        let controller = StreamController(
+            streamID: 119,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        let floor = await controller.hardRecoveryNoProgressFloor(for: .vpn)
+        let snapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: true,
+            awaitingSince: clock.now - floor - 0.1,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .vpn,
+            mediaPathProfile: .vpnOrOverlay,
+            pendingFrameCount: 2,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        let decision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: snapshot,
+            pendingRenderFrameCount: 0,
+            pendingRenderFrameAgeMs: 0
+        )
+
+        #expect(decision == .hardRecovery)
 
         await controller.stop()
     }

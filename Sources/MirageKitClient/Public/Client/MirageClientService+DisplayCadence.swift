@@ -72,7 +72,8 @@ extension MirageClientService {
             cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         updateObservedFrameRate(targetFrameRate, for: streamID)
-        let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+        let requestedLatencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
+        let latencyMode = effectiveLatencyModeForCurrentMediaPath(requestedLatencyMode) ?? requestedLatencyMode
         let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         let target = MirageStreamCadenceTarget(
             sourceFPS: targetFrameRate,

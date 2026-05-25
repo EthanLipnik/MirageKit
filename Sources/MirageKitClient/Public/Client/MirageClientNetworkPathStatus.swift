@@ -12,6 +12,8 @@ import MirageKit
 public struct MirageClientNetworkPathStatus: Sendable, Equatable {
     /// High-level path kind inferred from Network.framework state and interface hints.
     public let kind: MirageNetworkPathKind
+    /// Internal media behavior profile derived from the path kind and concrete interface hints.
+    package let mediaProfile: MirageMediaPathProfile
     /// Raw path status label.
     public let status: String
     /// Interface names observed on the active path.
@@ -57,6 +59,15 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         remoteEndpointDescription: String? = nil
     ) {
         self.kind = kind
+        mediaProfile = MirageMediaPathProfile.classify(
+            pathKind: kind,
+            interfaceNames: interfaceNames,
+            usesWiFi: usesWiFi,
+            usesWired: usesWired,
+            usesCellular: usesCellular,
+            usesLoopback: usesLoopback,
+            usesOther: usesOther
+        )
         self.status = status
         self.interfaceNames = interfaceNames
         self.isExpensive = isExpensive
@@ -156,6 +167,11 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
             return "The active control path is using a generic wired path classification."
         }
         return nil
+    }
+
+    /// Whether the active path uses a fixed realtime-display policy instead of user-selectable latency modes.
+    public var usesFixedRealtimeDisplayPolicy: Bool {
+        mediaProfile.usesAwdlRadioPolicy
     }
 
     package init(snapshot: MirageNetworkPathSnapshot) {

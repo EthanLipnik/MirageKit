@@ -32,7 +32,6 @@ extension StreamController {
         snapshot: FrameReassembler.KeyframeWaitSnapshot
     ) -> StreamRecoveryDecision {
         guard reason != .manualRecovery else { return .requestKeyframe }
-        guard lastRecoveryRequestDispatchTime > 0 else { return .requestKeyframe }
 
         if let progress = snapshot.latestPendingKeyframeProgress,
            Self.shouldDeferForPendingKeyframeProgress(
@@ -43,15 +42,18 @@ extension StreamController {
             return .deferKeyframeProgress
         }
 
-        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot.transportPathKind)
-        if snapshot.latestPacketReceivedTime > 0,
+        guard lastRecoveryRequestDispatchTime > 0 else { return .requestKeyframe }
+
+        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot)
+        if !snapshot.isAwaitingKeyframe,
+           snapshot.latestPacketReceivedTime > 0,
            now - snapshot.latestPacketReceivedTime < packetProgressThreshold {
             return .deferPacketsFlowing
         }
 
-        let duplicateGrace = duplicateKeyframeRequestGrace(for: snapshot.transportPathKind)
+        let duplicateGrace = keyframeRetryGrace(for: snapshot)
         if now - lastRecoveryRequestDispatchTime < duplicateGrace {
-            return .deferPacketsFlowing
+            return .deferRetryGrace
         }
 
         return .requestKeyframe
@@ -63,7 +65,8 @@ extension StreamController {
         pendingRenderFrameCount: Int,
         pendingRenderFrameAgeMs: Double
     ) -> StreamRecoveryDecision {
-        if pendingRenderFrameCount > 0 {
+        if pendingRenderFrameCount > 0,
+           pendingRenderFrameAgeMs < Self.stalePendingRenderFrameRecoveryAgeMs {
             return .presenterRecovery
         }
 
@@ -76,14 +79,15 @@ extension StreamController {
             return .deferKeyframeProgress
         }
 
-        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot.transportPathKind)
-        if snapshot.latestPacketReceivedTime > 0,
+        let packetProgressThreshold = packetProgressFreshThreshold(for: snapshot)
+        if !snapshot.isAwaitingKeyframe,
+           snapshot.latestPacketReceivedTime > 0,
            now - snapshot.latestPacketReceivedTime < packetProgressThreshold {
             return .deferPacketsFlowing
         }
 
-        let hardFloor = hardRecoveryNoProgressFloor(for: snapshot.transportPathKind)
-        if snapshot.awaitingDuration >= hardFloor {
+        let hardFloor = hardRecoveryNoProgressFloor(for: snapshot)
+        if snapshot.awaitingDuration(now: now) >= hardFloor {
             return .hardRecovery
         }
 
@@ -101,7 +105,7 @@ extension StreamController {
         let packetAgeMs = snapshot.latestPacketReceivedTime > 0
             ? Int(max(0, now - snapshot.latestPacketReceivedTime) * 1000)
             : -1
-        let awaitingMs = Int(snapshot.awaitingDuration * 1000)
+        let awaitingMs = Int(snapshot.awaitingDuration(now: now) * 1000)
         let progressText: String
         if let progress = snapshot.latestPendingKeyframeProgress {
             let percent = Int((progress.progressRatio * 100).rounded())
@@ -118,36 +122,119 @@ extension StreamController {
         }
         MirageLogger.client(
             "Recovery decision \(decision.rawValue) for stream \(streamID) reason=\(reason) " +
-                "path=\(snapshot.transportPathKind.rawValue) awaiting=\(snapshot.isAwaitingKeyframe) " +
+                "path=\(snapshot.transportPathKind.rawValue) media=\(snapshot.mediaPathProfile.rawValue) " +
+                "awaiting=\(snapshot.isAwaitingKeyframe) " +
                 "awaitingMs=\(awaitingMs) packetAgeMs=\(packetAgeMs) keyframeProgress=\(progressText)" +
                 renderText
         )
     }
 
+    func duplicateKeyframeRequestGrace(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        duplicateKeyframeRequestGrace(for: snapshot.mediaPathProfile, pathKind: snapshot.transportPathKind)
+    }
+
+    func keyframeRetryGrace(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        if snapshot.isAwaitingKeyframe, snapshot.latestPendingKeyframeProgress == nil {
+            return awaitingKeyframeNoProgressRetryGrace(for: snapshot)
+        }
+        return duplicateKeyframeRequestGrace(for: snapshot)
+    }
+
     func duplicateKeyframeRequestGrace(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+        duplicateKeyframeRequestGrace(
+            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            pathKind: pathKind
+        )
+    }
+
+    func duplicateKeyframeRequestGrace(
+        for mediaProfile: MirageMediaPathProfile,
+        pathKind: MirageNetworkPathKind
+    ) -> CFAbsoluteTime {
+        if mediaProfile.usesAwdlRadioPolicy {
+            return Self.localDuplicateKeyframeRequestGrace
+        }
         switch pathKind {
         case .vpn, .cellular:
-            Self.remoteDuplicateKeyframeRequestGrace
+            return Self.remoteDuplicateKeyframeRequestGrace
         case .awdl, .wifi, .wired, .loopback, .other, .unknown:
-            Self.localDuplicateKeyframeRequestGrace
+            return Self.localDuplicateKeyframeRequestGrace
         }
+    }
+
+    func awaitingKeyframeNoProgressRetryGrace(
+        for snapshot: FrameReassembler.KeyframeWaitSnapshot
+    ) -> CFAbsoluteTime {
+        awaitingKeyframeNoProgressRetryGrace(
+            for: snapshot.mediaPathProfile,
+            pathKind: snapshot.transportPathKind
+        )
+    }
+
+    func awaitingKeyframeNoProgressRetryGrace(
+        for mediaProfile: MirageMediaPathProfile,
+        pathKind: MirageNetworkPathKind
+    ) -> CFAbsoluteTime {
+        if mediaProfile.usesAwdlRadioPolicy {
+            return Self.localAwaitingKeyframeNoProgressRetryGrace
+        }
+        switch pathKind {
+        case .vpn, .cellular:
+            return Self.remoteAwaitingKeyframeNoProgressRetryGrace
+        case .awdl, .wifi, .wired, .loopback, .other, .unknown:
+            return Self.localAwaitingKeyframeNoProgressRetryGrace
+        }
+    }
+
+    func hardRecoveryNoProgressFloor(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        hardRecoveryNoProgressFloor(for: snapshot.mediaPathProfile, pathKind: snapshot.transportPathKind)
     }
 
     func hardRecoveryNoProgressFloor(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+        hardRecoveryNoProgressFloor(
+            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            pathKind: pathKind
+        )
+    }
+
+    func hardRecoveryNoProgressFloor(
+        for mediaProfile: MirageMediaPathProfile,
+        pathKind: MirageNetworkPathKind
+    ) -> CFAbsoluteTime {
+        if mediaProfile.usesAwdlRadioPolicy {
+            return Self.localHardRecoveryNoProgressFloor
+        }
         switch pathKind {
         case .vpn, .cellular:
-            Self.remoteHardRecoveryNoProgressFloor
+            return Self.remoteHardRecoveryNoProgressFloor
         case .awdl, .wifi, .wired, .loopback, .other, .unknown:
-            Self.localHardRecoveryNoProgressFloor
+            return Self.localHardRecoveryNoProgressFloor
         }
     }
 
+    func packetProgressFreshThreshold(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {
+        packetProgressFreshThreshold(for: snapshot.mediaPathProfile, pathKind: snapshot.transportPathKind)
+    }
+
     func packetProgressFreshThreshold(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+        packetProgressFreshThreshold(
+            for: MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: []),
+            pathKind: pathKind
+        )
+    }
+
+    func packetProgressFreshThreshold(
+        for mediaProfile: MirageMediaPathProfile,
+        pathKind: MirageNetworkPathKind
+    ) -> CFAbsoluteTime {
+        if mediaProfile.usesAwdlRadioPolicy {
+            return 0.25
+        }
         switch pathKind {
         case .vpn, .cellular:
-            Self.remotePacketProgressFreshThreshold
+            return Self.remotePacketProgressFreshThreshold
         case .awdl, .wifi, .wired, .loopback, .other, .unknown:
-            Self.localPacketProgressFreshThreshold
+            return Self.localPacketProgressFreshThreshold
         }
     }
 }

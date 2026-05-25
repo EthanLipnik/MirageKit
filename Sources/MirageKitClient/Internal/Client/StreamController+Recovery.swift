@@ -280,6 +280,11 @@ extension StreamController {
         let coalesceInterval = Self.keyframeRequestCoalesceInterval(targetFPS: decodeSchedulerTargetFPS)
         if lastRecoveryRequestDispatchTime > 0,
            now - lastRecoveryRequestDispatchTime < coalesceInterval {
+            let remainingMs = Int(max(0, coalesceInterval - (now - lastRecoveryRequestDispatchTime)) * 1000)
+            MirageLogger.client(
+                "Recovery keyframe request coalesced " +
+                    "(\(reason.logLabel), \(remainingMs)ms remaining) for stream \(streamID)"
+            )
             return false
         }
         trimRecoveryKeyframeDispatchWindow(now: now)
@@ -294,9 +299,6 @@ extension StreamController {
                     stallHandler?(.keyframeStarved)
                 }
             }
-            return false
-        }
-        if shouldDeferKeyframeRequestForPendingProgress(now: now, reason: reason) {
             return false
         }
         let snapshot = reassembler.keyframeWaitSnapshot
@@ -325,6 +327,10 @@ extension StreamController {
         }
         guard let handler = onKeyframeNeeded else {
             recoveryCoordinator.recordDispatchDeferred(until: now + coalesceInterval)
+            MirageLogger.client(
+                "Recovery keyframe request deferred because no keyframe handler is active " +
+                    "(\(reason.logLabel)) for stream \(streamID)"
+            )
             return false
         }
         MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
@@ -344,21 +350,6 @@ extension StreamController {
     private func trimRecoveryKeyframeDispatchWindow(now: CFAbsoluteTime) {
         let oldestAllowed = now - Self.recoveryKeyframeDispatchWindow
         recoveryKeyframeDispatchTimes.removeAll { $0 < oldestAllowed }
-    }
-
-    private func shouldDeferKeyframeRequestForPendingProgress(
-        now: CFAbsoluteTime,
-        reason: RecoveryReason
-    ) -> Bool {
-        guard reason != .manualRecovery else { return false }
-        guard let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress else {
-            return false
-        }
-        return Self.shouldDeferForPendingKeyframeProgress(
-            pendingKeyframeProgress,
-            now: now,
-            targetFPS: decodeSchedulerTargetFPS
-        )
     }
 
     func handleDecodeErrorThresholdSignal() async {

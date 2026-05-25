@@ -45,7 +45,7 @@ extension StreamContext {
         queueReset: Bool,
         recoveryKeyframe: Bool
     ) {
-        guard transportPathKind == .awdl else {
+        guard mediaPathProfile.usesAwdlRadioPolicy else {
             return (queueReset: false, recoveryKeyframe: false)
         }
 

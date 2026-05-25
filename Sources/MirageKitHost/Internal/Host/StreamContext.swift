@@ -36,6 +36,10 @@ actor StreamContext {
     }
 
     let mediaMaxPacketSize: Int
+    var mediaSendProfileRawValue: String?
+    var mediaSendProfileMaxOutstandingPackets: Int?
+    var mediaSendProfileMaxOutstandingBytes: Int?
+    var mediaSendProfileMaxQueuedPackets: Int?
 
     var captureMode: CaptureMode = .window
     /// Max payload size per UDP packet (excludes Mirage header).
@@ -239,6 +243,8 @@ actor StreamContext {
     var receiverAcceptedFPS: Double = 0
     var receiverPresentedFPS: Double = 0
     var lastReceiverFeedbackTime: CFAbsoluteTime = 0
+    var lastAwdlReceiverFeedbackLogTime: CFAbsoluteTime = 0
+    var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -320,6 +326,8 @@ actor StreamContext {
     let hostBufferingPolicy: MirageHostBufferingPolicy
     /// Classified transport path used for proximity-specific media policy.
     let transportPathKind: MirageNetworkPathKind
+    /// Media behavior profile used for real-time pacing and admission policy.
+    let mediaPathProfile: MirageMediaPathProfile
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -363,6 +371,7 @@ actor StreamContext {
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile? = nil,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -377,13 +386,26 @@ actor StreamContext {
         }
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
 
+        let resolvedMediaPathProfile = mediaPathProfile ?? MirageMediaPathProfile.classify(
+            pathKind: transportPathKind,
+            interfaceNames: []
+        )
+        let effectiveLatencyMode = MirageAwdlMediaController.fixedLatencyMode(
+            requestedLatencyMode: latencyMode,
+            mediaPathProfile: resolvedMediaPathProfile
+        )
+        let effectiveHostBufferingPolicy = resolvedMediaPathProfile.usesAwdlRadioPolicy
+            ? MirageHostBufferingPolicy.freshestFrame
+            : hostBufferingPolicy
+
         self.streamID = streamID
         self.windowID = windowID
         self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
-        self.latencyMode = latencyMode
-        self.hostBufferingPolicy = hostBufferingPolicy
+        self.latencyMode = effectiveLatencyMode
+        self.hostBufferingPolicy = effectiveHostBufferingPolicy
         self.transportPathKind = transportPathKind
+        self.mediaPathProfile = resolvedMediaPathProfile
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
@@ -408,14 +430,14 @@ actor StreamContext {
         self.capturePressureProfile = capturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
         activePixelFormat = resolvedEncoderConfig.pixelFormat
-        let prefersSmoothness = latencyMode == .smoothest
-        let latencySensitive = latencyMode == .lowestLatency
+        let prefersSmoothness = effectiveLatencyMode == .smoothest
+        let latencySensitive = effectiveLatencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
         let bufferPolicy = Self.resolvedBufferPolicy(
             streamKind: streamKind,
             frameRate: resolvedEncoderConfig.targetFrameRate,
-            latencyMode: latencyMode,
-            hostBufferingPolicy: hostBufferingPolicy,
+            latencyMode: effectiveLatencyMode,
+            hostBufferingPolicy: effectiveHostBufferingPolicy,
             useLowLatencyPipeline: useLowLatencyPipeline
         )
         maxInFlightFramesCap = bufferPolicy.maxInFlightFramesCap

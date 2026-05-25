@@ -207,6 +207,7 @@ extension MirageHostService {
         audioConfiguration: inout MirageAudioConfiguration
     ) async throws {
         let firstSuccessfulVideoPacketSent = Locked(false)
+        await activation.streamContext.setMediaSendProfile(mediaSendProfile)
         let startDesktopDisplay: () async throws -> Void = {
             try await activation.streamContext.startDesktopDisplay(
                 displayWrapper: activation.captureDisplay,

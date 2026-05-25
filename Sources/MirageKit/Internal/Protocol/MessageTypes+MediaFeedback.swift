@@ -63,6 +63,16 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let pFrameCompletionLatencyP95Ms: Double?
     package let pFrameCompletionLatencyMaxMs: Double?
     package let latePFrameCount: UInt64?
+    package let receivedWorstGapMs: Double?
+    package let presentationStallCount: UInt64?
+    package let displayTickNoFrameCount: UInt64?
+    package let worstPresentationGapMs: Double?
+    package let playoutDelayFrames: Int?
+    package let playoutDelayTargetMs: Double?
+    package let reassemblerIncompleteFrameTimeouts: UInt64?
+    package let reassemblerMissingFragmentTimeouts: UInt64?
+    package let reassemblerForwardGapTimeouts: UInt64?
+    package let fecRecoveredFragmentCount: UInt64?
     package let reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause]
 
     package init(
@@ -90,6 +100,16 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         pFrameCompletionLatencyP95Ms: Double? = nil,
         pFrameCompletionLatencyMaxMs: Double? = nil,
         latePFrameCount: UInt64? = nil,
+        receivedWorstGapMs: Double? = nil,
+        presentationStallCount: UInt64? = nil,
+        displayTickNoFrameCount: UInt64? = nil,
+        worstPresentationGapMs: Double? = nil,
+        playoutDelayFrames: Int? = nil,
+        playoutDelayTargetMs: Double? = nil,
+        reassemblerIncompleteFrameTimeouts: UInt64? = nil,
+        reassemblerMissingFragmentTimeouts: UInt64? = nil,
+        reassemblerForwardGapTimeouts: UInt64? = nil,
+        fecRecoveredFragmentCount: UInt64? = nil,
         reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = []
     ) {
         self.streamID = streamID
@@ -116,6 +136,16 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.pFrameCompletionLatencyP95Ms = pFrameCompletionLatencyP95Ms.map { max(0, $0) }
         self.pFrameCompletionLatencyMaxMs = pFrameCompletionLatencyMaxMs.map { max(0, $0) }
         self.latePFrameCount = latePFrameCount
+        self.receivedWorstGapMs = receivedWorstGapMs.map { max(0, $0) }
+        self.presentationStallCount = presentationStallCount
+        self.displayTickNoFrameCount = displayTickNoFrameCount
+        self.worstPresentationGapMs = worstPresentationGapMs.map { max(0, $0) }
+        self.playoutDelayFrames = playoutDelayFrames.map { max(0, $0) }
+        self.playoutDelayTargetMs = playoutDelayTargetMs.map { max(0, $0) }
+        self.reassemblerIncompleteFrameTimeouts = reassemblerIncompleteFrameTimeouts
+        self.reassemblerMissingFragmentTimeouts = reassemblerMissingFragmentTimeouts
+        self.reassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
+        self.fecRecoveredFragmentCount = fecRecoveredFragmentCount
         self.reliabilityCauses = reliabilityCauses
     }
 
@@ -166,6 +196,16 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             pFrameCompletionLatencyP95Ms: nil,
             pFrameCompletionLatencyMaxMs: nil,
             latePFrameCount: nil,
+            receivedWorstGapMs: nil,
+            presentationStallCount: nil,
+            displayTickNoFrameCount: nil,
+            worstPresentationGapMs: nil,
+            playoutDelayFrames: nil,
+            playoutDelayTargetMs: nil,
+            reassemblerIncompleteFrameTimeouts: nil,
+            reassemblerMissingFragmentTimeouts: nil,
+            reassemblerForwardGapTimeouts: nil,
+            fecRecoveredFragmentCount: nil,
             reliabilityCauses: []
         )
     }
@@ -195,6 +235,16 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case pFrameCompletionLatencyP95Ms
         case pFrameCompletionLatencyMaxMs
         case latePFrameCount
+        case receivedWorstGapMs
+        case presentationStallCount
+        case displayTickNoFrameCount
+        case worstPresentationGapMs
+        case playoutDelayFrames
+        case playoutDelayTargetMs
+        case reassemblerIncompleteFrameTimeouts
+        case reassemblerMissingFragmentTimeouts
+        case reassemblerForwardGapTimeouts
+        case fecRecoveredFragmentCount
         case reliabilityCauses
     }
 
@@ -243,6 +293,28 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
                 forKey: .pFrameCompletionLatencyMaxMs
             ),
             latePFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .latePFrameCount),
+            receivedWorstGapMs: try container.decodeIfPresent(Double.self, forKey: .receivedWorstGapMs),
+            presentationStallCount: try container.decodeIfPresent(UInt64.self, forKey: .presentationStallCount),
+            displayTickNoFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .displayTickNoFrameCount),
+            worstPresentationGapMs: try container.decodeIfPresent(Double.self, forKey: .worstPresentationGapMs),
+            playoutDelayFrames: try container.decodeIfPresent(Int.self, forKey: .playoutDelayFrames),
+            playoutDelayTargetMs: try container.decodeIfPresent(Double.self, forKey: .playoutDelayTargetMs),
+            reassemblerIncompleteFrameTimeouts: try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .reassemblerIncompleteFrameTimeouts
+            ),
+            reassemblerMissingFragmentTimeouts: try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .reassemblerMissingFragmentTimeouts
+            ),
+            reassemblerForwardGapTimeouts: try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .reassemblerForwardGapTimeouts
+            ),
+            fecRecoveredFragmentCount: try container.decodeIfPresent(
+                UInt64.self,
+                forKey: .fecRecoveredFragmentCount
+            ),
             reliabilityCauses: try container.decodeIfPresent(
                 [ReceiverMediaFeedbackReliabilityCause].self,
                 forKey: .reliabilityCauses
@@ -276,6 +348,19 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encodeIfPresent(pFrameCompletionLatencyP95Ms, forKey: .pFrameCompletionLatencyP95Ms)
         try container.encodeIfPresent(pFrameCompletionLatencyMaxMs, forKey: .pFrameCompletionLatencyMaxMs)
         try container.encodeIfPresent(latePFrameCount, forKey: .latePFrameCount)
+        try container.encodeIfPresent(receivedWorstGapMs, forKey: .receivedWorstGapMs)
+        try container.encodeIfPresent(presentationStallCount, forKey: .presentationStallCount)
+        try container.encodeIfPresent(displayTickNoFrameCount, forKey: .displayTickNoFrameCount)
+        try container.encodeIfPresent(worstPresentationGapMs, forKey: .worstPresentationGapMs)
+        try container.encodeIfPresent(playoutDelayFrames, forKey: .playoutDelayFrames)
+        try container.encodeIfPresent(playoutDelayTargetMs, forKey: .playoutDelayTargetMs)
+        try container.encodeIfPresent(
+            reassemblerIncompleteFrameTimeouts,
+            forKey: .reassemblerIncompleteFrameTimeouts
+        )
+        try container.encodeIfPresent(reassemblerMissingFragmentTimeouts, forKey: .reassemblerMissingFragmentTimeouts)
+        try container.encodeIfPresent(reassemblerForwardGapTimeouts, forKey: .reassemblerForwardGapTimeouts)
+        try container.encodeIfPresent(fecRecoveredFragmentCount, forKey: .fecRecoveredFragmentCount)
         if !reliabilityCauses.isEmpty {
             try container.encode(reliabilityCauses, forKey: .reliabilityCauses)
         }

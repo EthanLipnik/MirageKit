@@ -68,6 +68,7 @@ actor VideoEncoder {
     let codec: MirageVideoCodec
     let latencyMode: MirageStreamLatencyMode
     let streamKind: StreamKind
+    let mediaPathProfile: MirageMediaPathProfile
 
     var isProRes: Bool { codec == .proRes4444 }
     var activePixelFormat: MiragePixelFormat
@@ -123,6 +124,7 @@ actor VideoEncoder {
         configuration: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         streamKind: StreamKind = .window,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
         inFlightLimit: Int? = nil,
         maximizePowerEfficiencyEnabled: Bool = false
     ) {
@@ -130,6 +132,7 @@ actor VideoEncoder {
         codec = configuration.codec
         self.latencyMode = latencyMode
         self.streamKind = streamKind
+        self.mediaPathProfile = mediaPathProfile
         self.maximizePowerEfficiencyEnabled = maximizePowerEfficiencyEnabled
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1

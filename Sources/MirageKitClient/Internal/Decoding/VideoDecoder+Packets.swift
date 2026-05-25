@@ -47,7 +47,7 @@ extension FrameReassembler {
     func setFrameLossHandler(_ handler: @escaping @Sendable (StreamID, FrameLossReason) -> Void) {
         lock.lock()
         defer { lock.unlock() }
-        onFrameLoss = handler
+        onFrameLoss = FrameLossHandler(handler)
     }
 
     func updateExpectedDimensionToken(_ token: UInt16) {
@@ -97,12 +97,29 @@ extension FrameReassembler {
             defer { lock.unlock() }
             previousPathKind = transportPathKind
             transportPathKind = pathKind
+            mediaPathProfile = MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: [])
         }
 
         guard previousPathKind != pathKind else { return }
         MirageLogger.log(
             .frameAssembly,
             "Reassembler path kind updated to \(pathKind.rawValue) for stream \(streamID)"
+        )
+    }
+
+    func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
+        lock.lock()
+        let previousProfile: MirageMediaPathProfile
+        do {
+            defer { lock.unlock() }
+            previousProfile = mediaPathProfile
+            mediaPathProfile = profile
+        }
+
+        guard previousProfile != profile else { return }
+        MirageLogger.log(
+            .frameAssembly,
+            "Reassembler media path profile updated to \(profile.rawValue) for stream \(streamID)"
         )
     }
 
@@ -376,7 +393,7 @@ extension FrameReassembler {
 
         if shouldSignalFrameLoss {
             if let onFrameLoss {
-                onFrameLoss(streamID, frameLossReason ?? .timeout)
+                onFrameLoss(streamID: streamID, reason: frameLossReason ?? .timeout)
             }
         }
 

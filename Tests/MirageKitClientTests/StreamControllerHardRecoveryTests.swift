@@ -210,8 +210,8 @@ struct StreamControllerHardRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Remote keyframe recovery defers duplicate requests during grace window")
-    func remoteKeyframeRecoveryDefersDuplicateRequestsDuringGraceWindow() async throws {
+    @Test("Remote keyframe recovery retries awaiting keyframe with no progress on bounded grace")
+    func remoteKeyframeRecoveryRetriesAwaitingKeyframeWithNoProgressOnBoundedGrace() async throws {
         let clock = StreamControllerManualTimeProvider(start: 7000)
         let keyframeCounter = StreamControllerLockedCounter()
         let controller = StreamController(
@@ -236,11 +236,11 @@ struct StreamControllerHardRecoveryTests {
         #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
         #expect(keyframeCounter.value == 1)
 
-        clock.advance(by: 3.0)
+        clock.advance(by: StreamController.remoteAwaitingKeyframeNoProgressRetryGrace - 0.1)
         #expect(!(await controller.requestKeyframeRecovery(reason: .frameLoss)))
         #expect(keyframeCounter.value == 1)
 
-        clock.advance(by: StreamController.remoteDuplicateKeyframeRequestGrace + 0.1)
+        clock.advance(by: 0.2)
         #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
         #expect(keyframeCounter.value == 2)
         #expect(await controller.clientRecoveryStatus != .hardRecovery)

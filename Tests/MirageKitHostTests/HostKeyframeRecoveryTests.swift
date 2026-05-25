@@ -285,12 +285,14 @@ struct HostKeyframeRecoveryTests {
     func awdlMediaPacingKeepsBitrateTargetButNarrowsBurstBudget() {
         let keyframeOverride = StreamContext.keyframePacingOverride(
             transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
             targetBitrateBps: 24_000_000,
             maxPayloadSize: 1_200
         )
         let pFrameOverride = StreamContext.mediaPacingOverride(
             isKeyframe: false,
             transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
             targetBitrateBps: 24_000_000,
             maxPayloadSize: 1_200
         )

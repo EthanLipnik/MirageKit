@@ -219,7 +219,9 @@ async throws {
         encoderMaxHeight: encoderMaxHeight,
         disableResolutionCap: disableResolutionCap
     ).resolvedStreamScale
-    let transportPathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown
+    let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
+    let transportPathKind = pathSnapshot?.kind ?? .unknown
+    let mediaPathProfile = pathSnapshot?.mediaProfile ?? .unknown
 
     let streamContext = await makeDesktopStreamContext(
         DesktopStreamContextRequest(
@@ -235,6 +237,7 @@ async throws {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,

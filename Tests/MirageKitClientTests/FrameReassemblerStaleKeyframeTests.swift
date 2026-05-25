@@ -107,7 +107,7 @@ struct FrameReassemblerStaleKeyframeTests {
     }
 
     @Test("Delivered keyframe duplicate is dropped without triggering loss")
-    func deliveredKeyframeDuplicateDoesNotTriggerLossLoop() async throws {
+    func deliveredKeyframeDuplicateDoesNotTriggerLossLoop() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -147,7 +147,7 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        try await Task.sleep(for: .seconds(3.2))
+        Thread.sleep(forTimeInterval: 3.2)
 
         let pFramePayload = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
         reassembler.processPacket(

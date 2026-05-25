@@ -54,6 +54,25 @@ struct HEVCEncoderRateLimitTests {
         #expect(ninetyFPS.bytes == 375_000)
     }
 
+    @Test("AWDL rate-limit windows are shorter to avoid encoder-side bursts")
+    func awdlRateLimitWindowsAreShorter() {
+        let sixtyFPS = VideoEncoder.dataRateLimit(
+            targetBitrateBps: 24_000_000,
+            targetFrameRate: 60,
+            mediaPathProfile: .awdlRadio
+        )
+        let oneTwentyFPS = VideoEncoder.dataRateLimit(
+            targetBitrateBps: 24_000_000,
+            targetFrameRate: 120,
+            mediaPathProfile: .awdlRadio
+        )
+
+        #expect(sixtyFPS.windowSeconds == 0.15)
+        #expect(sixtyFPS.bytes == 450_000)
+        #expect(oneTwentyFPS.windowSeconds == 0.10)
+        #expect(oneTwentyFPS.bytes == 300_000)
+    }
+
     @Test("Realtime encoder rate control uses constrained VBR")
     func realtimeRateControlUsesConstrainedVBR() {
         #expect(VideoEncoder.LowLatencyBitrateStrategy.averageBitRateDataRateLimits.publicStrategy == .averageBitRateDataRateLimits)

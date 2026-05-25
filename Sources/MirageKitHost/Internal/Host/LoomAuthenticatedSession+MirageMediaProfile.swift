@@ -6,16 +6,18 @@
 //
 
 import Loom
+import MirageKit
 
 #if os(macOS)
 extension LoomAuthenticatedSession {
     func mirageMediaSendProfile() async -> LoomQueuedUnreliableSendProfile {
-        guard pathSnapshot?.interfaceNames.contains(where: { interfaceName in
-            interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("awdl")
-        }) == true else {
+        guard let pathSnapshot else {
             return .interactiveMedia
         }
-        return .proximityInteractiveMedia
+        let mediaProfile = MirageNetworkPathClassifier.classify(pathSnapshot).mediaProfile
+        return mediaProfile == .awdlRadio || mediaProfile == .proximityWiredLike
+            ? .proximityInteractiveMedia
+            : .interactiveMedia
     }
 }
 #endif

@@ -25,6 +25,8 @@ extension StreamController {
     static let hardRecoveryMinimumInterval: CFAbsoluteTime = 2.5
     static let localDuplicateKeyframeRequestGrace: CFAbsoluteTime = 2.5
     static let remoteDuplicateKeyframeRequestGrace: CFAbsoluteTime = 8.0
+    static let localAwaitingKeyframeNoProgressRetryGrace: CFAbsoluteTime = 1.0
+    static let remoteAwaitingKeyframeNoProgressRetryGrace: CFAbsoluteTime = 2.0
     static let localHardRecoveryNoProgressFloor: CFAbsoluteTime = 8.0
     static let remoteHardRecoveryNoProgressFloor: CFAbsoluteTime = 20.0
     static let localPacketProgressFreshThreshold: CFAbsoluteTime = 2.0
@@ -64,6 +66,7 @@ extension StreamController {
         case requestKeyframe = "request-keyframe"
         case deferPacketsFlowing = "defer-packets-flowing"
         case deferKeyframeProgress = "defer-keyframe-progress"
+        case deferRetryGrace = "defer-retry-grace"
         case presenterRecovery = "presenter-recovery"
         case hardRecovery = "hard-recovery"
     }
@@ -164,6 +167,7 @@ extension StreamController {
         let reassemblerPFrameCompletionLatencyP95Ms: Double
         let reassemblerPFrameCompletionLatencyMaxMs: Double
         let reassemblerLatePFrameCompletionCount: UInt64
+        let reassemblerFECRecoveredFragmentCount: UInt64
         let decoderOutputPixelFormat: String?
         let usingHardwareDecoder: Bool?
     }

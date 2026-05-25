@@ -123,6 +123,7 @@ struct HostStreamTransportControllerTests {
             with: feedback(sequence: 1, targetFPS: 60, jitterP99Ms: 90),
             currentFrameRate: 60,
             transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
             now: 60
         )
         #expect(firstSample == nil)
@@ -131,6 +132,7 @@ struct HostStreamTransportControllerTests {
             with: feedback(sequence: 2, targetFPS: 60, jitterP99Ms: 90),
             currentFrameRate: 60,
             transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
             now: 60.5
         )
 
@@ -139,16 +141,49 @@ struct HostStreamTransportControllerTests {
         #expect(pressure?.frameAdmissionTrigger == .clientJitter)
         #expect(pressure?.awdlPacingDeadline == 62.5)
         #expect(pressure?.awdlPacingTrigger == .clientJitter)
+        #expect(pressure?.awdlPolicyState == .stressed)
+        #expect(pressure?.awdlPolicyTrigger == .jitter)
+        #expect(pressure?.awdlTargetFrameRate == 60)
 
         let cleared = controller.update(
             with: feedback(sequence: 3, targetFPS: 60),
             currentFrameRate: 60,
             transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
             now: 62.6
         )
 
         #expect(cleared?.awdlPacingDeadline == 0)
         #expect(cleared?.awdlPacingTrigger == .clear)
+    }
+
+    @Test("AWDL P-frame latency enables pacing and pre-encode admission relief")
+    func awdlPFrameLatencyEnablesPacingAndAdmissionRelief() {
+        var controller = HostStreamTransportController()
+
+        let firstSample = controller.update(
+            with: feedback(sequence: 1, targetFPS: 60, pFrameCompletionLatencyP95Ms: 72),
+            currentFrameRate: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            now: 70
+        )
+        #expect(firstSample == nil)
+
+        let pressure = controller.update(
+            with: feedback(sequence: 2, targetFPS: 60, pFrameCompletionLatencyP95Ms: 72),
+            currentFrameRate: 60,
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio,
+            now: 70.5
+        )
+
+        #expect(pressure?.frameAdmissionTargetFPS == 30)
+        #expect(pressure?.frameAdmissionTrigger == .clientPFrameLatency)
+        #expect(pressure?.awdlPacingDeadline == 72.5)
+        #expect(pressure?.awdlPacingTrigger == .clientPFrameLatency)
+        #expect(pressure?.awdlPolicyState == .stressed)
+        #expect(pressure?.awdlPolicyTrigger == .pFrameLatency)
     }
 
     @Test("Receiver transport loss requires sustained samples before admission")
@@ -206,7 +241,9 @@ struct HostStreamTransportControllerTests {
         reassemblyBacklogFrames: Int = 0,
         reassemblyBacklogKeyframes: Int = 0,
         reassemblyBacklogBytes: Int = 0,
-        recoveryState: MirageMediaFeedbackRecoveryState = .idle
+        recoveryState: MirageMediaFeedbackRecoveryState = .idle,
+        pFrameCompletionLatencyP95Ms: Double? = nil,
+        latePFrameCount: UInt64? = nil
     ) -> ReceiverMediaFeedbackMessage {
         ReceiverMediaFeedbackMessage(
             streamID: 1,
@@ -228,7 +265,11 @@ struct HostStreamTransportControllerTests {
             receivedFPS: Double(targetFPS),
             rendererAcceptedFPS: Double(targetFPS),
             rendererPresentedFPS: Double(targetFPS),
-            recoveryState: recoveryState
+            recoveryState: recoveryState,
+            pFrameCompletionLatencyP50Ms: nil,
+            pFrameCompletionLatencyP95Ms: pFrameCompletionLatencyP95Ms,
+            pFrameCompletionLatencyMaxMs: nil,
+            latePFrameCount: latePFrameCount
         )
     }
 }

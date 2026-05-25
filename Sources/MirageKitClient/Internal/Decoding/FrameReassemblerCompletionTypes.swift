@@ -32,6 +32,7 @@ extension FrameReassembler {
         let latestPacketReceivedTime: CFAbsoluteTime
         let latestPendingKeyframeProgress: PendingKeyframeProgress?
         let transportPathKind: MirageNetworkPathKind
+        let mediaPathProfile: MirageMediaPathProfile
         let pendingFrameCount: Int
         let pendingKeyframeCount: Int
         let incompleteFrameTimeouts: UInt64
@@ -40,8 +41,12 @@ extension FrameReassembler {
         let forwardGapTimeouts: UInt64
 
         var awaitingDuration: CFAbsoluteTime {
+            awaitingDuration(now: CFAbsoluteTimeGetCurrent())
+        }
+
+        func awaitingDuration(now: CFAbsoluteTime) -> CFAbsoluteTime {
             guard isAwaitingKeyframe, awaitingSince > 0 else { return 0 }
-            return max(0, CFAbsoluteTimeGetCurrent() - awaitingSince)
+            return max(0, now - awaitingSince)
         }
     }
 

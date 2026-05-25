@@ -134,6 +134,20 @@ actor CursorMonitor {
         return 1.0 / normalizedRate
     }
 
+    nonisolated static func resolvedCursorType(
+        currentSystemCursor: NSCursor?,
+        currentCursor: NSCursor?
+    )
+    -> (cursorType: MirageCursorType, source: String) {
+        if let systemType = MirageCursorType(from: currentSystemCursor) {
+            return (systemType, "currentSystem")
+        }
+        if let currentType = MirageCursorType(from: currentCursor) {
+            return (currentType, "current")
+        }
+        return (.arrow, "fallback")
+    }
+
     private func streamsForTick(
         windowFrameProvider: @escaping @MainActor () -> [(StreamID, CGRect)],
         now: CFAbsoluteTime
@@ -207,26 +221,14 @@ actor CursorMonitor {
         await MainActor.run {
             let sampleStart = CFAbsoluteTimeGetCurrent()
             let mouseLocation = NSEvent.mouseLocation
-            let currentType = MirageCursorType(from: NSCursor.current)
-            let source: String
-            let cursorType: MirageCursorType
-            if let currentType {
-                cursorType = currentType
-                source = "current"
-            } else {
-                let systemType = MirageCursorType(from: NSCursor.currentSystem)
-                if let systemType {
-                    cursorType = systemType
-                    source = "currentSystem"
-                } else {
-                    cursorType = .arrow
-                    source = "fallback"
-                }
-            }
+            let resolvedCursor = Self.resolvedCursorType(
+                currentSystemCursor: NSCursor.currentSystem,
+                currentCursor: NSCursor.current
+            )
             return CursorSample(
                 mouseLocation: mouseLocation,
-                cursorType: cursorType,
-                source: source,
+                cursorType: resolvedCursor.cursorType,
+                source: resolvedCursor.source,
                 sampledAt: sampleStart,
                 sampleMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: sampleStart)
             )

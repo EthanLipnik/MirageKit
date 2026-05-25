@@ -15,11 +15,13 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
     let targetFPS: Int
     let playoutDelayFrames: Int
     let latencyMode: MirageStreamLatencyMode
+    let usesFixedRealtimeDisplayPolicy: Bool
 
     init(
         targetFPS: Int,
         playoutDelayFrames: Int,
-        latencyMode: MirageStreamLatencyMode
+        latencyMode: MirageStreamLatencyMode,
+        usesFixedRealtimeDisplayPolicy: Bool = false
     ) {
         self.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
         self.playoutDelayFrames = max(
@@ -27,10 +29,14 @@ struct MirageRenderPresentationTiming: Equatable, Sendable {
             min(MirageRenderModePolicy.maximumSmoothestPlayoutDelayFrames, playoutDelayFrames)
         )
         self.latencyMode = latencyMode
+        self.usesFixedRealtimeDisplayPolicy = usesFixedRealtimeDisplayPolicy
     }
 
     var displaysImmediately: Bool {
-        switch latencyMode {
+        if usesFixedRealtimeDisplayPolicy {
+            return false
+        }
+        return switch latencyMode {
         case .lowestLatency, .balanced:
             true
         case .smoothest:

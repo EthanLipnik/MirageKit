@@ -18,6 +18,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     let sourceFPS: Int
     let displayFPS: Int
     let transportPathKind: MirageNetworkPathKind
+    let mediaPathProfile: MirageMediaPathProfile
     let hasRecentInteraction: Bool
     let lastInteractionAgeSeconds: CFTimeInterval?
 
@@ -26,13 +27,22 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         sourceFPS: Int,
         displayFPS: Int,
         transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile? = nil,
         hasRecentInteraction: Bool = false,
         lastInteractionAgeSeconds: CFTimeInterval? = nil
     ) {
-        self.latencyMode = latencyMode
+        let resolvedMediaPathProfile = mediaPathProfile ?? MirageMediaPathProfile.classify(
+            pathKind: transportPathKind,
+            interfaceNames: []
+        )
+        self.latencyMode = MirageAwdlMediaController.fixedLatencyMode(
+            requestedLatencyMode: latencyMode,
+            mediaPathProfile: resolvedMediaPathProfile
+        )
         self.sourceFPS = MirageRenderModePolicy.normalizedTargetFPS(sourceFPS)
         self.displayFPS = MirageRenderModePolicy.normalizedTargetFPS(displayFPS)
         self.transportPathKind = transportPathKind
+        self.mediaPathProfile = resolvedMediaPathProfile
         self.hasRecentInteraction = hasRecentInteraction
         self.lastInteractionAgeSeconds = lastInteractionAgeSeconds
     }
@@ -40,17 +50,26 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var targetPlayoutDelayFrames: Int {
         switch latencyMode {
         case .lowestLatency:
-            0
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return max(1, Int((baseTargetPlayoutDelayMs / sourceFrameIntervalMs).rounded(.up)))
+            }
+            return 0
         case .balanced:
-            MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .balanced)
+            return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .balanced)
         case .smoothest:
-            MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .smoothest)
+            return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .smoothest)
         }
     }
 
     var maximumQueueDepth: Int {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return min(
+                    6,
+                    max(3, Int(((maximumTargetPlayoutDelayMs + 50) / displayFrameIntervalMs).rounded(.up)))
+                )
+            }
             return 1
         case .balanced:
             return 3
@@ -65,6 +84,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var maximumQueueAgeMs: Double {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return max(120, maximumTargetPlayoutDelayMs + 50)
+            }
             return sourceFrameIntervalMs
         case .balanced:
             return max(45, displayFrameIntervalMs * 3)
@@ -90,6 +112,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var hardResetDebtMs: Double {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return max(100, maximumTargetPlayoutDelayMs + displayFrameIntervalMs)
+            }
             return sourceFrameIntervalMs
         case .balanced:
             return max(80, displayFrameIntervalMs * 4)
@@ -109,6 +134,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var baseTargetPlayoutDelayMs: Double {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return MirageAwdlMediaController.basePlayoutDelayMs
+            }
             return 0
         case .balanced:
             return 0
@@ -129,6 +157,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var minimumTargetPlayoutDelayMs: Double {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return MirageAwdlMediaController.minimumPlayoutDelayMs
+            }
             return 0
         case .balanced:
             return 0
@@ -149,6 +180,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var maximumTargetPlayoutDelayMs: Double {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return MirageAwdlMediaController.maximumPlayoutDelayMs
+            }
             return 0
         case .balanced:
             return displayFrameIntervalMs
@@ -160,6 +194,9 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     var maximumRetainedPixelBufferBytes: Int {
         switch latencyMode {
         case .lowestLatency:
+            if mediaPathProfile.usesAwdlRadioPolicy {
+                return 192 * 1024 * 1024
+            }
             return 96 * 1024 * 1024
         case .balanced:
             return 192 * 1024 * 1024
@@ -198,7 +235,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
     }
 
     var usesBufferedPlayout: Bool {
-        latencyMode == .balanced || latencyMode == .smoothest
+        mediaPathProfile.usesAwdlRadioPolicy || latencyMode == .balanced || latencyMode == .smoothest
     }
 
 }

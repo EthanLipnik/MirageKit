@@ -192,6 +192,7 @@ final class MirageRenderStreamState {
     var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var playoutDelayFrames: Int = MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .lowestLatency)
     var transportPathKind: MirageNetworkPathKind = .unknown
+    var mediaPathProfile: MirageMediaPathProfile = .unknown
     var lastInteractionTime: CFAbsoluteTime = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
     var presentationRecoveryHandlers: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]
@@ -257,6 +258,7 @@ final class MirageRenderStreamState {
         lastAcceptedFrameTimeline = nil
         lastDisplayTickTime = 0
         transportPathKind = .unknown
+        mediaPathProfile = .unknown
         lastInteractionTime = 0
         decodeSamples.removeAll(keepingCapacity: false)
         decodeSampleStartIndex = 0
