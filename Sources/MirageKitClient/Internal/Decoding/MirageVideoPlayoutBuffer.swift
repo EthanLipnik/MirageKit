@@ -87,7 +87,7 @@ struct MirageVideoPlayoutBuffer {
         let selectedFrameNumber: UInt32?
     }
 
-    private var latencyMode: MirageStreamLatencyMode = .balanced
+    private var latencyMode: MirageStreamLatencyMode = .lowestLatency
     private var transportPathKind: MirageNetworkPathKind = .unknown
     private var adaptedDelayMs: Double = 0
     private var playbackStarted = false
@@ -102,7 +102,7 @@ struct MirageVideoPlayoutBuffer {
     private var lastDelayIncreaseTime: CFAbsoluteTime = 0
 
     mutating func reset() {
-        latencyMode = .balanced
+        latencyMode = .lowestLatency
         transportPathKind = .unknown
         adaptedDelayMs = 0
         playbackStarted = false

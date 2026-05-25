@@ -27,6 +27,7 @@ extension InputCapturingView {
     }
 
     func updateCursorImage() {
+        let updateStart = CFAbsoluteTimeGetCurrent()
         let cursorType = currentCursorType
         let image = UIImage(named: cursorType.cursorImageName, in: .module, compatibleWith: nil)
         for view in [virtualCursorView, lockedCursorView] {
@@ -38,6 +39,11 @@ extension InputCapturingView {
                 )
             }
         }
+        MirageCursorLatencyProbe.updateCursorImage(
+            streamID: streamID,
+            cursorType: cursorType,
+            durationMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: updateStart)
+        )
     }
 
     func updateVirtualTrackpadMode() {
@@ -176,7 +182,7 @@ extension InputCapturingView {
             setLockedCursorVisible(false)
             // Force UIKit to re-query the pointer style so the system cursor
             // becomes visible again now that cursor lock is off.
-            pointerInteraction?.invalidate()
+            invalidatePointerInteraction(reason: "cursorLockDisabled")
         }
     }
 

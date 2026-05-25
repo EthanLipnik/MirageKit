@@ -460,6 +460,9 @@ private func resolvedAnomalyBottleneckKind(
     let submissionLaggingDecode =
         sample.submittedFPS + presentationGapGrace < sample.decodedFPS ||
         sample.uniqueSubmittedFPS + presentationGapGrace < sample.decodedFPS
+    let layerAcceptanceLaggingDecode =
+        sample.layerAcceptedFPS + presentationGapGrace < sample.decodedFPS ||
+        sample.visibleFrameFPS + presentationGapGrace < sample.decodedFPS
     let rendererLoopStalled =
         sample.submittedFPS >= targetFPS * 0.75 &&
         sample.uniqueSubmittedFPS + presentationGapGrace < sample.submittedFPS &&
@@ -473,6 +476,11 @@ private func resolvedAnomalyBottleneckKind(
         sample.worstPresentationGapMs >= max(180.0, targetFrameIntervalMs * 8.0) ||
         sample.frameIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0) ||
         sample.displayTickIntervalP99Ms >= max(100.0, targetFrameIntervalMs * 6.0)
+    if decodeKeepsUp,
+       layerAcceptanceLaggingDecode,
+       sample.presentationTier == .activeLive {
+        return .presentationBound
+    }
     if !presentationHealthyEnoughToAvoidBlame &&
         (rendererLoopStalled ||
         decodeKeepsUp &&

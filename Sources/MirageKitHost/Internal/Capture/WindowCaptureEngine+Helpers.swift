@@ -32,7 +32,7 @@ extension WindowCaptureEngine {
         height: Int,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         overrideDepth: Int?,
         usesDisplayRefreshCadence: Bool = false
     ) -> Int {

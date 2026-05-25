@@ -189,8 +189,8 @@ final class MirageRenderStreamState {
     var lastDisplayTickTime: CFAbsoluteTime = 0
     var sourceTargetFPS: Int = 60
     var displayTargetFPS: Int = 60
-    var latencyMode: MirageStreamLatencyMode = .balanced
-    var playoutDelayFrames: Int = MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .balanced)
+    var latencyMode: MirageStreamLatencyMode = .lowestLatency
+    var playoutDelayFrames: Int = MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: .lowestLatency)
     var transportPathKind: MirageNetworkPathKind = .unknown
     var lastInteractionTime: CFAbsoluteTime = 0
     var listeners: [ObjectIdentifier: MirageRenderStreamFrameListener] = [:]

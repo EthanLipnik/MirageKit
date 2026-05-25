@@ -117,13 +117,15 @@ final class FrameReassembler: @unchecked Sendable {
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
     let pendingKeyframeProgressPreservationThreshold: Double = 0.75
     let pFrameNoProgressTimeout: TimeInterval = 0.30
+    let pFrameNoProgressTimeoutRemote: TimeInterval = 1.25
     let pFrameAbsoluteLifetimeCapDefault: TimeInterval = 0.60
     let pFrameAbsoluteLifetimeCapRemoteSmoothest: TimeInterval = 0.90
-    let vpnBufferedForwardGapTimeout: TimeInterval = 1.50
+    let pFrameAbsoluteLifetimeCapRemoteLowestLatency: TimeInterval = 2.50
+    let remoteBufferedForwardGapTimeout: TimeInterval = 2.50
     let pFrameCompletionLatencySampleWindow: TimeInterval = 5.0
     let pFrameLateCompletionThresholdMs: Double = 250
     var targetFrameRate: Int = 60
-    var latencyMode: MirageStreamLatencyMode = .balanced
+    var latencyMode: MirageStreamLatencyMode = .lowestLatency
     var transportPathKind: MirageNetworkPathKind = .unknown
     var startupKeyframeTimeoutOverrideEnabled = false
 

@@ -210,10 +210,15 @@ struct StreamControllerHardRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Keyframe recovery loop escalates once to hard recovery when keyframes never arrive")
-    func keyframeRecoveryLoopEscalatesToHardRecoveryWhenKeyframesNeverArrive() async throws {
+    @Test("Remote keyframe recovery defers duplicate requests during grace window")
+    func remoteKeyframeRecoveryDefersDuplicateRequestsDuringGraceWindow() async throws {
+        let clock = StreamControllerManualTimeProvider(start: 7000)
         let keyframeCounter = StreamControllerLockedCounter()
-        let controller = StreamController(streamID: 151, maxPayloadSize: 1200)
+        let controller = StreamController(
+            streamID: 151,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -223,26 +228,22 @@ struct StreamControllerHardRecoveryTests {
         )
 
         await controller.updatePresentationTier(.activeLive)
+        await controller.setTransportPathKind(.vpn)
         await controller.markFirstFramePresented()
         let reassembler = await controller.reassembler
         reassembler.beginKeyframeWait()
 
-        await controller.startKeyframeRecoveryLoopIfNeeded()
-        _ = await controller.requestKeyframeRecovery(reason: .frameLoss)
+        #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
+        #expect(keyframeCounter.value == 1)
 
-        var hardRecoveryTriggered = false
-        let timeoutAt = ContinuousClock.now + .seconds(6)
-        while ContinuousClock.now < timeoutAt {
-            if await controller.lastHardRecoveryStartTime > 0 {
-                hardRecoveryTriggered = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
+        clock.advance(by: 3.0)
+        #expect(!(await controller.requestKeyframeRecovery(reason: .frameLoss)))
+        #expect(keyframeCounter.value == 1)
 
-        #expect(hardRecoveryTriggered)
-        #expect(keyframeCounter.value >= 1)
-        #expect(await controller.clientRecoveryStatus == .hardRecovery)
+        clock.advance(by: StreamController.remoteDuplicateKeyframeRequestGrace + 0.1)
+        #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
+        #expect(keyframeCounter.value == 2)
+        #expect(await controller.clientRecoveryStatus != .hardRecovery)
 
         await controller.stop()
     }
@@ -294,6 +295,45 @@ struct StreamControllerHardRecoveryTests {
         await controller.handleFrameLossSignal()
         try await Task.sleep(for: .milliseconds(300))
         #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+    }
+
+    @Test("Frame-loss timeout requests keyframe after useful progress stalls")
+    func frameLossTimeoutRequestsKeyframeAfterUsefulProgressStalls() async throws {
+        let streamID: StreamID = 156
+        let keyframeCounter = StreamControllerLockedCounter()
+        let clock = StreamControllerManualTimeProvider(start: 9000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer {
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        await controller.markFirstFramePresented()
+
+        clock.advance(by: StreamController.localHardRecoveryNoProgressFloor - 0.1)
+        await controller.handleFrameLossSignal()
+        #expect(keyframeCounter.value == 0)
+
+        clock.advance(by: 0.2)
+        await controller.handleFrameLossSignal()
+
+        #expect(keyframeCounter.value == 1)
+        let reassembler = await controller.reassembler
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }

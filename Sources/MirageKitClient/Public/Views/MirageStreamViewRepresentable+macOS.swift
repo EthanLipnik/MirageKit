@@ -113,7 +113,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         inputEnabled: Bool = true,
-        systemShortcutForwardingEnabled: Bool = true,
+        systemShortcutForwardingEnabled: Bool = false,
         presentationTier: StreamPresentationTier = .activeLive,
         preferredMaximumRenderFPS: Int? = nil,
         maxDrawableSize: CGSize? = nil,

@@ -94,9 +94,17 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                let flushStart = CFAbsoluteTimeGetCurrent()
                 for (streamID, force) in refreshes {
                     view(for: streamID)?.refreshCursorUpdates(force: force)
                 }
+                MirageCursorLatencyProbe.routerFlush(
+                    refreshCount: refreshes.count,
+                    forcedCount: refreshes.reduce(0) { count, refresh in
+                        count + (refresh.1 ? 1 : 0)
+                    },
+                    flushMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: flushStart)
+                )
             }
 
             do {

@@ -34,14 +34,10 @@ actor StreamController {
     /// Pending resize debounce task
     var resizeDebounceTask: Task<Void, Never>?
 
-    /// Task that periodically requests keyframes during decoder recovery
-    var keyframeRecoveryTask: Task<Void, Never>?
-    var keyframeRecoveryAttempt: Int = 0
     var recoveryCoordinator = RecoveryCoordinator()
     /// One-shot probe that verifies decode/presentation progress after passive->active promotion.
     var tierPromotionProbeTask: Task<Void, Never>?
     var memoryBudgetRecoveryTask: Task<Void, Never>?
-    var lastRecoveryRequestTime: CFAbsoluteTime = 0
 
     /// Whether we've decoded at least one frame.
     var hasDecodedFirstFrame = false
@@ -146,6 +142,7 @@ actor StreamController {
 
     var lastPresentedSequenceObserved: UInt64 = 0
     var lastPresentedProgressTime: CFAbsoluteTime = 0
+    var lastDecodedProgressTime: CFAbsoluteTime = 0
     var lastFreezeRecoveryTime: CFAbsoluteTime = 0
     var consecutiveFreezeRecoveries: Int = 0
     var freezeMonitorTask: Task<Void, Never>?
@@ -250,6 +247,7 @@ extension StreamController {
         await GlobalDecodeBudgetController.shared.register(streamID: streamID, tier: presentationTier)
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        lastDecodedProgressTime = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         lastRecoveryRequestDispatchTime = 0

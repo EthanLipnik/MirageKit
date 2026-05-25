@@ -54,7 +54,7 @@ extension MirageHostService {
 
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
-            let latencyMode = request.latencyMode ?? .balanced
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
             let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
             let adaptiveFloorFPS = targetFrameRate >= 90 ? 60 : targetFrameRate

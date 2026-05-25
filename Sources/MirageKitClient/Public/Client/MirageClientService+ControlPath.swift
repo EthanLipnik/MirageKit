@@ -89,7 +89,7 @@ extension MirageClientService {
     /// Reapplies transport-sensitive stream pacing after the control path changes.
     private func refreshActiveStreamTransportProfiles(for pathKind: MirageNetworkPathKind) {
         for (streamID, controller) in controllersByStream {
-            let latencyMode = renderLatencyModeByStream[streamID] ?? .balanced
+            let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
             let targetFrameRate = resolvedStreamCadenceFrameRate(for: streamID)
             let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
             MirageRenderStreamStore.shared.setTransportPathKind(for: streamID, pathKind: pathKind)

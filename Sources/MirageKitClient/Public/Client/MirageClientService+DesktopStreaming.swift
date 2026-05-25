@@ -136,8 +136,8 @@ public extension MirageClientService {
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         pendingDesktopRequestedColorDepth = request.colorDepth
-        pendingDesktopRequestedLatencyMode = request.latencyMode ?? .balanced
-        pendingStreamSetupLatencyMode = request.latencyMode ?? .balanced
+        pendingDesktopRequestedLatencyMode = request.latencyMode ?? .lowestLatency
+        pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
         desktopStreamRestartAttempts = 0
         lastDesktopStreamStartRequest = request
 
@@ -147,7 +147,7 @@ public extension MirageClientService {
         let requestedCadence = max(1, request.targetFrameRate)
         let adaptiveFloorFPS = requestedCadence >= 90 ? 60 : requestedCadence
         let pathKind = controlPathSnapshot?.kind.rawValue ?? MirageNetworkPathKind.unknown.rawValue
-        let requestLatencyMode = request.latencyMode ?? .balanced
+        let requestLatencyMode = request.latencyMode ?? .lowestLatency
         MirageLogger.client(
             "Desktop bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText) " +
                 "scale=\(String(format: "%.3f", bitrateSemantics.geometryScaleFactor)) display=\(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height))"
@@ -305,9 +305,9 @@ extension MirageClientService {
         pendingStreamSetupRequestID = restartRequest.startupRequestID
         pendingStreamSetupKind = .desktop
         pendingStreamSetupAppSessionID = nil
-        pendingStreamSetupLatencyMode = restartRequest.latencyMode ?? .balanced
+        pendingStreamSetupLatencyMode = restartRequest.latencyMode ?? .lowestLatency
         pendingDesktopRequestedColorDepth = restartRequest.colorDepth
-        pendingDesktopRequestedLatencyMode = restartRequest.latencyMode ?? .balanced
+        pendingDesktopRequestedLatencyMode = restartRequest.latencyMode ?? .lowestLatency
         desktopStreamMode = restartRequest.mode ?? .unified
         desktopCursorPresentation = restartRequest.cursorPresentation
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()

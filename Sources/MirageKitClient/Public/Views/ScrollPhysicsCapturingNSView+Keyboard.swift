@@ -13,9 +13,8 @@ import QuartzCore
 extension ScrollPhysicsCapturingNSView {
     // MARK: - Keyboard Event Handling
 
-    /// Intercept key equivalents before AppKit's menu bar dispatching.
-    /// Client-reserved shortcuts (exit stream, dictation toggle) are handled locally.
-    /// All other key equivalents (including Cmd+Q, Cmd+W) are forwarded to the host.
+    /// Intercepts key equivalents before AppKit's menu bar dispatching.
+    /// Client-reserved shortcuts are handled locally; other key equivalents are forwarded to the host.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard isInputProcessingActive else { return super.performKeyEquivalent(with: event) }
 
@@ -29,6 +28,7 @@ extension ScrollPhysicsCapturingNSView {
 
         // Check if this matches a unified action
         for action in actions {
+            guard action.isEnabled else { continue }
             guard let binding = action.shortcut else { continue }
             if binding.matches(keyEvent) {
                 onActionTriggered?(action)
@@ -36,13 +36,11 @@ extension ScrollPhysicsCapturingNSView {
             }
         }
 
-        // Check if this matches a client-reserved shortcut
         for shortcut in clientShortcuts where shortcut.matches(keyEvent) {
             onClientShortcut?(shortcut)
             return true
         }
 
-        // Forward all other key equivalents to the host
         hideCursorForTypingUntilPointerMovement()
         onMouseEvent?(.keyDown(keyEvent))
         onMouseEvent?(.keyUp(MirageKeyEvent(

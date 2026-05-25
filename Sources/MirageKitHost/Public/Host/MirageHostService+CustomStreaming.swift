@@ -149,7 +149,7 @@ extension MirageHostService {
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: request.lowLatencyHighResolutionCompressionBoost ?? false,
             disableResolutionCap: request.disableResolutionCap ?? false,
-            latencyMode: request.latencyMode ?? .balanced,
+            latencyMode: request.latencyMode ?? .lowestLatency,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,
             transportPathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind } ?? .unknown,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,

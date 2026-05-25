@@ -21,9 +21,16 @@ extension StreamContext {
         }
     }
 
-    func markKeyframeInFlight() {
+    var usesConstrainedKeyframeInFlightWindow: Bool {
+        transportPathKind == .awdl || transportPathKind == .cellular
+    }
+
+    func markKeyframeInFlight(frameNumber: UInt32? = nil) {
         let deadline = CFAbsoluteTimeGetCurrent() + activeKeyframeInFlightCap
         if deadline > keyframeSendDeadline { keyframeSendDeadline = deadline }
+        if let frameNumber {
+            keyframeInFlightFrameNumber = frameNumber
+        }
     }
 
     func markKeyframeRequestIssued() {
@@ -32,11 +39,27 @@ extension StreamContext {
     }
 
     var activeKeyframeRequestCooldown: CFAbsoluteTime {
-        transportPathKind == .awdl ? 1.5 : keyframeRequestCooldown
+        usesConstrainedKeyframeInFlightWindow ? 1.5 : keyframeRequestCooldown
     }
 
     var activeKeyframeInFlightCap: CFAbsoluteTime {
-        transportPathKind == .awdl ? 1.5 : keyframeInFlightCap
+        usesConstrainedKeyframeInFlightWindow ? 1.5 : keyframeInFlightCap
+    }
+
+    func extendConstrainedKeyframeInFlightDeadline(
+        now: CFAbsoluteTime,
+        requestLabel: String
+    ) {
+        guard usesConstrainedKeyframeInFlightWindow else { return }
+        let extendedDeadline = now + activeKeyframeInFlightCap
+        guard extendedDeadline > keyframeSendDeadline else { return }
+        keyframeSendDeadline = extendedDeadline
+        let deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded())
+        MirageLogger.stream(
+            "\(requestLabel) extended constrained-path keyframe in-flight deadline "
+                + "frame=\(keyframeInFlightFrameNumber.map { String($0) } ?? "nil") "
+                + "deadlineMs=\(deadlineMs) path=\(transportPathKind.rawValue)"
+        )
     }
 
     func shouldThrottleKeyframeRequest(
@@ -46,8 +69,12 @@ extension StreamContext {
     ) -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
         if checkInFlight, now < keyframeSendDeadline {
+            extendConstrainedKeyframeInFlightDeadline(now: now, requestLabel: requestLabel)
             let remaining = Int(((keyframeSendDeadline - now) * 1000).rounded())
-            MirageLogger.stream("\(requestLabel) skipped (keyframe in flight, \(remaining)ms remaining)")
+            MirageLogger.stream(
+                "\(requestLabel) skipped (keyframe in flight, \(remaining)ms remaining, "
+                    + "frame=\(keyframeInFlightFrameNumber.map { String($0) } ?? "nil"))"
+            )
             return true
         }
         let elapsed = now - lastKeyframeRequestTime
@@ -125,13 +152,14 @@ extension StreamContext {
     }
 
     func forceKeyframeAfterFallbackResume() {
-        if transportPathKind != .awdl {
+        let now = CFAbsoluteTimeGetCurrent()
+        if transportPathKind != .awdl, now >= keyframeSendDeadline {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
         }
         let queued = queueKeyframe(
             reason: "Fallback resume keyframe",
-            checkInFlight: transportPathKind == .awdl,
+            checkInFlight: true,
             requiresFlush: false,
             requiresReset: false,
             urgent: true,
@@ -144,13 +172,14 @@ extension StreamContext {
         restartStreak: Int,
         shouldEscalateRecovery: Bool
     ) {
-        if transportPathKind != .awdl {
+        let now = CFAbsoluteTimeGetCurrent()
+        if transportPathKind != .awdl, now >= keyframeSendDeadline {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
         }
         let queued = queueKeyframe(
             reason: "Fallback keyframe",
-            checkInFlight: transportPathKind == .awdl,
+            checkInFlight: true,
             requiresFlush: true,
             requiresReset: shouldEscalateRecovery,
             urgent: true,
@@ -169,6 +198,14 @@ extension StreamContext {
     ) async {
         guard droppedStreamID == streamID, isRunning else { return }
         let label = "Packet sender dependency drop"
+        let queuedBytes = packetSender?.queuedByteCount ?? 0
+        dependencyRecoveryPendingDropFrameNumber = frameNumber
+        dependencyRecoveryPendingDropReason = reason
+        dependencyRecoveryPendingQueuedBytes = queuedBytes
+        dependencyRecoveryRetryNecessary = false
+        MirageLogger.stream(
+            "\(label) observed frame=\(frameNumber) reason=\(reason.rawValue) queuedBytes=\(queuedBytes)"
+        )
         qualityRaiseSuppressionUntil = max(
             qualityRaiseSuppressionUntil,
             CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
@@ -182,7 +219,11 @@ extension StreamContext {
             urgent: true
         )
         guard queued else {
-            MirageLogger.stream("\(label) coalesced after frame \(frameNumber) (\(reason.rawValue))")
+            dependencyRecoveryRetryNecessary = true
+            MirageLogger.stream(
+                "\(label) coalesced frame=\(frameNumber) reason=\(reason.rawValue) "
+                    + "queuedBytes=\(queuedBytes) retryNecessary=true"
+            )
             schedulePacketSenderDependencyRecoveryKeyframeRetry(
                 frameNumber: frameNumber,
                 reason: reason
@@ -195,7 +236,8 @@ extension StreamContext {
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream(
-            "Scheduled coalesced keyframe after packet sender dropped frame \(frameNumber) (\(reason.rawValue))"
+            "Scheduled coalesced keyframe after packet sender dependency drop "
+                + "frame=\(frameNumber) reason=\(reason.rawValue) queuedBytes=\(queuedBytes) retryNecessary=false"
         )
     }
 
@@ -216,7 +258,9 @@ extension StreamContext {
         }
         let delayMs = Int((delaySeconds * 1000).rounded())
         MirageLogger.stream(
-            "Scheduled packet sender dependency keyframe retry in \(delayMs)ms after frame \(frameNumber) (\(reason.rawValue))"
+            "Scheduled packet sender dependency keyframe retry in \(delayMs)ms "
+                + "frame=\(frameNumber) reason=\(reason.rawValue) "
+                + "queuedBytes=\(dependencyRecoveryPendingQueuedBytes) retryNecessary=true"
         )
     }
 
@@ -247,6 +291,8 @@ extension StreamContext {
     ) async {
         dependencyRecoveryKeyframeRetryTask = nil
         guard isRunning else { return }
+        let queuedBytes = packetSender?.queuedByteCount ?? dependencyRecoveryPendingQueuedBytes
+        dependencyRecoveryPendingQueuedBytes = queuedBytes
         if let packetSender {
             let stillRequiresRecovery = await packetSender.requiresDependencyRecoveryKeyframe()
             guard stillRequiresRecovery else { return }
@@ -261,7 +307,11 @@ extension StreamContext {
             urgent: true
         )
         guard queued else {
-            MirageLogger.stream("\(label) deferred after frame \(frameNumber) (\(reason.rawValue))")
+            dependencyRecoveryRetryNecessary = true
+            MirageLogger.stream(
+                "\(label) deferred frame=\(frameNumber) reason=\(reason.rawValue) "
+                    + "queuedBytes=\(queuedBytes) retryNecessary=true"
+            )
             schedulePacketSenderDependencyRecoveryKeyframeRetry(
                 frameNumber: frameNumber,
                 reason: reason
@@ -272,8 +322,30 @@ extension StreamContext {
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream(
-            "Scheduled retried keyframe after packet sender dropped frame \(frameNumber) (\(reason.rawValue))"
+            "Scheduled retried keyframe after packet sender dependency drop "
+                + "frame=\(frameNumber) reason=\(reason.rawValue) queuedBytes=\(queuedBytes) retryNecessary=true"
         )
+    }
+
+    func logDependencyRecoveryKeyframeIfNeeded(
+        frameNumber: UInt32,
+        queuedBytes: Int
+    ) {
+        guard let droppedFrameNumber = dependencyRecoveryPendingDropFrameNumber,
+              let reason = dependencyRecoveryPendingDropReason else {
+            return
+        }
+
+        MirageLogger.stream(
+            "Dependency-drop recovery keyframe encoded "
+                + "keyframeFrame=\(frameNumber) droppedFrame=\(droppedFrameNumber) "
+                + "reason=\(reason.rawValue) queuedBytes=\(queuedBytes) "
+                + "retryNecessary=\(dependencyRecoveryRetryNecessary)"
+        )
+        dependencyRecoveryPendingDropFrameNumber = nil
+        dependencyRecoveryPendingDropReason = nil
+        dependencyRecoveryPendingQueuedBytes = 0
+        dependencyRecoveryRetryNecessary = false
     }
 
     func scheduleCoalescedRecoveryKeyframe(
@@ -285,7 +357,11 @@ extension StreamContext {
         advanceEpochOnReset: Bool = true,
         ignoreExistingInFlight: Bool = false
     ) async {
-        let effectiveIgnoreExistingInFlight = ignoreExistingInFlight && transportPathKind != .awdl
+        let now = CFAbsoluteTimeGetCurrent()
+        let hasKeyframeInFlight = now < keyframeSendDeadline
+        let effectiveIgnoreExistingInFlight = ignoreExistingInFlight &&
+            !hasKeyframeInFlight &&
+            !usesConstrainedKeyframeInFlightWindow
         if effectiveIgnoreExistingInFlight {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
@@ -408,8 +484,12 @@ extension StreamContext {
         if highMotion || queueBackedUp, !allowDespitePressure { return false }
 
         if now < keyframeSendDeadline {
+            extendConstrainedKeyframeInFlightDeadline(now: now, requestLabel: "Scheduled keyframe")
             let remaining = Int(((keyframeSendDeadline - now) * 1000).rounded())
-            MirageLogger.stream("Scheduled keyframe skipped (keyframe in flight, \(remaining)ms remaining)")
+            MirageLogger.stream(
+                "Scheduled keyframe skipped (keyframe in flight, \(remaining)ms remaining, "
+                    + "frame=\(keyframeInFlightFrameNumber.map { String($0) } ?? "nil"))"
+            )
             return false
         }
         let requestElapsed = now - lastKeyframeRequestTime

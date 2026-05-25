@@ -95,8 +95,8 @@ extension StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Decode threshold while awaiting recovered presentation requests immediate keyframe")
-    func decodeThresholdWhileAwaitingRecoveredPresentationRequestsImmediateKeyframe() async throws {
+    @Test("Decode threshold while awaiting recovered presentation honors duplicate keyframe grace")
+    func decodeThresholdWhileAwaitingRecoveredPresentationHonorsDuplicateKeyframeGrace() async throws {
         let streamID: StreamID = 247
         let keyframeCounter = StreamControllerLockedCounter()
         let clock = StreamControllerManualTimeProvider(start: 4000)
@@ -128,8 +128,14 @@ extension StreamControllerRecoveryTests {
 
         clock.advance(by: StreamController.recoveryRequestDispatchCooldown + 0.01)
         await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(100))
 
-        try await streamControllerWaitUntil("decode-threshold keyframe while awaiting recovered presentation") {
+        #expect(keyframeCounter.value == baselineRequests)
+
+        clock.advance(by: StreamController.localDuplicateKeyframeRequestGrace)
+        await controller.handleDecodeErrorThresholdSignal()
+
+        try await streamControllerWaitUntil("decode-threshold keyframe after duplicate grace") {
             keyframeCounter.value > baselineRequests
         }
         #expect(await controller.awaitingFirstPresentedFrame)

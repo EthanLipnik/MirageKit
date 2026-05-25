@@ -130,6 +130,43 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.message.contains("overwritten=4"))
     }
 
+    @Test("Stable decode with low layer acceptance is classified as presentation-bound")
+    func stableDecodeWithLowLayerAcceptanceIsClassifiedAsPresentationBound() {
+        let diagnostic = clientStreamingAnomalyDiagnostic(
+            sample: ClientStreamingAnomalySample(
+                streamID: 33,
+                trigger: "freeze-recovery-render-submission",
+                decodedFPS: 30,
+                receivedFPS: 30,
+                displayTickFPS: 30,
+                submitAttemptFPS: 30,
+                layerAcceptedFPS: 2,
+                visibleFrameFPS: 2,
+                submittedFPS: 2,
+                uniqueSubmittedFPS: 2,
+                pendingFrameCount: 0,
+                pendingFrameAgeMs: 0,
+                overwrittenPendingFrames: 0,
+                displayLayerNotReadyCount: 0,
+                decodeHealthy: true,
+                decodeSubmissionLimit: 2,
+                presentationTier: .activeLive,
+                decoderOutputPixelFormat: "420f",
+                usingHardwareDecoder: true,
+                targetFrameRate: 30,
+                hostMetrics: makeHostMetrics(
+                    targetFrameRate: 30,
+                    encodedFPS: 30,
+                    captureFPS: 30,
+                    encodeAttemptFPS: 30
+                )
+            )
+        )
+
+        #expect(diagnostic.bottleneckKind == .presentationBound)
+        #expect(diagnostic.label == "presentation-bound")
+    }
+
     @Test("Stale layer enqueue loop uses layer-enqueue diagnostic language")
     func staleLayerEnqueueLoopUsesLayerEnqueueDiagnosticLanguage() {
         let diagnostic = clientStreamingAnomalyDiagnostic(

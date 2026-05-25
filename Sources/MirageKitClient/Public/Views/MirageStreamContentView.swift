@@ -192,7 +192,7 @@ public struct MirageStreamContentView: View {
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         useHostResolution: Bool = false,
-        macSystemShortcutForwardingEnabled: Bool = true,
+        macSystemShortcutForwardingEnabled: Bool = false,
         keyboardAvoidanceEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,

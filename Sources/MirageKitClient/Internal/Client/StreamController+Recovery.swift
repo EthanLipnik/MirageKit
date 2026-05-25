@@ -75,7 +75,7 @@ extension StreamController {
                 "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), requesting keyframe"
         )
         if presentationTier == .activeLive {
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "decode-backpressure")
         }
         await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
     }
@@ -123,7 +123,7 @@ extension StreamController {
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
             )
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-\(reason.rawValue)")
             await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
@@ -149,47 +149,121 @@ extension StreamController {
         if reason == .timeout, reassembler.isAwaitingKeyframe {
             guard !hasPresentedFirstFrame else {
                 startFreezeMonitorIfNeeded()
+                let now = currentTime
                 let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
                 let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
-                guard pendingFrameCount > 0,
-                      pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs else {
-                    discardQueuedFramesForRecovery()
+                if pendingFrameCount > 0 {
+                    let didHandlePresenterPath = await maybeTriggerRenderSubmissionRecovery(
+                        now: now,
+                        pendingFrameCount: pendingFrameCount
+                    )
                     MirageLogger.client(
                         "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
                             "reassembler is awaiting keyframe after presentation progress, " +
-                            "waiting for freeze recovery or natural keyframe " +
-                            "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms)"
+                            "routing pending render frames through presenter recovery " +
+                            "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
+                            "handled=\(didHandlePresenterPath))"
                     )
                     return
                 }
-                let clearedRenderFrames = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
                 discardQueuedFramesForRecovery()
                 MirageLogger.client(
                     "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
                         "reassembler is awaiting keyframe after presentation progress, " +
-                        "requesting bounded recovery keyframe " +
-                        "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
-                        "clearedRenderFrames=\(clearedRenderFrames))"
+                        "waiting for freeze recovery or natural keyframe " +
+                        "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms)"
                 )
-                await startKeyframeRecoveryLoopIfNeeded()
-                await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
                 return
             }
             MirageLogger.client(
                 "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
                     "reassembler is awaiting keyframe before first presentation, requesting bounded recovery"
             )
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-before-first-presentation")
             await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
 
-        // Active streams avoid keyframe requests for non-blocking packet loss.
-        // Once the reassembler enters keyframe wait, the timeout branch above
-        // requests bounded recovery because dependent P-frames cannot resume decoding.
+        if reason == .timeout,
+           await maybeRecoverStalledActiveFrameLossTimeout() {
+            return
+        }
+
+        // Active streams avoid keyframe requests for non-blocking packet loss
+        // while decoded or presented frames are still making progress.
         MirageLogger.client(
             "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); waiting for natural keyframe or decode error"
         )
+    }
+
+    func maybeRecoverStalledActiveFrameLossTimeout() async -> Bool {
+        guard presentationTier == .activeLive,
+              hasPresentedFirstFrame else {
+            return false
+        }
+
+        let now = currentTime
+        startFreezeMonitorIfNeeded()
+        _ = syncPresentationProgressFromFrameStore(now: now)
+
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        if pendingFrameCount > 0 {
+            let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
+            let didHandlePresenterPath = await maybeTriggerRenderSubmissionRecovery(
+                now: now,
+                pendingFrameCount: pendingFrameCount
+            )
+            MirageLogger.client(
+                "Frame loss timeout for stream \(streamID) found pending render frames; " +
+                    "routing through presenter recovery " +
+                    "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
+                    "handled=\(didHandlePresenterPath))"
+            )
+            return true
+        }
+
+        let snapshot = reassembler.keyframeWaitSnapshot
+        let usefulProgressTime = max(lastDecodedProgressTime, lastPresentedProgressTime)
+        guard usefulProgressTime > 0 else {
+            return false
+        }
+
+        let noUsefulProgressDuration = now - usefulProgressTime
+        let floor = hardRecoveryNoProgressFloor(for: snapshot.transportPathKind)
+        guard noUsefulProgressDuration >= floor else {
+            MirageLogger.client(
+                "Frame loss timeout for stream \(streamID) is monitoring without keyframe request " +
+                    "(usefulProgressAgeMs=\(Int((noUsefulProgressDuration * 1000).rounded())), " +
+                    "floorMs=\(Int((floor * 1000).rounded())), path=\(snapshot.transportPathKind.rawValue))"
+            )
+            return true
+        }
+
+        if let progress = snapshot.latestPendingKeyframeProgress,
+           Self.shouldDeferForPendingKeyframeProgress(
+               progress,
+               now: now,
+               targetFPS: decodeSchedulerTargetFPS
+           ) {
+            logRecoveryDecision(
+                .deferKeyframeProgress,
+                reason: "frame-loss-timeout-no-progress",
+                snapshot: snapshot
+            )
+            return true
+        }
+
+        reassembler.beginKeyframeWait()
+        discardQueuedFramesForRecovery()
+        MirageLogger.client(
+            "Frame loss timeout for stream \(streamID) had no decoded or presented progress beyond recovery floor; " +
+                "requesting one recovery keyframe " +
+                "(usefulProgressAgeMs=\(Int((noUsefulProgressDuration * 1000).rounded())), " +
+                "floorMs=\(Int((floor * 1000).rounded())), path=\(snapshot.transportPathKind.rawValue))"
+        )
+        await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-no-progress")
+        await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
+        return true
     }
 
     func cancelMemoryBudgetRecoveryTask() {
@@ -225,6 +299,12 @@ extension StreamController {
         if shouldDeferKeyframeRequestForPendingProgress(now: now, reason: reason) {
             return false
         }
+        let snapshot = reassembler.keyframeWaitSnapshot
+        let keyframeDecision = keyframeRequestDecision(now: now, reason: reason, snapshot: snapshot)
+        guard keyframeDecision == .requestKeyframe else {
+            logRecoveryDecision(keyframeDecision, reason: reason.logLabel, snapshot: snapshot)
+            return false
+        }
         let recoveryDecision = recoveryCoordinator.requestAction(
             now: now,
             reason: reason.logLabel,
@@ -256,11 +336,7 @@ extension StreamController {
             MirageLogger.client("Recovery keyframe request not sent by client service for stream \(streamID)")
             return false
         }
-        if keyframeRecoveryTask != nil, reason != .keyframeRecoveryLoop {
-            keyframeRecoveryAttempt = max(1, keyframeRecoveryAttempt)
-        }
         lastRecoveryRequestDispatchTime = now
-        lastRecoveryRequestTime = now
         recoveryKeyframeDispatchTimes.append(now)
         return true
     }
@@ -354,7 +430,7 @@ extension StreamController {
         stopMetricsReporting()
         stopFreezeMonitor()
         await stopTierPromotionProbe()
-        await stopKeyframeRecoveryLoop()
+        await clearKeyframeRecoveryState()
         stopFirstPresentedFrameMonitor()
         await setClientRecoveryStatus(.idle)
 
@@ -410,9 +486,6 @@ extension StreamController {
                 .client(
                     "Soft recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
                 )
-            if presentationTier == .activeLive {
-                await startKeyframeRecoveryLoopIfNeeded()
-            }
             if reason == .decodeErrorThreshold {
                 discardQueuedFramesForRecovery()
                 reassembler.beginKeyframeWait()
@@ -450,7 +523,7 @@ extension StreamController {
             await armPostResizeRecoveryWindow(reason: "post-resize-soft-recovery")
         }
         if presentationTier == .activeLive {
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "soft-\(reason.logLabel)")
         }
         await requestKeyframeRecoveryIfPossible(reason: reason)
     }

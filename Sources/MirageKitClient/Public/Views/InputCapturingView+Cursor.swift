@@ -13,7 +13,7 @@ extension InputCapturingView {
     func hideCursorForTypingUntilPointerMovement() {
         guard !cursorHiddenForTyping else { return }
         cursorHiddenForTyping = true
-        pointerInteraction?.invalidate()
+        invalidatePointerInteraction(reason: "hideForTyping")
         updateLockedCursorViewVisibility()
     }
 
@@ -21,7 +21,7 @@ extension InputCapturingView {
         guard cursorHiddenForTyping else { return }
         cursorHiddenForTyping = false
         refreshCursorUpdates(force: true)
-        pointerInteraction?.invalidate()
+        invalidatePointerInteraction(reason: "revealAfterPointerMovement")
         updateLockedCursorViewVisibility()
     }
 
@@ -55,7 +55,18 @@ extension InputCapturingView {
         // Invalidate the pointer interaction to force it to re-query the style
         // This is required because UIPointerInteraction only calls its delegate
         // when the pointer enters a region, not when the underlying state changes
+        invalidatePointerInteraction(reason: "cursorUpdate")
+    }
+
+    func invalidatePointerInteraction(reason: String) {
+        let invalidateStart = CFAbsoluteTimeGetCurrent()
         pointerInteraction?.invalidate()
+        MirageCursorLatencyProbe.pointerInteractionInvalidate(
+            reason: reason,
+            streamID: streamID,
+            cursorType: currentCursorType,
+            durationMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: invalidateStart)
+        )
     }
 
     func refreshCursorIfNeeded(force: Bool = false) {

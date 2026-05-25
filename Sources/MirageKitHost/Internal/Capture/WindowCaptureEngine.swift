@@ -97,8 +97,8 @@ actor WindowCaptureEngine {
     init(
         configuration: MirageEncoderConfiguration,
         capturePressureProfile: CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .balanced,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         captureFrameRate: Int? = nil,
         usesDisplayRefreshCadence: Bool = false
     ) {

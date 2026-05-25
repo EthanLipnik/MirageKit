@@ -464,7 +464,7 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossReason.value == nil)
         #expect(reassembler.isAwaitingKeyframe == false)
 
-        Thread.sleep(forTimeInterval: 0.760)
+        Thread.sleep(forTimeInterval: 1.900)
 
         let expiredVPNGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x2C])
         reassembler.processPacket(

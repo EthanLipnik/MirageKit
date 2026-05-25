@@ -121,7 +121,7 @@ actor VideoEncoder {
 
     init(
         configuration: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode = .balanced,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         streamKind: StreamKind = .window,
         inFlightLimit: Int? = nil,
         maximizePowerEfficiencyEnabled: Bool = false

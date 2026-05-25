@@ -56,9 +56,14 @@ extension MirageHostService {
 
                     return streams
                 },
-                onCursorChange: { [weak self] streamID, cursorType, isVisible in
+                onCursorChange: { [weak self] streamID, cursorType, isVisible, sampledAt in
                     await MainActor.run { [weak self] in
-                        self?.sendCursorUpdate(streamID: streamID, cursorType: cursorType, isVisible: isVisible)
+                        self?.sendCursorUpdate(
+                            streamID: streamID,
+                            cursorType: cursorType,
+                            isVisible: isVisible,
+                            sampledAt: sampledAt
+                        )
                     }
                 },
                 onCursorPosition: { [weak self] streamID, position, isVisible in
@@ -78,7 +83,12 @@ extension MirageHostService {
     }
 
     /// Sends a cursor shape or visibility update to the client that owns the stream.
-    func sendCursorUpdate(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) {
+    func sendCursorUpdate(
+        streamID: StreamID,
+        cursorType: MirageCursorType,
+        isVisible: Bool,
+        sampledAt: CFAbsoluteTime? = nil
+    ) {
         let clientContext: ClientContext?
         if let session = activeSessionByStreamID[streamID] {
             clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id })
@@ -96,7 +106,17 @@ extension MirageHostService {
             isVisible: isVisible
         )
 
-        if clientContext.sendBestEffort(.cursorUpdate, content: message) {
+        let sendStart = CFAbsoluteTimeGetCurrent()
+        let sent = clientContext.sendBestEffort(.cursorUpdate, content: message)
+        MirageCursorLatencyProbe.hostControlSend(
+            kind: "shape",
+            streamID: streamID,
+            sent: sent,
+            sampleToSendMilliseconds: sampledAt.map { max(0, (sendStart - $0) * 1_000) },
+            sendMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: sendStart)
+        )
+
+        if sent {
             recordCursorControlSendSample(updateSent: true, positionSent: false, updateDropped: false, positionDropped: false)
         } else {
             recordCursorControlSendSample(updateSent: false, positionSent: false, updateDropped: true, positionDropped: false)
@@ -119,7 +139,17 @@ extension MirageHostService {
             isVisible: isVisible
         )
 
-        if clientContext.sendBestEffort(.cursorPositionUpdate, content: message) {
+        let sendStart = CFAbsoluteTimeGetCurrent()
+        let sent = clientContext.sendBestEffort(.cursorPositionUpdate, content: message)
+        MirageCursorLatencyProbe.hostControlSend(
+            kind: "position",
+            streamID: streamID,
+            sent: sent,
+            sampleToSendMilliseconds: nil,
+            sendMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: sendStart)
+        )
+
+        if sent {
             recordCursorControlSendSample(updateSent: false, positionSent: true, updateDropped: false, positionDropped: false)
         } else {
             recordCursorControlSendSample(updateSent: false, positionSent: false, updateDropped: false, positionDropped: true)

@@ -10,8 +10,8 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    /// Starts a bounded retry loop while recovery is waiting for a presented frame.
-    func startRecoveryKeyframeRetry(
+    /// Monitors a foregrounded stream and escalates only after stream and presenter progress stop.
+    func startForegroundRecoveryMonitor(
         for streamID: StreamID,
         controller: StreamController,
         trigger: MirageClientStreamRecoveryTrigger
@@ -19,27 +19,28 @@ extension MirageClientService {
         let token = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.finishRecoveryKeyframeRetry(for: streamID, token: token) }
+            defer { self.finishForegroundRecoveryMonitor(for: streamID, token: token) }
 
             let reassembler = controller.reassembler
             let baselineSubmittedSequence = MirageRenderStreamStore.shared
                 .submissionSnapshot(for: streamID)
                 .sequence
-            var lastPacketTime = reassembler.latestPacketReceivedTime
+            let startedAt = CFAbsoluteTimeGetCurrent()
+            var requestedKeyframe = false
+            var lastPresenterRecoveryTime: CFAbsoluteTime = 0
 
-            for attempt in 1 ... recoveryKeyframeRetryLimit {
+            while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: recoveryKeyframeRetryInterval)
+                    try await Task.sleep(for: foregroundRecoveryMonitorInterval)
                 } catch {
                     return
                 }
 
                 guard case .connected = connectionState,
-                      controllersByStream[streamID] != nil else {
+                      controllersByStream[streamID] === controller else {
                     return
                 }
 
-                let latestPacketTime = reassembler.latestPacketReceivedTime
                 let latestSubmittedSequence = MirageRenderStreamStore.shared
                     .submissionSnapshot(for: streamID)
                     .sequence
@@ -50,38 +51,84 @@ extension MirageClientService {
                     return
                 }
 
-                let awaitingKeyframe = reassembler.isAwaitingKeyframe
-                if latestPacketTime <= lastPacketTime {
-                    let keyframeText =
-                        awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
+                let now = CFAbsoluteTimeGetCurrent()
+                let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+                let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
+                if pendingFrameCount > 0,
+                   pendingFrameAgeMs >= 100,
+                   now - lastPresenterRecoveryTime >= 1 {
+                    lastPresenterRecoveryTime = now
+                    let didRequest = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
                     MirageLogger.client(
-                        "Recovery not yet presented for stream \(streamID); waiting for packet flow before retrying keyframe "
-                            + "(attempt \(attempt)/\(recoveryKeyframeRetryLimit), state=\(keyframeText)) "
-                            + "trigger=\(trigger.logLabel)"
+                        "Foreground recovery requested presenter recovery for stream \(streamID) " +
+                            "pendingFrames=\(pendingFrameCount) pendingAgeMs=\(Int(pendingFrameAgeMs.rounded())) " +
+                            "accepted=\(didRequest) trigger=\(trigger.logLabel)"
                     )
-                    lastPacketTime = latestPacketTime
                     continue
                 }
 
-                let keyframeText =
-                    awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
-                MirageLogger.client(
-                    "Recovery not yet presented for stream \(streamID); retrying keyframe "
-                        + "(\(attempt)/\(recoveryKeyframeRetryLimit), packets=flowing, state=\(keyframeText)) "
-                        + "trigger=\(trigger.logLabel)"
-                )
+                let snapshot = reassembler.keyframeWaitSnapshot
+                if let progress = snapshot.latestPendingKeyframeProgress,
+                   now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot.transportPathKind) {
+                    continue
+                }
+                if snapshot.latestPacketReceivedTime > 0,
+                   now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot.transportPathKind) {
+                    continue
+                }
 
-                sendKeyframeRequest(for: streamID)
-                lastPacketTime = latestPacketTime
+                if snapshot.isAwaitingKeyframe,
+                   !requestedKeyframe {
+                    requestedKeyframe = await controller.requestKeyframeRecovery(reason: .manualRecovery)
+                    if requestedKeyframe {
+                        MirageLogger.client(
+                            "Foreground recovery requested one keyframe for stream \(streamID) after no progress " +
+                                "trigger=\(trigger.logLabel)"
+                        )
+                    }
+                    continue
+                }
+
+                let noProgressDuration = max(0, now - max(startedAt, snapshot.awaitingSince))
+                if noProgressDuration >= hardRecoveryNoProgressFloor(for: snapshot.transportPathKind) {
+                    MirageLogger.client(
+                        "Foreground recovery escalating to hard recovery for stream \(streamID) " +
+                            "noProgressMs=\(Int((noProgressDuration * 1000).rounded())) trigger=\(trigger.logLabel)"
+                    )
+                    await controller.requestRecovery(
+                        reason: .manualRecovery,
+                        awaitFirstPresentedFrame: true,
+                        firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
+                    )
+                    return
+                }
             }
         }
 
-        recoveryKeyframeRetryTasks[streamID] = (token: token, task: task)
+        foregroundRecoveryMonitorTasks[streamID] = (token: token, task: task)
     }
 
-    /// Clears a retry loop only if the finishing task still owns the active token.
-    func finishRecoveryKeyframeRetry(for streamID: StreamID, token: UUID) {
-        guard recoveryKeyframeRetryTasks[streamID]?.token == token else { return }
-        recoveryKeyframeRetryTasks.removeValue(forKey: streamID)
+    /// Clears a foreground recovery monitor only if the finishing task still owns the active token.
+    func finishForegroundRecoveryMonitor(for streamID: StreamID, token: UUID) {
+        guard foregroundRecoveryMonitorTasks[streamID]?.token == token else { return }
+        foregroundRecoveryMonitorTasks.removeValue(forKey: streamID)
+    }
+
+    private func packetProgressFreshThreshold(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+        switch pathKind {
+        case .vpn, .cellular:
+            6.0
+        case .awdl, .wired, .wifi, .loopback, .other, .unknown:
+            2.0
+        }
+    }
+
+    private func hardRecoveryNoProgressFloor(for pathKind: MirageNetworkPathKind) -> CFAbsoluteTime {
+        switch pathKind {
+        case .vpn, .cellular:
+            20.0
+        case .awdl, .wired, .wifi, .loopback, .other, .unknown:
+            8.0
+        }
     }
 }

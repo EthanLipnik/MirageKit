@@ -12,6 +12,14 @@ import Foundation
 
 /// Polls host cursor state for active streams and publishes visibility, position, and cursor-shape changes.
 actor CursorMonitor {
+    private struct CursorSample {
+        let mouseLocation: CGPoint
+        let cursorType: MirageCursorType
+        let source: String
+        let sampledAt: CFAbsoluteTime
+        let sampleMilliseconds: Double
+    }
+
     /// Expands visibility checks slightly so edge cursors remain visible at window bounds.
     private static let visibilityPadding: CGFloat = 1.0
 
@@ -47,7 +55,7 @@ actor CursorMonitor {
     private var lastCursorPositionSentAt: [StreamID: CFAbsoluteTime] = [:]
 
     /// Callback invoked when a stream's cursor shape or visibility changes.
-    private var onCursorChange: ((StreamID, MirageCursorType, Bool) async -> Void)?
+    private var onCursorChange: (@Sendable (StreamID, MirageCursorType, Bool, CFAbsoluteTime) async -> Void)?
 
     /// Callback invoked with cursor position updates for a stream.
     private var onCursorPosition: ((StreamID, CGPoint, Bool) async -> Void)?
@@ -71,7 +79,7 @@ actor CursorMonitor {
     ///   - onCursorPosition: Optional callback invoked for movement updates and position heartbeats.
     func start(
         windowFrameProvider: @escaping @MainActor () -> [(StreamID, CGRect)],
-        onCursorChange: @escaping @Sendable (StreamID, MirageCursorType, Bool) async -> Void,
+        onCursorChange: @escaping @Sendable (StreamID, MirageCursorType, Bool, CFAbsoluteTime) async -> Void,
         onCursorPosition: (@Sendable (StreamID, CGPoint, Bool) async -> Void)? = nil
     ) {
         self.onCursorChange = onCursorChange
@@ -143,7 +151,8 @@ actor CursorMonitor {
 
     /// Samples the current cursor state and publishes changes for active streams.
     private func pollCursor(streams: [(StreamID, CGRect)]) async {
-        let mouseLocation = NSEvent.mouseLocation
+        let sample = await currentCursorSample()
+        let mouseLocation = sample.mouseLocation
 
         for (streamID, windowFrame) in streams {
             let visibilityFrame = windowFrame.insetBy(dx: -Self.visibilityPadding, dy: -Self.visibilityPadding)
@@ -155,22 +164,32 @@ actor CursorMonitor {
                 await onCursorPosition(streamID, normalized, isInWindow)
             }
 
-            let cursorType = MirageCursorType(from: NSCursor.currentSystem) ?? .arrow
+            let cursorType = sample.cursorType
 
             let previousType = lastCursorTypes[streamID]
             let previousVisibility = lastVisibility[streamID]
-
-            if Self.didCursorStateChange(
+            let didChange = Self.didCursorStateChange(
                 previousType: previousType,
                 previousVisibility: previousVisibility,
                 cursorType: cursorType,
                 isVisible: isInWindow
-            ) {
+            )
+
+            MirageCursorLatencyProbe.hostCursorSample(
+                streamID: streamID,
+                cursorType: cursorType,
+                isVisible: isInWindow,
+                didChange: didChange,
+                source: sample.source,
+                sampleMilliseconds: sample.sampleMilliseconds
+            )
+
+            if didChange {
                 lastCursorTypes[streamID] = cursorType
                 lastVisibility[streamID] = isInWindow
 
                 if let onCursorChange {
-                    await onCursorChange(streamID, cursorType, isInWindow)
+                    await onCursorChange(streamID, cursorType, isInWindow, sample.sampledAt)
                 }
             }
         }
@@ -181,6 +200,36 @@ actor CursorMonitor {
             lastVisibility.removeValue(forKey: streamID)
             lastCursorPositions.removeValue(forKey: streamID)
             lastCursorPositionSentAt.removeValue(forKey: streamID)
+        }
+    }
+
+    private func currentCursorSample() async -> CursorSample {
+        await MainActor.run {
+            let sampleStart = CFAbsoluteTimeGetCurrent()
+            let mouseLocation = NSEvent.mouseLocation
+            let currentType = MirageCursorType(from: NSCursor.current)
+            let source: String
+            let cursorType: MirageCursorType
+            if let currentType {
+                cursorType = currentType
+                source = "current"
+            } else {
+                let systemType = MirageCursorType(from: NSCursor.currentSystem)
+                if let systemType {
+                    cursorType = systemType
+                    source = "currentSystem"
+                } else {
+                    cursorType = .arrow
+                    source = "fallback"
+                }
+            }
+            return CursorSample(
+                mouseLocation: mouseLocation,
+                cursorType: cursorType,
+                source: source,
+                sampledAt: sampleStart,
+                sampleMilliseconds: MirageCursorLatencyProbe.elapsedMilliseconds(since: sampleStart)
+            )
         }
     }
 

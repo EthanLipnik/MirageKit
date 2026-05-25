@@ -160,7 +160,7 @@ package struct StartStreamMessage: Codable {
     }
 
     package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
-        hostBufferingPolicy ?? .stability
+        hostBufferingPolicy ?? .freshestFrame
     }
 }
 

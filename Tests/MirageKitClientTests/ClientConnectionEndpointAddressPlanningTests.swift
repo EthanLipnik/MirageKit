@@ -376,7 +376,7 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(attempts.map(\.routeTier) == [.vpn, .vpn, .vpn])
         #expect(attempts.map(\.transportKind) == [.quic, .udp, .tcp])
         #expect(service.controlSessionInitialConnectTimeout(for: attempts[0]) == .seconds(6))
-        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(30))
+        #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(45))
     }
 
     @MainActor

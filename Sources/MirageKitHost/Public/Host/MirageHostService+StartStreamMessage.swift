@@ -63,7 +63,7 @@ extension MirageHostService {
             MirageLogger.host("Client display size (points): \(displayWidth)x\(displayHeight)")
 
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
-            let latencyMode = request.latencyMode ?? .balanced
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
             let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? false
             let disableResolutionCap = request.disableResolutionCap ?? false

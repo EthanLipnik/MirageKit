@@ -26,6 +26,25 @@ extension FrameReassembler {
         let age: CFAbsoluteTime
     }
 
+    struct KeyframeWaitSnapshot: Equatable {
+        let isAwaitingKeyframe: Bool
+        let awaitingSince: CFAbsoluteTime
+        let latestPacketReceivedTime: CFAbsoluteTime
+        let latestPendingKeyframeProgress: PendingKeyframeProgress?
+        let transportPathKind: MirageNetworkPathKind
+        let pendingFrameCount: Int
+        let pendingKeyframeCount: Int
+        let incompleteFrameTimeouts: UInt64
+        let incompleteFrameNoProgressTimeouts: UInt64
+        let incompleteFrameLifetimeTimeouts: UInt64
+        let forwardGapTimeouts: UInt64
+
+        var awaitingDuration: CFAbsoluteTime {
+            guard isAwaitingKeyframe, awaitingSince > 0 else { return 0 }
+            return max(0, CFAbsoluteTimeGetCurrent() - awaitingSince)
+        }
+    }
+
     struct CompletedFrame {
         let data: Data
         let isKeyframe: Bool

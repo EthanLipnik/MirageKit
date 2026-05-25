@@ -132,24 +132,25 @@ extension FrameReassembler {
     var latestPendingKeyframeProgress: PendingKeyframeProgress? {
         lock.lock()
         defer { lock.unlock() }
-        guard let frameNumber = bestPendingKeyframeNumberLocked(),
-              let frame = pendingFrames[frameNumber] else {
-            return nil
-        }
-        let lastProgressTime = frame.lastProgressAt.timeIntervalSinceReferenceDate
-        let dataFragments = max(1, frame.dataFragmentCount)
-        let progressRatio = min(1.0, Double(frame.receivedCount) / Double(dataFragments))
-        return PendingKeyframeProgress(
-            frameNumber: frameNumber,
-            epoch: frame.epoch,
-            dimensionToken: frame.dimensionToken,
-            receivedFragments: frame.receivedCount,
-            dataFragments: frame.dataFragmentCount,
-            progressRatio: progressRatio,
-            receivedBytes: min(frame.expectedTotalBytes, frame.receivedCount * maxPayloadSize),
-            expectedBytes: frame.expectedTotalBytes,
-            lastProgressTime: lastProgressTime,
-            age: max(0, CFAbsoluteTimeGetCurrent() - frame.receivedAt.timeIntervalSinceReferenceDate)
+        return latestPendingKeyframeProgressLocked(now: CFAbsoluteTimeGetCurrent())
+    }
+
+    var keyframeWaitSnapshot: KeyframeWaitSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = CFAbsoluteTimeGetCurrent()
+        return KeyframeWaitSnapshot(
+            isAwaitingKeyframe: awaitingKeyframe,
+            awaitingSince: awaitingKeyframeSince,
+            latestPacketReceivedTime: lastPacketReceivedTime,
+            latestPendingKeyframeProgress: latestPendingKeyframeProgressLocked(now: now),
+            transportPathKind: transportPathKind,
+            pendingFrameCount: pendingFrames.count,
+            pendingKeyframeCount: pendingKeyframeCountLocked(),
+            incompleteFrameTimeouts: incompleteFrameTimeoutCount,
+            incompleteFrameNoProgressTimeouts: incompleteFrameNoProgressTimeoutCount,
+            incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeoutCount,
+            forwardGapTimeouts: forwardGapTimeoutCount
         )
     }
 
@@ -196,6 +197,28 @@ extension FrameReassembler {
     func clearAwaitingKeyframe() {
         awaitingKeyframe = false
         awaitingKeyframeSince = 0
+    }
+
+    private func latestPendingKeyframeProgressLocked(now: CFAbsoluteTime) -> PendingKeyframeProgress? {
+        guard let frameNumber = bestPendingKeyframeNumberLocked(),
+              let frame = pendingFrames[frameNumber] else {
+            return nil
+        }
+        let lastProgressTime = frame.lastProgressAt.timeIntervalSinceReferenceDate
+        let dataFragments = max(1, frame.dataFragmentCount)
+        let progressRatio = min(1.0, Double(frame.receivedCount) / Double(dataFragments))
+        return PendingKeyframeProgress(
+            frameNumber: frameNumber,
+            epoch: frame.epoch,
+            dimensionToken: frame.dimensionToken,
+            receivedFragments: frame.receivedCount,
+            dataFragments: frame.dataFragmentCount,
+            progressRatio: progressRatio,
+            receivedBytes: min(frame.expectedTotalBytes, frame.receivedCount * maxPayloadSize),
+            expectedBytes: frame.expectedTotalBytes,
+            lastProgressTime: lastProgressTime,
+            age: max(0, now - frame.receivedAt.timeIntervalSinceReferenceDate)
+        )
     }
 
     func isStaleKeyframeLocked(_ frameNumber: UInt32) -> Bool {

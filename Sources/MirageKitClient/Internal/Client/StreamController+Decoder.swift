@@ -78,6 +78,7 @@ extension StreamController {
         lastStreamingAnomalyDiagnosticTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        lastDecodedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
@@ -111,6 +112,7 @@ extension StreamController {
         )
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastPresentedProgressTime = 0
+        lastDecodedProgressTime = 0
         lastPresentedSequenceObserved = 0
         presentationProgressRequiresSequenceAdvance = false
         stopFreezeMonitor()
@@ -222,7 +224,7 @@ extension StreamController {
             }
         case .passiveSnapshot:
             await stopTierPromotionProbe()
-            await stopKeyframeRecoveryLoop()
+            await clearKeyframeRecoveryState()
             stopFreezeMonitor()
             consecutiveFreezeRecoveries = 0
             if !hasPresentedFirstFrame {
@@ -246,7 +248,7 @@ extension StreamController {
             await stopTierPromotionProbe()
             reassembler.beginKeyframeWait()
             await setClientRecoveryStatus(.keyframeRecovery)
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-\(forcedKeyframeReason)")
             MirageLogger.client(
                 "Tier promotion forcing keyframe for stream \(streamID) (reason: \(forcedKeyframeReason))"
             )
@@ -301,7 +303,7 @@ extension StreamController {
             )
             reassembler.beginKeyframeWait()
             await setClientRecoveryStatus(.keyframeRecovery)
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-probe")
             await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
             return
         }

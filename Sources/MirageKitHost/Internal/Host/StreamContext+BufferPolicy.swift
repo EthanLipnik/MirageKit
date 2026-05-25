@@ -32,7 +32,7 @@ extension StreamContext {
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         useLowLatencyPipeline: Bool
     ) -> StreamBufferPolicy {
         if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
@@ -167,7 +167,7 @@ extension StreamContext {
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame
     )
     -> Bool {
         streamKind == .desktop &&
@@ -181,7 +181,7 @@ extension StreamContext {
         streamKind: VideoEncoder.StreamKind,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame
     ) -> Int {
         if latencyMode == .lowestLatency, hostBufferingPolicy == .freshestFrame {
             return 1

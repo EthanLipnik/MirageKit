@@ -313,7 +313,7 @@ extension MirageClientService {
             streamStartupFirstPacketReceived.remove(streamID)
             fastPathState.clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
-            cancelRecoveryKeyframeRetry(for: streamID)
+            cancelForegroundRecoveryMonitor(for: streamID)
             pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
             clearDecoderColorDepthState(for: streamID)
             pendingDesktopRequestedColorDepth = nil

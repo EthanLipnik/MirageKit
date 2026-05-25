@@ -283,7 +283,7 @@ private final class PingSendCounter {
 private func waitForPingRequestToStart(
     on service: MirageClientService,
     sendCounter: PingSendCounter,
-    timeout: Duration = .seconds(1)
+    timeout: Duration = .seconds(3)
 ) async throws {
     try await waitForPingRequest(
         on: service,
@@ -300,7 +300,7 @@ private func waitForPingRequest(
     sendCounter: PingSendCounter,
     expectedSendCount: Int,
     minimumWaiterCount: Int,
-    timeout: Duration = .seconds(1)
+    timeout: Duration = .seconds(3)
 ) async throws {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {

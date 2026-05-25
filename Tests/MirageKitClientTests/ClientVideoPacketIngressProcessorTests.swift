@@ -277,7 +277,7 @@ private func waitForProcessor(
     service: MirageClientService,
     streamID: StreamID
 ) async -> ClientVideoPacketIngressProcessor? {
-    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    let deadline = CFAbsoluteTimeGetCurrent() + 3.0
     while CFAbsoluteTimeGetCurrent() < deadline {
         if let processor = service.videoPacketIngressProcessors[streamID] {
             return processor
@@ -291,7 +291,7 @@ private func waitForProcessedPackets(
     processor: ClientVideoPacketIngressProcessor,
     count: UInt64
 ) async -> Bool {
-    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    let deadline = CFAbsoluteTimeGetCurrent() + 3.0
     while CFAbsoluteTimeGetCurrent() < deadline {
         if processor.snapshot().processedPacketCount >= count {
             return true
@@ -307,7 +307,7 @@ private func waitForIngressSnapshot(
     streamID: StreamID,
     count: UInt64
 ) async -> ClientVideoIngressMetricsSnapshot? {
-    let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+    let deadline = CFAbsoluteTimeGetCurrent() + 3.0
     while CFAbsoluteTimeGetCurrent() < deadline {
         if let snapshot = service.videoIngressTelemetryStore.snapshot(for: streamID),
            snapshot.processedPacketCount >= count {

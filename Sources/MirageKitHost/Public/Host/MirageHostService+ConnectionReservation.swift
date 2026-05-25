@@ -119,7 +119,28 @@ extension MirageHostService {
         MirageLogger.host(
             "Expiring stale client slot reservation \(reservedSessionID.uuidString) after \(now - reservationStartedAt)s"
         )
-        singleClientSessionID = nil
+        releaseSingleClientSlot(
+            for: reservedSessionID,
+            clientID: nil,
+            reason: "reservation-expired"
+        )
+    }
+
+    /// Schedules reservation expiry so a stalled bootstrap does not leave the host advertised as busy.
+    func scheduleSingleClientReservationExpiry(for sessionID: UUID) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = singleClientReservationStartedAt.map { now - $0 } ?? 0
+        let delaySeconds = max(0, connectionApprovalTimeoutSeconds - elapsed)
+        Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delaySeconds))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            guard self.singleClientSessionID == sessionID else { return }
+            self.expireStaleSingleClientReservationIfNeeded()
+        }
     }
 
     /// Reserves the host's single-client slot for a bootstrapping session.
@@ -134,14 +155,25 @@ extension MirageHostService {
         }
 
         singleClientSessionID = sessionID
+        scheduleSingleClientReservationExpiry(for: sessionID)
         return true
     }
 
     /// Releases the single-client slot if it is still owned by the supplied session.
-    func releaseSingleClientSlot(for sessionID: UUID) {
-        if singleClientSessionID == sessionID {
-            singleClientSessionID = nil
-        }
+    func releaseSingleClientSlot(
+        for sessionID: UUID,
+        clientID: UUID? = nil,
+        reason: String = "unspecified"
+    ) {
+        guard singleClientSessionID == sessionID else { return }
+        MirageLogger.host(
+            "Releasing single-client slot sessionID=\(sessionID.uuidString) "
+                + "clientID=\(clientID?.uuidString ?? "nil") "
+                + "reason=\(reason) "
+                + "clientsBySessionIDEmpty=\(clientsBySessionID.isEmpty) "
+                + "connectedClientsEmpty=\(connectedClients.isEmpty)"
+        )
+        singleClientSessionID = nil
     }
 }
 

@@ -47,7 +47,7 @@ extension MirageClientService {
     func stopMediaStreamListener() {
         mediaStreamListenerTask?.cancel()
         mediaStreamListenerTask = nil
-        cancelRecoveryKeyframeRetries()
+        cancelForegroundRecoveryMonitors()
         for (label, stream) in activeMediaStreams where label.hasPrefix("video/") {
             stream.clearIncomingBytesBatchHandler()
         }
@@ -290,7 +290,7 @@ extension MirageClientService {
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         fastPathState.clearBufferedEarlyVideoPacket(for: streamID)
         refreshActiveStreamTransportBudgetPolicy()
-        cancelRecoveryKeyframeRetry(for: streamID)
+        cancelForegroundRecoveryMonitor(for: streamID)
         clearReceiverMediaFeedbackState(for: streamID)
     }
 

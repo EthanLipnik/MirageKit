@@ -71,11 +71,16 @@ extension MirageHostService {
         if let staleSingleClientSessionID = singleClientSessionID,
            clientsBySessionID.isEmpty,
            connectedClients.isEmpty {
-            MirageLogger.host("Releasing stale client slot reservation \(staleSingleClientSessionID)")
-            singleClientSessionID = nil
+            releaseSingleClientSlot(
+                for: staleSingleClientSessionID,
+                clientID: nil,
+                reason: "stale-orphaned-reservation"
+            )
         }
 
         var reservedSingleClientSlot = false
+        var singleClientSlotReleaseReason = "bootstrap-failed"
+        var bootstrapPhase = "reservation"
         if busyClientContext(forIncomingSessionID: sessionID) == nil {
             guard reserveSingleClientSlot(for: sessionID) else {
                 MirageLogger.host(
@@ -90,11 +95,16 @@ extension MirageHostService {
 
         defer {
             if reservedSingleClientSlot, clientsBySessionID[sessionID] == nil {
-                releaseSingleClientSlot(for: sessionID)
+                releaseSingleClientSlot(
+                    for: sessionID,
+                    clientID: peerIdentity.deviceID,
+                    reason: singleClientSlotReleaseReason
+                )
             }
         }
 
         do {
+            bootstrapPhase = "connection-approval"
             let connectionAccepted = try await awaitBootstrapStep(
                 timeout: .seconds(Int(connectionApprovalTimeoutSeconds.rounded(.up))),
                 peerName: peerIdentity.name,
@@ -116,8 +126,10 @@ extension MirageHostService {
             }
 
             guard connectionAccepted else {
+                singleClientSlotReleaseReason = "approval-rejected"
                 MirageLogger.host("Connection from \(peerIdentity.name) rejected by delegate (origin=\(origin))")
                 do {
+                    bootstrapPhase = "approval-rejection-control-channel"
                     let controlChannel = try await MirageControlChannel.accept(from: session)
                     let rejection = makeRejectedBootstrapResponse(reason: .unauthorized)
                     do {
@@ -127,12 +139,14 @@ extension MirageHostService {
                     }
                     await closeBootstrapControlChannel(controlChannel, reason: "unauthorized rejection")
                 } catch {
+                    singleClientSlotReleaseReason = "approval-rejection-control-channel-open-failed"
                     MirageLogger.error(.host, error: error, message: "Failed to accept control channel for unauthorized rejection: ")
                     await session.cancel()
                 }
                 return
             }
 
+            bootstrapPhase = "control-channel-open"
             let controlChannel = try await awaitBootstrapStep(
                 timeout: .seconds(10),
                 peerName: peerIdentity.name,
@@ -141,6 +155,7 @@ extension MirageHostService {
                 try await MirageControlChannel.accept(from: session)
             }
             MirageLogger.host("Accepted Mirage control channel from \(peerIdentity.name) origin=\(origin)")
+            bootstrapPhase = "bootstrap-request"
             let bootstrap = try await awaitBootstrapStep(
                 timeout: .seconds(10),
                 peerName: peerIdentity.name,
@@ -160,6 +175,7 @@ extension MirageHostService {
                     MirageLogger.host(
                         "Connection from \(peerIdentity.name) rejected while host is busy reason=\(rejectionReason.rawValue)"
                     )
+                    singleClientSlotReleaseReason = "busy-bootstrap-rejected-\(rejectionReason.rawValue)"
                     let rejection = makeRejectedBootstrapResponse(reason: rejectionReason)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
                     await closeBootstrapControlChannel(controlChannel, reason: "busy rejection")
@@ -184,6 +200,7 @@ extension MirageHostService {
                         "Connection rejected after takeover check: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
                             + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
                     )
+                    singleClientSlotReleaseReason = "slot-reservation-rejected"
                     let rejection = makeRejectedBootstrapResponse(reason: .hostBusy)
                     try await controlChannel.send(.sessionBootstrapResponse, content: rejection)
                     await closeBootstrapControlChannel(controlChannel, reason: "slot reservation rejection")
@@ -192,6 +209,7 @@ extension MirageHostService {
                 reservedSingleClientSlot = true
             }
 
+            bootstrapPhase = "bootstrap-response"
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,
                 peerIdentity: peerIdentity,
@@ -205,6 +223,7 @@ extension MirageHostService {
             )
 
             guard responseResult.response.accepted else {
+                singleClientSlotReleaseReason = "bootstrap-rejected-\(responseResult.response.rejectionReason?.rawValue ?? "unknown")"
                 await closeBootstrapControlChannel(controlChannel, reason: "bootstrap rejection")
                 return
             }
@@ -241,6 +260,14 @@ extension MirageHostService {
             startClientLivenessMonitorIfNeeded()
             delegate?.didConnectClient(client)
         } catch {
+            if Task.isCancelled {
+                singleClientSlotReleaseReason = "bootstrap-cancelled-\(bootstrapPhase)"
+            } else if case let MirageError.protocolError(message) = error,
+                      message.hasPrefix("Timed out waiting") {
+                singleClientSlotReleaseReason = "bootstrap-timeout-\(bootstrapPhase)"
+            } else {
+                singleClientSlotReleaseReason = "bootstrap-failed-\(bootstrapPhase)"
+            }
             if isExpectedBootstrapConnectionClosure(error) ||
                 isFatalConnectionError(error) ||
                 LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {

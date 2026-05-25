@@ -139,7 +139,7 @@ extension MirageHostService {
         )
         atlasEncoderConfig = atlasEncoderConfig.withInternalOverrides(pixelFormat: .bgra8)
 
-        let latencyMode = selectRequest.latencyMode ?? .balanced
+        let latencyMode = selectRequest.latencyMode ?? .lowestLatency
         let hostBufferingPolicy = selectRequest.resolvedHostBufferingPolicy
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default

@@ -158,8 +158,13 @@ extension StreamContext {
 
                 let generation = packetSender.currentGeneration
                 if isKeyframe {
+                    let queuedBytes = packetSender.queuedByteCount
                     Task(priority: .userInitiated) {
-                        await self.markKeyframeInFlight()
+                        await self.logDependencyRecoveryKeyframeIfNeeded(
+                            frameNumber: reservation.frameNumber,
+                            queuedBytes: queuedBytes
+                        )
+                        await self.markKeyframeInFlight(frameNumber: reservation.frameNumber)
                         await self.markKeyframeSent()
                     }
                 }

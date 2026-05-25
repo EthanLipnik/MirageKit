@@ -535,14 +535,11 @@ public final class MirageClientService {
     /// Minimum spacing between recovery keyframe requests.
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75
 
-    /// Active retry tasks for recovery keyframe requests.
-    var recoveryKeyframeRetryTasks: [StreamID: (token: UUID, task: Task<Void, Never>)] = [:]
+    /// Active foreground recovery monitors keyed by stream.
+    var foregroundRecoveryMonitorTasks: [StreamID: (token: UUID, task: Task<Void, Never>)] = [:]
 
-    /// Delay between recovery keyframe retry attempts.
-    let recoveryKeyframeRetryInterval: Duration = .seconds(1)
-
-    /// Maximum number of recovery keyframe retry attempts.
-    let recoveryKeyframeRetryLimit: Int = 2
+    /// Poll interval while foreground recovery waits for stream or presenter progress.
+    let foregroundRecoveryMonitorInterval: Duration = .milliseconds(250)
 
     /// Wall-clock time for the current desktop stream request.
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0

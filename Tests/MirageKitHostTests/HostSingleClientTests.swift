@@ -71,6 +71,26 @@ struct HostSingleClientTests {
         #expect(host.currentPeerAdvertisement.mirageAcceptingConnections)
     }
 
+    @Test("Reservation expiry task clears stale slot")
+    @MainActor
+    func reservationExpiryTaskClearsStaleSlot() async {
+        let host = MirageHostService()
+        let staleSessionID = UUID()
+
+        #expect(host.reserveSingleClientSlot(for: staleSessionID))
+        host.singleClientReservationStartedAt = CFAbsoluteTimeGetCurrent() - (host.connectionApprovalTimeoutSeconds + 1)
+        host.scheduleSingleClientReservationExpiry(for: staleSessionID)
+
+        let deadline = ContinuousClock.now + .seconds(3)
+        while host.singleClientSessionID != nil, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(host.singleClientSessionID == nil)
+        #expect(host.allowsNewClientConnections)
+        #expect(host.currentPeerAdvertisement.mirageAcceptingConnections)
+    }
+
     @Test("Reconnect preemption matches same device ID")
     @MainActor
     func reconnectPreemptionMatchesSameDeviceID() {

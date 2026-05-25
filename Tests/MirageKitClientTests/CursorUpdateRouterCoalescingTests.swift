@@ -91,6 +91,47 @@ struct CursorUpdateRouterCoalescingTests {
         #expect(lastSeenSequence == 2)
         #expect(forcedRefreshCount == 1)
     }
+
+    @Test("Cursor store and router coalesce to latest cursor shape")
+    func cursorStoreAndRouterCoalesceToLatestCursorShape() async throws {
+        let streamID: StreamID = 91
+        let updateCount = 200
+        let store = MirageClientCursorStore()
+        let router = MirageCursorUpdateRouter(
+            flushInterval: MirageInteractionCadence.frameInterval120Duration
+        )
+        let probe = await MainActor.run {
+            CursorStoreRefreshProbe(store: store, streamID: streamID)
+        }
+        await MainActor.run {
+            router.register(view: probe, for: streamID)
+        }
+        defer {
+            Task { @MainActor in
+                router.unregister(streamID: streamID)
+            }
+        }
+
+        for index in 0 ..< updateCount {
+            let cursorType: MirageCursorType = index == updateCount - 1 ? .resizeNWSE : .arrow
+            _ = store.updateCursor(streamID: streamID, cursorType: cursorType, isVisible: true)
+            router.notify(streamID: streamID)
+        }
+
+        try await waitUntil(timeout: .seconds(2)) {
+            let cursorType = await MainActor.run { probe.lastCursorType }
+            return cursorType == .resizeNWSE
+        }
+
+        let refreshCount = await MainActor.run { probe.refreshCount }
+        let lastCursorType = await MainActor.run { probe.lastCursorType }
+        let lastSequence = await MainActor.run { probe.lastSequence }
+
+        #expect(lastCursorType == .resizeNWSE)
+        #expect(lastSequence == 2)
+        #expect(refreshCount > 0)
+        #expect(refreshCount < updateCount / 10)
+    }
 }
 
 private func waitUntil(
@@ -139,6 +180,27 @@ private final class CursorRefreshProbe: MirageCursorUpdateHandling {
             forcedRefreshCount += 1
         }
         lastSeenSequence = sequenceSource.load()
+    }
+}
+
+@MainActor
+private final class CursorStoreRefreshProbe: MirageCursorUpdateHandling {
+    private let store: MirageClientCursorStore
+    private let streamID: StreamID
+    private(set) var refreshCount: Int = 0
+    private(set) var lastCursorType: MirageCursorType?
+    private(set) var lastSequence: UInt64 = 0
+
+    init(store: MirageClientCursorStore, streamID: StreamID) {
+        self.store = store
+        self.streamID = streamID
+    }
+
+    func refreshCursorUpdates(force _: Bool) {
+        refreshCount += 1
+        guard let snapshot = store.snapshot(for: streamID) else { return }
+        lastCursorType = snapshot.cursorType
+        lastSequence = snapshot.sequence
     }
 }
 #endif

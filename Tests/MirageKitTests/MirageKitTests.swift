@@ -44,11 +44,11 @@ struct MirageKitTests {
         #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
     }
 
-    @Test("Default stream cadence uses balanced latency")
-    func defaultStreamCadenceUsesBalancedLatency() {
+    @Test("Default stream cadence uses lowest latency")
+    func defaultStreamCadenceUsesLowestLatency() {
         let target = MirageStreamCadenceTarget(sourceFPS: 60)
 
-        #expect(target.latencyMode == .balanced)
+        #expect(target.latencyMode == .lowestLatency)
         #expect(target.playoutDelayFrames == 0)
     }
 

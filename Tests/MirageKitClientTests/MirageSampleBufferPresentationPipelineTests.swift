@@ -30,7 +30,7 @@ struct MirageSampleBufferPresentationPipelineTests {
     }
 
     @Test("Drawable metrics are deduplicated and capped through shared pipeline")
-    func drawableMetricsAreDeduplicatedAndCapped() {
+    func drawableMetricsAreDeduplicatedAndCapped() async throws {
         let layer = AVSampleBufferDisplayLayer()
         let pipeline = makePipeline(displayLayer: layer)
         var reportedMetrics: [MirageDrawableMetrics] = []
@@ -45,6 +45,9 @@ struct MirageSampleBufferPresentationPipelineTests {
             viewSize: CGSize(width: 200, height: 100),
             scaleFactor: 2
         )
+        for _ in 0..<10 where reportedMetrics.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         #expect(reportedMetrics.first?.pixelSize == CGSize(width: 120, height: 60))
         #expect(reportedMetrics.count == 1)

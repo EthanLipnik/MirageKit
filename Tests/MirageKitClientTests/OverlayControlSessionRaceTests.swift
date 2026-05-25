@@ -12,6 +12,12 @@ import Testing
 
 @Suite("Overlay Control Session Race")
 struct OverlayControlSessionRaceTests {
+    @Test("Overlay remote route budgets allow slow handshakes")
+    func overlayRemoteRouteBudgetsAllowSlowHandshakes() {
+        #expect(OverlayControlSessionRacePolicy.groupBudget == .seconds(45))
+        #expect(OverlayControlSessionRacePolicy.preRemoteHelloIdleTimeout == .seconds(12))
+    }
+
     @Test("UDP hedge launches when QUIC has not reached remote hello")
     func udpHedgeLaunchesWhenQUICIsOnlyTransportStarting() async {
         let state = OverlayControlSessionRaceState()
@@ -48,6 +54,32 @@ struct OverlayControlSessionRaceTests {
         #expect(!(await state.shouldLaunch(.tcp)))
     }
 
+    @Test("Pre-remote-hello progress waits for the lenient idle window")
+    func preRemoteHelloProgressWaitsForLenientIdleWindow() async {
+        let state = OverlayControlSessionRaceState()
+        let base = ContinuousClock.now
+        await state.recordLaunched(.quic, at: base)
+        await state.recordProgress(
+            LoomAuthenticatedSessionBootstrapProgress(phase: .localHelloSent),
+            transportKind: .quic,
+            at: base
+        )
+
+        let beforeDeadline = await state.launchDecision(
+            for: .udp,
+            now: base + .seconds(11),
+            earliestLaunch: base
+        )
+        let afterDeadline = await state.launchDecision(
+            for: .udp,
+            now: base + .seconds(12),
+            earliestLaunch: base
+        )
+
+        #expect(beforeDeadline != .launch)
+        #expect(afterDeadline == .launch)
+    }
+
     @MainActor
     @Test("Connection attempt cancellation clears every pending transport candidate")
     func connectionAttemptCancellationClearsEveryPendingTransportCandidate() {
@@ -74,4 +106,3 @@ struct OverlayControlSessionRaceTests {
         #expect(secondTask.isCancelled)
     }
 }
-

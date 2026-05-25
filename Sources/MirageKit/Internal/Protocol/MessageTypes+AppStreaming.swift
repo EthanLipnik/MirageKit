@@ -253,7 +253,7 @@ package struct SelectAppMessage: Codable {
     }
 
     package var resolvedHostBufferingPolicy: MirageHostBufferingPolicy {
-        hostBufferingPolicy ?? .stability
+        hostBufferingPolicy ?? .freshestFrame
     }
 }
 

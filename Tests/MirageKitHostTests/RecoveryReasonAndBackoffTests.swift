@@ -98,7 +98,53 @@ struct RecoveryReasonMappingTests {
         #expect(await context.softRecoveryCount == 0)
     }
 
-    private func makeContext() -> StreamContext {
+    @Test("Constrained path keeps in-flight keyframe instead of queueing another")
+    func constrainedPathKeepsInFlightKeyframe() async {
+        let context = makeContext(transportPathKind: .awdl)
+
+        await context.markKeyframeInFlight(frameNumber: 42)
+        let firstDeadline = await context.keyframeSendDeadline
+        try? await Task.sleep(for: .milliseconds(20))
+
+        let queued = await context.queueKeyframe(
+            reason: "Repeated recovery keyframe",
+            checkInFlight: true,
+            urgent: true
+        )
+
+        #expect(!queued)
+        #expect(await context.keyframeInFlightFrameNumber == 42)
+        #expect(await context.keyframeSendDeadline > firstDeadline)
+    }
+
+    @Test("Dependency drop recovery tracks retry diagnostics until keyframe")
+    func dependencyDropRecoveryTracksRetryDiagnostics() async {
+        let context = makeContext()
+        await context.configureRunningForDependencyDropTest()
+
+        await context.handlePacketSenderDependencyFrameDrop(
+            streamID: 9,
+            frameNumber: 7,
+            reason: .expiredBeforeSend
+        )
+
+        #expect(await context.dependencyRecoveryPendingDropFrameNumber == 7)
+        #expect(await context.dependencyRecoveryPendingDropReason == .expiredBeforeSend)
+        #expect(await context.dependencyRecoveryPendingQueuedBytes == 0)
+        #expect(await context.dependencyRecoveryRetryNecessary == false)
+
+        await context.logDependencyRecoveryKeyframeIfNeeded(
+            frameNumber: 8,
+            queuedBytes: 1234
+        )
+
+        #expect(await context.dependencyRecoveryPendingDropFrameNumber == nil)
+        #expect(await context.dependencyRecoveryPendingDropReason == nil)
+        #expect(await context.dependencyRecoveryPendingQueuedBytes == 0)
+        #expect(await context.dependencyRecoveryRetryNecessary == false)
+    }
+
+    private func makeContext(transportPathKind: MirageNetworkPathKind = .unknown) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
@@ -111,8 +157,15 @@ struct RecoveryReasonMappingTests {
             streamID: 9,
             windowID: 9,
             encoderConfig: encoderConfig,
-            streamScale: 1.0
+            streamScale: 1.0,
+            transportPathKind: transportPathKind
         )
+    }
+}
+
+private extension StreamContext {
+    func configureRunningForDependencyDropTest() {
+        isRunning = true
     }
 }
 #endif

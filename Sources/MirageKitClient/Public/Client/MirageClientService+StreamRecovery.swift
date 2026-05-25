@@ -103,16 +103,16 @@ extension MirageClientService {
         )
     }
 
-    func cancelRecoveryKeyframeRetry(for streamID: StreamID) {
-        guard let retry = recoveryKeyframeRetryTasks.removeValue(forKey: streamID) else { return }
-        retry.task.cancel()
+    func cancelForegroundRecoveryMonitor(for streamID: StreamID) {
+        guard let monitor = foregroundRecoveryMonitorTasks.removeValue(forKey: streamID) else { return }
+        monitor.task.cancel()
     }
 
-    func cancelRecoveryKeyframeRetries() {
-        let retries = recoveryKeyframeRetryTasks.values
-        recoveryKeyframeRetryTasks.removeAll()
-        for retry in retries {
-            retry.task.cancel()
+    func cancelForegroundRecoveryMonitors() {
+        let monitors = foregroundRecoveryMonitorTasks.values
+        foregroundRecoveryMonitorTasks.removeAll()
+        for monitor in monitors {
+            monitor.task.cancel()
         }
     }
 
@@ -230,7 +230,7 @@ extension MirageClientService {
         }
 
         if trigger == .applicationActivation,
-           recoveryKeyframeRetryTasks[streamID] != nil {
+           foregroundRecoveryMonitorTasks[streamID] != nil {
             MirageLogger.client(
                 "Stream recovery coalesced for stream \(streamID) trigger=\(trigger.logLabel)"
             )
@@ -247,9 +247,10 @@ extension MirageClientService {
         if trigger.requestsPresentationRecoveryImmediately {
             _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         }
-        cancelRecoveryKeyframeRetry(for: streamID)
-        if trigger.awaitFirstPresentedFrame {
-            startRecoveryKeyframeRetry(for: streamID, controller: controller, trigger: trigger)
+        cancelForegroundRecoveryMonitor(for: streamID)
+        if trigger == .applicationActivation {
+            startForegroundRecoveryMonitor(for: streamID, controller: controller, trigger: trigger)
+            return
         }
 
         Task { [weak self] in

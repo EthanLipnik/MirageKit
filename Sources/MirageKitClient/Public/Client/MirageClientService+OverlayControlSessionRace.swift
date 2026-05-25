@@ -34,9 +34,9 @@ enum OverlayControlSessionLaunchDecision: Equatable, Sendable {
 struct OverlayControlSessionRacePolicy {
     static let udpHedgeDelay: Duration = .seconds(3)
     static let tcpHedgeDelay: Duration = .seconds(8)
-    static let groupBudget: Duration = .seconds(30)
+    static let groupBudget: Duration = .seconds(45)
     static let preTransportReadyTimeout: Duration = .seconds(6)
-    static let preRemoteHelloIdleTimeout: Duration = .seconds(8)
+    static let preRemoteHelloIdleTimeout: Duration = .seconds(12)
 
     static func launchDelay(for transportKind: LoomTransportKind) -> Duration {
         switch transportKind {

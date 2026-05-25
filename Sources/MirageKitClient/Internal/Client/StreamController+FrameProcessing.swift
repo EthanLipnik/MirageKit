@@ -28,6 +28,7 @@ extension StreamController {
         lastDecodeErrorLogTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        lastDecodedProgressTime = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         metricsTracker.reset()

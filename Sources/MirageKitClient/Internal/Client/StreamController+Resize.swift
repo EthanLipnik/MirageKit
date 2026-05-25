@@ -35,7 +35,7 @@ extension StreamController {
             )
             stopFirstPresentedFrameMonitor()
             resetPostResizeRecoveryTracking(clearResizeRecovery: true)
-            await stopKeyframeRecoveryLoop()
+            await clearKeyframeRecoveryState()
             await setClientRecoveryStatus(.idle)
             return
         }
@@ -62,7 +62,7 @@ extension StreamController {
                 reassembler.beginKeyframeWait()
             }
             if restartRecoveryLoop, presentationTier == .activeLive {
-                await startKeyframeRecoveryLoopIfNeeded()
+                await enterKeyframeRecoveryIfNeeded(reason: "hard-recovery-throttled-\(reason.logLabel)")
             }
             await requestKeyframeRecoveryIfPossible(reason: reason)
             return
@@ -85,6 +85,7 @@ extension StreamController {
         _ = MirageRenderStreamStore.shared.requestPresentationRecovery(for: streamID)
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        lastDecodedProgressTime = 0
         presentationProgressRequiresSequenceAdvance = shouldAwaitNextPresentedFrame
         resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastFreezeRecoveryTime = 0
@@ -99,9 +100,9 @@ extension StreamController {
         }
         reassembler.beginKeyframeWait()
         if restartRecoveryLoop, presentationTier == .activeLive {
-            await startKeyframeRecoveryLoopIfNeeded()
+            await enterKeyframeRecoveryIfNeeded(reason: "hard-\(reason.logLabel)")
         } else {
-            await stopKeyframeRecoveryLoop()
+            await clearKeyframeRecoveryState()
         }
         await startFrameProcessingPipeline()
         if shouldAwaitNextPresentedFrame, presentationTier == .activeLive {

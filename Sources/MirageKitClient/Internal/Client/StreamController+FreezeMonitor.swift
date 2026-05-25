@@ -50,22 +50,46 @@ extension StreamController {
         let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
         if reassembler.isAwaitingKeyframe {
             let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
-            if pendingFrameCount == 0 || pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs {
-                let clearedFrames = pendingFrameCount > 0
-                    ? MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
-                    : 0
-                MirageLogger.client(
-                    "Presentation stalled while awaiting keyframe for stream \(streamID); " +
-                        "prioritizing keyframe recovery over presenter recovery " +
-                        "(pendingFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, cleared=\(clearedFrames))"
-                )
-                let lastPacketTime = reassembler.latestPacketReceivedTime
-                let packetStarved = lastPacketTime <= 0 || now - lastPacketTime >= Self.freezeTimeout
-                await maybeTriggerFreezeRecovery(
+            let snapshot = reassembler.keyframeWaitSnapshot
+            let decision = freezeRecoveryDecision(
+                now: now,
+                snapshot: snapshot,
+                pendingRenderFrameCount: pendingFrameCount,
+                pendingRenderFrameAgeMs: pendingFrameAgeMs
+            )
+            logRecoveryDecision(
+                decision,
+                reason: "freeze-monitor-awaiting-keyframe",
+                snapshot: snapshot,
+                pendingRenderFrameCount: pendingFrameCount,
+                pendingRenderFrameAgeMs: pendingFrameAgeMs
+            )
+            switch decision {
+            case .presenterRecovery:
+                if await maybeTriggerRenderSubmissionRecovery(
                     now: now,
-                    keyframeStarved: true,
-                    packetStarved: packetStarved
+                    pendingFrameCount: pendingFrameCount
+                ) {
+                    return
+                }
+            case .deferPacketsFlowing,
+                 .deferKeyframeProgress:
+                return
+            case .requestKeyframe:
+                await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor")
+                await requestKeyframeRecoveryIfPossible(reason: .freezeTimeout)
+                return
+            case .hardRecovery:
+                let metricsSnapshot = metricsTracker.snapshot(now: now)
+                await maybeLogStreamingAnomalyDiagnostic(
+                    trigger: "freeze-recovery-hard-recovery",
+                    decodedFPS: metricsSnapshot.decodedFPS,
+                    receivedFPS: metricsSnapshot.receivedFPS
                 )
+                MirageLogger.client(
+                    "Presentation stall persisted without packet/keyframe progress for stream \(streamID); escalating to hard recovery"
+                )
+                await requestRecovery(reason: .freezeTimeout)
                 return
             }
         }

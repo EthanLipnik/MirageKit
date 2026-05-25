@@ -13,8 +13,6 @@ import Foundation
 import MirageKit
 
 extension StreamController {
-    /// Maximum keyframe retries before escalating to a single hard reset.
-    static let activeRecoveryMaxKeyframeAttempts = 3
     /// Maximum recovery keyframe requests over the sliding pressure window.
     static let recoveryKeyframeDispatchLimit = 3
     /// Sliding window for recovery keyframe request limiting.
@@ -25,6 +23,12 @@ extension StreamController {
     static let softRecoveryMinimumInterval: CFAbsoluteTime = 1.0
     /// Minimum spacing between hard recoveries to avoid repeated full pipeline resets.
     static let hardRecoveryMinimumInterval: CFAbsoluteTime = 2.5
+    static let localDuplicateKeyframeRequestGrace: CFAbsoluteTime = 2.5
+    static let remoteDuplicateKeyframeRequestGrace: CFAbsoluteTime = 8.0
+    static let localHardRecoveryNoProgressFloor: CFAbsoluteTime = 8.0
+    static let remoteHardRecoveryNoProgressFloor: CFAbsoluteTime = 20.0
+    static let localPacketProgressFreshThreshold: CFAbsoluteTime = 2.0
+    static let remotePacketProgressFreshThreshold: CFAbsoluteTime = 6.0
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissSampleThreshold = 3
@@ -34,7 +38,6 @@ extension StreamController {
         case decodeErrorThreshold
         case frameLoss
         case freezeTimeout
-        case keyframeRecoveryLoop
         case manualRecovery
         case memoryBudget
         case startupKeyframeTimeout
@@ -47,8 +50,6 @@ extension StreamController {
                 "frame-loss"
             case .freezeTimeout:
                 "freeze-timeout"
-            case .keyframeRecoveryLoop:
-                "keyframe-recovery-loop"
             case .manualRecovery:
                 "manual-recovery"
             case .memoryBudget:
@@ -57,6 +58,14 @@ extension StreamController {
                 "startup-keyframe-timeout"
             }
         }
+    }
+
+    enum StreamRecoveryDecision: String, Equatable {
+        case requestKeyframe = "request-keyframe"
+        case deferPacketsFlowing = "defer-packets-flowing"
+        case deferKeyframeProgress = "defer-keyframe-progress"
+        case presenterRecovery = "presenter-recovery"
+        case hardRecovery = "hard-recovery"
     }
 
     enum FreezeStallKind: String, Equatable {

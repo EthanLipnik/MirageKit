@@ -249,8 +249,13 @@ actor StreamContext {
     let startupKeyframeFECBlockSize: Int = 4
     var lastKeyframeRequestTime: CFAbsoluteTime = 0
     var keyframeSendDeadline: CFAbsoluteTime = 0
+    var keyframeInFlightFrameNumber: UInt32?
     var recentKeyframeRequestTimes: [CFAbsoluteTime] = []
     var dependencyRecoveryKeyframeRetryTask: Task<Void, Never>?
+    var dependencyRecoveryPendingDropFrameNumber: UInt32?
+    var dependencyRecoveryPendingDropReason: StreamPacketSender.DependencyFrameDropReason?
+    var dependencyRecoveryPendingQueuedBytes: Int = 0
+    var dependencyRecoveryRetryNecessary = false
 
     /// Scheduled keyframe cadence derived from keyFrameInterval/currentFrameRate.
     var keyframeIntervalSeconds: CFAbsoluteTime = 0
@@ -355,8 +360,8 @@ actor StreamContext {
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .balanced,
-        hostBufferingPolicy: MirageHostBufferingPolicy = .stability,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
         transportPathKind: MirageNetworkPathKind = .unknown,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,

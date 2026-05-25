@@ -32,11 +32,7 @@ extension StreamController {
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
-        keyframeRecoveryTask?.cancel()
-        keyframeRecoveryTask = nil
         cancelMemoryBudgetRecoveryTask()
-        keyframeRecoveryAttempt = 0
-        lastRecoveryRequestTime = 0
         recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0

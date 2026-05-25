@@ -178,7 +178,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     /// Whether macOS Input Monitoring backed shortcut forwarding is enabled.
-    var shortcutForwardingEnabled: Bool = true {
+    var shortcutForwardingEnabled: Bool = false {
         didSet {
             guard shortcutForwardingEnabled != oldValue else { return }
             handleInputActivityStateChange()

@@ -72,7 +72,7 @@ extension MirageClientService {
             cap: runtimeWorkloadSafetyFrameRateCap(for: streamID)
         )
         updateObservedFrameRate(targetFrameRate, for: streamID)
-        let latencyMode = renderLatencyModeByStream[streamID] ?? .balanced
+        let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
         let playoutDelayFrames = resolvedStreamPlayoutDelayFrames(for: latencyMode)
         let target = MirageStreamCadenceTarget(
             sourceFPS: targetFrameRate,
@@ -93,12 +93,9 @@ extension MirageClientService {
 
     /// Returns the client playout hold for the current transport.
     func resolvedStreamPlayoutDelayFrames(for latencyMode: MirageStreamLatencyMode?) -> Int {
-        let latencyMode = latencyMode ?? .balanced
+        let latencyMode = latencyMode ?? .lowestLatency
         guard latencyMode != .lowestLatency else { return 0 }
-        guard controlPathSnapshot?.kind == .vpn else {
-            return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: latencyMode)
-        }
-        return MirageRenderModePolicy.maximumSmoothestPlayoutDelayFrames
+        return MirageStreamCadenceTarget.defaultPlayoutDelayFrames(for: latencyMode)
     }
 
     /// Sends a refresh-rate override to the host for an active stream.
@@ -120,7 +117,7 @@ extension MirageClientService {
             forceDisplayRefresh: forceDisplayRefresh
         )
         let adaptiveFloorFPS = clamped >= 90 ? 60 : clamped
-        let latencyMode = renderLatencyModeByStream[streamID] ?? .balanced
+        let latencyMode = renderLatencyModeByStream[streamID] ?? .lowestLatency
         MirageLogger.client("Sending refresh rate override for stream \(streamID): \(clamped)Hz")
         MirageLogger.client(
             "event=cadence_contract phase=refresh_change stream=\(streamID) requested=\(clamped) " +

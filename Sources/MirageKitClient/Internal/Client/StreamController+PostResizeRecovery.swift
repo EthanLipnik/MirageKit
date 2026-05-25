@@ -76,13 +76,13 @@ extension StreamController {
             MirageLogger.client(
                 "Presentation progress resumed for stream \(streamID); ending keyframe recovery"
             )
-            await stopKeyframeRecoveryLoop()
+            await clearKeyframeRecoveryState()
         case .hardRecovery:
             MirageLogger.client(
                 "Presentation progress resumed for stream \(streamID); ending hard recovery"
             )
             presentationProgressRequiresSequenceAdvance = false
-            await stopKeyframeRecoveryLoop()
+            await clearKeyframeRecoveryState()
             await setClientRecoveryStatus(.idle)
         case .tierPromotionProbe:
             MirageLogger.client(
@@ -98,6 +98,7 @@ extension StreamController {
 
     /// Records a decoded frame and advances startup, post-resize, and freeze-monitor recovery gates.
     func recordDecodedFrame() async {
+        lastDecodedProgressTime = currentTime
         if !decodeRecoveryEscalationTimestamps.isEmpty {
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         }

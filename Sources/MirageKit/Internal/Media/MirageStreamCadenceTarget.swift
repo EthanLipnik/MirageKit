@@ -29,7 +29,7 @@ package struct MirageStreamCadenceTarget: Sendable, Equatable {
     package init(
         sourceFPS: Int,
         displayFPS: Int? = nil,
-        latencyMode: MirageStreamLatencyMode = .balanced,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         playoutDelayFrames: Int? = nil
     ) {
         let resolvedSourceFPS = Self.normalizedFPS(sourceFPS)

@@ -163,7 +163,7 @@ public class InputCapturingView: UIView {
             if syntheticCursorEnabled, hideSystemCursor {
                 cursorIsVisible = true
             }
-            pointerInteraction?.invalidate()
+            invalidatePointerInteraction(reason: "hideSystemCursorChanged")
             updateLockedCursorViewVisibility()
             updateLockedCursorViewPosition()
             updateMouseInputHandler()
@@ -208,7 +208,7 @@ public class InputCapturingView: UIView {
             }
             updateVirtualTrackpadMode()
             updateLockedCursorViewVisibility()
-            pointerInteraction?.invalidate()
+            invalidatePointerInteraction(reason: "syntheticCursorChanged")
             refreshCursorUpdates(force: true)
             updateMouseInputHandler()
         }

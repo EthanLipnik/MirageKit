@@ -491,10 +491,16 @@ extension FrameReassembler {
     }
 
     private func pFrameTimeoutLocked() -> TimeInterval {
-        pFrameNoProgressTimeout
+        if isLenientRemotePathLocked {
+            return pFrameNoProgressTimeoutRemote
+        }
+        return pFrameNoProgressTimeout
     }
 
     private func pFrameAbsoluteLifetimeCapLocked() -> TimeInterval {
+        if isLenientRemotePathLocked {
+            return pFrameAbsoluteLifetimeCapRemoteLowestLatency
+        }
         if latencyMode == .smoothest || transportPathKind == .vpn {
             return pFrameAbsoluteLifetimeCapRemoteSmoothest
         }
@@ -502,12 +508,12 @@ extension FrameReassembler {
     }
 
     private func bufferedForwardGapTimeoutLocked() -> TimeInterval {
-        transportPathKind == .vpn ? vpnBufferedForwardGapTimeout : pFrameTimeoutLocked()
+        isLenientRemotePathLocked ? remoteBufferedForwardGapTimeout : pFrameTimeoutLocked()
     }
 
     private func keyframeNoProgressTimeoutLocked(for frame: PendingFrame) -> TimeInterval {
         var timeout = startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
-        if transportPathKind == .vpn {
+        if isLenientRemotePathLocked {
             timeout = max(timeout, vpnKeyframeTimeout)
         }
 
@@ -518,6 +524,10 @@ extension FrameReassembler {
             timeout += highProgressKeyframeTimeoutBonus
         }
         return timeout
+    }
+
+    private var isLenientRemotePathLocked: Bool {
+        transportPathKind == .vpn || transportPathKind == .cellular
     }
 
     private func severeForwardGapFrameThresholdLocked() -> UInt32 {

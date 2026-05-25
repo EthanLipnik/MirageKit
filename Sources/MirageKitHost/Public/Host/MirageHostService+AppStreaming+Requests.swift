@@ -47,7 +47,7 @@ extension MirageHostService {
             let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
             MirageLogger.host("Frame rate: \(targetFrameRate)fps")
 
-            let latencyMode = request.latencyMode ?? .balanced
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
             guard let displayWidth = request.displayWidth,
                   let displayHeight = request.displayHeight,
