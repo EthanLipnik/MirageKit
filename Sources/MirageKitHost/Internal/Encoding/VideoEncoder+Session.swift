@@ -258,7 +258,7 @@ extension VideoEncoder {
                 targetFrameRate: clampedFrameRate
             )
         } else {
-            windowSeconds = clampedFrameRate >= 90 ? 0.25 : 0.5
+            windowSeconds = min(0.05, 1.0 / Double(clampedFrameRate))
         }
         let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
         let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))
@@ -266,7 +266,7 @@ extension VideoEncoder {
     }
 
     static func lowLatencyUsesDataRateLimits(mediaPathProfile: MirageMediaPathProfile) -> Bool {
-        mediaPathProfile.usesAwdlRadioPolicy
+        mediaPathProfile.usesAwdlRadioPolicy || mediaPathProfile == .localWiFi
     }
 
     func configureSession(

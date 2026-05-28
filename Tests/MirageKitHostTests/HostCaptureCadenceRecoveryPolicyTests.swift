@@ -239,8 +239,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         #expect(second == .restartCapture)
     }
 
-    @Test("Presented sixty hertz stream recovers repeated thirty millisecond capture gaps")
-    func presentedSixtyHertzStreamRecoversRepeatedThirtyMillisecondCaptureGaps() {
+    @Test("Presented sixty hertz stream ignores isolated thirty millisecond capture gaps")
+    func presentedSixtyHertzStreamIgnoresIsolatedThirtyMillisecondCaptureGaps() {
         var policy = policy(consecutiveBadWindowsRequired: 2)
         let cadence = StreamCaptureCadenceMetrics(
             deliveredFrameGapWorstMs: 38,
@@ -260,7 +260,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         )
 
         #expect(first == .none)
-        #expect(second == .restartCapture)
+        #expect(second == .none)
     }
 
     @Test("Presented desktop severe capture stall recovers after one bad window")
@@ -281,6 +281,31 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         )
 
         #expect(action == .restartCapture)
+    }
+
+    @Test("Presented sixty hertz stream ignores virtual timing suspicion while capture is healthy")
+    func presentedSixtyHertzStreamIgnoresVirtualTimingSuspicionWhileCaptureIsHealthy() {
+        var policy = policy(consecutiveBadWindowsRequired: 2)
+        let cadence = StreamCaptureCadenceMetrics(
+            deliveredFrameGapWorstMs: 310,
+            deliveredFrameGapP99Ms: 310,
+            usesDisplayRefreshCadence: true,
+            usesNativeRefreshMinimumFrameInterval: true,
+            minimumFrameIntervalRate: 60,
+            displayRefreshRate: 60,
+            virtualDisplayRefreshRate: 60,
+            virtualDisplayTimingSuspect: true
+        )
+
+        let first = policy.evaluate(
+            sample(now: 1, targetFrameRate: 60, captureFPS: 60, captureCadence: cadence)
+        )
+        let second = policy.evaluate(
+            sample(now: 3, targetFrameRate: 60, captureFPS: 60, captureCadence: cadence)
+        )
+
+        #expect(first == .none)
+        #expect(second == .none)
     }
 
     @Test("Pre-presentation severe capture stall keeps topology ladder")
@@ -335,7 +360,7 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         isResizing: Bool = false,
         isEncodingSuspendedForResize: Bool = false,
         targetFrameRate: Int = 60,
-        captureFPS: Double = 58,
+        captureFPS: Double = 48,
         captureIngressFPS: Double? = nil,
         encodeAttemptFPS: Double? = nil,
         captureCadence: StreamCaptureCadenceMetrics? = nil

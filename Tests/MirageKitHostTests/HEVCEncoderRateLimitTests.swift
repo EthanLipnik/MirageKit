@@ -33,8 +33,8 @@ struct HEVCEncoderRateLimitTests {
             targetBitrateBps: targetBitrate,
             targetFrameRate: await encoder.configuration.targetFrameRate
         )
-        #expect(refreshedLimit.windowSeconds == 0.25)
-        #expect(refreshedLimit.bytes == 2_500_000)
+        #expect(abs(refreshedLimit.windowSeconds - (1.0 / 120.0)) < 0.0001)
+        #expect(refreshedLimit.bytes == 83_333)
     }
 
     @Test("Rate-limit windows use short windows at high frame rates")
@@ -48,10 +48,10 @@ struct HEVCEncoderRateLimitTests {
             targetFrameRate: 90
         )
 
-        #expect(sixtyFPS.windowSeconds == 0.5)
-        #expect(sixtyFPS.bytes == 750_000)
-        #expect(ninetyFPS.windowSeconds == 0.25)
-        #expect(ninetyFPS.bytes == 375_000)
+        #expect(abs(sixtyFPS.windowSeconds - (1.0 / 60.0)) < 0.0001)
+        #expect(sixtyFPS.bytes == 25_000)
+        #expect(abs(ninetyFPS.windowSeconds - (1.0 / 90.0)) < 0.0001)
+        #expect(ninetyFPS.bytes == 16_667)
     }
 
     @Test("AWDL rate-limit windows are shorter to avoid encoder-side bursts")
@@ -73,9 +73,9 @@ struct HEVCEncoderRateLimitTests {
         #expect(oneTwentyFPS.bytes == 300_000)
     }
 
-    @Test("Realtime encoder rate control uses average bitrate off AWDL")
-    func realtimeRateControlUsesAverageBitrateOffAwdl() {
-        #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .localWiFi))
+    @Test("Realtime encoder rate control uses data-rate limits on WiFi")
+    func realtimeRateControlUsesDataRateLimitsOnWiFi() {
+        #expect(VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .localWiFi))
         #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .wired))
         #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .proximityWiredLike))
         #expect(VideoEncoder.LowLatencyBitrateStrategy.averageBitRateOnly.publicStrategy == .none)

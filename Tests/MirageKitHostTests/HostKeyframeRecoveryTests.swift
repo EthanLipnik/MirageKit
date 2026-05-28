@@ -90,12 +90,14 @@ struct HostKeyframeRecoveryTests {
         let boostedContext = makeContext(
             frameRate: 60,
             bitrate: 600_000_000,
+            runtimeQualityAdjustmentEnabled: false,
             latencyMode: .lowestLatency,
             lowLatencyHighResolutionCompressionBoostEnabled: true
         )
         let baselineContext = makeContext(
             frameRate: 60,
             bitrate: 600_000_000,
+            runtimeQualityAdjustmentEnabled: false,
             latencyMode: .lowestLatency,
             lowLatencyHighResolutionCompressionBoostEnabled: false
         )
@@ -116,12 +118,14 @@ struct HostKeyframeRecoveryTests {
         let boostedContext = makeContext(
             frameRate: 60,
             bitrate: 25_000_000,
+            runtimeQualityAdjustmentEnabled: false,
             latencyMode: .lowestLatency,
             lowLatencyHighResolutionCompressionBoostEnabled: true
         )
         let baselineContext = makeContext(
             frameRate: 60,
             bitrate: 25_000_000,
+            runtimeQualityAdjustmentEnabled: false,
             latencyMode: .lowestLatency,
             lowLatencyHighResolutionCompressionBoostEnabled: false
         )

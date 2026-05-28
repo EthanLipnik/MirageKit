@@ -26,6 +26,58 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
     private static let mapperMinimumQuality: Float = 0.05
 
+    private func applyHostAdaptiveBudgetIfNeeded(
+        for outputSize: CGSize,
+        logLabel: String?
+    ) async {
+        guard !hostAdaptiveBudgetApplied else { return }
+
+        guard let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            HostAdaptiveStreamBudgetPolicy.Request(
+                requestedBitrateBps: requestedTargetBitrate ?? encoderConfig.bitrate,
+                requestedCeilingBps: bitrateAdaptationCeiling,
+                enteredBitrateBps: explicitEnteredTargetBitrate,
+                runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+                codec: encoderConfig.codec,
+                outputSize: outputSize,
+                frameRate: currentFrameRate,
+                transportPathKind: transportPathKind,
+                mediaPathProfile: mediaPathProfile
+            )
+        ) else {
+            return
+        }
+        hostAdaptiveBudgetApplied = true
+
+        let previousBitrate = encoderConfig.bitrate
+        let previousCeiling = bitrateAdaptationCeiling
+        encoderConfig.bitrate = decision.startupBitrateBps
+        currentTargetBitrateBps = decision.startupBitrateBps
+        startupBitrate = decision.startupBitrateBps
+        bitrateAdaptationCeiling = decision.maximumCeilingBps
+        realtimeRuntimeBitrateCeilingBps = decision.startupBitrateBps
+        realtimeMinimumBitrateFloorBps = decision.minimumBitrateFloorBps
+        await packetSender?.setTargetBitrateBps(decision.startupBitrateBps)
+        if encoder != nil, previousBitrate != decision.startupBitrateBps {
+            await encoder?.updateBitrate(decision.startupBitrateBps)
+            scheduleRateControlRetuneValidation(
+                previousBitrate: previousBitrate,
+                targetBitrate: decision.startupBitrateBps
+            )
+        }
+
+        let prefix = logLabel.map { "\($0): " } ?? ""
+        let previousBitrateText = previousBitrate.map(mirageFormattedMegabitRate) ?? "auto"
+        let previousCeilingText = previousCeiling.map(mirageFormattedMegabitRate) ?? "none"
+        MirageLogger.stream(
+            "\(prefix)host adaptive budget \(decision.reason): " +
+                "startup \(mirageFormattedMegabitRate(decision.startupBitrateBps)) " +
+                "ceiling \(mirageFormattedMegabitRate(decision.maximumCeilingBps)) " +
+                "floor \(mirageFormattedMegabitRate(decision.minimumBitrateFloorBps)) " +
+                "(client target \(previousBitrateText), ceiling \(previousCeilingText))"
+        )
+    }
+
     /// Returns the runtime quality floor for the active bitrate policy.
     func resolvedRuntimeQualityFloor(for qualityCeiling: Float) -> Float {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
@@ -148,6 +200,8 @@ extension StreamContext {
         // ProRes manages its own quality — no bitrate-driven quality mapping
         guard encoderConfig.codec != .proRes4444 else { return }
 
+        await applyHostAdaptiveBudgetIfNeeded(for: outputSize, logLabel: logLabel)
+
         guard let targetBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: encoderConfig.bitrate
         ) else {
@@ -218,6 +272,11 @@ extension StreamContext {
                     "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText)), bpp \(bppText), fpsScale \(scaleText)\(boostText)"
                 )
         }
+    }
+
+    private func mirageFormattedMegabitRate(_ bitrate: Int) -> String {
+        let mbps = Double(bitrate) / 1_000_000.0
+        return "\(mbps.formatted(.number.precision(.fractionLength(1))))Mbps"
     }
 }
 #endif

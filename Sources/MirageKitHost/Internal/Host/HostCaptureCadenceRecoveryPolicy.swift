@@ -233,6 +233,7 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         )
         let highP99Gap = p99Gap.map { $0 >= p99Threshold } ?? false
         let highWorstGap = worstGap.map { $0 >= worstThreshold } ?? false
+        let severeGap = worstGap.map { $0 >= configuration.severeCaptureGapMs } ?? false
         let repeatedDisplayDrift = (cadence?.displayTimeDriftCount ?? 0) >=
             configuration.displayTimeDriftCountThreshold
         let statusLimited = (cadence?.blankFrameStatusCount ?? 0) > 0 ||
@@ -240,15 +241,21 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
             (cadence?.stoppedFrameStatusCount ?? 0) > 0
         let explicitDrops = (cadence?.longFrameGapCount ?? 0) > 0 ||
             (cadence?.cadenceDropCount ?? 0) > 0
-        let virtualTimingSuspect = cadence?.virtualDisplayTimingSuspect == true
+        let virtualTimingSuspect = cadence?.virtualDisplayTimingSuspect == true &&
+            (lowCaptureFPS || severeGap || sample.targetFrameRate >= configuration.highRefreshTargetFrameRate)
         let highRefreshPolicyMismatch = highRefreshPolicyRateMismatch(sample, configuration: configuration)
+        let gapCadenceAnomaly = highP99Gap || highWorstGap || explicitDrops
+        let gapCadenceBad = if sample.targetFrameRate >= configuration.highRefreshTargetFrameRate {
+            gapCadenceAnomaly
+        } else {
+            lowCaptureFPS && gapCadenceAnomaly
+        }
 
         return lowCaptureFPS ||
-            highP99Gap ||
-            highWorstGap ||
+            gapCadenceBad ||
+            severeGap ||
             repeatedDisplayDrift ||
             statusLimited ||
-            explicitDrops ||
             virtualTimingSuspect ||
             highRefreshPolicyMismatch
     }
@@ -283,9 +290,6 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         guard sample.receiverHasPresentedFrame,
               let cadence = sample.captureCadence else {
             return false
-        }
-        if cadence.virtualDisplayTimingSuspect == true {
-            return true
         }
         let severeGap = largest(
             cadence.wallClockGapWorstMs,

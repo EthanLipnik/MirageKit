@@ -30,8 +30,18 @@ extension StreamContext {
         )
         guard targetBitrate > 0, targetBitrate != currentTargetBitrateBps else { return }
 
+        let previousBitrate = encoderConfig.bitrate
+        encoderConfig.bitrate = targetBitrate
         currentTargetBitrateBps = targetBitrate
         await packetSender?.setTargetBitrateBps(targetBitrate)
+        await encoder?.updateBitrate(targetBitrate)
+        scheduleRateControlRetuneValidation(
+            previousBitrate: previousBitrate,
+            targetBitrate: targetBitrate
+        )
+        if currentEncodedSize != .zero {
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Realtime budget")
+        }
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +

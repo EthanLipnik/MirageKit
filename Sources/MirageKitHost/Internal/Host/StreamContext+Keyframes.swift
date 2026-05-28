@@ -357,14 +357,12 @@ extension StreamContext {
         advanceEpochOnReset: Bool = true,
         ignoreExistingInFlight: Bool = false
     ) async {
-        let now = CFAbsoluteTimeGetCurrent()
-        let hasKeyframeInFlight = now < keyframeSendDeadline
         let effectiveIgnoreExistingInFlight = ignoreExistingInFlight &&
-            !hasKeyframeInFlight &&
             !usesConstrainedKeyframeInFlightWindow
         if effectiveIgnoreExistingInFlight {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
+            keyframeInFlightFrameNumber = nil
         }
 
         let queued = queueKeyframe(

@@ -114,7 +114,7 @@ extension VideoEncoder {
 
     /// Registers output callbacks and admits future frames into the active compression session.
     func startEncoding(
-        onEncodedFrame: @escaping @Sendable (Data, Bool, CMTime) -> Void,
+        onEncodedFrame: @escaping @Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void,
         onFrameComplete: @escaping @Sendable () -> Void
     ) {
         encodedFrameHandler = onEncodedFrame

@@ -14,6 +14,7 @@ extension StreamContext {
     func applyReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
         let now = CFAbsoluteTimeGetCurrent()
         lastReceiverFeedbackTime = now
+        receiverDecodedFPS = feedback.decodedFPS
         receiverPresentationBacklogFrames = feedback.presentationBacklogFrames
         receiverAcceptedFPS = feedback.rendererAcceptedFPS
         receiverPresentedFPS = feedback.rendererPresentedFPS
@@ -27,13 +28,16 @@ extension StreamContext {
             mediaPathProfile: mediaPathProfile,
             now: now
         )
-        let realtimeDecision = realtimeBudgetController.update(
+        let frameBudgetDecision = frameBudgetController.update(
             with: feedback,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
             minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
             currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
             steadyQualityCeiling: steadyQualityCeiling,
             now: now
         )
@@ -48,8 +52,8 @@ extension StreamContext {
         if let transportDecision {
             await applyTransportFeedbackDecision(transportDecision, now: now)
         }
-        if let realtimeDecision {
-            await applyRealtimeBudgetDecision(realtimeDecision, now: now)
+        if let frameBudgetDecision {
+            await applyFrameBudgetDecision(frameBudgetDecision, now: now)
         }
     }
 
@@ -81,30 +85,28 @@ extension StreamContext {
         }
     }
 
-    private func applyRealtimeBudgetDecision(
-        _ decision: HostRealtimeStreamBudgetController.Decision,
+    func applyFrameBudgetDecision(
+        _ decision: HostFrameBudgetDecision,
         now: CFAbsoluteTime
     ) async {
         realtimePressureState = decision.state
-        realtimePressureReason = decision.reason
-        realtimeRuntimeBitrateCeilingBps = realtimeBudgetController.runtimeCeilingBps
-        realtimeRuntimeQualityCeiling = decision.runtimeQualityCeiling
+        realtimePressureReason = decision.reason.rawValue
+        realtimeRuntimeBitrateCeilingBps = frameBudgetController.runtimeCeilingBps
+        realtimeRuntimeQualityCeiling = decision.state == .observing ? nil : decision.qualityCeiling
         qualityRaiseSuppressionUntil = max(
             qualityRaiseSuppressionUntil,
             decision.qualityRaiseSuppressionDeadline
         )
-        realtimeFrameAdmissionTargetFPS = decision.frameAdmissionTargetFPS
-        realtimeFrameAdmissionDeadline = decision.frameAdmissionDeadline
+        realtimeFrameAdmissionTargetFPS = nil
+        realtimeFrameAdmissionDeadline = 0
         refreshReceiverFrameAdmission(now: now)
 
-        if let targetBitrateBps = decision.targetBitrateBps {
-            await applyRealtimeBudgetBitrate(
-                targetBitrateBps,
-                ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
-                reason: decision.reason
-            )
-        }
-        await applyRealtimeQualityBudget(reason: decision.reason)
+        await applyRealtimeBudgetBitrate(
+            decision.targetBitrateBps,
+            ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
+            reason: decision.reason.rawValue
+        )
+        await applyFrameBudgetQuality(decision)
 
         logReceiverFrameAdmissionChangeIfNeeded(
             now: now,
@@ -202,49 +204,44 @@ extension StreamContext {
         }
     }
 
-    private func applyRealtimeQualityBudget(reason: String) async {
+    private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async {
         let previousQuality = activeQuality
-        qualityCeiling = resolvedQualityCeiling
+        qualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling)
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
-            for: min(encoderConfig.keyframeQuality, qualityCeiling)
+            for: min(decision.keyframeQuality, qualityCeiling)
         )
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-        } else if activeQuality < qualityFloor {
-            activeQuality = qualityFloor
-        }
+        activeQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
         guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
-            "Realtime stream budget updated quality for stream \(streamID): " +
+            "Frame budget updated quality for stream \(streamID): " +
                 "active=\(formatAwdlMetric(Double(activeQuality))) " +
-                "ceiling=\(formatAwdlMetric(Double(qualityCeiling))) reason=\(reason)"
+                "ceiling=\(formatAwdlMetric(Double(qualityCeiling))) reason=\(decision.reason.rawValue)"
         )
     }
 
     private func frameAdmissionTrigger(
-        for decision: HostRealtimeStreamBudgetController.Decision
+        for decision: HostFrameBudgetDecision
     ) -> HostStreamTransportController.FrameAdmissionTrigger {
-        guard decision.frameAdmissionTargetFPS != nil else { return .clear }
         switch decision.reason {
-        case "p-frame-latency":
+        case .pFrameLatency:
             return .clientPFrameLatency
-        case "receiver-cadence",
-             "receiver-backlog":
+        case .receiverCadence,
+             .receiverBacklog:
             return .clientReassemblyBacklog
-        case "receiver-loss":
+        case .receiverLoss:
             return .clientTransportLoss
-        case "client-recovery":
+        case .clientRecovery:
             return .clientRecovery
         default:
-            return .senderQueue
+            return .clear
         }
     }
 
     private func logRealtimeBudgetDecisionIfNeeded(
         now: CFAbsoluteTime,
-        decision: HostRealtimeStreamBudgetController.Decision
+        decision: HostFrameBudgetDecision
     ) {
         let admission = receiverFrameAdmissionIsActive(now: now) ? receiverFrameAdmissionTargetFPS : nil
         guard realtimeLastLoggedState != decision.state ||
@@ -269,10 +266,11 @@ extension StreamContext {
             .map { formatAwdlMetric(Double($0)) }
             ?? "none"
         MirageLogger.metrics(
-            "Realtime stream budget: stream=\(streamID) " +
-                "state=\(decision.state.rawValue) reason=\(decision.reason) " +
+            "Frame budget: stream=\(streamID) " +
+                "state=\(decision.state.rawValue) reason=\(decision.reason.rawValue) " +
                 "runtimeCeiling=\(ceilingText) currentBitrate=\(currentBitrateText) " +
-                "qualityCeiling=\(qualityText) admission=\(admissionText)"
+                "qualityCeiling=\(qualityText) admission=\(admissionText) " +
+                "frameBytes=\(decision.maxFrameBytes) wireBytes=\(decision.maxWireBytes) packets=\(decision.maxPacketCount)"
         )
     }
 

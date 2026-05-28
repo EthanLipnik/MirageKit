@@ -13,12 +13,6 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
-    private static let encodedFrameOverBudgetRatio = 1.20
-    private static let encodedFrameUnderBudgetRatio = 0.68
-    private static let encodedFrameQualityRaiseThreshold = 3
-    private static let encodedFrameBaseQualityDropStep: Float = 0.03
-    private static let encodedFrameBaseQualityRaiseStep: Float = 0.02
-
     /// Logs periodic stream pipeline metrics and updates adaptive in-flight depth.
     func logPipelineStatsIfNeeded() async {
         let now = CFAbsoluteTimeGetCurrent()
@@ -158,6 +152,158 @@ extension StreamContext {
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
     }
 
+    /// Applies a conservative host-local change estimate before submitting the frame to VideoToolbox.
+    /// Returns true when the current non-keyframe should be dropped before it can advance encoder references.
+    func applyPreEncodeMotionBudgetIfNeeded(
+        for frame: CapturedFrame,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        guard runtimeQualityAdjustmentEnabled else { return false }
+        guard encoderConfig.codec != .proRes4444 else { return false }
+        guard let currentSample = HostFrameMotionSampler.sample(pixelBuffer: frame.pixelBuffer) else {
+            previousFrameMotionSample = nil
+            return false
+        }
+        defer { previousFrameMotionSample = currentSample }
+        guard let estimate = HostFrameMotionSampler.estimate(
+            previous: previousFrameMotionSample,
+            current: currentSample
+        ) else {
+            return false
+        }
+
+        guard let decision = frameBudgetController.updateForFrameChange(
+            estimate: estimate,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: steadyQualityCeiling,
+            now: now
+        ) else {
+            return false
+        }
+
+        await applyFrameBudgetDecision(decision, now: now)
+        logPreEncodeMotionBudgetIfNeeded(estimate: estimate, decision: decision, now: now)
+        return shouldDropPreEncodeMotionFrame(estimate: estimate, decision: decision, now: now)
+    }
+
+    private func shouldDropPreEncodeMotionFrame(
+        estimate: HostFrameChangeEstimate,
+        decision: HostFrameBudgetDecision,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard decision.state == .severe else { return false }
+        guard activeQuality <= qualityFloor + 0.01 else { return false }
+        guard now - preEncodeMotionDropLastTime >= 0.20 else { return false }
+        guard estimate.confidence >= 0.92 else { return false }
+        return estimate.changedAreaRatio >= 0.72 || estimate.averageDelta >= 0.26
+    }
+
+    func shouldDropEncodedNonKeyframeForBudget(byteCount: Int) -> Bool {
+        guard runtimeQualityAdjustmentEnabled, byteCount > 0 else { return false }
+        guard let budgetBytes = encodedFrameBudgetBytes() else { return false }
+        return Double(byteCount) > budgetBytes
+    }
+
+    func evaluateEncodedFrameBudget(
+        byteCount: Int,
+        wireBytes: Int,
+        packetCount: Int,
+        isKeyframe: Bool,
+        encodedAt now: CFAbsoluteTime
+    ) async -> HostEncodedFrameAdmissionDecision {
+        guard runtimeQualityAdjustmentEnabled, byteCount > 0 else {
+            return HostEncodedFrameAdmissionDecision(
+                admission: .send,
+                budgetDecision: nil,
+                sendDeadline: now + 1.0 / Double(max(1, currentFrameRate)),
+                byteRatio: 0,
+                wireRatio: 0,
+                packetRatio: 0
+            )
+        }
+        let decision = frameBudgetController.evaluateEncodedFrame(
+            byteCount: byteCount,
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            isKeyframe: isKeyframe,
+            receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: steadyQualityCeiling,
+            now: now
+        )
+        if let budgetDecision = decision.budgetDecision {
+            await applyFrameBudgetDecision(budgetDecision, now: now)
+        }
+        return decision
+    }
+
+    func handleDroppedEncodedFrameForBudget(
+        byteCount: Int,
+        evaluation: HostEncodedFrameAdmissionDecision,
+        encodedAt now: CFAbsoluteTime
+    ) async {
+        droppedFrameCount += 1
+        qualityRaiseSuppressionUntil = max(
+            qualityRaiseSuppressionUntil,
+            now + qualityRaisePostSpikeCooldown
+        )
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Encoded-frame budget recovery",
+            noteLoss: false,
+            ignoreExistingInFlight: true
+        )
+        let budgetBytes = encodedFrameBudgetBytes() ?? 0
+        let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
+        logDroppedEncodedFrameForBudgetIfNeeded(
+            byteCount: byteCount,
+            budgetBytes: budgetBytes,
+            ratio: ratio,
+            now: now
+        )
+    }
+
+    func handleDroppedKeyframeForBudget(
+        byteCount: Int,
+        evaluation: HostEncodedFrameAdmissionDecision,
+        encodedAt now: CFAbsoluteTime
+    ) async {
+        droppedFrameCount += 1
+        qualityRaiseSuppressionUntil = max(
+            qualityRaiseSuppressionUntil,
+            now + qualityRaisePostSpikeCooldown
+        )
+        if let decision = evaluation.budgetDecision {
+            await encoder?.prepareForKeyframe(quality: decision.keyframeQuality)
+        }
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Encoded keyframe budget recovery",
+            noteLoss: false,
+            ignoreExistingInFlight: true
+        )
+        let budgetBytes = encodedFrameBudgetBytes() ?? 0
+        let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
+        logDroppedEncodedFrameForBudgetIfNeeded(
+            byteCount: byteCount,
+            budgetBytes: budgetBytes,
+            ratio: ratio,
+            now: now
+        )
+    }
+
     /// Applies runtime encoder quality changes using queue pressure and encode timing.
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
@@ -224,74 +370,6 @@ extension StreamContext {
         }
     }
 
-    /// Applies fast runtime quality control from each encoded non-keyframe's byte size.
-    func adjustQualityForEncodedFrame(
-        byteCount: Int,
-        isKeyframe: Bool,
-        queueBytes: Int,
-        encodedAt now: CFAbsoluteTime
-    ) async {
-        guard !isKeyframe else { return }
-        guard let encoder else { return }
-        guard runtimeQualityAdjustmentEnabled else { return }
-        guard let budgetBytes = encodedFrameBudgetBytes() else { return }
-
-        qualityCeiling = resolvedQualityCeiling
-        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-            await encoder.updateQuality(activeQuality)
-            return
-        }
-        if activeQuality < qualityFloor {
-            activeQuality = qualityFloor
-            await encoder.updateQuality(activeQuality)
-            return
-        }
-
-        let ratio = Double(max(0, byteCount)) / budgetBytes
-        let previousQuality = activeQuality
-        let action: String
-        if ratio > Self.encodedFrameOverBudgetRatio {
-            qualityOverBudgetCount += 1
-            qualityUnderBudgetCount = 0
-            activeQuality = Self.encodedFrameOverBudgetQuality(
-                currentQuality: activeQuality,
-                qualityFloor: qualityFloor,
-                ratio: ratio
-            )
-            qualityOverBudgetCount = 0
-            action = "down reason=encoded-frame"
-        } else if ratio < Self.encodedFrameUnderBudgetRatio, queueBytes <= minQueuedBytes {
-            qualityOverBudgetCount = 0
-            qualityUnderBudgetCount += 1
-            if qualityUnderBudgetCount >= Self.encodedFrameQualityRaiseThreshold {
-                activeQuality = min(
-                    qualityCeiling,
-                    activeQuality + Self.encodedFrameQualityRaiseStep(for: ratio)
-                )
-                qualityUnderBudgetCount = 0
-            }
-            action = "up"
-        } else {
-            qualityOverBudgetCount = 0
-            qualityUnderBudgetCount = 0
-            return
-        }
-
-        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
-        await encoder.updateQuality(activeQuality)
-        lastQualityAdjustmentTime = now
-        logEncodedFrameQualityChangeIfNeeded(
-            action: action,
-            byteCount: byteCount,
-            budgetBytes: budgetBytes,
-            ratio: ratio,
-            queueBytes: queueBytes,
-            now: now
-        )
-    }
-
     private func encodedFrameBudgetBytes() -> Double? {
         let targetBitrate = realtimeRuntimeBitrateCeilingBps ??
             currentTargetBitrateBps ??
@@ -302,52 +380,61 @@ extension StreamContext {
         return max(1.0, Double(targetBitrate) / 8.0 / Double(max(1, currentFrameRate)))
     }
 
-    private static func encodedFrameQualityDropStep(for ratio: Double) -> Float {
-        guard ratio.isFinite else { return encodedFrameBaseQualityDropStep }
-        if ratio >= 2.5 { return 0.08 }
-        if ratio >= 1.8 { return 0.06 }
-        if ratio >= 1.4 { return 0.04 }
-        return encodedFrameBaseQualityDropStep
+    private func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
+        guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
+        let target = Double(max(1, currentFrameRate))
+        if receiverPresentationBacklogFrames > 1 { return false }
+        let receiverFPS = [receiverDecodedFPS, receiverAcceptedFPS, receiverPresentedFPS]
+            .filter { $0 > 0 }
+            .min()
+        guard let receiverFPS else { return true }
+        return receiverFPS >= target * 0.85
     }
 
-    private static func encodedFrameOverBudgetQuality(
-        currentQuality: Float,
-        qualityFloor: Float,
-        ratio: Double
-    ) -> Float {
-        guard ratio.isFinite, ratio > 0 else {
-            return max(qualityFloor, currentQuality - encodedFrameBaseQualityDropStep)
-        }
-        let steppedQuality = currentQuality - encodedFrameQualityDropStep(for: ratio)
-        let proportionalQuality = currentQuality / Float(sqrt(max(1.0, ratio / 0.92)))
-        return max(qualityFloor, min(steppedQuality, proportionalQuality))
+    private func logPreEncodeMotionBudgetIfNeeded(
+        estimate: HostFrameChangeEstimate,
+        decision: HostFrameBudgetDecision,
+        now: CFAbsoluteTime
+    ) {
+        guard now - preEncodeMotionBudgetLastLogTime >= 0.5 else { return }
+        preEncodeMotionBudgetLastLogTime = now
+        let changedText = estimate.changedAreaRatio.formatted(.number.precision(.fractionLength(2)))
+        let deltaText = estimate.averageDelta.formatted(.number.precision(.fractionLength(2)))
+        let confidenceText = estimate.confidence.formatted(.number.precision(.fractionLength(2)))
+        let bitrateText = "\((Double(decision.targetBitrateBps) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))))Mbps"
+        MirageLogger.metrics(
+            "Pre-encode change estimate: stream=\(streamID) state=\(decision.state.rawValue) " +
+                "target=\(bitrateText) changed=\(changedText) delta=\(deltaText) confidence=\(confidenceText)"
+        )
     }
 
-    private static func encodedFrameQualityRaiseStep(for ratio: Double) -> Float {
-        guard ratio.isFinite else { return encodedFrameBaseQualityRaiseStep }
-        if ratio <= 0.25 { return 0.05 }
-        if ratio <= 0.45 { return 0.035 }
-        return encodedFrameBaseQualityRaiseStep
+    func logPreEncodeMotionDropIfNeeded(now: CFAbsoluteTime) {
+        guard now - preEncodeMotionDropLastLogTime >= 0.5 else { return }
+        preEncodeMotionDropLastLogTime = now
+        let qualityText = Double(activeQuality).formatted(.number.precision(.fractionLength(2)))
+        let floorText = Double(qualityFloor).formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.metrics(
+            "Dropped high-motion frame before encoder for stream \(streamID) " +
+                "(quality=\(qualityText) floor=\(floorText))"
+        )
     }
 
-    private func logEncodedFrameQualityChangeIfNeeded(
-        action: String,
+    private func logDroppedEncodedFrameForBudgetIfNeeded(
         byteCount: Int,
         budgetBytes: Double,
         ratio: Double,
-        queueBytes: Int,
         now: CFAbsoluteTime
     ) {
         guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
         encodedFrameQualityLastLogTime = now
-        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
         let budgetKB = (budgetBytes / 1024.0).formatted(.number.precision(.fractionLength(1)))
         let frameKB = (Double(byteCount) / 1024.0).formatted(.number.precision(.fractionLength(1)))
         let ratioText = ratio.formatted(.number.precision(.fractionLength(2)))
         MirageLogger.metrics(
-            "Encoded-frame quality \(action) to \(qualityText) " +
-                "(frame=\(frameKB)KB budget=\(budgetKB)KB ratio=\(ratioText) queue=\(queueBytes / 1024)KB)"
+            "Dropped encoded frame over budget before send " +
+                "(frame=\(frameKB)KB budget=\(budgetKB)KB ratio=\(ratioText))"
         )
     }
+
 }
 #endif

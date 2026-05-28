@@ -184,11 +184,15 @@ extension MirageHostService {
                 frameContinuation.withLock { $0 = continuation }
             }
 
+            let encodedFrameHandler = captureBenchmarkEncodedFrameHandler(
+                measurementWindow: measurementWindow,
+                encodedFrameCount: encodedFrameCount
+            )
             await stageEncoder.startEncoding(
-                onEncodedFrame: captureBenchmarkEncodedFrameHandler(
-                    measurementWindow: measurementWindow,
-                    encodedFrameCount: encodedFrameCount
-                ),
+                onEncodedFrame: { data, isKeyframe, presentationTime, finishFrame in
+                    encodedFrameHandler(data, isKeyframe, presentationTime)
+                    finishFrame()
+                },
                 onFrameComplete: {}
             )
 

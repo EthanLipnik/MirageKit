@@ -7,6 +7,7 @@
 //  Shared streaming pipeline setup used by all capture modes.
 //
 
+import CoreMedia
 import CoreVideo
 import Foundation
 import MirageKit
@@ -103,7 +104,7 @@ extension StreamContext {
         logPrefix: String
     ) async {
         let currentStreamID = streamID
-        guard let packetSender, let encoder else {
+        guard packetSender != nil, let encoder else {
             MirageLogger.stream("startEncoderWithSharedCallback skipped — stream \(currentStreamID) already stopped")
             return
         }
@@ -111,102 +112,180 @@ extension StreamContext {
         let baseFrameFlagsSnapshot = baseFrameFlags
 
         await encoder.startEncoding(
-            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
-                guard let self else { return }
-
-                let now = CFAbsoluteTimeGetCurrent()
-                if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe {
-                    return
-                }
-                if isKeyframe {
-                    suppressEncodedNonKeyframesUntilKeyframe = false
-                }
-
-                let requestedFECBlockSize = resolvedFECBlockSize(
-                    isKeyframe: isKeyframe,
-                    frameByteCount: encodedData.count,
-                    now: now
-                )
-                let fecBlockSize = videoTransportMode.usesReliableOrderedDelivery ? 0 : requestedFECBlockSize
-                let reservation = callbackSequencer.reserve(
-                    frameByteCount: encodedData.count,
-                    maxPayloadSize: maxPayloadSize,
-                    fecBlockSize: fecBlockSize
-                )
-
-                if isKeyframe {
-                    MirageLogger.stream(
-                        "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
-                    )
-                } else {
-                    MirageFrameIntegrityDiagnostics.shared.recordPFrame(
-                        source: .encodedPFrame,
-                        streamID: streamID,
-                        frameNumber: reservation.frameNumber,
-                        frameBytes: encodedData
-                    )
-                }
-                let contentRect = pinnedContentRect ?? currentContentRect
-                let pacingOverride = Self.mediaPacingOverride(
-                    isKeyframe: isKeyframe,
-                    transportPathKind: transportPathKind,
-                    mediaPathProfile: mediaPathProfile,
-                    targetBitrateBps: currentTargetBitrateBps,
-                    maxPayloadSize: maxPayloadSize
-                )
-                let frameByteCount = encodedData.count
-                if !isKeyframe {
-                    let queuedBytes = packetSender.queuedByteCount
-                    Task(priority: .userInitiated) {
-                        await self.adjustQualityForEncodedFrame(
-                            byteCount: frameByteCount,
-                            isKeyframe: isKeyframe,
-                            queueBytes: queuedBytes,
-                            encodedAt: now
-                        )
+            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime, finishFrame in
+                Task(priority: .userInitiated) {
+                    guard let self else {
+                        finishFrame()
+                        return
                     }
+                    await self.handleEncodedFrameForStreaming(
+                        encodedData: encodedData,
+                        isKeyframe: isKeyframe,
+                        presentationTime: presentationTime,
+                        pinnedContentRect: pinnedContentRect,
+                        logPrefix: logPrefix,
+                        callbackSequencer: callbackSequencer,
+                        baseFrameFlagsSnapshot: baseFrameFlagsSnapshot
+                    )
+                    finishFrame()
                 }
-
-                let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
-                let dimToken = dimensionToken
-                let currentEpoch = epoch
-
-                let generation = packetSender.currentGeneration
-                if isKeyframe {
-                    let queuedBytes = packetSender.queuedByteCount
-                    Task(priority: .userInitiated) {
-                        await self.logDependencyRecoveryKeyframeIfNeeded(
-                            frameNumber: reservation.frameNumber,
-                            queuedBytes: queuedBytes
-                        )
-                        await self.markKeyframeInFlight(frameNumber: reservation.frameNumber)
-                        await self.markKeyframeSent()
-                    }
-                }
-                let workItem = StreamPacketSender.WorkItem(
-                    encodedData: encodedData,
-                    frameByteCount: frameByteCount,
-                    isKeyframe: isKeyframe,
-                    presentationTime: presentationTime,
-                    contentRect: contentRect,
-                    streamID: streamID,
-                    frameNumber: reservation.frameNumber,
-                    sequenceNumberStart: reservation.sequenceNumberStart,
-                    additionalFlags: flags,
-                    dimensionToken: dimToken,
-                    epoch: currentEpoch,
-                    fecBlockSize: fecBlockSize,
-                    wireBytes: reservation.wireBytes,
-                    logPrefix: logPrefix,
-                    generation: generation,
-                    encodedAt: now,
-                    targetFrameRate: currentFrameRate,
-                    pacingOverride: pacingOverride
-                )
-                packetSender.enqueue(workItem)
             }, onFrameComplete: { [weak self] in
                 Task(priority: .userInitiated) { await self?.finishEncoding() }
             }
+        )
+    }
+
+    private func handleEncodedFrameForStreaming(
+        encodedData: Data,
+        isKeyframe: Bool,
+        presentationTime: CMTime,
+        pinnedContentRect: CGRect?,
+        logPrefix: String,
+        callbackSequencer: StreamEncodingCallbackSequencer,
+        baseFrameFlagsSnapshot: FrameFlags
+    ) async {
+        guard let packetSender else { return }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe {
+            return
+        }
+        if isKeyframe {
+            suppressEncodedNonKeyframesUntilKeyframe = false
+        }
+
+        let frameByteCount = encodedData.count
+        let requestedFECBlockSize = resolvedFECBlockSize(
+            isKeyframe: isKeyframe,
+            frameByteCount: frameByteCount,
+            now: now
+        )
+        let fecBlockSize = videoTransportMode.usesReliableOrderedDelivery ? 0 : requestedFECBlockSize
+        let projectedPlan = Self.projectedFragmentPlan(
+            frameByteCount: frameByteCount,
+            maxPayloadSize: maxPayloadSize,
+            fecBlockSize: fecBlockSize
+        )
+        let admissionDecision = await evaluateEncodedFrameBudget(
+            byteCount: frameByteCount,
+            wireBytes: projectedPlan.wireBytes,
+            packetCount: projectedPlan.packetCount,
+            isKeyframe: isKeyframe,
+            encodedAt: now
+        )
+
+        switch admissionDecision.admission {
+        case .send:
+            break
+        case .dropPFrameAndRequestKeyframe:
+            suppressEncodedNonKeyframesUntilKeyframe = true
+            await handleDroppedEncodedFrameForBudget(
+                byteCount: frameByteCount,
+                evaluation: admissionDecision,
+                encodedAt: now
+            )
+            return
+        case .retryKeyframeAtEmergencyQuality,
+             .dropKeyframeAndWaitForNext:
+            suppressEncodedNonKeyframesUntilKeyframe = true
+            await handleDroppedKeyframeForBudget(
+                byteCount: frameByteCount,
+                evaluation: admissionDecision,
+                encodedAt: now
+            )
+            return
+        }
+
+        if isKeyframe, admissionDecision.isOverBudget {
+            let ratio = max(admissionDecision.byteRatio, max(admissionDecision.wireRatio, admissionDecision.packetRatio))
+            let ratioText = ratio.formatted(.number.precision(.fractionLength(2)))
+            let frameKB = (Double(frameByteCount) / 1024.0).formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.metrics(
+                "Sending recovery keyframe within extended budget " +
+                    "(frame=\(frameKB)KB ratio=\(ratioText))"
+            )
+        }
+
+        let reservation = callbackSequencer.reserve(
+            frameByteCount: frameByteCount,
+            maxPayloadSize: maxPayloadSize,
+            fecBlockSize: fecBlockSize
+        )
+
+        if isKeyframe {
+            MirageLogger.stream(
+                "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
+            )
+        } else {
+            MirageFrameIntegrityDiagnostics.shared.recordPFrame(
+                source: .encodedPFrame,
+                streamID: streamID,
+                frameNumber: reservation.frameNumber,
+                frameBytes: encodedData
+            )
+        }
+        let contentRect = pinnedContentRect ?? currentContentRect
+        let pacingOverride = Self.mediaPacingOverride(
+            isKeyframe: isKeyframe,
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile,
+            targetBitrateBps: currentTargetBitrateBps,
+            maxPayloadSize: maxPayloadSize
+        )
+
+        let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
+        let dimToken = dimensionToken
+        let currentEpoch = epoch
+
+        let generation = packetSender.currentGeneration
+        if isKeyframe {
+            let queuedBytes = packetSender.queuedByteCount
+            logDependencyRecoveryKeyframeIfNeeded(
+                frameNumber: reservation.frameNumber,
+                queuedBytes: queuedBytes
+            )
+            markKeyframeInFlight(frameNumber: reservation.frameNumber)
+            markKeyframeSent()
+        }
+        let workItem = StreamPacketSender.WorkItem(
+            encodedData: encodedData,
+            frameByteCount: frameByteCount,
+            isKeyframe: isKeyframe,
+            presentationTime: presentationTime,
+            contentRect: contentRect,
+            streamID: streamID,
+            frameNumber: reservation.frameNumber,
+            sequenceNumberStart: reservation.sequenceNumberStart,
+            additionalFlags: flags,
+            dimensionToken: dimToken,
+            epoch: currentEpoch,
+            fecBlockSize: fecBlockSize,
+            wireBytes: reservation.wireBytes,
+            logPrefix: logPrefix,
+            generation: generation,
+            encodedAt: now,
+            sendDeadline: admissionDecision.sendDeadline,
+            targetFrameRate: currentFrameRate,
+            pacingOverride: pacingOverride
+        )
+        packetSender.enqueue(workItem)
+    }
+
+    private static func projectedFragmentPlan(
+        frameByteCount: Int,
+        maxPayloadSize: Int,
+        fecBlockSize: Int
+    ) -> (wireBytes: Int, packetCount: Int) {
+        let payloadSize = max(1, maxPayloadSize)
+        let dataFragments = frameByteCount > 0
+            ? (frameByteCount + payloadSize - 1) / payloadSize
+            : 0
+        let parityFragments = fecBlockSize > 1
+            ? (dataFragments + fecBlockSize - 1) / fecBlockSize
+            : 0
+        return (
+            wireBytes: frameByteCount + parityFragments * payloadSize,
+            packetCount: dataFragments + parityFragments
         )
     }
 

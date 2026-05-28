@@ -134,6 +134,9 @@ actor StreamContext {
     var qualityOverBudgetCount: Int = 0
     var qualityUnderBudgetCount: Int = 0
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
+    var preEncodeMotionBudgetLastLogTime: CFAbsoluteTime = 0
+    var preEncodeMotionDropLastLogTime: CFAbsoluteTime = 0
+    var preEncodeMotionDropLastTime: CFAbsoluteTime = 0
     let qualityDropThreshold: Int = 3
     let qualityRaiseThreshold: Int = 8
     let qualityDropStep: Float = 0.02
@@ -150,6 +153,7 @@ actor StreamContext {
     var latencyBurstCaptureQueueDepthOverride: Int?
     var preLatencyBurstCaptureQueueDepthOverride: Int?
     var enteredTargetBitrate: Int?
+    var explicitEnteredTargetBitrate: Int?
     var bitrateAdaptationCeiling: Int?
     var requestedTargetBitrate: Int?
     var startupBitrate: Int?
@@ -161,6 +165,7 @@ actor StreamContext {
     var keyframeForRetuneCount: UInt64 = 0
     var encoderSessionRecreationCount: UInt64 = 0
     var adaptiveStreamScaleReason: String?
+    var hostAdaptiveBudgetApplied = false
 
     // Pipeline throughput metrics (interval counters)
     var captureIngressIntervalCount: UInt64 = 0
@@ -233,16 +238,16 @@ actor StreamContext {
     let senderFrameBudgetDelayOverrunThreshold: Int = 2
     let senderFrameBudgetDelayRecoveryMultiplier: Double = 2.0
     var transportController = HostStreamTransportController()
-    var realtimeBudgetController = HostRealtimeStreamBudgetController()
+    var frameBudgetController = HostFrameBudgetController()
     var realtimeRuntimeQualityCeiling: Float?
     var realtimeRuntimeBitrateCeilingBps: Int?
-    var realtimePressureState: HostRealtimeStreamBudgetController.PressureState = .observing
+    var realtimePressureState: HostFrameBudgetController.PressureState = .observing
     var realtimePressureReason: String?
-    var realtimeLastLoggedState: HostRealtimeStreamBudgetController.PressureState = .observing
+    var realtimeLastLoggedState: HostFrameBudgetController.PressureState = .observing
     var realtimeLastLoggedBitrateCeilingBps: Int?
     var realtimeLastLoggedAdmissionTargetFPS: Int?
     var realtimeLastLogTime: CFAbsoluteTime = 0
-    let realtimeMinimumBitrateFloorBps: Int = 12_000_000
+    nonisolated(unsafe) var realtimeMinimumBitrateFloorBps: Int = 12_000_000
     var transportFrameAdmissionTargetFPS: Int?
     var transportFrameAdmissionDeadline: CFAbsoluteTime = 0
     var realtimeFrameAdmissionTargetFPS: Int?
@@ -254,6 +259,7 @@ actor StreamContext {
     var receiverFrameAdmissionLastLoggedTargetFPS: Int?
     var receiverFrameAdmissionLastLoggedTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
     var receiverHasPresentedFrame = false
+    var receiverDecodedFPS: Double = 0
     var receiverPresentationBacklogFrames = 0
     var receiverAcceptedFPS: Double = 0
     var receiverPresentedFPS: Double = 0
@@ -316,6 +322,7 @@ actor StreamContext {
     var smoothedDirtyPercentage: Double = 0
     let motionSmoothingFactor: Double = 0.2
     let keyframeMotionThreshold: Double = 0.25
+    var previousFrameMotionSample: HostFrameMotionSampler.Sample?
 
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
@@ -483,6 +490,7 @@ actor StreamContext {
         keyframeIntervalSeconds = cadence.interval
         keyframeMaxIntervalSeconds = cadence.maxInterval
         self.enteredTargetBitrate = enteredBitrate ?? requestedTargetBitrate
+        self.explicitEnteredTargetBitrate = enteredBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = resolvedEncoderConfig.bitrate

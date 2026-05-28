@@ -291,8 +291,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var lowLatencyHighResolutionCompressionBoost: Bool?
     /// Whether the host should ignore normal resolution caps for this stream.
     public var disableResolutionCap: Bool
-    /// Maximum bitrate budget the client-owned adaptation loop may request for
-    /// this stream.
+    /// Maximum bitrate budget the host-side adaptation loop may use for this stream.
     public var bitrateAdaptationCeiling: Int?
     /// Maximum encoded width in pixels. When set, the host computes the stream
     /// scale from these dimensions and the actual capture resolution instead of

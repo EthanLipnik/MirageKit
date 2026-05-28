@@ -149,9 +149,12 @@ extension VideoEncoder {
             infoFlagsOut: nil
         ) { status, infoFlags, sampleBuffer in
             let info = Unmanaged<EncodeInfo>.fromOpaque(encodeInfoToken.rawPointer).takeRetainedValue()
+            var didTransferCompletion = false
             defer {
                 self.releaseEncoderSlot()
-                info.completion?()
+                if !didTransferCompletion {
+                    info.completion?()
+                }
             }
 
             guard status == noErr, let sampleBuffer else {
@@ -285,7 +288,12 @@ extension VideoEncoder {
             }
 
             info.encodedOutputTelemetry?.recordFrame(byteCount: data.count, isKeyframe: isKeyframe)
-            info.handler?(data, isKeyframe, pts)
+            if let handler = info.handler {
+                didTransferCompletion = true
+                handler(data, isKeyframe, pts) {
+                    info.completion?()
+                }
+            }
         }
 
         if status != noErr {

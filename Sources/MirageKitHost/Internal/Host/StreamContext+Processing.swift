@@ -331,6 +331,18 @@ extension StreamContext {
             setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
             await applyTrafficLightCloneStampIfNeeded(frame: frame)
+            let shouldDropForPreEncodeBudget = await applyPreEncodeMotionBudgetIfNeeded(
+                for: frame,
+                now: CFAbsoluteTimeGetCurrent()
+            )
+            if shouldDropForPreEncodeBudget, !forceKeyframe {
+                preEncodeMotionDropLastTime = CFAbsoluteTimeGetCurrent()
+                captureDroppedIntervalCount += 1
+                droppedFrameCount += 1
+                logPreEncodeMotionDropIfNeeded(now: preEncodeMotionDropLastTime)
+                await logStreamStatsIfNeeded()
+                continue
+            }
 
             do {
                 guard let encoder else { continue }
