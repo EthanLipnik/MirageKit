@@ -20,7 +20,7 @@ struct StreamEncodingCallbackSequencerTests {
             for index in 0 ..< 128 {
                 group.addTask {
                     let frameByteCount = 800 + (index % 11) * 173
-                    let fecBlockSize = index.isMultiple(of: 5) ? 4 : 1
+                    let fecBlockSize = index.isMultiple(of: 5) ? 4 : 0
                     let reservation = sequencer.reserve(
                         frameByteCount: frameByteCount,
                         maxPayloadSize: 512,

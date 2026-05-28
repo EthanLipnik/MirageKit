@@ -14,33 +14,30 @@ import Testing
 @MainActor
 @Suite("Cursor Monitor Source Resolution")
 struct CursorMonitorSourceResolutionTests {
-    @Test("System cursor wins over stale process cursor")
-    func systemCursorWinsOverStaleProcessCursor() {
+    @Test("Recognized system cursor is used")
+    func recognizedSystemCursorIsUsed() {
         let resolved = CursorMonitor.resolvedCursorType(
-            currentSystemCursor: .closedHand,
-            currentCursor: Self.unrecognizedCursor()
+            currentSystemCursor: .closedHand
         )
 
         #expect(resolved.cursorType == .closedHand)
         #expect(resolved.source == "currentSystem")
     }
 
-    @Test("Unrecognized system cursor falls back to process cursor")
-    func unrecognizedSystemCursorFallsBackToProcessCursor() {
+    @Test("Unrecognized system cursor falls back to arrow")
+    func unrecognizedSystemCursorFallsBackToArrow() {
         let resolved = CursorMonitor.resolvedCursorType(
-            currentSystemCursor: Self.unrecognizedCursor(),
-            currentCursor: .closedHand
+            currentSystemCursor: Self.unrecognizedCursor()
         )
 
-        #expect(resolved.cursorType == .closedHand)
-        #expect(resolved.source == "current")
+        #expect(resolved.cursorType == .arrow)
+        #expect(resolved.source == "fallback")
     }
 
-    @Test("Unrecognized cursor sources fall back to arrow")
-    func unrecognizedCursorSourcesFallBackToArrow() {
+    @Test("Missing system cursor falls back to arrow")
+    func missingSystemCursorFallsBackToArrow() {
         let resolved = CursorMonitor.resolvedCursorType(
-            currentSystemCursor: Self.unrecognizedCursor(),
-            currentCursor: Self.unrecognizedCursor()
+            currentSystemCursor: nil
         )
 
         #expect(resolved.cursorType == .arrow)

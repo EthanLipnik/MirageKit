@@ -67,6 +67,15 @@ package struct StartCustomStreamMessage: Codable {
     /// Requested media packet size for this stream.
     package var mediaMaxPacketSize: Int?
 
+    /// Client-observed control path kind at stream start.
+    package var clientTransportPathKind: MirageNetworkPathKind?
+
+    /// Client-observed media profile at stream start.
+    package var clientMediaPathProfile: MirageMediaPathProfile?
+
+    /// Diagnostic client control-path signature at stream start.
+    package var clientPathSignature: String?
+
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
 
@@ -82,7 +91,10 @@ package struct StartCustomStreamMessage: Codable {
         displayHeight: Int,
         targetFrameRate: Int,
         streamScale: CGFloat? = nil,
-        mediaMaxPacketSize: Int? = nil
+        mediaMaxPacketSize: Int? = nil,
+        clientTransportPathKind: MirageNetworkPathKind? = nil,
+        clientMediaPathProfile: MirageMediaPathProfile? = nil,
+        clientPathSignature: String? = nil
     ) {
         self.startupRequestID = startupRequestID
         self.kind = kind
@@ -92,6 +104,9 @@ package struct StartCustomStreamMessage: Codable {
         self.targetFrameRate = max(1, min(120, targetFrameRate))
         self.streamScale = streamScale
         self.mediaMaxPacketSize = mediaMaxPacketSize
+        self.clientTransportPathKind = clientTransportPathKind
+        self.clientMediaPathProfile = clientMediaPathProfile
+        self.clientPathSignature = clientPathSignature
     }
 
     /// Public request handed to custom stream providers.

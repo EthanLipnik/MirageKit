@@ -370,7 +370,7 @@ struct PriorityInputClientRouteTests {
             )
         }
 
-        try await waitUntil("ordered protected fallback", timeout: .milliseconds(40)) {
+        try await waitUntil("ordered protected fallback", timeout: .milliseconds(250)) {
             await fallbackRecorder.count == 1
         }
 

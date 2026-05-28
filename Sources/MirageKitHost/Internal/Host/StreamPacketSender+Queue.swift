@@ -11,12 +11,6 @@ import MirageKit
 #if os(macOS)
 
 extension StreamPacketSender {
-    /// Returns whether a non-keyframe missed its sender-local deadline.
-    nonisolated func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
-        guard !item.isKeyframe, item.sendDeadline.isFinite else { return false }
-        return now >= item.sendDeadline
-    }
-
     /// Reduces the tracked queue byte count after a drop or send completes.
     nonisolated func reduceQueuedBytes(_ bytes: Int) {
         guard bytes > 0 else { return }
@@ -27,7 +21,17 @@ extension StreamPacketSender {
 
     /// Returns the queue accounting cost for a frame including FEC parity budget.
     nonisolated func accountedWireBytes(for item: WorkItem) -> Int {
-        max(0, max(item.wireBytes, fecPayloadBudgetBytes(for: item)))
+        if videoTransportMode.usesReliableOrderedDelivery {
+            return max(0, item.frameByteCount)
+        }
+        return max(0, max(item.wireBytes, fecPayloadBudgetBytes(for: item)))
+    }
+
+    /// Returns whether an unreliable non-keyframe missed its sender-local deadline.
+    nonisolated func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
+        guard !videoTransportMode.usesReliableOrderedDelivery else { return false }
+        guard !item.isKeyframe, item.sendDeadline.isFinite else { return false }
+        return now >= item.sendDeadline
     }
 
     /// Drops expired queued non-keyframes while the caller holds `queueLock`.
@@ -102,7 +106,7 @@ extension StreamPacketSender {
         }
     }
 
-    /// Enforces realtime queue bounds by evicting stale non-keyframes first.
+    /// Enforces realtime queue bounds by evicting non-keyframes first.
     nonisolated func enforceRealtimeQueueBoundsLocked(now: CFAbsoluteTime) {
         discardExpiredQueuedNonKeyframesLocked(now: now)
         while queuedWorkItems.count > Self.maxQueuedWorkItems || queuedBytes > Self.maxQueuedBytes {
@@ -110,7 +114,25 @@ extension StreamPacketSender {
             let evictedItem = queuedWorkItems.remove(at: evictionIndex)
             queuedBytes = max(0, queuedBytes - evictedItem.accountedBytes)
             queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(evictedItem.item, reason: .queueEviction)
+            markDependencyFrameDroppedLocked(
+                evictedItem.item,
+                reason: .queueEviction
+            )
+        }
+    }
+
+    /// Gives reliable ordered video room to ride out local bursts before declaring dependency loss.
+    nonisolated func enforceReliableQueueBoundsLocked() {
+        while queuedWorkItems.count > Self.maxReliableQueuedWorkItems ||
+            queuedBytes > Self.maxReliableQueuedBytes {
+            guard let evictionIndex = queuedWorkItems.firstIndex(where: { !$0.item.isKeyframe }) else { break }
+            let evictedItem = queuedWorkItems.remove(at: evictionIndex)
+            queuedBytes = max(0, queuedBytes - evictedItem.accountedBytes)
+            queuedStalePacketDropCount &+= 1
+            markDependencyFrameDroppedLocked(
+                evictedItem.item,
+                reason: .queueEviction
+            )
         }
     }
 
@@ -121,9 +143,13 @@ extension StreamPacketSender {
     ) {
         guard !item.isKeyframe else { return }
         switch reason {
-        case .expiredBeforeEnqueue, .expiredBeforeSend, .expiredDuringSend, .expiredQueuedFrame:
+        case .expiredBeforeEnqueue,
+             .expiredBeforeSend,
+             .expiredQueuedFrame:
             queuedSenderLocalDeadlineDropCount &+= 1
-        case .generationAbort, .oversizedFrame, .queueEviction:
+        case .generationAbort,
+             .oversizedFrame,
+             .queueEviction:
             break
         }
 

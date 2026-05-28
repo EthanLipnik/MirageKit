@@ -91,6 +91,12 @@ extension StreamController {
             return .hardRecovery
         }
 
+        if snapshot.isAwaitingKeyframe,
+           clientRecoveryStatus == .keyframeRecovery,
+           lastRecoveryRequestDispatchTime > 0 {
+            return .deferRetryGrace
+        }
+
         return .requestKeyframe
     }
 

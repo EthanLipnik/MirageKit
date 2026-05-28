@@ -31,7 +31,11 @@ extension StreamContext {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
         guard ceiling > 0 else { return 0 }
         let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
-        let floorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
+        let floorFactor: Float = if let pressureRatio = runtimeBitratePressureRatio() {
+            max(0.18, min(bitrateCappedQualityFloorFactor, pressureRatio * 1.10))
+        } else {
+            hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
+        }
         let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
         return min(ceiling, max(minimumFloor, ceiling * floorFactor))
     }
@@ -41,9 +45,26 @@ extension StreamContext {
         let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
         guard ceiling > 0 else { return 0 }
         let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
-        let floorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
+        let floorFactor: Float = if let pressureRatio = runtimeBitratePressureRatio() {
+            max(0.18, min(bitrateCappedKeyframeFloorFactor, pressureRatio * 1.10))
+        } else {
+            hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
+        }
         let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
         return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+    }
+
+    private func runtimeBitratePressureRatio() -> Float? {
+        let currentBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? 0
+        let baselineBitrate = enteredTargetBitrate ??
+            requestedTargetBitrate ??
+            startupBitrate ??
+            encoderConfig.bitrate ??
+            0
+        guard currentBitrate > 0, baselineBitrate > 0 else { return nil }
+        let ratio = Float(currentBitrate) / Float(baselineBitrate)
+        guard ratio < 0.95 else { return nil }
+        return max(0.01, min(1.0, ratio))
     }
 
     private func applyLowLatencyHighResolutionCompressionBoost(
@@ -161,9 +182,9 @@ extension StreamContext {
         encoderConfig.keyframeQuality = cappedKeyframeQuality
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = resolvedQualityCeiling
-        qualityFloor = resolvedRuntimeQualityFloor(for: cappedFrameQuality)
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         activeQuality = max(qualityFloor, min(cappedFrameQuality, qualityCeiling))
-        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: cappedKeyframeQuality)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: min(cappedKeyframeQuality, qualityCeiling))
 
         await encoder?.updateQuality(activeQuality)
 

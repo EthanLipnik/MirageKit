@@ -34,13 +34,21 @@ extension StreamContext {
     /// Configures the packet sender for encoded frame output.
     func setupPacketSender(
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil
     ) async {
+        let requestedVideoTransportMode = MirageVideoTransportMode.defaultMode(for: mediaPathProfile)
+        let videoTransportMode = sendPacketReliably == nil ? .unreliableQueued : requestedVideoTransportMode
+        self.videoTransportMode = videoTransportMode
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext,
             sendPacket: sendPacket,
+            sendPacketReliably: sendPacketReliably,
+            videoTransportMode: videoTransportMode,
             onSendError: onSendError,
+            duplicatesParameterSetPackets: mediaPathProfile.usesAwdlRadioPolicy &&
+                !videoTransportMode.usesReliableOrderedDelivery,
             onDependencyFrameDropped: { [weak self] streamID, frameNumber, reason in
                 Task(priority: .userInitiated) {
                     await self?.handlePacketSenderDependencyFrameDrop(
@@ -114,11 +122,12 @@ extension StreamContext {
                     suppressEncodedNonKeyframesUntilKeyframe = false
                 }
 
-                let fecBlockSize = resolvedFECBlockSize(
+                let requestedFECBlockSize = resolvedFECBlockSize(
                     isKeyframe: isKeyframe,
                     frameByteCount: encodedData.count,
                     now: now
                 )
+                let fecBlockSize = videoTransportMode.usesReliableOrderedDelivery ? 0 : requestedFECBlockSize
                 let reservation = callbackSequencer.reserve(
                     frameByteCount: encodedData.count,
                     maxPayloadSize: maxPayloadSize,
@@ -146,18 +155,21 @@ extension StreamContext {
                     maxPayloadSize: maxPayloadSize
                 )
                 let frameByteCount = encodedData.count
+                if !isKeyframe {
+                    let queuedBytes = packetSender.queuedByteCount
+                    Task(priority: .userInitiated) {
+                        await self.adjustQualityForEncodedFrame(
+                            byteCount: frameByteCount,
+                            isKeyframe: isKeyframe,
+                            queueBytes: queuedBytes,
+                            encodedAt: now
+                        )
+                    }
+                }
 
                 let flags = baseFrameFlagsSnapshot.union(dynamicFrameFlags)
                 let dimToken = dimensionToken
                 let currentEpoch = epoch
-                let sendDeadline = Self.mediaSendDeadline(
-                    encodedAt: now,
-                    isKeyframe: isKeyframe,
-                    latencyMode: latencyMode,
-                    transportPathKind: transportPathKind,
-                    mediaPathProfile: mediaPathProfile,
-                    targetFrameRate: currentFrameRate
-                )
 
                 let generation = packetSender.currentGeneration
                 if isKeyframe {
@@ -188,7 +200,6 @@ extension StreamContext {
                     logPrefix: logPrefix,
                     generation: generation,
                     encodedAt: now,
-                    sendDeadline: sendDeadline,
                     targetFrameRate: currentFrameRate,
                     pacingOverride: pacingOverride
                 )
@@ -305,41 +316,5 @@ extension StreamContext {
         return true
     }
 
-    nonisolated static func mediaSendDeadline(
-        encodedAt: CFAbsoluteTime,
-        isKeyframe: Bool,
-        latencyMode: MirageStreamLatencyMode,
-        transportPathKind: MirageNetworkPathKind = .unknown,
-        mediaPathProfile: MirageMediaPathProfile? = nil,
-        targetFrameRate: Int
-    ) -> CFAbsoluteTime? {
-        guard !isKeyframe else { return nil }
-        let profile = mediaPathProfile ?? MirageMediaPathProfile.classify(
-            pathKind: transportPathKind,
-            interfaceNames: []
-        )
-        let frameInterval = 1.0 / Double(max(1, targetFrameRate))
-        let deadlineOffset = switch latencyMode {
-        case .lowestLatency:
-            if profile.usesAwdlRadioPolicy {
-                clamp(frameInterval * 5.0, min: 0.080, max: 0.120)
-            } else {
-                clamp(frameInterval * 2.0, min: 0.016, max: 0.050)
-            }
-        case .balanced:
-            if profile.usesAwdlRadioPolicy {
-                clamp(frameInterval * 5.0, min: 0.080, max: 0.120)
-            } else {
-                clamp(frameInterval * 3.0, min: 0.033, max: 0.080)
-            }
-        case .smoothest:
-            clamp(0.160 + frameInterval * 2.0, min: 0.120, max: 0.300)
-        }
-        return encodedAt + deadlineOffset
-    }
-
-    nonisolated private static func clamp(_ value: Double, min lowerBound: Double, max upperBound: Double) -> Double {
-        Swift.min(Swift.max(value, lowerBound), upperBound)
-    }
 }
 #endif

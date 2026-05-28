@@ -12,9 +12,10 @@ import MirageKit
 import Testing
 
 extension StreamPacketSenderRegressionTests {
-    @Test("Expired non-keyframes are dropped before packet submission")
-    func expiredNonKeyframesDropBeforePacketSubmission() async throws {
+    @Test("Expired non-keyframes before enqueue open dependency recovery")
+    func expiredNonKeyframesBeforeEnqueueOpenDependencyRecovery() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacket: { packet, onComplete in
@@ -27,7 +28,8 @@ extension StreamPacketSenderRegressionTests {
                     $0.append(StreamPacketSenderSubmittedPacket(frameNumber: header.frameNumber))
                 }
                 onComplete(nil)
-            }
+            },
+            onDependencyFrameDropped: { _, _, _ in dependencyDropCount.withLock { $0 += 1 } }
         )
 
         await sender.start()
@@ -43,14 +45,14 @@ extension StreamPacketSenderRegressionTests {
             )
         )
 
-        _ = try await waitForStreamPacketTelemetry(
-            sender,
-            timeout: .seconds(2)
-        ) { snapshot in
-            snapshot.stalePacketDrops == 1
-        }
+        try await Task.sleep(for: .milliseconds(50))
 
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.stalePacketDrops == 1)
+        #expect(telemetry.senderLocalDeadlineDrops == 1)
         #expect(submittedPackets.read { $0.isEmpty })
+        #expect(dependencyDropCount.read { $0 == 1 })
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
         #expect(sender.queuedByteCount == 0)
 
         await sender.stop()
@@ -97,9 +99,10 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Non-keyframe drops instead of pacing past sender deadline")
-    func nonKeyframeDropsInsteadOfPacingPastSenderDeadline() async throws {
+    @Test("Finite non-keyframe deadline does not prevent delivery")
+    func finiteNonKeyframeDeadlineDoesNotPreventDelivery() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 1200,
             sendPacket: { packet, onComplete in
@@ -112,11 +115,11 @@ extension StreamPacketSenderRegressionTests {
                     $0.append(StreamPacketSenderSubmittedPacket(frameNumber: header.frameNumber))
                 }
                 onComplete(nil)
-            }
+            },
+            onDependencyFrameDropped: { _, _, _ in dependencyDropCount.withLock { $0 += 1 } }
         )
 
         await sender.start()
-        await sender.setTargetBitrateBps(8_000)
         let generation = sender.currentGeneration
         sender.enqueue(
             makeStreamPacketWorkItem(
@@ -129,16 +132,15 @@ extension StreamPacketSenderRegressionTests {
             )
         )
 
-        let telemetry = try await waitForStreamPacketTelemetry(
-            sender,
-            timeout: .seconds(2)
-        ) { snapshot in
-            snapshot.stalePacketDrops == 1 &&
-                snapshot.senderLocalDeadlineDrops == 1
-        }
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
 
-        #expect(telemetry.stalePacketDrops == 1)
-        #expect(submittedPackets.read { $0.isEmpty })
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.stalePacketDrops == 0)
+        #expect(telemetry.senderLocalDeadlineDrops == 0)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [304])
+        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(await !sender.requiresDependencyRecoveryKeyframe())
         #expect(sender.queuedByteCount == 0)
 
         await sender.stop()
@@ -186,8 +188,8 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Repeated local expired dependency frames hold until keyframe")
-    func repeatedLocalExpiredDependencyFramesHoldUntilKeyframe() async throws {
+    @Test("Repeated local deadline drops hold later P-frames until keyframe")
+    func repeatedLocalDeadlineDropsHoldLaterPFramesUntilKeyframe() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
@@ -221,13 +223,7 @@ extension StreamPacketSenderRegressionTests {
             )
         }
 
-        _ = try await waitForStreamPacketTelemetry(
-            sender,
-            timeout: .seconds(2)
-        ) { snapshot in
-            snapshot.stalePacketDrops == 3 &&
-                snapshot.senderLocalDeadlineDrops == 3
-        }
+        try await Task.sleep(for: .milliseconds(50))
 
         sender.enqueue(
             makeStreamPacketWorkItem(
@@ -240,40 +236,21 @@ extension StreamPacketSenderRegressionTests {
         )
         try await Task.sleep(for: .milliseconds(50))
 
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.stalePacketDrops == 3)
+        #expect(telemetry.senderLocalDeadlineDrops == 3)
+        #expect(telemetry.nonKeyframeHoldDrops == 1)
         #expect(submittedPackets.read { $0.isEmpty })
         #expect(dependencyDropCount.read { $0 == 1 })
-
-        sender.enqueue(
-            makeStreamPacketWorkItem(
-                payload: makeStreamPacketPayload(byteCount: 128),
-                streamID: 46,
-                frameNumber: 405,
-                sequenceNumberStart: 4050,
-                generation: generation,
-                isKeyframe: true
-            )
-        )
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
-
-        sender.enqueue(
-            makeStreamPacketWorkItem(
-                payload: makeStreamPacketPayload(byteCount: 128),
-                streamID: 46,
-                frameNumber: 406,
-                sequenceNumberStart: 4060,
-                generation: generation
-            )
-        )
-        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
-
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [405, 406])
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
 
         await sender.stop()
     }
 
-    @Test("Started non-keyframes stop remaining fragments after deadline")
-    func startedNonKeyframesStopRemainingFragmentsAfterDeadline() async throws {
+    @Test("Started non-keyframes complete after deadline")
+    func startedNonKeyframesCompleteAfterDeadline() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacket: { packet, onComplete in
@@ -290,6 +267,10 @@ extension StreamPacketSenderRegressionTests {
                     Thread.sleep(forTimeInterval: 0.030)
                 }
                 onComplete(nil)
+            },
+            onDependencyFrameDropped: { _, _, reason in
+                Issue.record("Unexpected dependency drop: \(reason)")
+                dependencyDropCount.withLock { $0 += 1 }
             }
         )
 
@@ -307,16 +288,15 @@ extension StreamPacketSenderRegressionTests {
             )
         )
 
-        let telemetry = try await waitForStreamPacketTelemetry(
-            sender,
-            timeout: .seconds(2)
-        ) { snapshot in
-            snapshot.senderLocalDeadlineDrops == 1 &&
-                snapshot.stalePacketDrops == 1
-        }
-        #expect(telemetry.senderLocalDeadlineDrops == 1)
-        #expect(telemetry.stalePacketDrops == 1)
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [410])
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
+        try await Task.sleep(for: .milliseconds(80))
+
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.senderLocalDeadlineDrops == 0)
+        #expect(telemetry.stalePacketDrops == 0)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [410, 410])
+        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(await !sender.requiresDependencyRecoveryKeyframe())
 
         await sender.stop()
     }
@@ -377,9 +357,76 @@ extension StreamPacketSenderRegressionTests {
         try await Task.sleep(for: .milliseconds(50))
         let telemetry = await sender.telemetrySnapshot
         #expect(telemetry.stalePacketDrops == 1)
+        #expect(telemetry.senderLocalDeadlineDrops == 1)
         #expect(telemetry.nonKeyframeHoldDrops == 1)
         #expect(dependencyDropCount.read { $0 == 1 })
         #expect(submittedPackets.read { $0.map(\.frameNumber) } == [500, 500])
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
+
+        await sender.stop()
+    }
+
+    @Test("Expired P-frame after queued keyframe opens recovery off AWDL")
+    func expiredPFrameAfterQueuedKeyframeOpensRecoveryOffAwdl() async throws {
+        let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let dependencyDropCount = Locked(0)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(StreamPacketSenderSubmittedPacket(frameNumber: header.frameNumber))
+                }
+                onComplete(nil)
+            },
+            onDependencyFrameDropped: { _, _, _ in dependencyDropCount.withLock { $0 += 1 } }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 1024),
+                streamID: 49,
+                frameNumber: 600,
+                sequenceNumberStart: 6000,
+                generation: generation,
+                isKeyframe: true
+            )
+        )
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 49,
+                frameNumber: 601,
+                sequenceNumberStart: 6100,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+            )
+        )
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 128),
+                streamID: 49,
+                frameNumber: 602,
+                sequenceNumberStart: 6200,
+                generation: generation
+            )
+        )
+
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
+        try await Task.sleep(for: .milliseconds(50))
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.stalePacketDrops == 1)
+        #expect(telemetry.senderLocalDeadlineDrops == 1)
+        #expect(telemetry.nonKeyframeHoldDrops == 1)
+        #expect(dependencyDropCount.read { $0 == 1 })
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [600, 600])
+        #expect(await sender.requiresDependencyRecoveryKeyframe())
 
         await sender.stop()
     }

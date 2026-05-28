@@ -143,7 +143,7 @@ extension MirageHostService {
         let hostBufferingPolicy = selectRequest.resolvedHostBufferingPolicy
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let audioConfiguration = selectRequest.audioConfiguration ?? audioConfigurationByClientID[clientID] ?? .default
-        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
+        let mediaPathPolicy = effectiveMediaPathPolicy(for: selectRequest, clientContext: clientContext)
         let context = StreamContext(
             streamID: mediaStreamID,
             windowID: 0,
@@ -160,11 +160,16 @@ extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
-            transportPathKind: pathSnapshot?.kind ?? .unknown,
-            mediaPathProfile: pathSnapshot?.mediaProfile,
+            transportPathKind: mediaPathPolicy.transportPathKind,
+            mediaPathProfile: mediaPathPolicy.mediaPathProfile,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight
+        )
+        MirageLogger.host(
+            "event=media_path_policy phase=app_atlas_start stream=\(mediaStreamID) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "maxPacket=\(mediaMaxPacketSize)"
         )
         streamsByID[mediaStreamID] = context
 
@@ -216,6 +221,11 @@ extension MirageHostService {
 
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         await context.setMediaSendProfile(mediaSendProfile)
+        MirageLogger.host(
+            "event=media_path_policy phase=app_atlas_transport stream=\(mediaStreamID) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(context.mediaMaxPacketSize)"
+        )
         let coordinator = AppAtlasMediaCoordinator(
             mediaStreamID: mediaStreamID,
             context: context,

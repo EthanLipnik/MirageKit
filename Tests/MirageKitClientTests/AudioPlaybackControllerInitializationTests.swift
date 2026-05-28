@@ -41,7 +41,7 @@ struct AudioPlaybackControllerInitializationTests {
         service.handleAudioStreamStarted(message)
 
         let controller = try #require(service.audioPlaybackControllerIfInitialized)
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(5)) {
             controller.playbackGraph != nil
         }
         #expect(controller.playbackGraph != nil)

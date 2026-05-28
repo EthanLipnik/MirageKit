@@ -59,6 +59,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
     func newerCurrentGenerationKeyframesSupersedeOlderQueuedKeyframes() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let blockedFirstPacket = Locked(false)
+        let firstPacketGate = StreamPacketSenderSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacket: { packet, onComplete in
@@ -75,10 +76,11 @@ struct StreamPacketSenderKeyframeSupersessionTests {
                     didBlock = true
                     return true
                 }
-                if shouldBlock { Thread.sleep(forTimeInterval: 0.05) }
+                if shouldBlock { firstPacketGate.wait() }
                 onComplete(nil)
             }
         )
+        defer { firstPacketGate.open() }
 
         await sender.start()
         let generation = sender.currentGeneration
@@ -113,6 +115,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
                 isKeyframe: true
             )
         )
+        firstPacketGate.open()
 
         try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
         let frameNumbers = submittedPackets.read { $0.map(\.frameNumber) }
@@ -126,6 +129,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
     func staleGenerationKeyframesDoNotSupersedeCurrentRecoveryKeyframes() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let blockedFirstPacket = Locked(false)
+        let firstPacketGate = StreamPacketSenderSendGate()
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
             sendPacket: { packet, onComplete in
@@ -142,10 +146,11 @@ struct StreamPacketSenderKeyframeSupersessionTests {
                     didBlock = true
                     return true
                 }
-                if shouldBlock { Thread.sleep(forTimeInterval: 0.05) }
+                if shouldBlock { firstPacketGate.wait() }
                 onComplete(nil)
             }
         )
+        defer { firstPacketGate.open() }
 
         await sender.start()
         await sender.bumpGeneration(reason: "test current recovery keyframe")
@@ -181,6 +186,7 @@ struct StreamPacketSenderKeyframeSupersessionTests {
                 isKeyframe: true
             )
         )
+        firstPacketGate.open()
 
         try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
         _ = try await waitForStreamPacketTelemetry(
@@ -196,4 +202,25 @@ struct StreamPacketSenderKeyframeSupersessionTests {
         await sender.stop()
     }
 }
+
+private final class StreamPacketSenderSendGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var isOpen = false
+
+    func wait() {
+        condition.lock()
+        while !isOpen {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func open() {
+        condition.lock()
+        isOpen = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
 #endif

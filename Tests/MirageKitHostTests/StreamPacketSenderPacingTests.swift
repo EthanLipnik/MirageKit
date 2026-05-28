@@ -137,6 +137,62 @@ struct StreamPacketSenderPacingTests {
         #expect(order.last == 12)
     }
 
+    @Test("FEC block size one is treated as disabled")
+    func fecBlockSizeOneIsTreatedAsDisabled() {
+        let plan = StreamPacketSender.fragmentPlan(
+            frameByteCount: 10,
+            maxPayload: 4,
+            fecBlockSize: 1
+        )
+        let order = StreamPacketSender.fragmentSendOrder(
+            dataFragmentCount: plan.dataFragmentCount,
+            parityFragmentCount: plan.parityFragmentCount,
+            fecBlockSize: 1
+        )
+
+        #expect(plan.dataFragmentCount == 3)
+        #expect(plan.parityFragmentCount == 0)
+        #expect(order == [0, 1, 2])
+    }
+
+    @Test("FEC fragment planning sequence reservation and queue bytes agree")
+    func fecFragmentPlanningSequenceReservationAndQueueBytesAgree() {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 4,
+            sendPacket: { _, onComplete in onComplete(nil) }
+        )
+        let sequencer = StreamEncodingCallbackSequencer()
+        var expectedSequenceNumber: UInt32 = 0
+
+        for blockSize in [0, 4, 8] {
+            let plan = StreamPacketSender.fragmentPlan(
+                frameByteCount: 10,
+                maxPayload: 4,
+                fecBlockSize: blockSize
+            )
+            let reservation = sequencer.reserve(
+                frameByteCount: 10,
+                maxPayloadSize: 4,
+                fecBlockSize: blockSize
+            )
+            let item = makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 10),
+                streamID: 9,
+                frameNumber: UInt32(blockSize),
+                sequenceNumberStart: reservation.sequenceNumberStart,
+                generation: sender.currentGeneration,
+                fecBlockSize: blockSize
+            )
+            let expectedWireBytes = 10 + plan.parityFragmentCount * 4
+
+            #expect(reservation.sequenceNumberStart == expectedSequenceNumber)
+            #expect(reservation.wireBytes == expectedWireBytes)
+            #expect(sender.accountedWireBytes(for: item) == expectedWireBytes)
+
+            expectedSequenceNumber &+= UInt32(plan.totalFragmentCount)
+        }
+    }
+
     @Test("Fragment send order stays sequential when FEC is disabled")
     func fragmentSendOrderStaysSequentialWhenFECIsDisabled() {
         let order = StreamPacketSender.fragmentSendOrder(

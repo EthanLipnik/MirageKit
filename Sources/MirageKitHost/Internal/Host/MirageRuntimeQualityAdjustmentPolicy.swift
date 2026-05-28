@@ -33,6 +33,8 @@ enum MirageRuntimeQualityAdjustmentPolicy {
         qualityFloor: Float,
         qualityCeiling: Float,
         transportOverBudget: Bool,
+        encodedFrameOverBudget: Bool = false,
+        encodedFrameUnderBudget: Bool = true,
         allowsRaise: Bool,
         allowTransportQualityRelief: Bool,
         qualityDropThreshold: Int,
@@ -41,7 +43,8 @@ enum MirageRuntimeQualityAdjustmentPolicy {
         qualityRaiseStep: Float
     ) -> MirageRuntimeQualityAdjustmentDecision {
         var nextState = state
-        let qualityDropSignal = allowTransportQualityRelief && transportOverBudget
+        let transportDropSignal = allowTransportQualityRelief && transportOverBudget
+        let qualityDropSignal = encodedFrameOverBudget || transportDropSignal
 
         if !qualityDropSignal {
             nextState.qualityOverBudgetCount = 0
@@ -54,9 +57,10 @@ enum MirageRuntimeQualityAdjustmentPolicy {
                 if nextQuality < nextState.activeQuality {
                     nextState.activeQuality = nextQuality
                     nextState.qualityOverBudgetCount = 0
+                    let reason = encodedFrameOverBudget ? "encoded-frame" : "transport"
                     return MirageRuntimeQualityAdjustmentDecision(
                         state: nextState,
-                        action: .drop(reason: "transport")
+                        action: .drop(reason: reason)
                     )
                 }
             }
@@ -68,7 +72,7 @@ enum MirageRuntimeQualityAdjustmentPolicy {
         }
 
         nextState.qualityOverBudgetCount = 0
-        guard allowsRaise else {
+        guard allowsRaise, encodedFrameUnderBudget else {
             nextState.qualityUnderBudgetCount = 0
             return MirageRuntimeQualityAdjustmentDecision(
                 state: nextState,

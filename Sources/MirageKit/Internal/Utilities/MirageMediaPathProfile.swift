@@ -46,20 +46,28 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         usesOther: Bool = false
     ) -> MirageMediaPathProfile {
         let interfaces = InterfaceSummary(interfaceNames)
-        if interfaces.hasAWDL {
-            return .awdlRadio
+        if interfaces.hasOverlay || pathKind == .vpn || usesCellular || pathKind == .cellular {
+            return .vpnOrOverlay
+        }
+        let selectedWiFi = pathKind == .wifi ||
+            (usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity))
+        if selectedWiFi {
+            return .localWiFi
+        }
+        if usesWired || usesLoopback || pathKind == .wired || pathKind == .loopback {
+            return .wired
         }
         if interfaces.hasApplePrivateNCM || interfaces.hasLowLatencyWireless {
             return .proximityWiredLike
         }
-        if pathKind == .awdl {
+        if interfaces.hasBridge {
+            return .wired
+        }
+        if interfaces.hasAWDL {
             return .awdlRadio
         }
-        if interfaces.hasOverlay || pathKind == .vpn || usesCellular || pathKind == .cellular {
-            return .vpnOrOverlay
-        }
-        if usesWired || usesLoopback || interfaces.hasBridge || pathKind == .wired || pathKind == .loopback {
-            return .wired
+        if pathKind == .awdl {
+            return .awdlRadio
         }
         if usesWiFi || pathKind == .wifi {
             return .localWiFi
@@ -77,6 +85,8 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         let hasLowLatencyWireless: Bool
         let hasBridge: Bool
         let hasOverlay: Bool
+        let hasProximity: Bool
+        let hasNonProximityRouteInterface: Bool
 
         init(_ interfaceNames: [String]) {
             names = interfaceNames
@@ -88,6 +98,15 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
             hasLowLatencyWireless = names.contains { $0.hasPrefix("llw") }
             hasBridge = names.contains { $0.hasPrefix("bridge") || $0.contains("thunderbolt") }
             hasOverlay = names.contains { $0.hasPrefix("utun") }
+            hasProximity = hasApplePrivateNCM || hasAWDL || hasLowLatencyWireless
+            hasNonProximityRouteInterface = names.contains {
+                !$0.hasPrefix("anpi") &&
+                    !$0.hasPrefix("awdl") &&
+                    !$0.hasPrefix("llw") &&
+                    !$0.hasPrefix("utun") &&
+                    !$0.hasPrefix("bridge") &&
+                    !$0.contains("thunderbolt")
+            }
         }
     }
 }

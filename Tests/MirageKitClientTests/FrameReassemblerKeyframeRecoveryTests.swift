@@ -122,5 +122,43 @@ struct FrameReassemblerKeyframeRecoveryTests {
         let expectedFrame = fragment0 + fragment1 + fragment2 + fragment3 + fragment4 + fragment5
         #expect(deliveredFrame.value == expectedFrame)
     }
+
+    @Test("Keyframe FEC block size one is ignored")
+    func keyframeFECBlockSizeOneIsIgnored() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredFrame = FrameReassemblerLockedOptionalData()
+
+        reassembler.setFrameHandler { _, data, _, _, _, _, release in
+            deliveredFrame.set(data)
+            release()
+        }
+
+        let fragment0 = Data([0x00, 0x00, 0x00, 0x01])
+        let fragment1 = Data([0x26, 0xAA, 0xBB, 0xCC])
+        let fragment2 = Data([0x11, 0x22, 0x33, 0x44])
+
+        let payloadsByFragment: [(UInt16, FrameFlags, Data)] = [
+            (0, [.keyframe], fragment0),
+            (2, [.keyframe], fragment2),
+            (4, [.keyframe, .fecParity], fragment1),
+        ]
+
+        for (fragmentIndex, flags, payload) in payloadsByFragment {
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                    flags: flags,
+                    frameNumber: 41,
+                    payload: payload,
+                    fragmentIndex: fragmentIndex,
+                    fragmentCount: 6,
+                    frameByteCount: 12,
+                    fecBlockSize: 1
+                )
+            )
+        }
+
+        #expect(deliveredFrame.value == nil)
+    }
 }
 #endif

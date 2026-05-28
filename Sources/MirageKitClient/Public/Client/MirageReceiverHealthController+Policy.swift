@@ -68,4 +68,11 @@ extension MirageReceiverHealthController {
     static let clientPFrameLatencyStressMs = 250.0
     static let clientPFrameLatencySevereMs = 450.0
     static let clientLatePFrameStressCount: UInt64 = 2
+    static let hostDeliveryCadenceHealthyRatio = 0.85
+    static let clientReceivedCadenceStressRatio = 0.75
+    static let clientReceivedCadenceSevereRatio = 0.55
+    static let clientReceivedGapStressMinimumMs = 90.0
+    static let clientReceivedGapSevereMinimumMs = 180.0
+    static let clientReceivedGapStressFrameMultiple = 4.0
+    static let clientReceivedGapSevereFrameMultiple = 8.0
 }

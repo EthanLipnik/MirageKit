@@ -14,6 +14,7 @@ extension StreamContext {
     func startAppAtlasFrameStream(
         pixelSize: CGSize,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws -> MirageCustomStreamFrameSink {
@@ -32,7 +33,11 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
+        await setupPacketSender(
+            sendPacket: sendPacket,
+            sendPacketReliably: sendPacketReliably,
+            onSendError: onSendError
+        )
 
         streamScale = 1.0
         baseCaptureSize = outputSize

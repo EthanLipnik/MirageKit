@@ -58,6 +58,7 @@ func startDesktopStream(
     encoderMaxWidth: Int? = nil,
     encoderMaxHeight: Int? = nil,
     mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
+    mediaPathPolicy: MirageEffectiveMediaPathPolicy,
     upscalingMode: MirageUpscalingMode? = nil,
     codec: MirageVideoCodec? = nil,
     startupRequestID: UUID
@@ -219,9 +220,8 @@ async throws {
         encoderMaxHeight: encoderMaxHeight,
         disableResolutionCap: disableResolutionCap
     ).resolvedStreamScale
-    let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
-    let transportPathKind = pathSnapshot?.kind ?? .unknown
-    let mediaPathProfile = pathSnapshot?.mediaProfile ?? .unknown
+    let transportPathKind = mediaPathPolicy.transportPathKind
+    let mediaPathProfile = mediaPathPolicy.mediaPathProfile
 
     let streamContext = await makeDesktopStreamContext(
         DesktopStreamContextRequest(
@@ -248,6 +248,11 @@ async throws {
             virtualDisplaySnapshot: virtualDisplaySnapshot,
             usesDisplayRefreshCadence: usesDisplayRefreshCadence
         )
+    )
+    MirageLogger.host(
+        "event=media_path_policy phase=desktop_start stream=\(streamID) " +
+            "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(streamContext.videoTransportMode) " +
+            "maxPacket=\(mediaMaxPacketSize)"
     )
     logDesktopStartStep("stream context created (\(streamID))")
     logDesktopStreamRuntimeOptions(

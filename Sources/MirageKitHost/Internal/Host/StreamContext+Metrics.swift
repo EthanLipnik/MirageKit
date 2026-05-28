@@ -56,7 +56,7 @@ extension StreamContext {
                 encoder: encoderValidation
             )
             await applyUltraValidationDowngradeIfNeeded(encoderValidation)
-            let currentBitrate = encoderConfig.bitrate
+            let currentBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate
             let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
             if let packetTelemetry {
                 await applySenderFrameBudgetRecoveryIfNeeded(
@@ -107,6 +107,9 @@ extension StreamContext {
                 requestedTargetBitrate: requestedTargetBitrate,
                 bitrateAdaptationCeiling: bitrateAdaptationCeiling,
                 startupBitrate: startupBitrate,
+                realtimeBitrateCeiling: realtimeRuntimeBitrateCeilingBps,
+                realtimePressureState: realtimePressureState.rawValue,
+                realtimePressureReason: realtimePressureReason,
                 captureAdmissionDrops: captureDroppedIntervalCount,
                 frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,

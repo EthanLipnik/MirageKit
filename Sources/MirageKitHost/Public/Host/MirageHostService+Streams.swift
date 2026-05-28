@@ -51,6 +51,65 @@ public extension MirageHostService {
         sizePreset: MirageDisplaySizePreset = .standard
     )
     async throws {
+        try await startStreamWithResolvedMediaPath(
+            for: window,
+            to: client,
+            expectedSessionID: expectedSessionID,
+            clientDisplayResolution: clientDisplayResolution,
+            clientScaleFactor: clientScaleFactor,
+            keyFrameInterval: keyFrameInterval,
+            streamScale: streamScale,
+            targetFrameRate: targetFrameRate,
+            colorDepth: colorDepth,
+            captureQueueDepth: captureQueueDepth,
+            bitrate: bitrate,
+            latencyMode: latencyMode,
+            hostBufferingPolicy: hostBufferingPolicy,
+            allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
+            lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
+            disableResolutionCap: disableResolutionCap,
+            allowBestEffortRemap: allowBestEffortRemap,
+            audioConfiguration: audioConfiguration,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            mediaMaxPacketSize: mediaMaxPacketSize,
+            mediaPathPolicy: nil,
+            upscalingMode: upscalingMode,
+            codec: codec,
+            sizePreset: sizePreset
+        )
+    }
+
+    internal func startStreamWithResolvedMediaPath(
+        for window: MirageWindow,
+        to client: MirageConnectedClient,
+        expectedSessionID: UUID? = nil,
+        clientDisplayResolution: CGSize? = nil,
+        clientScaleFactor: CGFloat? = nil,
+        keyFrameInterval: Int? = nil,
+        streamScale: CGFloat? = nil,
+        targetFrameRate: Int? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
+        captureQueueDepth: Int? = nil,
+        bitrate: Int? = nil,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
+        hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
+        allowRuntimeQualityAdjustment: Bool? = nil,
+        lowLatencyHighResolutionCompressionBoost: Bool = false,
+        disableResolutionCap: Bool = false,
+        allowBestEffortRemap: Bool = true,
+        audioConfiguration: MirageAudioConfiguration? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil,
+        mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
+        mediaPathPolicy: MirageEffectiveMediaPathPolicy? = nil,
+        upscalingMode: MirageUpscalingMode? = nil,
+        codec: MirageVideoCodec? = nil,
+        sizePreset: MirageDisplaySizePreset = .standard
+    )
+    async throws {
         inputController.clearAllModifiers()
 
         guard !disconnectingClientIDs.contains(client.id),
@@ -132,8 +191,13 @@ public extension MirageHostService {
 
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
         let resolvedAudioConfiguration = audioConfiguration ?? .default
-        let pathSnapshot = startupClientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
-        let transportPathKind = pathSnapshot?.kind ?? .unknown
+        let resolvedMediaPathPolicy = mediaPathPolicy ?? effectiveMediaPathPolicy(
+            clientContext: startupClientContext,
+            clientPathKind: nil,
+            clientMediaPathProfile: nil,
+            clientPathSignature: nil
+        )
+        let transportPathKind = resolvedMediaPathPolicy.transportPathKind
         let context = StreamContext(
             streamID: streamID,
             windowID: updatedWindow.id,
@@ -151,10 +215,15 @@ public extension MirageHostService {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             transportPathKind: transportPathKind,
-            mediaPathProfile: pathSnapshot?.mediaProfile,
+            mediaPathProfile: resolvedMediaPathPolicy.mediaPathProfile,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
+        )
+        MirageLogger.host(
+            "event=media_path_policy phase=window_start stream=\(streamID) " +
+                "\(resolvedMediaPathPolicy.diagnosticSummary) " +
+                "videoTransport=\(context.videoTransportMode) maxPacket=\(mediaMaxPacketSize)"
         )
         logWindowStreamOptions(
             streamID: streamID,
@@ -240,6 +309,12 @@ public extension MirageHostService {
         let displayWrapper = SCDisplayWrapper(display: captureSource.display)
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         await context.setMediaSendProfile(mediaSendProfile)
+        MirageLogger.host(
+            "event=media_path_policy phase=window_transport stream=\(streamID) " +
+                "\(resolvedMediaPathPolicy.diagnosticSummary) " +
+                "videoTransport=\(context.videoTransportMode) sendProfile=\(mediaSendProfile.rawValue) " +
+                "maxPacket=\(context.mediaMaxPacketSize)"
+        )
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
             videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
         }

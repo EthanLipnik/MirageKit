@@ -20,30 +20,50 @@ extension StreamContext {
         if feedback.rendererPresentedFPS > 0 || feedback.rendererAcceptedFPS > 0 {
             receiverHasPresentedFrame = true
         }
-        let decision = transportController.update(
+        let transportDecision = transportController.update(
             with: feedback,
             currentFrameRate: currentFrameRate,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
             now: now
         )
+        let realtimeDecision = realtimeBudgetController.update(
+            with: feedback,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            steadyQualityCeiling: steadyQualityCeiling,
+            now: now
+        )
         if mediaPathProfile.usesAwdlRadioPolicy {
             await logAwdlReceiverFeedbackIfNeeded(
                 now: now,
                 feedback: feedback,
-                decision: decision
+                decision: transportDecision
             )
         }
-        guard let decision else {
-            return
-        }
 
+        if let transportDecision {
+            await applyTransportFeedbackDecision(transportDecision, now: now)
+        }
+        if let realtimeDecision {
+            await applyRealtimeBudgetDecision(realtimeDecision, now: now)
+        }
+    }
+
+    private func applyTransportFeedbackDecision(
+        _ decision: HostStreamTransportController.Decision,
+        now: CFAbsoluteTime
+    ) async {
         qualityRaiseSuppressionUntil = max(
             qualityRaiseSuppressionUntil,
             decision.qualityRaiseSuppressionDeadline
         )
-        receiverFrameAdmissionTargetFPS = decision.frameAdmissionTargetFPS
-        receiverFrameAdmissionDeadline = decision.frameAdmissionDeadline
+        transportFrameAdmissionTargetFPS = decision.frameAdmissionTargetFPS
+        transportFrameAdmissionDeadline = decision.frameAdmissionDeadline
+        refreshReceiverFrameAdmission(now: now)
         if mediaPathProfile.usesAwdlRadioPolicy, decision.awdlPacingDeadline > now {
             await packetSender?.activateAwdlPressurePacing(
                 until: decision.awdlPacingDeadline,
@@ -61,7 +81,40 @@ extension StreamContext {
         }
     }
 
+    private func applyRealtimeBudgetDecision(
+        _ decision: HostRealtimeStreamBudgetController.Decision,
+        now: CFAbsoluteTime
+    ) async {
+        realtimePressureState = decision.state
+        realtimePressureReason = decision.reason
+        realtimeRuntimeBitrateCeilingBps = realtimeBudgetController.runtimeCeilingBps
+        realtimeRuntimeQualityCeiling = decision.runtimeQualityCeiling
+        qualityRaiseSuppressionUntil = max(
+            qualityRaiseSuppressionUntil,
+            decision.qualityRaiseSuppressionDeadline
+        )
+        realtimeFrameAdmissionTargetFPS = decision.frameAdmissionTargetFPS
+        realtimeFrameAdmissionDeadline = decision.frameAdmissionDeadline
+        refreshReceiverFrameAdmission(now: now)
+
+        if let targetBitrateBps = decision.targetBitrateBps {
+            await applyRealtimeBudgetBitrate(
+                targetBitrateBps,
+                ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
+                reason: decision.reason
+            )
+        }
+        await applyRealtimeQualityBudget(reason: decision.reason)
+
+        logReceiverFrameAdmissionChangeIfNeeded(
+            now: now,
+            trigger: frameAdmissionTrigger(for: decision)
+        )
+        logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
+    }
+
     func receiverFrameAdmissionIsActive(now: CFAbsoluteTime) -> Bool {
+        refreshReceiverFrameAdmission(now: now)
         guard let targetFPS = receiverFrameAdmissionTargetFPS else { return false }
         guard targetFPS < currentFrameRate else { return false }
         if receiverFrameAdmissionDeadline > 0, now >= receiverFrameAdmissionDeadline {
@@ -71,6 +124,36 @@ extension StreamContext {
             return false
         }
         return true
+    }
+
+    @discardableResult
+    private func refreshReceiverFrameAdmission(now: CFAbsoluteTime) -> Bool {
+        if transportFrameAdmissionDeadline > 0, now >= transportFrameAdmissionDeadline {
+            transportFrameAdmissionTargetFPS = nil
+            transportFrameAdmissionDeadline = 0
+        }
+        if realtimeFrameAdmissionDeadline > 0, now >= realtimeFrameAdmissionDeadline {
+            realtimeFrameAdmissionTargetFPS = nil
+            realtimeFrameAdmissionDeadline = 0
+        }
+
+        var candidates: [(targetFPS: Int, deadline: CFAbsoluteTime)] = []
+        if let targetFPS = transportFrameAdmissionTargetFPS, targetFPS < currentFrameRate {
+            candidates.append((targetFPS, transportFrameAdmissionDeadline))
+        }
+        if let targetFPS = realtimeFrameAdmissionTargetFPS, targetFPS < currentFrameRate {
+            candidates.append((targetFPS, realtimeFrameAdmissionDeadline))
+        }
+        let nextTarget = candidates.map(\.targetFPS).min()
+        let nextDeadline = candidates.map(\.deadline).max() ?? 0
+        let changed = receiverFrameAdmissionTargetFPS != nextTarget ||
+            receiverFrameAdmissionDeadline != nextDeadline
+        receiverFrameAdmissionTargetFPS = nextTarget
+        receiverFrameAdmissionDeadline = nextDeadline
+        if nextTarget == nil {
+            receiverFrameAdmissionLastAdmitTime = 0
+        }
+        return changed
     }
 
     func shouldDropForReceiverFrameAdmission(now: CFAbsoluteTime) -> Bool {
@@ -117,6 +200,85 @@ extension StreamContext {
                 "Receiver transport pressure cleared pre-encode admission limit for stream \(streamID) trigger=\(trigger.rawValue)"
             )
         }
+    }
+
+    private func applyRealtimeQualityBudget(reason: String) async {
+        let previousQuality = activeQuality
+        qualityCeiling = resolvedQualityCeiling
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
+            for: min(encoderConfig.keyframeQuality, qualityCeiling)
+        )
+        if activeQuality > qualityCeiling {
+            activeQuality = qualityCeiling
+        } else if activeQuality < qualityFloor {
+            activeQuality = qualityFloor
+        }
+        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
+        await encoder?.updateQuality(activeQuality)
+        MirageLogger.metrics(
+            "Realtime stream budget updated quality for stream \(streamID): " +
+                "active=\(formatAwdlMetric(Double(activeQuality))) " +
+                "ceiling=\(formatAwdlMetric(Double(qualityCeiling))) reason=\(reason)"
+        )
+    }
+
+    private func frameAdmissionTrigger(
+        for decision: HostRealtimeStreamBudgetController.Decision
+    ) -> HostStreamTransportController.FrameAdmissionTrigger {
+        guard decision.frameAdmissionTargetFPS != nil else { return .clear }
+        switch decision.reason {
+        case "p-frame-latency":
+            return .clientPFrameLatency
+        case "receiver-cadence",
+             "receiver-backlog":
+            return .clientReassemblyBacklog
+        case "receiver-loss":
+            return .clientTransportLoss
+        case "client-recovery":
+            return .clientRecovery
+        default:
+            return .senderQueue
+        }
+    }
+
+    private func logRealtimeBudgetDecisionIfNeeded(
+        now: CFAbsoluteTime,
+        decision: HostRealtimeStreamBudgetController.Decision
+    ) {
+        let admission = receiverFrameAdmissionIsActive(now: now) ? receiverFrameAdmissionTargetFPS : nil
+        guard realtimeLastLoggedState != decision.state ||
+            realtimeLastLoggedBitrateCeilingBps != realtimeRuntimeBitrateCeilingBps ||
+            realtimeLastLoggedAdmissionTargetFPS != admission ||
+            now - realtimeLastLogTime >= 2.0 else {
+            return
+        }
+        realtimeLastLogTime = now
+        realtimeLastLoggedState = decision.state
+        realtimeLastLoggedBitrateCeilingBps = realtimeRuntimeBitrateCeilingBps
+        realtimeLastLoggedAdmissionTargetFPS = admission
+
+        let ceilingText = realtimeRuntimeBitrateCeilingBps
+            .map { mirageFormattedMegabitRate($0) }
+            ?? "unknown"
+        let currentBitrateText = (currentTargetBitrateBps ?? encoderConfig.bitrate)
+            .map { mirageFormattedMegabitRate($0) }
+            ?? "auto"
+        let admissionText = admission.map { "\($0)fps" } ?? "none"
+        let qualityText = realtimeRuntimeQualityCeiling
+            .map { formatAwdlMetric(Double($0)) }
+            ?? "none"
+        MirageLogger.metrics(
+            "Realtime stream budget: stream=\(streamID) " +
+                "state=\(decision.state.rawValue) reason=\(decision.reason) " +
+                "runtimeCeiling=\(ceilingText) currentBitrate=\(currentBitrateText) " +
+                "qualityCeiling=\(qualityText) admission=\(admissionText)"
+        )
+    }
+
+    private func mirageFormattedMegabitRate(_ bitrate: Int) -> String {
+        let mbps = Double(bitrate) / 1_000_000.0
+        return "\(mbps.formatted(.number.precision(.fractionLength(1))))Mbps"
     }
 
     private func logAwdlReceiverFeedbackIfNeeded(

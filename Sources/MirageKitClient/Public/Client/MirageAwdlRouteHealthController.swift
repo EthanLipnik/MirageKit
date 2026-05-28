@@ -22,6 +22,7 @@ public struct MirageAwdlRouteHealthController: Sendable {
     private var startupBitrateBps: Int?
     private var degradedSampleCount: Int = 0
     private var severeSampleCount: Int = 0
+    private var earlyStartupFailureSampleCount: Int = 0
     private var hasEmittedDecision = false
 
     public init(
@@ -45,6 +46,7 @@ public struct MirageAwdlRouteHealthController: Sendable {
         streamStartedAt = startedOnAwdl ? now : nil
         degradedSampleCount = 0
         severeSampleCount = 0
+        earlyStartupFailureSampleCount = 0
         hasEmittedDecision = false
     }
 
@@ -78,19 +80,22 @@ public struct MirageAwdlRouteHealthController: Sendable {
         let isAtBitrateFloor = currentBitrateBps.map {
             $0 <= MirageReceiverHealthController.minimumBitrateBps
         } ?? false
-        guard isAtBitrateFloor else {
-            degradedSampleCount = max(0, degradedSampleCount - 1)
-            severeSampleCount = max(0, severeSampleCount - 1)
-            return nil
-        }
-
+        let localStartupFailure = Self.hasEarlyStartupFailure(snapshot)
         if assessment.isDegraded {
             degradedSampleCount += 1
         } else {
             degradedSampleCount = max(0, degradedSampleCount - 1)
         }
 
-        if assessment.isSevere && age >= Self.severeDemotionMinimumAgeSeconds {
+        if localStartupFailure,
+           age >= Self.earlyDemotionMinimumAgeSeconds,
+           age <= Self.earlyDemotionMaximumAgeSeconds {
+            earlyStartupFailureSampleCount += 1
+        } else {
+            earlyStartupFailureSampleCount = max(0, earlyStartupFailureSampleCount - 1)
+        }
+
+        if assessment.isSevere && age >= Self.earlyDemotionMinimumAgeSeconds {
             severeSampleCount += 1
         } else {
             severeSampleCount = max(0, severeSampleCount - 1)
@@ -98,12 +103,20 @@ public struct MirageAwdlRouteHealthController: Sendable {
 
         let shouldDemoteForSevereCollapse =
             age >= Self.severeDemotionMinimumAgeSeconds &&
+            isAtBitrateFloor &&
             severeSampleCount >= Self.severeDemotionSampleThreshold
         let shouldDemoteForSustainedDegradation =
             age >= Self.sustainedDemotionMinimumAgeSeconds &&
+            isAtBitrateFloor &&
             degradedSampleCount >= Self.sustainedDemotionSampleThreshold
+        let shouldDemoteForEarlyStartupFailure =
+            age >= Self.earlyDemotionMinimumAgeSeconds &&
+            age <= Self.earlyDemotionMaximumAgeSeconds &&
+            earlyStartupFailureSampleCount >= Self.earlyDemotionSampleThreshold
 
-        guard shouldDemoteForSevereCollapse || shouldDemoteForSustainedDegradation else {
+        guard shouldDemoteForEarlyStartupFailure ||
+            shouldDemoteForSevereCollapse ||
+            shouldDemoteForSustainedDegradation else {
             return nil
         }
 
@@ -132,9 +145,11 @@ public struct MirageAwdlRouteHealthController: Sendable {
             currentBitrateBps: currentBitrateBps,
             startupBitrateBps: startupBitrateBps
         )
+        let localStartupFailure = Self.hasEarlyStartupFailure(snapshot)
         let degraded = sample.hasTransportPressure ||
             mediaDeliveryFailure ||
             sample.hasReceiverMediaLatencyPressure ||
+            localStartupFailure ||
             bitrateCollapsed
         let severe = sample.hasSevereTransportPressure ||
             severeArrivalGap ||
@@ -166,6 +181,12 @@ public struct MirageAwdlRouteHealthController: Sendable {
             return false
         }
         return currentBitrateBps <= Int(Double(startupBitrateBps) * bitrateCollapseRatio)
+    }
+
+    private static func hasEarlyStartupFailure(_ snapshot: MirageClientMetricsSnapshot) -> Bool {
+        snapshot.clientPresentationStallCount > 0 ||
+            snapshot.clientDroppedFrames > 0 ||
+            snapshot.clientDecodeBacklogFrames >= earlyDecodeBacklogFrameThreshold
     }
 
     private static func reason(
@@ -216,8 +237,12 @@ private struct AwdlSampleAssessment: Equatable {
 extension MirageAwdlRouteHealthController {
     static let severeDemotionMinimumAgeSeconds: CFAbsoluteTime = 30
     static let sustainedDemotionMinimumAgeSeconds: CFAbsoluteTime = 90
+    static let earlyDemotionMinimumAgeSeconds: CFAbsoluteTime = 15
+    static let earlyDemotionMaximumAgeSeconds: CFAbsoluteTime = 30
     static let severeDemotionSampleThreshold = 2
     static let sustainedDemotionSampleThreshold = 4
+    static let earlyDemotionSampleThreshold = 2
+    static let earlyDecodeBacklogFrameThreshold = 30
     static let bitrateCollapseRatio = 0.55
     static let degradedReceivedGapMs = 500.0
     static let severeReceivedGapMs = 1_000.0

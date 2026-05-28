@@ -22,6 +22,7 @@ extension StreamContext {
         sizePreset: MirageDisplaySizePreset,
         clientLogicalSize: CGSize,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
@@ -32,6 +33,7 @@ extension StreamContext {
             sizePreset: sizePreset,
             clientLogicalSize: clientLogicalSize,
             sendPacket: sendPacket,
+            sendPacketReliably: sendPacketReliably,
             onSendError: onSendError
         )
     }
@@ -41,6 +43,7 @@ extension StreamContext {
         resolution: CGSize? = nil,
         excludedWindows: [SCWindowWrapper] = [],
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
@@ -56,7 +59,11 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
+        await setupPacketSender(
+            sendPacket: sendPacket,
+            sendPacketReliably: sendPacketReliably,
+            onSendError: onSendError
+        )
 
         let captureResolution = resolution ?? CGSize(width: display.width, height: display.height)
         baseCaptureSize = captureResolution

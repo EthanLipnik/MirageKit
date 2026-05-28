@@ -57,6 +57,12 @@ struct RenderPresentationSchedulerTests {
         MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .lowestLatency)
     }
 
+    private func configureAwdlPresentationTiming(for streamID: StreamID) {
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.setMediaPathProfile(for: streamID, profile: .awdlRadio)
+        MirageRenderStreamStore.shared.setLatencyMode(for: streamID, latencyMode: .smoothest)
+    }
+
     @Test("Smoothest frame arrival waits until the display clock starts")
     func smoothestFrameArrivalWaitsUntilDisplayClockStarts() {
         let streamID: StreamID = 901
@@ -251,6 +257,41 @@ struct RenderPresentationSchedulerTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.displayTickNoFrameCount == 1)
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
+    }
+
+    @Test("AWDL catches up on frame arrival after an empty display tick")
+    func awdlCatchesUpOnFrameArrivalAfterEmptyDisplayTick() {
+        let streamID: StreamID = 921
+        configureAwdlPresentationTiming(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        #expect(timing.latencyMode == .lowestLatency)
+        #expect(timing.usesFixedRealtimeDisplayPolicy)
+
+        let pendingFrames = SimulatedPendingFrames()
+        var scheduledCallbacks: [@Sendable () -> Void] = []
+        var wallTime: CFTimeInterval = 1
+        let scheduler = MirageRenderPresentationScheduler(
+            referenceTimeProvider: { wallTime },
+            enqueueCoalescedPass: { action in
+                scheduledCallbacks.append(action)
+            },
+            submit: { _ in pendingFrames.submit() },
+            hasPendingFrame: { pendingFrames.hasPendingFrame },
+            pendingFrameCount: { pendingFrames.pendingCount }
+        )
+        scheduler.setStreamID(streamID)
+        scheduler.setPresentationTier(.activeLive)
+        scheduler.setDisplayClockActive(true)
+
+        scheduler.handleDisplayTick(referenceTime: 1)
+        pendingFrames.enqueue()
+        wallTime += 0.010
+        scheduler.handleFrameAvailable(referenceTime: 1.010)
+
+        #expect(scheduledCallbacks.isEmpty)
+        #expect(pendingFrames.submittedCount == 1)
+        #expect(pendingFrames.pendingCount == 0)
     }
 
     @Test("Smoothest records late arrival after an empty tick without catch-up")

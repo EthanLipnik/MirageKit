@@ -13,6 +13,12 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
+    private static let encodedFrameOverBudgetRatio = 1.20
+    private static let encodedFrameUnderBudgetRatio = 0.68
+    private static let encodedFrameQualityRaiseThreshold = 3
+    private static let encodedFrameBaseQualityDropStep: Float = 0.03
+    private static let encodedFrameBaseQualityRaiseStep: Float = 0.02
+
     /// Logs periodic stream pipeline metrics and updates adaptive in-flight depth.
     func logPipelineStatsIfNeeded() async {
         let now = CFAbsoluteTimeGetCurrent()
@@ -165,7 +171,7 @@ extension StreamContext {
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 
         let transportOverBudget = queueBytes > queuePressureBytes
-        let allowsRaise = now >= qualityRaiseSuppressionUntil && queueBytes <= minQueuedBytes
+        let allowsRaise = false
         let allowTransportQualityRelief = true
         let baseDropThreshold = qualityDropThreshold
         let baseDropStep = qualityDropStep
@@ -179,6 +185,7 @@ extension StreamContext {
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
             transportOverBudget: transportOverBudget,
+            encodedFrameUnderBudget: false,
             allowsRaise: allowsRaise,
             allowTransportQualityRelief: allowTransportQualityRelief,
             qualityDropThreshold: baseDropThreshold,
@@ -215,6 +222,132 @@ extension StreamContext {
                 "Quality up to \(qualityText) (queue \(queueBytes / 1024)KB)"
             )
         }
+    }
+
+    /// Applies fast runtime quality control from each encoded non-keyframe's byte size.
+    func adjustQualityForEncodedFrame(
+        byteCount: Int,
+        isKeyframe: Bool,
+        queueBytes: Int,
+        encodedAt now: CFAbsoluteTime
+    ) async {
+        guard !isKeyframe else { return }
+        guard let encoder else { return }
+        guard runtimeQualityAdjustmentEnabled else { return }
+        guard let budgetBytes = encodedFrameBudgetBytes() else { return }
+
+        qualityCeiling = resolvedQualityCeiling
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        if activeQuality > qualityCeiling {
+            activeQuality = qualityCeiling
+            await encoder.updateQuality(activeQuality)
+            return
+        }
+        if activeQuality < qualityFloor {
+            activeQuality = qualityFloor
+            await encoder.updateQuality(activeQuality)
+            return
+        }
+
+        let ratio = Double(max(0, byteCount)) / budgetBytes
+        let previousQuality = activeQuality
+        let action: String
+        if ratio > Self.encodedFrameOverBudgetRatio {
+            qualityOverBudgetCount += 1
+            qualityUnderBudgetCount = 0
+            activeQuality = Self.encodedFrameOverBudgetQuality(
+                currentQuality: activeQuality,
+                qualityFloor: qualityFloor,
+                ratio: ratio
+            )
+            qualityOverBudgetCount = 0
+            action = "down reason=encoded-frame"
+        } else if ratio < Self.encodedFrameUnderBudgetRatio, queueBytes <= minQueuedBytes {
+            qualityOverBudgetCount = 0
+            qualityUnderBudgetCount += 1
+            if qualityUnderBudgetCount >= Self.encodedFrameQualityRaiseThreshold {
+                activeQuality = min(
+                    qualityCeiling,
+                    activeQuality + Self.encodedFrameQualityRaiseStep(for: ratio)
+                )
+                qualityUnderBudgetCount = 0
+            }
+            action = "up"
+        } else {
+            qualityOverBudgetCount = 0
+            qualityUnderBudgetCount = 0
+            return
+        }
+
+        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
+        await encoder.updateQuality(activeQuality)
+        lastQualityAdjustmentTime = now
+        logEncodedFrameQualityChangeIfNeeded(
+            action: action,
+            byteCount: byteCount,
+            budgetBytes: budgetBytes,
+            ratio: ratio,
+            queueBytes: queueBytes,
+            now: now
+        )
+    }
+
+    private func encodedFrameBudgetBytes() -> Double? {
+        let targetBitrate = realtimeRuntimeBitrateCeilingBps ??
+            currentTargetBitrateBps ??
+            encoderConfig.bitrate ??
+            requestedTargetBitrate ??
+            startupBitrate
+        guard let targetBitrate, targetBitrate > 0 else { return nil }
+        return max(1.0, Double(targetBitrate) / 8.0 / Double(max(1, currentFrameRate)))
+    }
+
+    private static func encodedFrameQualityDropStep(for ratio: Double) -> Float {
+        guard ratio.isFinite else { return encodedFrameBaseQualityDropStep }
+        if ratio >= 2.5 { return 0.08 }
+        if ratio >= 1.8 { return 0.06 }
+        if ratio >= 1.4 { return 0.04 }
+        return encodedFrameBaseQualityDropStep
+    }
+
+    private static func encodedFrameOverBudgetQuality(
+        currentQuality: Float,
+        qualityFloor: Float,
+        ratio: Double
+    ) -> Float {
+        guard ratio.isFinite, ratio > 0 else {
+            return max(qualityFloor, currentQuality - encodedFrameBaseQualityDropStep)
+        }
+        let steppedQuality = currentQuality - encodedFrameQualityDropStep(for: ratio)
+        let proportionalQuality = currentQuality / Float(sqrt(max(1.0, ratio / 0.92)))
+        return max(qualityFloor, min(steppedQuality, proportionalQuality))
+    }
+
+    private static func encodedFrameQualityRaiseStep(for ratio: Double) -> Float {
+        guard ratio.isFinite else { return encodedFrameBaseQualityRaiseStep }
+        if ratio <= 0.25 { return 0.05 }
+        if ratio <= 0.45 { return 0.035 }
+        return encodedFrameBaseQualityRaiseStep
+    }
+
+    private func logEncodedFrameQualityChangeIfNeeded(
+        action: String,
+        byteCount: Int,
+        budgetBytes: Double,
+        ratio: Double,
+        queueBytes: Int,
+        now: CFAbsoluteTime
+    ) {
+        guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
+        encodedFrameQualityLastLogTime = now
+        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+        let budgetKB = (budgetBytes / 1024.0).formatted(.number.precision(.fractionLength(1)))
+        let frameKB = (Double(byteCount) / 1024.0).formatted(.number.precision(.fractionLength(1)))
+        let ratioText = ratio.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.metrics(
+            "Encoded-frame quality \(action) to \(qualityText) " +
+                "(frame=\(frameKB)KB budget=\(budgetKB)KB ratio=\(ratioText) queue=\(queueBytes / 1024)KB)"
+        )
     }
 }
 #endif

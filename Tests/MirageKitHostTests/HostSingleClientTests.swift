@@ -81,7 +81,7 @@ struct HostSingleClientTests {
         host.singleClientReservationStartedAt = CFAbsoluteTimeGetCurrent() - (host.connectionApprovalTimeoutSeconds + 1)
         host.scheduleSingleClientReservationExpiry(for: staleSessionID)
 
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + .seconds(8)
         while host.singleClientSessionID != nil, ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(20))
         }

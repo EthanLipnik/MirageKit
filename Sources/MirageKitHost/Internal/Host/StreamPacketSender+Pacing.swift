@@ -12,16 +12,12 @@ import MirageKit
 
 extension StreamPacketSender {
     /// Waits for packet-pacer tokens before submitting a fragment to the media transport.
-    ///
-    /// The pacer honors sender-local deadlines for non-keyframes so freshness recovery can drop stale work instead
-    /// of sleeping past the frame's useful lifetime.
     func paceIfNeeded(
         packetBytes: Int,
         isKeyframeBurst: Bool,
         totalFragments: Int,
         targetFrameRate: Int,
-        pacingOverride: PacingOverride?,
-        sendDeadline: CFAbsoluteTime?
+        pacingOverride: PacingOverride?
     ) async -> PacketPacingResult {
         let targetFrameIntervalMs = 1000.0 / Double(max(1, targetFrameRate))
         guard let parameters = Self.packetPacingParameters(
@@ -33,8 +29,7 @@ extension StreamPacketSender {
             pacingOverride: pacingOverride
         ) else {
             return PacketPacingResult(
-                sleepSample: PacketPacingSleepSample(totalMs: 0, maxMs: 0),
-                didMissDeadline: false
+                sleepSample: PacketPacingSleepSample(totalMs: 0, maxMs: 0)
             )
         }
 
@@ -54,32 +49,18 @@ extension StreamPacketSender {
         var sleepTotalMs = 0
         var sleepMaxMs = 0
         while true {
-            let beforeSleep = CFAbsoluteTimeGetCurrent()
-            if let sendDeadline, beforeSleep >= sendDeadline {
-                return PacketPacingResult(
-                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs),
-                    didMissDeadline: true
-                )
-            }
             let sleepMs = Self.packetPacerSleepMilliseconds(
                 tokensBeforeSend: pacerTokensBytes,
                 packetBytes: packetBytes,
                 bytesPerMillisecond: bytesPerMillisecond
             )
             guard sleepMs > 0 else { break }
-            if let sendDeadline, beforeSleep + (Double(sleepMs) / 1000.0) >= sendDeadline {
-                return PacketPacingResult(
-                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs),
-                    didMissDeadline: true
-                )
-            }
 
             do {
                 try await Task.sleep(for: .milliseconds(Int64(sleepMs)))
             } catch {
                 return PacketPacingResult(
-                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs),
-                    didMissDeadline: true
+                    sleepSample: PacketPacingSleepSample(totalMs: sleepTotalMs, maxMs: sleepMaxMs)
                 )
             }
             recordPacketPacerSleep(PacketPacingSleepSample(totalMs: sleepMs, maxMs: sleepMs))
@@ -100,8 +81,7 @@ extension StreamPacketSender {
             sleepSample: PacketPacingSleepSample(
                 totalMs: sleepTotalMs,
                 maxMs: sleepMaxMs
-            ),
-            didMissDeadline: false
+            )
         )
     }
 

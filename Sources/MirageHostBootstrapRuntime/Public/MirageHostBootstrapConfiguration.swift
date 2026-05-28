@@ -167,6 +167,9 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             controlAuthSecret: preloginDaemonReady && !trimmedControlAuthSecret.isEmpty ?
                 trimmedControlAuthSecret :
                 nil,
+            controlCapabilities: preloginDaemonReady && !trimmedControlAuthSecret.isEmpty ?
+                [.commands] :
+                [],
             sshHostKeyFingerprints: sshHostKeyFingerprints
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },

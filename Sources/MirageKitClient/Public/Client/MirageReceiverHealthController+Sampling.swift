@@ -52,6 +52,13 @@ struct ReceiverTransportPressureContext {
     let clientPFrameLatencySevere: Bool
     let clientFragmentLossStress: Bool
     let clientFragmentLossSevere: Bool
+    let hostEncodedFPS: Double
+    let receivedFPS: Double
+    let clientReceivedWorstGapMs: Double
+    let clientReceivedFrameIntervalP95Ms: Double
+    let clientReceivedFrameIntervalP99Ms: Double
+    let receiverDeliveryStress: Bool
+    let receiverDeliverySevere: Bool
 }
 
 extension MirageReceiverHealthController {
@@ -74,7 +81,6 @@ extension MirageReceiverHealthController {
             )
         }
 
-        _ = minimumHealthyFrameRate
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
@@ -91,6 +97,10 @@ extension MirageReceiverHealthController {
         let clientForwardGapTimeouts = snapshot.clientReassemblerForwardGapTimeouts
         let clientPFrameCompletionLatencyP95Ms = snapshot.clientPFrameCompletionLatencyP95Ms
         let clientLatePFrameCompletionCount = snapshot.clientLatePFrameCompletionCount
+        let receiverDeliveryPressure = Self.receiverDeliveryPressure(
+            snapshot,
+            minimumHealthyFrameRate: minimumHealthyFrameRate
+        )
         let receiverMediaDeliveryFailureCount = clientIncompleteFrameTimeouts +
             clientMissingFragmentTimeouts +
             clientForwardGapTimeouts
@@ -125,12 +135,14 @@ extension MirageReceiverHealthController {
             dropSevere ||
             clientFragmentLossSevere ||
             clientPFrameLatencySevere ||
+            receiverDeliveryPressure.severe ||
             pairedPacerSevere
         let sustainedTransportPressure = queueStress ||
             sendDelaySevere ||
             dropStress ||
             clientFragmentLossStress ||
             clientPFrameLatencyStress ||
+            receiverDeliveryPressure.stress ||
             pairedPacerStress
         let transportPressureReason = Self.transportPressureReason(
             ReceiverTransportPressureContext(
@@ -157,7 +169,14 @@ extension MirageReceiverHealthController {
                 clientPFrameLatencyStress: clientPFrameLatencyStress,
                 clientPFrameLatencySevere: clientPFrameLatencySevere,
                 clientFragmentLossStress: clientFragmentLossStress,
-                clientFragmentLossSevere: clientFragmentLossSevere
+                clientFragmentLossSevere: clientFragmentLossSevere,
+                hostEncodedFPS: receiverDeliveryPressure.hostEncodedFPS,
+                receivedFPS: receiverDeliveryPressure.receivedFPS,
+                clientReceivedWorstGapMs: receiverDeliveryPressure.receivedWorstGapMs,
+                clientReceivedFrameIntervalP95Ms: receiverDeliveryPressure.receivedFrameIntervalP95Ms,
+                clientReceivedFrameIntervalP99Ms: receiverDeliveryPressure.receivedFrameIntervalP99Ms,
+                receiverDeliveryStress: receiverDeliveryPressure.stress,
+                receiverDeliverySevere: receiverDeliveryPressure.severe
             )
         )
 
@@ -165,6 +184,7 @@ extension MirageReceiverHealthController {
             transportDropCount > 0 ||
             clientFragmentLossStress ||
             clientPFrameLatencyStress ||
+            receiverDeliveryPressure.stress ||
             sendDelayStress ||
             pairedPacerStress ||
             keyframeAssemblyInProgress
@@ -175,7 +195,8 @@ extension MirageReceiverHealthController {
             hasProvenTransportLoss: remoteTransportDropCount >= Self.transportDropStressCount ||
                 receiverMediaDeliveryFailure ||
                 clientFragmentLossStress ||
-                clientPFrameLatencyStress,
+                clientPFrameLatencyStress ||
+                receiverDeliveryPressure.stress,
             hasReceiverMediaDeliveryFailure: receiverMediaDeliveryFailure,
             hasReceiverMediaLatencyPressure: clientPFrameLatencyStress,
             hasSevereReceiverMediaLatencyPressure: clientPFrameLatencySevere,
@@ -204,6 +225,13 @@ extension MirageReceiverHealthController {
             return "client p-frame latency p95=\(formatMilliseconds(context.clientPFrameCompletionLatencyP95Ms)) " +
                 "late=\(context.clientLatePFrameCompletionCount)"
         }
+        if context.receiverDeliverySevere || context.receiverDeliveryStress {
+            return "client delivery cadence host=\(formatFPS(context.hostEncodedFPS)) " +
+                "received=\(formatFPS(context.receivedFPS)) " +
+                "worstGap=\(formatMilliseconds(context.clientReceivedWorstGapMs)) " +
+                "p95=\(formatMilliseconds(context.clientReceivedFrameIntervalP95Ms)) " +
+                "p99=\(formatMilliseconds(context.clientReceivedFrameIntervalP99Ms))"
+        }
         if context.sendDelaySevere || context.sendDelayStress {
             let startText = Self.formatMilliseconds(context.sendStartDelayAverageMs)
             let completionText = Self.formatMilliseconds(context.sendCompletionAverageMs)
@@ -227,6 +255,76 @@ extension MirageReceiverHealthController {
 
     private static func formatMilliseconds(_ milliseconds: Double) -> String {
         "\(milliseconds.formatted(.number.precision(.fractionLength(1))))ms"
+    }
+
+    private static func formatFPS(_ fps: Double) -> String {
+        "\(fps.formatted(.number.precision(.fractionLength(1))))fps"
+    }
+
+    private static func receiverDeliveryPressure(
+        _ snapshot: MirageClientMetricsSnapshot,
+        minimumHealthyFrameRate: Int?
+    ) -> (
+        stress: Bool,
+        severe: Bool,
+        hostEncodedFPS: Double,
+        receivedFPS: Double,
+        receivedWorstGapMs: Double,
+        receivedFrameIntervalP95Ms: Double,
+        receivedFrameIntervalP99Ms: Double
+    ) {
+        let targetFrameRate = Double(max(1, minimumHealthyFrameRate ?? snapshot.hostTargetFrameRate))
+        let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
+        let hostProductionFPS = max(
+            hostEncodedFPS,
+            snapshot.hostEncodeAttemptFPS ?? 0,
+            snapshot.hostCaptureFPS ?? 0
+        )
+        let receivedFPS = max(0, snapshot.receivedFPS)
+        let receiverHasStarted = receivedFPS > 0 || snapshot.decodedFPS > 0 || snapshot.submittedFPS > 0
+        guard receiverHasStarted,
+              hostProductionFPS >= targetFrameRate * Self.hostDeliveryCadenceHealthyRatio else {
+            return (
+                stress: false,
+                severe: false,
+                hostEncodedFPS: hostEncodedFPS,
+                receivedFPS: receivedFPS,
+                receivedWorstGapMs: max(0, snapshot.clientReceivedWorstGapMs),
+                receivedFrameIntervalP95Ms: max(0, snapshot.clientReceivedFrameIntervalP95Ms),
+                receivedFrameIntervalP99Ms: max(0, snapshot.clientReceivedFrameIntervalP99Ms)
+            )
+        }
+
+        let expectedReceiverFPS = min(targetFrameRate, hostProductionFPS)
+        let cadenceStress = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceStressRatio
+        let cadenceSevere = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceSevereRatio
+        let frameIntervalMs = 1_000.0 / max(1.0, expectedReceiverFPS)
+        let receivedWorstGapMs = max(0, snapshot.clientReceivedWorstGapMs)
+        let receivedFrameIntervalP95Ms = max(0, snapshot.clientReceivedFrameIntervalP95Ms)
+        let receivedFrameIntervalP99Ms = max(0, snapshot.clientReceivedFrameIntervalP99Ms)
+        let gapStressThresholdMs = max(
+            Self.clientReceivedGapStressMinimumMs,
+            frameIntervalMs * Self.clientReceivedGapStressFrameMultiple
+        )
+        let gapSevereThresholdMs = max(
+            Self.clientReceivedGapSevereMinimumMs,
+            frameIntervalMs * Self.clientReceivedGapSevereFrameMultiple
+        )
+        let gapStress = receivedWorstGapMs >= gapStressThresholdMs ||
+            receivedFrameIntervalP99Ms >= gapStressThresholdMs ||
+            receivedFrameIntervalP95Ms >= gapStressThresholdMs
+        let gapSevere = receivedWorstGapMs >= gapSevereThresholdMs ||
+            receivedFrameIntervalP99Ms >= gapSevereThresholdMs
+
+        return (
+            stress: cadenceStress || gapStress,
+            severe: cadenceSevere || gapSevere,
+            hostEncodedFPS: hostEncodedFPS,
+            receivedFPS: receivedFPS,
+            receivedWorstGapMs: receivedWorstGapMs,
+            receivedFrameIntervalP95Ms: receivedFrameIntervalP95Ms,
+            receivedFrameIntervalP99Ms: receivedFrameIntervalP99Ms
+        )
     }
 
     func isFastStartActive(now: CFAbsoluteTime) -> Bool {

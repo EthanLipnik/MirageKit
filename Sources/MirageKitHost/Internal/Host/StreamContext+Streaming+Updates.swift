@@ -14,6 +14,32 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    func applyRealtimeBudgetBitrate(
+        _ bitrate: Int,
+        ceilingBitrateBps: Int?,
+        reason: String
+    ) async {
+        guard isRunning else { return }
+        guard let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: bitrate
+        ) else { return }
+        let ceiling = ceilingBitrateBps ?? bitrateAdaptationCeiling ?? requestedTargetBitrate ?? normalizedBitrate
+        let targetBitrate = min(
+            max(realtimeMinimumBitrateFloorBps, normalizedBitrate),
+            max(realtimeMinimumBitrateFloorBps, ceiling)
+        )
+        guard targetBitrate > 0, targetBitrate != currentTargetBitrateBps else { return }
+
+        currentTargetBitrateBps = targetBitrate
+        await packetSender?.setTargetBitrateBps(targetBitrate)
+
+        MirageLogger.metrics(
+            "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
+                "target=\(targetBitrate) ceiling=\(ceiling) reason=\(reason)"
+        )
+        logBitrateContract(event: "realtime_budget_update")
+    }
+
     func updateEncoderSettings(
         colorDepth: MirageStreamColorDepth?,
         bitrate: Int?,

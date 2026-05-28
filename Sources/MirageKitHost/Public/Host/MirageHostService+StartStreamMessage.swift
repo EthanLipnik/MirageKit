@@ -69,10 +69,11 @@ extension MirageHostService {
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default
-            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
             let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
                 requested: request.mediaMaxPacketSize,
-                pathKind: pathKind
+                mediaPathProfile: mediaPathPolicy.mediaPathProfile,
+                pathKind: mediaPathPolicy.transportPathKind
             )
             MirageLogger.host("Frame rate: \(targetFrameRate)fps")
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
@@ -80,7 +81,7 @@ extension MirageHostService {
 
             pendingLightsOutSetup = true
             await beginPendingAppStreamLightsOutSetup()
-            try await startStream(
+            try await startStreamWithResolvedMediaPath(
                 for: window,
                 to: clientContext.client,
                 expectedSessionID: clientContext.sessionID,
@@ -102,6 +103,7 @@ extension MirageHostService {
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                mediaPathPolicy: mediaPathPolicy,
                 upscalingMode: request.upscalingMode,
                 codec: request.codec
             )

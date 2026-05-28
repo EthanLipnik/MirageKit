@@ -247,6 +247,7 @@ public extension MirageClientService {
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
+        applyCurrentClientPathFields(to: &request)
         pendingAppRequestedColorDepth = request.colorDepth
         pendingAppRequestedLatencyMode = request.latencyMode ?? .lowestLatency
         pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency

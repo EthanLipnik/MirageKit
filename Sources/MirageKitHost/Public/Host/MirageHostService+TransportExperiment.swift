@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/21/26.
 //
-//  AWDL experiment transport recovery hooks.
+//  AWDL radio transport recovery hooks.
 //
 
 import MirageKit
@@ -18,6 +18,8 @@ extension MirageHostService {
         let userDependentError = LoomDiagnosticsActionability.isLikelyUserDependent(error: error)
         let errorDescription = String(describing: error)
         let sendQueueCancelledDuringTeardown = errorDescription.contains("Unreliable send queue cancelled")
+        let context = streamsByID[streamID]
+        let awdlRecoveryEnabled = context?.mediaPathProfile.usesAwdlRadioPolicy == true
         if transportWasAlreadyGone && sendQueueCancelledDuringTeardown {
             MirageLogger.host(
                 "Video transport teardown for stream \(streamID) after client disconnect: \(error)"
@@ -26,7 +28,7 @@ extension MirageHostService {
         }
         if transportWasAlreadyGone || fatalConnectionError || userDependentError {
             MirageLogger.host(
-                "Video transport closed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled), fatal=\(fatalConnectionError), userDependent=\(userDependentError)): \(error)"
+                "Video transport closed for stream \(streamID) (awdlRecovery=\(awdlRecoveryEnabled), fatal=\(fatalConnectionError), userDependent=\(userDependentError)): \(error)"
             )
             return
         }
@@ -36,11 +38,10 @@ extension MirageHostService {
         if transportSendErrorReported.insert(streamID).inserted {
             MirageLogger.error(
                 .host,
-                "Video transport send failed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled)): \(error)"
+                "Video transport send failed for stream \(streamID) (awdlRecovery=\(awdlRecoveryEnabled)): \(error)"
             )
         }
-        guard awdlExperimentEnabled else { return }
-        guard let context = streamsByID[streamID] else { return }
+        guard awdlRecoveryEnabled, let context else { return }
         let didTriggerRecovery = await context.handleTransportSendError(error)
         guard didTriggerRecovery else { return }
 
@@ -55,7 +56,6 @@ extension MirageHostService {
     }
 
     func sendTransportRefreshRequest(streamID: StreamID, reason: String) async {
-        guard awdlExperimentEnabled else { return }
         guard let clientContext = clientContextForTransportRefresh(streamID: streamID) else {
             MirageLogger.host("Transport refresh request skipped (no client context for stream \(streamID))")
             return

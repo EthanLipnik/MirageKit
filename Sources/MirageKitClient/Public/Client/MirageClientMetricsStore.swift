@@ -28,6 +28,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         receivedFrameIntervalP95Ms: Double = 0,
         receivedFrameIntervalP99Ms: Double = 0,
         droppedFrames: UInt64,
+        decodeBacklogFrames: Int = 0,
         reassemblerPendingFrameCount: Int = 0,
         reassemblerPendingKeyframeCount: Int = 0,
         reassemblerPendingBytes: Int = 0,
@@ -114,6 +115,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
             snapshot.clientFrameIntervalP99Ms = max(0, frameIntervalP99Ms)
             snapshot.decodeHealthy = decodeHealthy
             snapshot.clientDroppedFrames = droppedFrames
+            snapshot.clientDecodeBacklogFrames = max(0, decodeBacklogFrames)
             snapshot.clientReassemblerPendingFrameCount = max(0, reassemblerPendingFrameCount)
             snapshot.clientReassemblerPendingKeyframeCount = max(0, reassemblerPendingKeyframeCount)
             snapshot.clientReassemblerPendingBytes = max(0, reassemblerPendingBytes)

@@ -174,6 +174,29 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         mediaProfile.usesAwdlRadioPolicy
     }
 
+    /// Whether the active path uses a proximity transport that should behave like local wired media.
+    public var usesProximityWiredLikePolicy: Bool {
+        mediaProfile == .proximityWiredLike
+    }
+
+    /// Whether the active path uses Apple's USB-C proximity interface.
+    public var usesUSBProximityInterface: Bool {
+        interfaceNames.containsInterfaceName(withPrefix: "anpi")
+    }
+
+    /// Whether the active path uses Apple's AWDL radio interface.
+    public var usesAwdlRadioInterface: Bool {
+        interfaceNames.containsInterfaceName(withPrefix: "awdl")
+    }
+
+    /// Whether the active path uses a Thunderbolt Bridge-style wired interface.
+    public var usesWiredBridgeInterface: Bool {
+        interfaceNames.contains { interfaceName in
+            let normalized = interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.hasPrefix("bridge") || normalized.contains("thunderbolt")
+        }
+    }
+
     package init(snapshot: MirageNetworkPathSnapshot) {
         self.init(
             kind: snapshot.kind,
@@ -195,23 +218,28 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     /// Interface names can be more specific than `NWPath` interface categories.
     private var interfaceOverrideKind: InterfaceOverrideKind? {
-        for interfaceName in interfaceNames {
-            let normalized = interfaceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if normalized.hasPrefix("anpi") {
-                return .applePrivateNCM
-            }
-            if normalized.hasPrefix("awdl") {
-                return .awdl
-            }
-            if normalized.hasPrefix("llw") {
-                return .lowLatencyWireless
-            }
-            if normalized.contains("thunderbolt") || normalized.contains("bridge") {
-                return .thunderboltBridge
-            }
-            if normalized.hasPrefix("utun") {
-                return .overlay
-            }
+        let normalizedNames = interfaceNames.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        if mediaProfile == .proximityWiredLike,
+           normalizedNames.contains(where: { $0.hasPrefix("anpi") }) {
+            return .applePrivateNCM
+        }
+        if mediaProfile == .proximityWiredLike,
+           normalizedNames.contains(where: { $0.hasPrefix("llw") }) {
+            return .lowLatencyWireless
+        }
+        if mediaProfile == .wired,
+           normalizedNames.contains(where: { $0.contains("thunderbolt") || $0.contains("bridge") }) {
+            return .thunderboltBridge
+        }
+        if mediaProfile.usesAwdlRadioPolicy,
+           normalizedNames.contains(where: { $0.hasPrefix("awdl") }) {
+            return .awdl
+        }
+        if mediaProfile == .vpnOrOverlay,
+           normalizedNames.contains(where: { $0.hasPrefix("utun") }) {
+            return .overlay
         }
         return nil
     }
@@ -254,6 +282,16 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         }
     }
 
+}
+
+private extension [String] {
+    func containsInterfaceName(withPrefix prefix: String) -> Bool {
+        contains { interfaceName in
+            interfaceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .hasPrefix(prefix)
+        }
+    }
 }
 
 /// One observed control-channel path snapshot in client path history.

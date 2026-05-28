@@ -91,6 +91,7 @@ extension StreamController {
         let snapshot = metricsTracker.snapshot(now: now)
         let reassemblerMetrics = reassembler.snapshotMetrics
         let droppedFrames = reassemblerMetrics.droppedFrames + snapshot.queueDroppedFrames
+        let decodeBacklogFrames = queuedFrames.count + pendingOrderedFrames.count
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         latestRenderTelemetrySnapshot = renderTelemetry
         evaluateRenderCadenceMissTelemetry(
@@ -110,6 +111,7 @@ extension StreamController {
             receivedFrameIntervalP95Ms: snapshot.receivedFrameIntervalP95Ms,
             receivedFrameIntervalP99Ms: snapshot.receivedFrameIntervalP99Ms,
             droppedFrames: droppedFrames,
+            decodeBacklogFrames: decodeBacklogFrames,
             displayTickFPS: renderTelemetry.displayTickFPS,
             submitAttemptFPS: renderTelemetry.submitAttemptFPS,
             layerAcceptedFPS: renderTelemetry.layerAcceptedFPS,

@@ -40,6 +40,14 @@ struct MirageKitTests {
     @Test("AWDL media packet sizing uses wireless MTU budget")
     func awdlMediaPacketSizingUsesWirelessMTUBudget() {
         #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == 1200)
+        #expect(miragePreferredMediaMaxPacketSize(
+            for: MirageMediaPathProfile.awdlRadio,
+            pathKind: .awdl
+        ) == 1200)
+        #expect(miragePreferredMediaMaxPacketSize(
+            for: MirageMediaPathProfile.proximityWiredLike,
+            pathKind: .awdl
+        ) == mirageDirectLocalMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == mirageDirectWiFiMaxPacketSize)
         #expect(miragePreferredMediaMaxPacketSize(for: .wired) == mirageDirectLocalMaxPacketSize)
     }
@@ -72,7 +80,7 @@ struct MirageKitTests {
 
         let deserialized = FrameHeader.deserialize(from: data)
         #expect(deserialized != nil)
-        #expect(deserialized?.version == 260523)
+        #expect(deserialized?.version == 260527)
         #expect(deserialized?.version == MirageKit.protocolVersion)
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
@@ -95,7 +103,7 @@ struct MirageKitTests {
         #expect(deserialized.type == .sessionBootstrapRequest)
 
         let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
-        #expect(MirageKit.protocolVersion == 260523)
+        #expect(MirageKit.protocolVersion == 260527)
         #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decodedBootstrap.clientRequiresMediaEncryption)
     }

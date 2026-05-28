@@ -39,28 +39,29 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "2.0.1"),
+        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "2.0.2"),
     ],
     targets: [
         .target(
             name: "MirageKit",
             dependencies: [
-                .product(name: "Loom", package: "Loom"),
-                .product(name: "LoomCloudKit", package: "Loom"),
+                .product(name: "Loom", package: "loom"),
+                .product(name: "LoomCloudKit", package: "loom"),
             ]
         ),
         .target(
             name: "MirageBootstrapShared",
             dependencies: [
                 "MirageKit",
-                .product(name: "Loom", package: "Loom"),
+                .product(name: "Loom", package: "loom"),
             ]
         ),
         .target(
             name: "MirageHostBootstrapRuntime",
             dependencies: [
                 "MirageBootstrapShared",
-                .product(name: "Loom", package: "Loom"),
+                "MirageKit",
+                .product(name: "Loom", package: "loom"),
             ]
         ),
         .target(
@@ -79,7 +80,7 @@ let package = Package(
             name: "MirageKitTests",
             dependencies: [
                 "MirageKit",
-                .product(name: "Loom", package: "Loom"),
+                .product(name: "Loom", package: "loom"),
             ]
         ),
         .testTarget(
@@ -90,7 +91,7 @@ let package = Package(
             name: "MirageHostBootstrapRuntimeTests",
             dependencies: [
                 "MirageHostBootstrapRuntime",
-                .product(name: "Loom", package: "Loom"),
+                .product(name: "Loom", package: "loom"),
             ]
         ),
         .testTarget(

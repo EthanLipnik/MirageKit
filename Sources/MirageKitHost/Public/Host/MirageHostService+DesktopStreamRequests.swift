@@ -56,17 +56,18 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
             let hostBufferingPolicy = request.resolvedHostBufferingPolicy
-            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
             let adaptiveFloorFPS = targetFrameRate >= 90 ? 60 : targetFrameRate
             MirageLogger.host(
                 "event=cadence_contract phase=host_accept requested=\(request.targetFrameRate) " +
                     "accepted=\(targetFrameRate) source=\(targetFrameRate) display=\(targetFrameRate) " +
-                    "adaptiveFloor=\(adaptiveFloorFPS) path=\(pathKind?.rawValue ?? MirageNetworkPathKind.unknown.rawValue) " +
+                    "adaptiveFloor=\(adaptiveFloorFPS) path=\(mediaPathPolicy.transportPathKind.rawValue) " +
                     "latency=\(latencyMode.rawValue)"
             )
             let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
                 requested: request.mediaMaxPacketSize,
-                pathKind: pathKind
+                mediaPathProfile: mediaPathPolicy.mediaPathProfile,
+                pathKind: mediaPathPolicy.transportPathKind
             )
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Desktop stream host buffering policy: \(hostBufferingPolicy.rawValue)")
@@ -125,6 +126,7 @@ extension MirageHostService {
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                mediaPathPolicy: mediaPathPolicy,
                 upscalingMode: request.upscalingMode,
                 codec: request.codec,
                 startupRequestID: request.startupRequestID

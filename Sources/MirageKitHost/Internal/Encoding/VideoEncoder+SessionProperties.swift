@@ -65,6 +65,9 @@ extension VideoEncoder {
 
     /// Rate-control policy selected for low-latency HEVC/H.264 sessions.
     enum LowLatencyBitrateStrategy: String {
+        /// Use average bitrate without a VideoToolbox data-rate window.
+        case averageBitRateOnly
+
         /// Use average bitrate plus data-rate limits.
         case averageBitRateDataRateLimits
 
@@ -73,6 +76,8 @@ extension VideoEncoder {
 
         var publicStrategy: MirageEncoderRateControlStrategy {
             switch self {
+            case .averageBitRateOnly:
+                .none
             case .averageBitRateDataRateLimits:
                 .averageBitRateDataRateLimits
             case .none:

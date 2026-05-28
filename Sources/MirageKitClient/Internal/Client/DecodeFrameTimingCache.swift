@@ -18,6 +18,7 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
         let hostEpoch: UInt16?
         let dimensionToken: UInt16?
         let queueEpoch: UInt64?
+        let renderGeneration: UInt64?
     }
 
     /// Hashable representation of `CMTime` that preserves the fields used for equality.
@@ -51,7 +52,8 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
         frameNumber: UInt32? = nil,
         hostEpoch: UInt16? = nil,
         dimensionToken: UInt16? = nil,
-        queueEpoch: UInt64? = nil
+        queueEpoch: UInt64? = nil,
+        renderGeneration: UInt64? = nil
     ) {
         let key = Key(streamPresentationTime)
         lock.lock()
@@ -64,7 +66,8 @@ final class DecodeFrameTimingCache: @unchecked Sendable {
             frameNumber: frameNumber,
             hostEpoch: hostEpoch,
             dimensionToken: dimensionToken,
-            queueEpoch: queueEpoch
+            queueEpoch: queueEpoch,
+            renderGeneration: renderGeneration
         )
         trimLocked()
     }

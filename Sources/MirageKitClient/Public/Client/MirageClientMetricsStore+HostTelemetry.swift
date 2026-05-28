@@ -39,6 +39,9 @@ extension MirageClientMetricsStore {
             snapshot.hostRequestedTargetBitrate = metrics.requestedTargetBitrate
             snapshot.hostBitrateAdaptationCeiling = metrics.bitrateAdaptationCeiling
             snapshot.hostStartupBitrate = metrics.startupBitrate
+            snapshot.hostRealtimeBitrateCeiling = metrics.realtimeBitrateCeiling
+            snapshot.hostRealtimePressureState = metrics.realtimePressureState
+            snapshot.hostRealtimePressureReason = metrics.realtimePressureReason
             snapshot.hostCaptureAdmissionDrops = metrics.captureAdmissionDrops
             snapshot.hostFrameBudgetMs = metrics.frameBudgetMs
             snapshot.hostAverageEncodeMs = metrics.averageEncodeMs

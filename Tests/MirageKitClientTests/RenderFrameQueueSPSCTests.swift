@@ -165,6 +165,55 @@ struct RenderFrameQueueSPSCTests {
         #expect(currentSnapshot.sequence == currentCursor.sequence)
     }
 
+    @Test("Stale decoded generation is ignored after render-store clear")
+    func staleDecodedGenerationIsIgnoredAfterRenderStoreClear() {
+        let streamID: StreamID = 312
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        let listenerOwner = NSObject()
+        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: listenerOwner) {}
+        defer {
+            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: listenerOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        let staleGeneration = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
+
+        let staleResult = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            generation: staleGeneration,
+            hostEpoch: nil,
+            dimensionToken: nil,
+            frameNumber: 1,
+            queueEpoch: nil,
+            timeline: nil,
+            for: streamID
+        )
+
+        #expect(!staleResult.didEnqueue)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+
+        let currentResult = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(seconds: 2, preferredTimescale: 600),
+            generation: MirageRenderStreamStore.shared.currentGeneration(for: streamID),
+            hostEpoch: nil,
+            dimensionToken: nil,
+            frameNumber: 2,
+            queueEpoch: nil,
+            timeline: nil,
+            for: streamID
+        )
+
+        #expect(currentResult.didEnqueue)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+    }
+
     @Test("Render telemetry reports submitted cadence and resets per-snapshot counters")
     func renderTelemetrySnapshot() {
         let streamID: StreamID = 304

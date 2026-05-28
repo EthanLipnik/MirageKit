@@ -135,7 +135,7 @@ extension MirageHostService {
         )
         config = config.withInternalOverrides(pixelFormat: .bgra8)
 
-        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
+        let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
         let context = StreamContext(
             streamID: streamID,
             windowID: 0,
@@ -144,7 +144,8 @@ extension MirageHostService {
             streamScale: request.streamScale ?? 1.0,
             maxPacketSize: mirageNegotiatedMediaMaxPacketSize(
                 requested: request.mediaMaxPacketSize,
-                pathKind: clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+                mediaPathProfile: mediaPathPolicy.mediaPathProfile,
+                pathKind: mediaPathPolicy.transportPathKind
             ),
             mediaSecurityContext: mediaSecurityByClientID[clientContext.client.id],
             runtimeQualityAdjustmentEnabled: request.allowRuntimeQualityAdjustment ?? true,
@@ -152,11 +153,16 @@ extension MirageHostService {
             disableResolutionCap: request.disableResolutionCap ?? false,
             latencyMode: request.latencyMode ?? .lowestLatency,
             hostBufferingPolicy: request.resolvedHostBufferingPolicy,
-            transportPathKind: pathSnapshot?.kind ?? .unknown,
-            mediaPathProfile: pathSnapshot?.mediaProfile,
+            transportPathKind: mediaPathPolicy.transportPathKind,
+            mediaPathProfile: mediaPathPolicy.mediaPathProfile,
             bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
             encoderMaxWidth: request.encoderMaxWidth,
             encoderMaxHeight: request.encoderMaxHeight
+        )
+        MirageLogger.host(
+            "event=media_path_policy phase=custom_start stream=\(streamID) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "maxPacket=\(context.mediaMaxPacketSize)"
         )
         streamsByID[streamID] = context
         await context.setStartupBaseTime(CFAbsoluteTimeGetCurrent(), label: "custom stream \(streamID)")
@@ -173,6 +179,11 @@ extension MirageHostService {
 
         let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
         await context.setMediaSendProfile(mediaSendProfile)
+        MirageLogger.host(
+            "event=media_path_policy phase=custom_transport stream=\(streamID) " +
+                "\(mediaPathPolicy.diagnosticSummary) videoTransport=\(context.videoTransportMode) " +
+                "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(context.mediaMaxPacketSize)"
+        )
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
             videoStream.sendUnreliableQueued(packetData, profile: mediaSendProfile, onComplete: onComplete)
         }

@@ -112,11 +112,50 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(decision.state.qualityOverBudgetCount == 0)
     }
 
+    @Test("Encoded frame overrun lowers active quality immediately")
+    func encodedFrameOverrunLowersActiveQualityImmediately() {
+        let decision = decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.75,
+                qualityOverBudgetCount: 0,
+                qualityUnderBudgetCount: 2
+            ),
+            transportOverBudget: false,
+            encodedFrameOverBudget: true,
+            encodedFrameUnderBudget: false,
+            qualityDropThreshold: 1
+        )
+
+        #expect(decision.action == .drop(reason: "encoded-frame"))
+        #expect(abs(decision.state.activeQuality - 0.73) < 0.0001)
+        #expect(decision.state.qualityUnderBudgetCount == 0)
+    }
+
+    @Test("Encoded frame budget gates quality raise")
+    func encodedFrameBudgetGatesQualityRaise() {
+        let decision = decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.66,
+                qualityOverBudgetCount: 0,
+                qualityUnderBudgetCount: 3
+            ),
+            transportOverBudget: false,
+            encodedFrameUnderBudget: false,
+            qualityRaiseThreshold: 4
+        )
+
+        #expect(decision.action == .hold)
+        #expect(decision.state.activeQuality == 0.66)
+        #expect(decision.state.qualityUnderBudgetCount == 0)
+    }
+
     private func decide(
         state: MirageRuntimeQualityAdjustmentState,
         qualityFloor: Float = 0.28,
         qualityCeiling: Float = 0.75,
         transportOverBudget: Bool,
+        encodedFrameOverBudget: Bool = false,
+        encodedFrameUnderBudget: Bool = true,
         allowsRaise: Bool = true,
         allowTransportQualityRelief: Bool = true,
         qualityDropThreshold: Int = 3,
@@ -129,6 +168,8 @@ struct RuntimeQualityAdjustmentPolicyTests {
             qualityFloor: qualityFloor,
             qualityCeiling: qualityCeiling,
             transportOverBudget: transportOverBudget,
+            encodedFrameOverBudget: encodedFrameOverBudget,
+            encodedFrameUnderBudget: encodedFrameUnderBudget,
             allowsRaise: allowsRaise,
             allowTransportQualityRelief: allowTransportQualityRelief,
             qualityDropThreshold: qualityDropThreshold,

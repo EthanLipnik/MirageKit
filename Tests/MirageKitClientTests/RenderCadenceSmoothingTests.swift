@@ -176,13 +176,13 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.pendingFrameCount == 3)
     }
 
-    @Test("Smoothest uses path-specific initial playout targets except fixed AWDL")
-    func smoothestUsesPathSpecificInitialPlayoutTargetsExceptFixedAwdl() {
+    @Test("Smoothest uses path-specific initial playout targets")
+    func smoothestUsesPathSpecificInitialPlayoutTargets() {
         let streamID: StreamID = 412
         for (pathKind, expectedDelayMs) in [
             (MirageNetworkPathKind.wired, 50.0),
             (.wifi, 100.0),
-            (.awdl, 24.0),
+            (.awdl, 160.0),
             (.vpn, 250.0),
         ] {
             MirageRenderStreamStore.shared.clear(for: streamID)
@@ -207,8 +207,8 @@ struct RenderCadenceSmoothingTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("Fixed AWDL recent input uses lowest latency floor")
-    func fixedAwdlRecentInputUsesLowestLatencyFloor() {
+    @Test("Path-only AWDL recent input keeps smoothest stability floor")
+    func pathOnlyAwdlRecentInputKeepsSmoothestStabilityFloor() {
         let streamID: StreamID = 413
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -231,7 +231,7 @@ struct RenderCadenceSmoothingTests {
             for: streamID
         )
 
-        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 16)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 96)
     }
 
     @Test("Balanced Wi-Fi uses zero playout hold and immediate display timing")
@@ -265,8 +265,8 @@ struct RenderCadenceSmoothingTests {
         #expect(timing.displaysImmediately)
     }
 
-    @Test("Lowest latency AWDL uses bounded playout hold")
-    func lowestLatencyAwdlUsesBoundedPlayoutHold() {
+    @Test("AWDL radio keeps lowest latency with bounded realtime playout")
+    func awdlRadioKeepsLowestLatencyWithBoundedRealtimePlayout() {
         let streamID: StreamID = 416
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }

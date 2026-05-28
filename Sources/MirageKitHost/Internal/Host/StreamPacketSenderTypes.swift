@@ -88,11 +88,12 @@ extension StreamPacketSender {
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
     nonisolated static let maxQueuedWorkItems: Int = 32
     nonisolated static let maxQueuedBytes: Int = 64 * 1024 * 1024
+    nonisolated static let maxReliableQueuedWorkItems: Int = 240
+    nonisolated static let maxReliableQueuedBytes: Int = 192 * 1024 * 1024
 
     enum DependencyFrameDropReason: String, Sendable {
         case expiredBeforeEnqueue = "expired-before-enqueue"
         case expiredBeforeSend = "expired-before-send"
-        case expiredDuringSend = "expired-during-send"
         case expiredQueuedFrame = "expired-queued-frame"
         case generationAbort = "generation-abort"
         case oversizedFrame = "oversized-frame"
@@ -210,7 +211,6 @@ extension StreamPacketSender {
     /// Result from pacing before a packet send.
     struct PacketPacingResult {
         let sleepSample: PacketPacingSleepSample
-        let didMissDeadline: Bool
     }
 
     /// Queue entry plus its accounted byte cost.
@@ -343,14 +343,14 @@ extension StreamPacketSender {
         .greatestFiniteMagnitude
     }
 
-    /// Returns whether the AWDL experiment should duplicate the parameter-set packet.
+    /// Returns whether the sender should duplicate the parameter-set packet.
     nonisolated static func shouldDuplicateParameterSetPacket(
-        isExperimentEnabled: Bool,
+        isEnabled: Bool,
         isKeyframe: Bool,
         fragmentIndex: Int,
         flags: FrameFlags
     ) -> Bool {
-        guard isExperimentEnabled else { return false }
+        guard isEnabled else { return false }
         guard isKeyframe else { return false }
         guard fragmentIndex == 0 else { return false }
         return flags.contains(.parameterSet)

@@ -151,15 +151,6 @@ extension VideoEncoder {
             return LowLatencyBitrateResult(strategy: .none, windowSeconds: nil)
         }
 
-        let targetFrameRate = max(1, targetFrameRate)
-        let rateLimit = Self.dataRateLimit(
-            targetBitrateBps: targetBitrate,
-            targetFrameRate: targetFrameRate,
-            mediaPathProfile: mediaPathProfile
-        )
-        let strategy: LowLatencyBitrateStrategy
-        let rateLimitForTelemetry: (bytes: Int, windowSeconds: Double)?
-
         _ = clearPropertyIfPresentTracked(
             session,
             key: kVTCompressionPropertyKey_ConstantBitRate,
@@ -173,19 +164,46 @@ extension VideoEncoder {
             propertyName: "averageBitRate",
             status: &status
         )
-        let rateLimits: [NSNumber] = [
-            NSNumber(value: rateLimit.bytes),
-            NSNumber(value: rateLimit.windowSeconds),
-        ]
-        let rateLimitApplied = setPropertyTracked(
-            session,
-            key: kVTCompressionPropertyKey_DataRateLimits,
-            value: rateLimits as CFArray,
-            propertyName: "dataRateLimits",
-            status: &status
-        )
-        strategy = (averageBitRateApplied && rateLimitApplied) ? .averageBitRateDataRateLimits : .none
-        rateLimitForTelemetry = rateLimitApplied ? rateLimit : nil
+        let usesConstrainedDataRate = Self.lowLatencyUsesDataRateLimits(mediaPathProfile: mediaPathProfile)
+        let strategy: LowLatencyBitrateStrategy
+        let rateLimitForTelemetry: (bytes: Int, windowSeconds: Double)?
+        if usesConstrainedDataRate {
+            let rateLimit = Self.dataRateLimit(
+                targetBitrateBps: targetBitrate,
+                targetFrameRate: max(1, targetFrameRate),
+                mediaPathProfile: mediaPathProfile
+            )
+            let rateLimits: [NSNumber] = [
+                NSNumber(value: rateLimit.bytes),
+                NSNumber(value: rateLimit.windowSeconds),
+            ]
+            let rateLimitApplied = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_DataRateLimits,
+                value: rateLimits as CFArray,
+                propertyName: "dataRateLimits",
+                status: &status
+            )
+            if averageBitRateApplied, rateLimitApplied {
+                strategy = .averageBitRateDataRateLimits
+                rateLimitForTelemetry = rateLimit
+            } else if averageBitRateApplied {
+                strategy = .averageBitRateOnly
+                rateLimitForTelemetry = nil
+            } else {
+                strategy = .none
+                rateLimitForTelemetry = rateLimitApplied ? rateLimit : nil
+            }
+        } else {
+            _ = clearPropertyIfPresentTracked(
+                session,
+                key: kVTCompressionPropertyKey_DataRateLimits,
+                propertyName: "clearDataRateLimits",
+                status: &status
+            )
+            strategy = averageBitRateApplied ? .averageBitRateOnly : .none
+            rateLimitForTelemetry = nil
+        }
 
         encodedOutputTelemetry.updateRateControl(
             requestedBitrateBps: targetBitrate,
@@ -194,7 +212,7 @@ extension VideoEncoder {
         )
 
         if strategy == .averageBitRateDataRateLimits, let rateLimitForTelemetry {
-            let limitMB = Double(rateLimit.bytes) / 1_000_000.0
+            let limitMB = Double(rateLimitForTelemetry.bytes) / 1_000_000.0
             let limitText = limitMB.formatted(.number.precision(.fractionLength(2)))
             let windowText = rateLimitForTelemetry.windowSeconds.formatted(.number.precision(.fractionLength(4)))
             MirageLogger
@@ -245,6 +263,10 @@ extension VideoEncoder {
         let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
         let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))
         return (bytes: bytes, windowSeconds: windowSeconds)
+    }
+
+    static func lowLatencyUsesDataRateLimits(mediaPathProfile: MirageMediaPathProfile) -> Bool {
+        mediaPathProfile.usesAwdlRadioPolicy
     }
 
     func configureSession(

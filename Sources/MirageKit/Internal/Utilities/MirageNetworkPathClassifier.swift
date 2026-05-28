@@ -11,7 +11,7 @@ import Foundation
 import Loom
 import Network
 
-public enum MirageNetworkPathKind: String, Sendable, Equatable {
+public enum MirageNetworkPathKind: String, Codable, Sendable, Equatable {
     case awdl
     case wifi
     case wired
@@ -70,23 +70,23 @@ package enum MirageNetworkPathClassifier {
     ) -> MirageNetworkPathKind {
         let interfaces = InterfaceSummary(interfaceNames)
 
-        if interfaces.hasProximity {
-            return .awdl
-        }
-        if usesWiFi {
+        if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             return .wifi
         }
         if usesWired {
             return .wired
+        }
+        if interfaces.hasApplePrivateNCM || interfaces.hasLowLatencyWireless || interfaces.hasBridge {
+            return .wired
+        }
+        if interfaces.hasAWDL {
+            return .awdl
         }
         if usesCellular {
             return .cellular
         }
         if usesLoopback {
             return .loopback
-        }
-        if interfaces.hasBridge {
-            return .wired
         }
         if interfaces.hasOverlay {
             return .vpn
@@ -114,14 +114,14 @@ package enum MirageNetworkPathClassifier {
     ) -> MirageNetworkPathSnapshot {
         let interfaces = InterfaceSummary(interfaceNames)
         let kind: MirageNetworkPathKind
-        if interfaces.hasProximity {
-            kind = .awdl
-        } else if interfaces.hasOverlay {
+        if interfaces.hasOverlay {
             kind = .vpn
-        } else if usesWiFi {
+        } else if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
             kind = .wifi
         } else if usesWired {
             kind = .wired
+        } else if interfaces.hasProximity {
+            kind = .awdl
         } else if usesCellular {
             kind = .cellular
         } else if usesLoopback {
@@ -184,6 +184,7 @@ package enum MirageNetworkPathClassifier {
         let hasBridge: Bool
         let hasOverlay: Bool
         let hasProximity: Bool
+        let hasNonProximityRouteInterface: Bool
 
         init(_ interfaceNames: [String]) {
             names = interfaceNames
@@ -195,6 +196,13 @@ package enum MirageNetworkPathClassifier {
             hasBridge = names.contains { $0.hasPrefix("bridge") }
             hasOverlay = names.contains { $0.hasPrefix("utun") }
             hasProximity = hasApplePrivateNCM || hasAWDL || hasLowLatencyWireless
+            hasNonProximityRouteInterface = names.contains {
+                !$0.hasPrefix("anpi") &&
+                    !$0.hasPrefix("awdl") &&
+                    !$0.hasPrefix("llw") &&
+                    !$0.hasPrefix("utun") &&
+                    !$0.hasPrefix("bridge")
+            }
         }
     }
 

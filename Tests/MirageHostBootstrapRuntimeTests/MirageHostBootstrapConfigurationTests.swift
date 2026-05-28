@@ -70,6 +70,7 @@ struct MirageHostBootstrapConfigurationTests {
         #expect(metadata?.supportsPreloginDaemon == true)
         #expect(metadata?.sshPort == 2222)
         #expect(metadata?.controlPort == 9852)
+        #expect(metadata?.controlCapabilities == [.commands])
         #expect(metadata?.endpoints.count == 2)
         #expect(metadata?.endpoints.first?.host == "host.local")
         #expect(metadata?.endpoints.first?.port == 2200)

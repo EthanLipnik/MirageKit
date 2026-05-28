@@ -133,6 +133,7 @@ actor StreamContext {
     let qualityAdjustmentCooldown: CFAbsoluteTime = 0.35
     var qualityOverBudgetCount: Int = 0
     var qualityUnderBudgetCount: Int = 0
+    var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
     let qualityDropThreshold: Int = 3
     let qualityRaiseThreshold: Int = 8
     let qualityDropStep: Float = 0.02
@@ -232,6 +233,20 @@ actor StreamContext {
     let senderFrameBudgetDelayOverrunThreshold: Int = 2
     let senderFrameBudgetDelayRecoveryMultiplier: Double = 2.0
     var transportController = HostStreamTransportController()
+    var realtimeBudgetController = HostRealtimeStreamBudgetController()
+    var realtimeRuntimeQualityCeiling: Float?
+    var realtimeRuntimeBitrateCeilingBps: Int?
+    var realtimePressureState: HostRealtimeStreamBudgetController.PressureState = .observing
+    var realtimePressureReason: String?
+    var realtimeLastLoggedState: HostRealtimeStreamBudgetController.PressureState = .observing
+    var realtimeLastLoggedBitrateCeilingBps: Int?
+    var realtimeLastLoggedAdmissionTargetFPS: Int?
+    var realtimeLastLogTime: CFAbsoluteTime = 0
+    let realtimeMinimumBitrateFloorBps: Int = 12_000_000
+    var transportFrameAdmissionTargetFPS: Int?
+    var transportFrameAdmissionDeadline: CFAbsoluteTime = 0
+    var realtimeFrameAdmissionTargetFPS: Int?
+    var realtimeFrameAdmissionDeadline: CFAbsoluteTime = 0
     var receiverFrameAdmissionTargetFPS: Int?
     var receiverFrameAdmissionDeadline: CFAbsoluteTime = 0
     var receiverFrameAdmissionLastAdmitTime: CFAbsoluteTime = 0
@@ -328,6 +343,8 @@ actor StreamContext {
     let transportPathKind: MirageNetworkPathKind
     /// Media behavior profile used for real-time pacing and admission policy.
     let mediaPathProfile: MirageMediaPathProfile
+    /// Video transport contract selected for dependency-coded media packets.
+    nonisolated(unsafe) var videoTransportMode: MirageVideoTransportMode = .unreliableQueued
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -395,7 +412,7 @@ actor StreamContext {
             mediaPathProfile: resolvedMediaPathProfile
         )
         let effectiveHostBufferingPolicy = resolvedMediaPathProfile.usesAwdlRadioPolicy
-            ? MirageHostBufferingPolicy.freshestFrame
+            ? MirageHostBufferingPolicy.stability
             : hostBufferingPolicy
 
         self.streamID = streamID

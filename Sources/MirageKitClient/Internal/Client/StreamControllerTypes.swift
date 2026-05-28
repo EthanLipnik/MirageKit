@@ -83,6 +83,23 @@ extension StreamController {
         case monitor(FreezeStallKind)
     }
 
+    enum FreezeRecoveryEpisodeState: String, Equatable {
+        case presenterProbe = "presenter-probe"
+        case requestingKeyframe = "requesting-keyframe"
+        case awaitingKeyframePresentation = "awaiting-keyframe-presentation"
+        case hardRecovery = "hard-recovery"
+    }
+
+    struct FreezeRecoveryEpisode: Equatable {
+        let id: UInt64
+        var state: FreezeRecoveryEpisodeState
+        let startedAt: CFAbsoluteTime
+        let baselineSubmittedSequence: UInt64
+        var lastActionTime: CFAbsoluteTime
+        var presenterProbeAttempted: Bool
+        var keyframeRequestAttempts: Int
+    }
+
     enum FirstPresentedFrameAwaitMode: Equatable {
         case startup
         case recovery
@@ -120,6 +137,7 @@ extension StreamController {
         let receivedFrameIntervalP95Ms: Double
         let receivedFrameIntervalP99Ms: Double
         let droppedFrames: UInt64
+        let decodeBacklogFrames: Int
         let displayTickFPS: Double
         let submitAttemptFPS: Double
         let layerAcceptedFPS: Double
@@ -205,15 +223,25 @@ extension StreamController {
         }
     }
 
+    nonisolated static func firstPresentedFrameHardRecoveryGrace(
+        for mode: FirstPresentedFrameAwaitMode
+    ) -> CFAbsoluteTime {
+        switch mode {
+        case .startup:
+            startupFirstPresentedFrameHardRecoveryGrace
+        case .recovery:
+            recoveryFirstPresentedFrameHardRecoveryGrace
+        }
+    }
+
     nonisolated static func bootstrapFirstFrameRecoveryAction(
         hasPackets: Bool,
-        awaitingKeyframe: Bool,
         latestSequence: UInt64,
         baselineSequence: UInt64
     ) -> BootstrapFirstFrameRecoveryAction {
         guard hasPackets else { return .hardRecovery }
-        guard latestSequence > baselineSequence || awaitingKeyframe else { return .hardRecovery }
-        return awaitingKeyframe ? .requestKeyframe : .hardRecovery
+        guard latestSequence <= baselineSequence else { return .hardRecovery }
+        return .requestKeyframe
     }
 
     nonisolated static func shouldAttemptRendererRecoveryBeforeBootstrapReset(

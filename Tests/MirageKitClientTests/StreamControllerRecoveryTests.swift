@@ -570,6 +570,13 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("AWDL decode queue budget holds a bounded jitter window")
+    func awdlDecodeQueueBudgetHoldsBoundedJitterWindow() {
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 20) == StreamController.maxQueuedFrames + 1)
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 60) == 36)
+        #expect(StreamController.awdlMaxQueuedFrames(targetFPS: 120) == 72)
+    }
+
 }
 
 func streamControllerWaitUntil(

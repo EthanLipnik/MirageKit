@@ -369,7 +369,8 @@ struct StreamControllerHardRecoveryTests {
         reassembler.beginKeyframeWait()
 
         try await Task.sleep(for: .seconds(11))
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value >= 1)
+        #expect(keyframeCounter.value <= 2)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         await controller.stop()

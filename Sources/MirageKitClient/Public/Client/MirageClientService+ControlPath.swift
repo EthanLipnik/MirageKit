@@ -34,8 +34,8 @@ extension MirageClientService {
         }
     }
 
-    /// Emits throttled AWDL experiment metrics when steady-state diagnostics are enabled.
-    func logAwdlExperimentTelemetryIfNeeded(
+    /// Emits throttled AWDL radio metrics when steady-state diagnostics are enabled.
+    func logAwdlRadioTelemetryIfNeeded(
         streamID: StreamID? = nil,
         metrics: StreamController.ClientFrameMetrics? = nil
     ) {
@@ -130,6 +130,30 @@ extension MirageClientService {
         return .freshestFrame
     }
 
+    func applyCurrentClientPathFields(to request: inout StartDesktopStreamMessage) {
+        request.clientTransportPathKind = controlPathSnapshot?.kind
+        request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
+        request.clientPathSignature = controlPathSnapshot?.signature
+    }
+
+    func applyCurrentClientPathFields(to request: inout StartStreamMessage) {
+        request.clientTransportPathKind = controlPathSnapshot?.kind
+        request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
+        request.clientPathSignature = controlPathSnapshot?.signature
+    }
+
+    func applyCurrentClientPathFields(to request: inout SelectAppMessage) {
+        request.clientTransportPathKind = controlPathSnapshot?.kind
+        request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
+        request.clientPathSignature = controlPathSnapshot?.signature
+    }
+
+    func applyCurrentClientPathFields(to request: inout StartCustomStreamMessage) {
+        request.clientTransportPathKind = controlPathSnapshot?.kind
+        request.clientMediaPathProfile = controlPathSnapshot?.mediaProfile
+        request.clientPathSignature = controlPathSnapshot?.signature
+    }
+
     /// Appends a distinct control-path status sample, keeping only the most recent entries.
     func recordControlPathHistory(
         _ snapshot: MirageNetworkPathSnapshot,
@@ -178,7 +202,7 @@ extension MirageClientService {
     }
 
     private static func pathStatusIndicatesAwdl(_ status: MirageClientNetworkPathStatus) -> Bool {
-        if status.kind == .awdl { return true }
+        if status.usesFixedRealtimeDisplayPolicy { return true }
         return !awdlInterfaceNames(from: status).isEmpty
     }
 

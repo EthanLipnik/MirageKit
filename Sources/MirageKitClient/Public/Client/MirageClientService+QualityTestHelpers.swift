@@ -292,7 +292,11 @@ extension MirageClientService {
             receivedPacketCount: receivedMetrics.receivedPacketCount,
             sentPayloadBytes: completion.sentPayloadBytes,
             receivedPayloadBytes: receivedMetrics.receivedPayloadBytes,
-            deliveryWindowMissed: completion.deliveryWindowMissed
+            deliveryWindowMissed: completion.deliveryWindowMissed,
+            receiveSpanMs: receivedMetrics.receiveSpanMs,
+            interArrivalP95Ms: receivedMetrics.interArrivalP95Ms,
+            interArrivalP99Ms: receivedMetrics.interArrivalP99Ms,
+            deliveryWindowMissReason: completion.deliveryWindowMissed ? "host-delivery-window" : nil
         )
         return try Self.validatedQualityTestStageResult(
             result,

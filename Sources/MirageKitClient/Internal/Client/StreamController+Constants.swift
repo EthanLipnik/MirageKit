@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MirageKit
 
 extension StreamController {
     /// Time window for counting repeated decode failures before escalating recovery.
@@ -24,19 +25,29 @@ extension StreamController {
     static let freezeCheckInterval: Duration = .milliseconds(250)
     /// Cooldown between freeze-triggered recovery attempts.
     static let freezeRecoveryCooldown: CFAbsoluteTime = 3.0
+    /// Grace period for a presenter-only freeze probe to submit a newer frame.
+    static let freezePresenterProbeGrace: CFAbsoluteTime = 0.5
     /// Number of repeated freeze recoveries before escalating the recovery path.
     static let freezeRecoveryEscalationThreshold: Int = 2
 
     /// Maximum number of compressed frames buffered ahead of decode.
     static let maxQueuedFrames: Int = 15
+    /// Maximum compressed frame bytes retained for AWDL radio before dependency recovery.
+    static let awdlMaxQueuedFrameBytes: Int = 32 * 1024 * 1024
+    /// Upper frame-count bound for the AWDL radio pre-decode jitter buffer.
+    static let awdlMaxQueuedFrameCap: Int = 72
     /// Poll interval while waiting for the first presented frame after startup/reset/resize.
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
     static let firstPresentedFrameWaitLogInterval: CFAbsoluteTime = 0.5
     /// Grace period before issuing bootstrap recovery while initial startup has no presentation progress.
     static let startupFirstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 5.0
+    /// Grace period before a first-frame startup stall escalates to a full pipeline reset.
+    static let startupFirstPresentedFrameHardRecoveryGrace: CFAbsoluteTime = 15.0
     /// Grace period before issuing bootstrap recovery after an established stream is reset.
     static let recoveryFirstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 1.0
+    /// Grace period before a reset/recovery first-frame stall escalates again.
+    static let recoveryFirstPresentedFrameHardRecoveryGrace: CFAbsoluteTime = 3.0
     /// Cooldown between bootstrap recovery probes while awaiting the first presented frame.
     static let firstPresentedFrameRecoveryCooldown: CFAbsoluteTime = 1.0
     /// Escalate to a hard recovery after a single bounded bootstrap request stalls again.
@@ -75,7 +86,7 @@ extension StreamController {
     /// FPS gap that marks the source as the likely cadence limiter.
     static let decodeSubmissionSourceBoundGapFPS: Double = 1.0
     /// Maximum adaptive jitter hold used to smooth transport bursts.
-    static let adaptiveJitterHoldMaxMs: Int = 8
+    static let adaptiveJitterHoldMaxMs: Int = 12
     /// Ratio below which adaptive jitter is treated as stressed.
     static let adaptiveJitterStressThreshold: Double = 0.88
     /// Number of stressed reporting windows before increasing adaptive jitter hold.
@@ -86,4 +97,13 @@ extension StreamController {
     static let adaptiveJitterStepUpMs: Int = 2
     /// Milliseconds removed when adaptive jitter relaxes.
     static let adaptiveJitterStepDownMs: Int = 1
+
+    static func awdlMaxQueuedFrames(targetFPS: Int) -> Int {
+        let targetFPS = max(1, targetFPS)
+        let frames = Int(
+            (Double(targetFPS) * MirageAwdlMediaController.decodeQueueWindowMs / 1_000.0)
+                .rounded(.up)
+        )
+        return min(awdlMaxQueuedFrameCap, max(maxQueuedFrames + 1, frames))
+    }
 }

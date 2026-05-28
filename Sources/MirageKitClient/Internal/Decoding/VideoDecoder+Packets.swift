@@ -97,7 +97,6 @@ extension FrameReassembler {
             defer { lock.unlock() }
             previousPathKind = transportPathKind
             transportPathKind = pathKind
-            mediaPathProfile = MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: [])
         }
 
         guard previousPathKind != pathKind else { return }

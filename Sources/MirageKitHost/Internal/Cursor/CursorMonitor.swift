@@ -135,15 +135,11 @@ actor CursorMonitor {
     }
 
     nonisolated static func resolvedCursorType(
-        currentSystemCursor: NSCursor?,
-        currentCursor: NSCursor?
+        currentSystemCursor: NSCursor?
     )
     -> (cursorType: MirageCursorType, source: String) {
         if let systemType = MirageCursorType(from: currentSystemCursor) {
             return (systemType, "currentSystem")
-        }
-        if let currentType = MirageCursorType(from: currentCursor) {
-            return (currentType, "current")
         }
         return (.arrow, "fallback")
     }
@@ -222,8 +218,7 @@ actor CursorMonitor {
             let sampleStart = CFAbsoluteTimeGetCurrent()
             let mouseLocation = NSEvent.mouseLocation
             let resolvedCursor = Self.resolvedCursorType(
-                currentSystemCursor: NSCursor.currentSystem,
-                currentCursor: NSCursor.current
+                currentSystemCursor: NSCursor.currentSystem
             )
             return CursorSample(
                 mouseLocation: mouseLocation,

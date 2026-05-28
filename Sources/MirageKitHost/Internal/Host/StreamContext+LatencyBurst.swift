@@ -13,7 +13,11 @@ import MirageKit
 #if os(macOS)
 extension StreamContext {
     var resolvedQualityCeiling: Float {
-        min(steadyQualityCeiling, compressionQualityCeiling)
+        min(
+            steadyQualityCeiling,
+            compressionQualityCeiling,
+            realtimeRuntimeQualityCeiling ?? compressionQualityCeiling
+        )
     }
 
     func enterLatencyBurst(reason: String) async {

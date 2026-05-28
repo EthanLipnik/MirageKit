@@ -97,7 +97,7 @@ extension MirageHostService {
         via stream: LoomMultiplexedStream
     ) async -> QualityTestStageSendMetrics? {
         let payloadLength = UInt16(clamping: payloadBytes)
-        let payload = Data(repeating: 0, count: payloadBytes)
+        let payload = qualityTestPayload(testID: testID, stageID: stage.id, payloadBytes: payloadBytes)
         let packetBytes = payloadBytes + mirageQualityTestHeaderSize
         let queueProfile = qualityTestQueueProfile(for: stage.probeKind)
         let stageSendState = QualityTestStageSendState(queueProfile: queueProfile)
@@ -325,6 +325,48 @@ extension MirageHostService {
             sentPayloadBytes: stagePayloadBytes,
             deliveryWindowMissed: deliveryWindowMissed
         )
+    }
+
+    nonisolated static func qualityTestPayload(
+        testID: UUID,
+        stageID: Int,
+        payloadBytes: Int
+    ) -> Data {
+        guard payloadBytes > 0 else { return Data() }
+        var seed = qualityTestPayloadSeed(testID: testID, stageID: stageID)
+        var bytes = [UInt8](repeating: 0, count: payloadBytes)
+        var randomWord: UInt64 = 0
+        var remainingWordBytes = 0
+        for index in bytes.indices {
+            if remainingWordBytes == 0 {
+                seed = qualityTestPayloadNextWord(seed)
+                randomWord = seed
+                remainingWordBytes = MemoryLayout<UInt64>.size
+            }
+            bytes[index] = UInt8(truncatingIfNeeded: randomWord)
+            randomWord >>= 8
+            remainingWordBytes -= 1
+        }
+        return Data(bytes)
+    }
+
+    private nonisolated static func qualityTestPayloadSeed(testID: UUID, stageID: Int) -> UInt64 {
+        var seed: UInt64 = 0xcbf2_9ce4_8422_2325 ^ UInt64(truncatingIfNeeded: stageID)
+        var uuid = testID.uuid
+        withUnsafeBytes(of: &uuid) { rawBytes in
+            for byte in rawBytes {
+                seed ^= UInt64(byte)
+                seed &*= 0x0000_0100_0000_01b3
+            }
+        }
+        return seed == 0 ? 0x9e37_79b9_7f4a_7c15 : seed
+    }
+
+    private nonisolated static func qualityTestPayloadNextWord(_ value: UInt64) -> UInt64 {
+        var z = value &+ 0x9e37_79b9_7f4a_7c15
+        z = (z ^ (z >> 30)) &* 0xbf58_476d_1ce4_e5b9
+        z = (z ^ (z >> 27)) &* 0x94d0_49bb_1331_11eb
+        return z ^ (z >> 31)
     }
 }
 #endif

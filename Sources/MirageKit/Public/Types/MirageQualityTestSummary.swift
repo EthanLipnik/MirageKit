@@ -37,6 +37,14 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
         public let receivedPayloadBytes: Int
         /// Whether expected delivery missed the stage's completion window.
         public let deliveryWindowMissed: Bool
+        /// Wall-clock receive span measured on the client.
+        public let receiveSpanMs: Double?
+        /// 95th percentile client packet inter-arrival time.
+        public let interArrivalP95Ms: Double?
+        /// 99th percentile client packet inter-arrival time.
+        public let interArrivalP99Ms: Double?
+        /// Reason associated with a missed delivery window, when known.
+        public let deliveryWindowMissReason: String?
 
         /// Creates one stage result.
         public init(
@@ -50,7 +58,11 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
             receivedPacketCount: Int,
             sentPayloadBytes: Int,
             receivedPayloadBytes: Int,
-            deliveryWindowMissed: Bool = false
+            deliveryWindowMissed: Bool = false,
+            receiveSpanMs: Double? = nil,
+            interArrivalP95Ms: Double? = nil,
+            interArrivalP99Ms: Double? = nil,
+            deliveryWindowMissReason: String? = nil
         ) {
             self.stageID = stageID
             self.probeKind = probeKind
@@ -63,6 +75,10 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
             self.sentPayloadBytes = sentPayloadBytes
             self.receivedPayloadBytes = receivedPayloadBytes
             self.deliveryWindowMissed = deliveryWindowMissed
+            self.receiveSpanMs = receiveSpanMs
+            self.interArrivalP95Ms = interArrivalP95Ms
+            self.interArrivalP99Ms = interArrivalP99Ms
+            self.deliveryWindowMissReason = deliveryWindowMissReason
         }
     }
 

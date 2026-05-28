@@ -200,19 +200,17 @@ extension StreamController {
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {
         reassembler.setTransportPathKind(kind)
-        let awdlActive = awdlExperimentEnabled && kind == .awdl
-        guard awdlTransportActive != awdlActive else { return }
-        awdlTransportActive = awdlActive
-        if !awdlActive {
-            adaptiveJitterHoldMs = 0
-            adaptiveJitterStressStreak = 0
-            adaptiveJitterStableStreak = 0
+        if kind != .awdl {
+            setAwdlTransportActive(false)
         }
     }
 
     func setMediaPathProfile(_ profile: MirageMediaPathProfile) {
         reassembler.setMediaPathProfile(profile)
-        let awdlActive = awdlExperimentEnabled && profile.usesAwdlRadioPolicy
+        setAwdlTransportActive(profile.usesAwdlRadioPolicy)
+    }
+
+    private func setAwdlTransportActive(_ awdlActive: Bool) {
         guard awdlTransportActive != awdlActive else { return }
         awdlTransportActive = awdlActive
         if !awdlActive {
@@ -223,7 +221,7 @@ extension StreamController {
     }
 
     func evaluateAdaptiveJitterHold(receivedFPS: Double) {
-        guard awdlExperimentEnabled, awdlTransportActive else {
+        guard awdlTransportActive else {
             guard adaptiveJitterHoldMs != 0 ||
                 adaptiveJitterStressStreak != 0 ||
                 adaptiveJitterStableStreak != 0 else {

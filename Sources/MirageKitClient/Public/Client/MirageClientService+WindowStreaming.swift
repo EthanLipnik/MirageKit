@@ -81,6 +81,7 @@ public extension MirageClientService {
         resolutionScale = geometry.resolvedStreamScale
         request.scaleFactor = geometry.displayScaleFactor
         request.streamScale = geometry.resolvedStreamScale
+        applyCurrentClientPathFields(to: &request)
 
         MirageLogger.client(
             "Sending startStream for window \(window.id): " +
@@ -344,13 +345,17 @@ public extension MirageClientService {
 
     /// Preferred media packet size for the current control path.
     var resolvedRequestedMediaMaxPacketSize: Int {
-        miragePreferredMediaMaxPacketSize(for: controlPathSnapshot?.kind)
+        miragePreferredMediaMaxPacketSize(
+            for: controlPathSnapshot?.mediaProfile,
+            pathKind: controlPathSnapshot?.kind
+        )
     }
 
     /// Negotiated media packet size after applying control-path limits.
     func resolvedAcceptedMediaMaxPacketSize(_ accepted: Int?) -> Int {
         mirageNegotiatedMediaMaxPacketSize(
             requested: accepted,
+            mediaPathProfile: controlPathSnapshot?.mediaProfile,
             pathKind: controlPathSnapshot?.kind
         )
     }

@@ -470,8 +470,8 @@ struct ReceiverHealthControllerTests {
         #expect(action == .backoff(targetBitrateBps: 27_000_000))
     }
 
-    @Test("Delivery collapse without transport evidence does not back off")
-    func deliveryCollapseWithoutTransportEvidenceDoesNotBackOff() {
+    @Test("Delivery collapse behind healthy host cadence backs off")
+    func deliveryCollapseBehindHealthyHostCadenceBacksOff() {
         var controller = MirageReceiverHealthController()
         var networkSnapshot = healthySnapshot(activeQuality: 0.62)
         networkSnapshot.hostEncodedFPS = 60
@@ -493,24 +493,44 @@ struct ReceiverHealthControllerTests {
             now: 12
         )
 
-        var decodeSnapshot = networkSnapshot
-        decodeSnapshot.decodeHealthy = false
-        var decodeController = MirageReceiverHealthController()
-        _ = decodeController.advance(
-            snapshots: [decodeSnapshot],
+        #expect(networkBackoff == .backoff(targetBitrateBps: 40_800_000))
+        #expect(
+            controller.lastTransportPressureReason ==
+                "client delivery cadence host=60.0fps received=8.0fps worstGap=0.0ms p95=0.0ms p99=0.0ms"
+        )
+    }
+
+    @Test("Support-log receive gaps back off without explicit drops")
+    func supportLogReceiveGapsBackOffWithoutExplicitDrops() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostEncodedFPS = 60
+        snapshot.receivedFPS = 30
+        snapshot.decodedFPS = 30
+        snapshot.submittedFPS = 30
+        snapshot.uniqueSubmittedFPS = 30
+        snapshot.clientReceivedWorstGapMs = 216
+        snapshot.clientReceivedFrameIntervalP95Ms = 55
+        snapshot.clientReceivedFrameIntervalP99Ms = 150
+
+        _ = controller.advance(
+            snapshots: [snapshot],
             currentBitrateBps: 48_000_000,
             ceilingBps: 136_000_000,
             now: 10
         )
-        let decodeAction = decodeController.advance(
-            snapshots: [decodeSnapshot],
+        let action = controller.advance(
+            snapshots: [snapshot],
             currentBitrateBps: 48_000_000,
             ceilingBps: 136_000_000,
             now: 12
         )
 
-        #expect(networkBackoff == .probe(targetBitrateBps: 60_000_000))
-        #expect(decodeAction == .probe(targetBitrateBps: 60_000_000))
+        #expect(action == .backoff(targetBitrateBps: 40_800_000))
+        #expect(
+            controller.lastTransportPressureReason ==
+                "client delivery cadence host=60.0fps received=30.0fps worstGap=216.0ms p95=55.0ms p99=150.0ms"
+        )
     }
 
     @Test("Missing host metrics hold")
@@ -617,6 +637,40 @@ struct ReceiverHealthControllerTests {
 
         #expect(secondEarlyDecision == nil)
         #expect(thirdEarlyDecision == nil)
+    }
+
+    @Test("AWDL route health demotes early for startup decode collapse")
+    func awdlRouteHealthDemotesEarlyForStartupDecodeCollapse() throws {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: true,
+            startupBitrateBps: 16_000_000,
+            now: 0
+        )
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientDecodeBacklogFrames = 36
+
+        let beforeWatchdogDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 7
+        )
+        let firstDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 15
+        )
+        let secondDecision = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 17
+        )
+
+        #expect(beforeWatchdogDecision == nil)
+        #expect(firstDecision == nil)
+        #expect(secondDecision != nil)
     }
 
     func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {

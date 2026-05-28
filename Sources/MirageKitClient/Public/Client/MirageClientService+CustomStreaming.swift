@@ -65,6 +65,7 @@ public extension MirageClientService {
         )
         resolutionScale = geometry.resolvedStreamScale
         request.streamScale = geometry.resolvedStreamScale
+        applyCurrentClientPathFields(to: &request)
 
         return try await withCheckedThrowingContinuation { continuation in
             customStreamStartedContinuations[startupRequestID] = continuation

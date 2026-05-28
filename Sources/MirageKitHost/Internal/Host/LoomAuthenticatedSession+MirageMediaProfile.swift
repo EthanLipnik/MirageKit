@@ -15,7 +15,7 @@ extension LoomAuthenticatedSession {
             return .interactiveMedia
         }
         let mediaProfile = MirageNetworkPathClassifier.classify(pathSnapshot).mediaProfile
-        return mediaProfile == .awdlRadio || mediaProfile == .proximityWiredLike
+        return mediaProfile.usesAwdlRadioPolicy
             ? .proximityInteractiveMedia
             : .interactiveMedia
     }

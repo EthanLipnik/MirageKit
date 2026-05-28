@@ -556,7 +556,7 @@ extension StreamContext {
     ) -> Int {
         if mediaPathProfile.usesAwdlRadioPolicy {
             if isKeyframe, isStartupTransportProtectionActive(now: now) {
-                return startupKeyframeFECBlockSize
+                return MirageAwdlMediaController.startupKeyframeFECBlockSizeForAwdlRadio()
             }
             if isLossModeActive(now: now) || isKeyframe {
                 return MirageAwdlMediaController.keyframeFECBlockSize()
@@ -630,7 +630,7 @@ extension StreamContext {
     var keyframeQuality: Float {
         let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
         guard runtimeQualityAdjustmentEnabled else { return base }
-        return max(keyframeQualityFloor, base)
+        return min(activeQuality, max(keyframeQualityFloor, base))
     }
 }
 #endif

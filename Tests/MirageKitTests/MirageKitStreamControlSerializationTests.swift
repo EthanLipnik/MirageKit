@@ -34,7 +34,7 @@ struct MirageKitStreamControlSerializationTests {
         #expect(serialized.count == mirageAudioHeaderSize)
         let decoded = AudioPacketHeader.deserialize(from: serialized)
         #expect(decoded != nil)
-        #expect(decoded?.version == 260523)
+        #expect(decoded?.version == 260527)
         #expect(decoded?.version == MirageKit.protocolVersion)
         #expect(decoded?.codec == .pcm16LE)
         #expect(decoded?.flags.contains(.discontinuity) == true)
@@ -167,6 +167,134 @@ struct MirageKitStreamControlSerializationTests {
         let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
         let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decodedStartDesktop.mediaMaxPacketSize == 1200)
+    }
+
+    @Test("Stream startup requests serialize client path fields")
+    func streamStartupRequestsSerializeClientPathFields() throws {
+        let pathSignature = "status=satisfied|kind=wifi|media=localWiFi"
+        let startStream = StartStreamMessage(
+            windowID: 12,
+            targetFrameRate: 60,
+            clientTransportPathKind: .wifi,
+            clientMediaPathProfile: .localWiFi,
+            clientPathSignature: pathSignature
+        )
+        let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
+        let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        #expect(decodedStartStream.clientTransportPathKind == .wifi)
+        #expect(decodedStartStream.clientMediaPathProfile == .localWiFi)
+        #expect(decodedStartStream.clientPathSignature == pathSignature)
+
+        let selectApp = SelectAppMessage(
+            bundleIdentifier: "com.example.Editor",
+            targetFrameRate: 60,
+            maxConcurrentVisibleWindows: 2,
+            clientTransportPathKind: .awdl,
+            clientMediaPathProfile: .awdlRadio,
+            clientPathSignature: pathSignature
+        )
+        let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
+        let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        #expect(decodedSelectApp.clientTransportPathKind == .awdl)
+        #expect(decodedSelectApp.clientMediaPathProfile == .awdlRadio)
+        #expect(decodedSelectApp.clientPathSignature == pathSignature)
+
+        let startDesktop = StartDesktopStreamMessage(
+            scaleFactor: nil,
+            displayWidth: 3008,
+            displayHeight: 1692,
+            targetFrameRate: 60,
+            clientTransportPathKind: .wired,
+            clientMediaPathProfile: .wired,
+            clientPathSignature: pathSignature
+        )
+        let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decodedStartDesktop.clientTransportPathKind == .wired)
+        #expect(decodedStartDesktop.clientMediaPathProfile == .wired)
+        #expect(decodedStartDesktop.clientPathSignature == pathSignature)
+
+        let custom = StartCustomStreamMessage(
+            kind: "test",
+            displayWidth: 1280,
+            displayHeight: 720,
+            targetFrameRate: 60,
+            clientTransportPathKind: .wifi,
+            clientMediaPathProfile: .localWiFi,
+            clientPathSignature: pathSignature
+        )
+        let customEnvelope = try ControlMessage(type: .startCustomStream, content: custom)
+        let (decodedCustomEnvelope, _) = try requireParsedControlMessage(from: customEnvelope.serialize())
+        let decodedCustom = try decodedCustomEnvelope.decode(StartCustomStreamMessage.self)
+        #expect(decodedCustom.clientTransportPathKind == .wifi)
+        #expect(decodedCustom.clientMediaPathProfile == .localWiFi)
+        #expect(decodedCustom.clientPathSignature == pathSignature)
+    }
+
+    @Test("Stream startup requests tolerate old payloads without client path fields")
+    func streamStartupRequestsTolerateMissingClientPathFields() throws {
+        let startupRequestID = UUID()
+        let appSessionID = UUID()
+        let oldWindowPayload = Data(#"{"windowID":12,"targetFrameRate":60}"#.utf8)
+        let oldWindow = try ControlMessage(type: .startStream, payload: oldWindowPayload)
+            .decode(StartStreamMessage.self)
+        #expect(oldWindow.clientTransportPathKind == nil)
+        #expect(oldWindow.clientMediaPathProfile == nil)
+        #expect(oldWindow.clientPathSignature == nil)
+
+        let oldAppPayload = Data(
+            """
+            {"startupRequestID":"\(startupRequestID.uuidString)","appSessionID":"\(appSessionID.uuidString)","bundleIdentifier":"com.example.Editor","targetFrameRate":60,"maxConcurrentVisibleWindows":1}
+            """.utf8
+        )
+        let oldApp = try ControlMessage(type: .selectApp, payload: oldAppPayload).decode(SelectAppMessage.self)
+        #expect(oldApp.clientTransportPathKind == nil)
+        #expect(oldApp.clientMediaPathProfile == nil)
+        #expect(oldApp.clientPathSignature == nil)
+
+        let oldDesktopPayload = Data(
+            """
+            {"startupRequestID":"\(startupRequestID.uuidString)","displayWidth":3008,"displayHeight":1692,"targetFrameRate":60}
+            """.utf8
+        )
+        let oldDesktop = try ControlMessage(type: .startDesktopStream, payload: oldDesktopPayload)
+            .decode(StartDesktopStreamMessage.self)
+        #expect(oldDesktop.clientTransportPathKind == nil)
+        #expect(oldDesktop.clientMediaPathProfile == nil)
+        #expect(oldDesktop.clientPathSignature == nil)
+
+        let oldCustomPayload = Data(
+            """
+            {"startupRequestID":"\(startupRequestID.uuidString)","kind":"test","metadata":{},"displayWidth":1280,"displayHeight":720,"targetFrameRate":60}
+            """.utf8
+        )
+        let oldCustom = try ControlMessage(type: .startCustomStream, payload: oldCustomPayload)
+            .decode(StartCustomStreamMessage.self)
+        #expect(oldCustom.clientTransportPathKind == nil)
+        #expect(oldCustom.clientMediaPathProfile == nil)
+        #expect(oldCustom.clientPathSignature == nil)
+    }
+
+    @Test("Desktop stream restart copy preserves client path fields")
+    func desktopStreamRestartCopyPreservesClientPathFields() {
+        let request = StartDesktopStreamMessage(
+            scaleFactor: nil,
+            displayWidth: 3008,
+            displayHeight: 1692,
+            targetFrameRate: 60,
+            clientTransportPathKind: .wifi,
+            clientMediaPathProfile: .localWiFi,
+            clientPathSignature: "status=satisfied|kind=wifi|media=localWiFi"
+        )
+
+        let copy = StartDesktopStreamMessage(copying: request, startupRequestID: UUID())
+
+        #expect(copy.clientTransportPathKind == request.clientTransportPathKind)
+        #expect(copy.clientMediaPathProfile == request.clientMediaPathProfile)
+        #expect(copy.clientPathSignature == request.clientPathSignature)
     }
 
     @Test("Stream startup requests default missing host buffering policy to freshest frame")

@@ -170,6 +170,12 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostBitrateAdaptationCeiling: Int?
     /// Startup bitrate selected by the host encoder, in bits per second.
     public var hostStartupBitrate: Int?
+    /// Host-side realtime bitrate ceiling, in bits per second.
+    public var hostRealtimeBitrateCeiling: Int?
+    /// Host-side realtime pressure state.
+    public var hostRealtimePressureState: String?
+    /// Host-side realtime pressure reason.
+    public var hostRealtimePressureReason: String?
     /// Number of frames rejected by host capture admission control.
     public var hostCaptureAdmissionDrops: UInt64?
     /// Host frame budget, in milliseconds.
@@ -391,6 +397,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRequestedTargetBitrate: Int? = nil,
         hostBitrateAdaptationCeiling: Int? = nil,
         hostStartupBitrate: Int? = nil,
+        hostRealtimeBitrateCeiling: Int? = nil,
+        hostRealtimePressureState: String? = nil,
+        hostRealtimePressureReason: String? = nil,
         hostCaptureAdmissionDrops: UInt64? = nil,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
@@ -497,6 +506,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
         self.hostBitrateAdaptationCeiling = hostBitrateAdaptationCeiling
         self.hostStartupBitrate = hostStartupBitrate
+        self.hostRealtimeBitrateCeiling = hostRealtimeBitrateCeiling
+        self.hostRealtimePressureState = hostRealtimePressureState
+        self.hostRealtimePressureReason = hostRealtimePressureReason
         self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
         self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs

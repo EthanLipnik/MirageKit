@@ -216,6 +216,19 @@ struct HostKeyframeRecoveryTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 0)
     }
 
+    @Test("AWDL startup keyframes use bounded FEC block")
+    func awdlStartupKeyframesUseBoundedFECBlock() async {
+        let context = makeContext(
+            transportPathKind: .awdl,
+            mediaPathProfile: .awdlRadio
+        )
+
+        await context.enableStartupTransportProtection(now: 10.0)
+
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 4)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: 10.0) == 0)
+    }
+
     @Test("Startup keyframe stays separate from recovery loss mode")
     func startupKeyframeDoesNotEnterRecoveryLossMode() async {
         let context = makeContext()
@@ -308,7 +321,9 @@ struct HostKeyframeRecoveryTests {
         bitrate: Int = 600_000_000,
         runtimeQualityAdjustmentEnabled: Bool = true,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
-        lowLatencyHighResolutionCompressionBoostEnabled: Bool = true
+        lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
+        transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile? = nil
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: frameRate,
@@ -325,7 +340,9 @@ struct HostKeyframeRecoveryTests {
             streamScale: 1.0,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
         )
     }
 

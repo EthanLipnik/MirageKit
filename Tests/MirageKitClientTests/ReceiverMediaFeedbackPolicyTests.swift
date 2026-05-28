@@ -57,6 +57,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             recoveryState: .keyframeRecovery,
             metrics: metrics(
                 droppedFrames: 42,
+                decodeBacklogFrames: 18,
                 pendingFrameCount: 5,
                 smoothestQueueDrops: 9,
                 presentationStallCount: 4,
@@ -71,6 +72,7 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.discardedPacketCount == 0)
         #expect(feedback.reassemblyBacklogFrames == 11)
         #expect(feedback.reassemblyBacklogKeyframes == 1)
+        #expect(feedback.decodeBacklogFrames == 18)
         #expect(feedback.presentationBacklogFrames == 5)
         #expect(feedback.recoveryState == .keyframeRecovery)
         #expect(feedback.reliabilityCauses.contains(.keyframeStarvation))
@@ -103,6 +105,7 @@ struct ReceiverMediaFeedbackPolicyTests {
 
     private func metrics(
         droppedFrames: UInt64 = 0,
+        decodeBacklogFrames: Int = 0,
         pendingFrameCount: Int = 0,
         smoothestQueueDrops: UInt64 = 0,
         presentationStallCount: UInt64 = 0,
@@ -118,6 +121,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             receivedFrameIntervalP95Ms: 20,
             receivedFrameIntervalP99Ms: 35,
             droppedFrames: droppedFrames,
+            decodeBacklogFrames: decodeBacklogFrames,
             displayTickFPS: 60,
             submitAttemptFPS: 60,
             layerAcceptedFPS: 55,

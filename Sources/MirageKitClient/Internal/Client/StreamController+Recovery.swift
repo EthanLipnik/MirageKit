@@ -153,10 +153,13 @@ extension StreamController {
                 let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
                 let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
                 if pendingFrameCount > 0 {
-                    let didHandlePresenterPath = await maybeTriggerRenderSubmissionRecovery(
-                        now: now,
-                        pendingFrameCount: pendingFrameCount
-                    )
+                    let pendingFrameIsFresh = pendingFrameAgeMs < Self.stalePendingRenderFrameRecoveryAgeMs
+                    let didHandlePresenterPath = pendingFrameIsFresh
+                        ? await maybeTriggerRenderSubmissionRecovery(
+                            now: now,
+                            pendingFrameCount: pendingFrameCount
+                        )
+                        : false
                     MirageLogger.client(
                         "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
                             "reassembler is awaiting keyframe after presentation progress, " +
@@ -164,6 +167,15 @@ extension StreamController {
                             "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
                             "handled=\(didHandlePresenterPath))"
                     )
+                    if didHandlePresenterPath { return }
+                    let droppedPendingFrames = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+                    discardQueuedFramesForRecovery()
+                    MirageLogger.client(
+                        "Frame loss timeout for stream \(streamID) could not recover pending render frames; " +
+                            "droppedPendingRenderFrames=\(droppedPendingFrames), requesting keyframe"
+                    )
+                    await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-unhandled-pending-render")
+                    await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
                     return
                 }
                 discardQueuedFramesForRecovery()
@@ -188,6 +200,20 @@ extension StreamController {
            await maybeRecoverStalledActiveFrameLossTimeout() {
             return
         }
+        if reason == .timeout,
+           presentationTier == .activeLive,
+           hasPresentedFirstFrame {
+            let snapshot = reassembler.keyframeWaitSnapshot
+            reassembler.beginKeyframeWait()
+            discardQueuedFramesForRecovery()
+            MirageLogger.client(
+                "Frame loss timeout for stream \(streamID) had no presenter recovery path; " +
+                    "requesting one recovery keyframe (path=\(snapshot.transportPathKind.rawValue))"
+            )
+            await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-unhandled")
+            await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
+            return
+        }
 
         // Active streams avoid keyframe requests for non-blocking packet loss
         // while decoded or presented frames are still making progress.
@@ -209,17 +235,23 @@ extension StreamController {
         let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
         if pendingFrameCount > 0 {
             let pendingFrameAgeMs = MirageRenderStreamStore.shared.pendingFrameAgeMs(for: streamID)
-            let didHandlePresenterPath = await maybeTriggerRenderSubmissionRecovery(
-                now: now,
-                pendingFrameCount: pendingFrameCount
-            )
+            let pendingFrameIsFresh = pendingFrameAgeMs < Self.stalePendingRenderFrameRecoveryAgeMs
+            let didHandlePresenterPath = pendingFrameIsFresh
+                ? await maybeTriggerRenderSubmissionRecovery(
+                    now: now,
+                    pendingFrameCount: pendingFrameCount
+                )
+                : false
             MirageLogger.client(
                 "Frame loss timeout for stream \(streamID) found pending render frames; " +
                     "routing through presenter recovery " +
                     "(pendingRenderFrames=\(pendingFrameCount), pendingAge=\(Int(pendingFrameAgeMs.rounded()))ms, " +
                     "handled=\(didHandlePresenterPath))"
             )
-            return true
+            if !didHandlePresenterPath {
+                _ = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+            }
+            return didHandlePresenterPath
         }
 
         let snapshot = reassembler.keyframeWaitSnapshot
@@ -275,10 +307,11 @@ extension StreamController {
         _ = await requestKeyframeRecovery(reason: reason)
     }
 
-    func requestKeyframeRecovery(reason: RecoveryReason) async -> Bool {
+    func requestKeyframeRecovery(reason: RecoveryReason, bypassRetryGate: Bool = false) async -> Bool {
         let now = currentTime
         let coalesceInterval = Self.keyframeRequestCoalesceInterval(targetFPS: decodeSchedulerTargetFPS)
-        if lastRecoveryRequestDispatchTime > 0,
+        if !bypassRetryGate,
+           lastRecoveryRequestDispatchTime > 0,
            now - lastRecoveryRequestDispatchTime < coalesceInterval {
             let remainingMs = Int(max(0, coalesceInterval - (now - lastRecoveryRequestDispatchTime)) * 1000)
             MirageLogger.client(
@@ -302,7 +335,9 @@ extension StreamController {
             return false
         }
         let snapshot = reassembler.keyframeWaitSnapshot
-        let keyframeDecision = keyframeRequestDecision(now: now, reason: reason, snapshot: snapshot)
+        let keyframeDecision = bypassRetryGate
+            ? StreamRecoveryDecision.requestKeyframe
+            : keyframeRequestDecision(now: now, reason: reason, snapshot: snapshot)
         guard keyframeDecision == .requestKeyframe else {
             logRecoveryDecision(keyframeDecision, reason: reason.logLabel, snapshot: snapshot)
             return false
@@ -311,7 +346,8 @@ extension StreamController {
             now: now,
             reason: reason.logLabel,
             targetFPS: decodeSchedulerTargetFPS,
-            forceNewEpisode: reason == .manualRecovery ||
+            forceNewEpisode: bypassRetryGate ||
+                reason == .manualRecovery ||
                 reason == .decodeErrorThreshold
         )
         switch recoveryDecision {

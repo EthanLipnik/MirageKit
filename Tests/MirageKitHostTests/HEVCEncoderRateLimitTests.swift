@@ -73,8 +73,17 @@ struct HEVCEncoderRateLimitTests {
         #expect(oneTwentyFPS.bytes == 300_000)
     }
 
-    @Test("Realtime encoder rate control uses constrained VBR")
-    func realtimeRateControlUsesConstrainedVBR() {
+    @Test("Realtime encoder rate control uses average bitrate off AWDL")
+    func realtimeRateControlUsesAverageBitrateOffAwdl() {
+        #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .localWiFi))
+        #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .wired))
+        #expect(!VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .proximityWiredLike))
+        #expect(VideoEncoder.LowLatencyBitrateStrategy.averageBitRateOnly.publicStrategy == .none)
+    }
+
+    @Test("AWDL realtime encoder rate control uses constrained VBR")
+    func awdlRealtimeRateControlUsesConstrainedVBR() {
+        #expect(VideoEncoder.lowLatencyUsesDataRateLimits(mediaPathProfile: .awdlRadio))
         #expect(VideoEncoder.LowLatencyBitrateStrategy.averageBitRateDataRateLimits.publicStrategy == .averageBitRateDataRateLimits)
     }
 

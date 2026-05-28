@@ -26,6 +26,7 @@ actor AppAtlasMediaCoordinator {
 
     /// Packet and control-message hooks supplied by the owning host service.
     private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
+    private let sendPacketReliably: (@Sendable (Data) async throws -> Void)?
     private let onSendError: @Sendable (Error) -> Void
     private let sendMediaUpdate: @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void
     let publishOverlayRegions: @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
@@ -67,6 +68,7 @@ actor AppAtlasMediaCoordinator {
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile,
         targetFrameRate: Int,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
         onSendError: @escaping @Sendable (Error) -> Void,
         sendMediaUpdate: @escaping @MainActor @Sendable (AppAtlasMediaUpdateMessage) async -> Void,
         publishOverlayRegions: @escaping @MainActor @Sendable (StreamID, [AppStreamInputOverlayRegion]) async -> Void
@@ -79,6 +81,7 @@ actor AppAtlasMediaCoordinator {
         self.capturePressureProfile = capturePressureProfile
         self.targetFrameRate = max(1, targetFrameRate)
         self.sendPacket = sendPacket
+        self.sendPacketReliably = sendPacketReliably
         self.onSendError = onSendError
         self.sendMediaUpdate = sendMediaUpdate
         self.publishOverlayRegions = publishOverlayRegions
@@ -379,6 +382,7 @@ actor AppAtlasMediaCoordinator {
         frameSink = try await context.startAppAtlasFrameStream(
             pixelSize: pixelSize,
             sendPacket: sendPacket,
+            sendPacketReliably: sendPacketReliably,
             onSendError: onSendError
         )
         await context.allowEncodingAfterRegistration()

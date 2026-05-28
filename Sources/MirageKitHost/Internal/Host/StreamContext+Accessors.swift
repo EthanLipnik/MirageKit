@@ -227,7 +227,7 @@ extension StreamContext {
     func logBitrateContract(event: String) {
         let enteredText = enteredTargetBitrate.map(String.init) ?? "nil"
         let requestedText = requestedTargetBitrate.map(String.init) ?? "nil"
-        let currentText = encoderConfig.bitrate.map(String.init) ?? "nil"
+        let currentText = (currentTargetBitrateBps ?? encoderConfig.bitrate).map(String.init) ?? "nil"
         let ceilingText = bitrateAdaptationCeiling.map(String.init) ?? "nil"
         let startupText = startupBitrate.map(String.init) ?? "nil"
         MirageLogger.metrics(

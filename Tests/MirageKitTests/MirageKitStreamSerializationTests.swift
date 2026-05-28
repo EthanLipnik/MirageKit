@@ -87,6 +87,9 @@ struct MirageKitStreamSerializationTests {
             encoderRetuneValidationResult: "session-recreation-overshoot-structural-adaptation-needed",
             encoderKeyframeForRetuneCount: 1,
             encoderSessionRecreationCount: 1,
+            realtimeBitrateCeiling: 16_000_000,
+            realtimePressureState: "pressured",
+            realtimePressureReason: "p-frame-latency",
             averageEncodeMs: 13.2,
             captureCadence: captureCadence,
             sendQueueBytes: 262_144,
@@ -132,6 +135,9 @@ struct MirageKitStreamSerializationTests {
         #expect(decoded.encoderRetuneValidationResult == "session-recreation-overshoot-structural-adaptation-needed")
         #expect(decoded.encoderKeyframeForRetuneCount == 1)
         #expect(decoded.encoderSessionRecreationCount == 1)
+        #expect(decoded.realtimeBitrateCeiling == 16_000_000)
+        #expect(decoded.realtimePressureState == "pressured")
+        #expect(decoded.realtimePressureReason == "p-frame-latency")
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeSendCompletionMaxMs == 14.2)

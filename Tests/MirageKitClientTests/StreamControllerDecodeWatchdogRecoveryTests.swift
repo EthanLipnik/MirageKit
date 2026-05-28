@@ -188,12 +188,114 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
             for: streamID
         )
 
-        try await streamControllerWaitUntil("render-submission presenter recovery", timeout: .seconds(3)) {
-            presenterRecoveryCounter.value >= 1
-        }
+        await controller.evaluateFreezeState()
         #expect(keyframeCounter.value == 0)
+        #expect(presenterRecoveryCounter.value == 1)
         let reassembler = await controller.reassembler
         #expect(!reassembler.isAwaitingKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("Freeze monitor requests keyframe for stale pending frame without keyframe wait")
+    func freezeMonitorRequestsKeyframeForStalePendingFrameWithoutKeyframeWait() async throws {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let streamID: StreamID = 157
+        let clock = StreamControllerManualTimeProvider(start: 8600)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+        await controller.simulatePresentationStall(now: clock.now)
+        await controller.testSeedFrameRates(decodedFPS: 0, receivedFPS: 0, now: clock.now)
+
+        let reassembler = await controller.reassembler
+        #expect(!reassembler.isAwaitingKeyframe)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makeStreamControllerPixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent() - 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        await controller.evaluateFreezeState()
+
+        #expect(keyframeCounter.value == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+        #expect(reassembler.isAwaitingKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("Freeze monitor escalates after presenter recovery drops only pending frame")
+    func freezeMonitorEscalatesAfterPresenterRecoveryDropsOnlyPendingFrame() async throws {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let presenterRecoveryCounter = StreamControllerLockedCounter()
+        let presenterOwner = NSObject()
+        let streamID: StreamID = 158
+        let clock = StreamControllerManualTimeProvider(start: 8700)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+            _ = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+        await controller.simulatePresentationStall(now: clock.now)
+        await controller.testSeedFrameRates(decodedFPS: 60, receivedFPS: 60, now: clock.now)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makeStreamControllerPixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        await controller.evaluateFreezeState()
+        #expect(presenterRecoveryCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
+
+        clock.advance(by: 1.0)
+        await controller.testSeedFrameRates(decodedFPS: 0, receivedFPS: 0, now: clock.now)
+        await controller.evaluateFreezeState()
+
+        let reassembler = await controller.reassembler
+        #expect(keyframeCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }
@@ -245,6 +347,57 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         #expect(presenterRecoveryCounter.value == 1)
         #expect(keyframeCounter.value == 0)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Frame-loss timeout clears stale pending render frames and requests keyframe")
+    func frameLossTimeoutClearsStalePendingRenderFramesAndRequestsKeyframe() async throws {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let presenterRecoveryCounter = StreamControllerLockedCounter()
+        let presenterOwner = NSObject()
+        let streamID: StreamID = 156
+        let clock = StreamControllerManualTimeProvider(start: 8500)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerPresentationRecoveryHandler(for: streamID, owner: presenterOwner) {
+            presenterRecoveryCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterPresentationRecoveryHandler(for: streamID, owner: presenterOwner)
+            MirageRenderStreamStore.shared.clear(for: streamID)
+        }
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.reassembler
+        reassembler.beginKeyframeWait()
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makeStreamControllerPixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent() - 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        await controller.handleFrameLossSignal()
+
+        #expect(presenterRecoveryCounter.value == 0)
+        #expect(keyframeCounter.value == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         await controller.stop()
     }
@@ -301,7 +454,7 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
         )
 
         await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-stall")
-        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
+        clock.advance(by: StreamController.firstPresentedFrameHardRecoveryGrace(for: .startup) + 0.1)
 
         var hardRecoveryTriggered = false
         let timeoutAt = ContinuousClock.now + .seconds(2)
@@ -313,6 +466,47 @@ struct StreamControllerDecodeWatchdogRecoveryTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(hardRecoveryTriggered)
+
+        await controller.stop()
+    }
+
+    @Test("First-frame watchdog requests keyframe before hard recovery when packets arrived")
+    func firstFrameWatchdogRequestsKeyframeBeforeHardRecoveryWhenPacketsArrived() async throws {
+        let clock = StreamControllerManualTimeProvider(start: 1200)
+        let keyframeCounter = StreamControllerLockedCounter()
+        let controller = StreamController(
+            streamID: 141,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-packet-flow")
+
+        let reassembler = await controller.reassembler
+        let payload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            payload,
+            header: makeStreamControllerVideoHeader(
+                streamID: 141,
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 1,
+                payload: payload
+            )
+        )
+
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
+        try await streamControllerWaitUntil("startup keyframe retry before hard recovery") {
+            keyframeCounter.value == 1
+        }
+
+        #expect(await controller.lastHardRecoveryStartTime == 0)
+        #expect(await controller.awaitingFirstPresentedFrame)
 
         await controller.stop()
     }

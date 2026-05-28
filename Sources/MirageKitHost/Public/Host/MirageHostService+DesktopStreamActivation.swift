@@ -231,6 +231,13 @@ extension MirageHostService {
                     }
                 }
             )
+            MirageLogger.host(
+                "event=media_path_policy phase=desktop_activation stream=\(activation.streamID) " +
+                    "resolved=\(activation.streamContext.transportPathKind.rawValue)/" +
+                    "\(activation.streamContext.mediaPathProfile.rawValue) " +
+                    "videoTransport=\(activation.streamContext.videoTransportMode) " +
+                    "sendProfile=\(mediaSendProfile.rawValue) maxPacket=\(activation.streamContext.mediaMaxPacketSize)"
+            )
         }
 
         do {

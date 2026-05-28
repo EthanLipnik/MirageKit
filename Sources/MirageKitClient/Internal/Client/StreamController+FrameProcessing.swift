@@ -199,13 +199,15 @@ extension StreamController {
             duplicateRemoteTimestamp: timing.duplicateRemoteTimestamp,
             correctedStreamTimestamp: timing.correctedStreamTimestamp
         )
+        let renderGeneration = MirageRenderStreamStore.shared.currentGeneration(for: streamID)
         decodeFrameTimingCache.insert(
             streamPresentationTime: timing.streamPresentationTime,
             remotePresentationTime: remotePresentationTime,
             frameNumber: frameNumber,
             hostEpoch: hostEpoch,
             dimensionToken: dimensionToken,
-            queueEpoch: enqueueOrder
+            queueEpoch: enqueueOrder,
+            renderGeneration: renderGeneration
         )
         let frame = FrameData(
             data: data,
@@ -257,7 +259,7 @@ extension StreamController {
                     dequeueContinuation = nil
                     continuation.resume(returning: frame)
                 } else {
-                    queuedFrames.append(frame)
+                    appendQueuedFrame(frame)
                 }
                 MirageLogger.client(
                     "Decode backpressure recovery accepted keyframe for stream \(streamID); " +
@@ -281,15 +283,15 @@ extension StreamController {
             if !queuedFrames.isEmpty {
                 discardQueuedFramesForRecovery()
             }
-            queuedFrames.append(frame)
+            appendQueuedFrame(frame)
             return
         }
 
-        if queuedFrames.count >= Self.maxQueuedFrames {
+        if exceedsQueuedFrameBudget(admitting: frame) {
             let queueDepth = queuedFrames.count
             if frame.isKeyframe {
                 discardQueuedFramesForRecovery()
-                queuedFrames.append(frame)
+                appendQueuedFrame(frame)
                 maybeLogDecodeBackpressure(queueDepth: queueDepth)
                 return
             }
@@ -298,12 +300,12 @@ extension StreamController {
             return
         }
 
-        queuedFrames.append(frame)
+        appendQueuedFrame(frame)
     }
 
     private func dequeueFrame() async -> FrameData? {
         let frame: FrameData? = if !queuedFrames.isEmpty {
-            queuedFrames.popFirst()
+            popQueuedFrame()
         } else {
             await withCheckedContinuation { continuation in
                 dequeueContinuation = continuation
@@ -315,7 +317,9 @@ extension StreamController {
     }
 
     private func maybeApplyAdaptiveJitterHold() async {
-        guard awdlExperimentEnabled, awdlTransportActive else { return }
+        guard awdlTransportActive else { return }
+        guard !decodeQueueRequiresKeyframe else { return }
+        guard queuedFrames.count < maxQueuedFrameBudget / 2 else { return }
         let holdMs = max(0, min(Self.adaptiveJitterHoldMaxMs, adaptiveJitterHoldMs))
         guard holdMs > 0 else { return }
         do {
@@ -323,6 +327,36 @@ extension StreamController {
         } catch {
             return
         }
+    }
+
+    private var maxQueuedFrameBudget: Int {
+        guard awdlTransportActive else { return Self.maxQueuedFrames }
+        return Self.awdlMaxQueuedFrames(targetFPS: decodeSchedulerTargetFPS)
+    }
+
+    private func exceedsQueuedFrameBudget(admitting frame: FrameData) -> Bool {
+        if queuedFrames.count >= maxQueuedFrameBudget {
+            return true
+        }
+        guard awdlTransportActive else { return false }
+        return queuedFrameBytes + frame.data.count > Self.awdlMaxQueuedFrameBytes
+    }
+
+    private func appendQueuedFrame(_ frame: FrameData) {
+        queuedFrameBytes += frame.data.count
+        queuedFrames.append(frame)
+    }
+
+    private func popQueuedFrame() -> FrameData? {
+        guard let frame = queuedFrames.popFirst() else { return nil }
+        queuedFrameBytes = max(0, queuedFrameBytes - frame.data.count)
+        return frame
+    }
+
+    private func drainQueuedFrames() -> [FrameData] {
+        let frames = queuedFrames.drain()
+        queuedFrameBytes = 0
+        return frames
     }
 
     private func finishFrameQueue() {
@@ -348,13 +382,13 @@ extension StreamController {
     }
 
     func clearQueuedDecodeFramesOnly() -> Int {
-        let frames = queuedFrames.drain()
+        let frames = drainQueuedFrames()
         release(frames)
         return frames.count
     }
 
     private func drainQueuedAndPendingFrames() -> [FrameData] {
-        let queued = queuedFrames.drain()
+        let queued = drainQueuedFrames()
         let pending = Array(pendingOrderedFrames.values)
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0

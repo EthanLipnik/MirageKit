@@ -19,12 +19,19 @@ extension MirageClientService {
         streamID: StreamID
     ) async {
         await controller.setCallbacks(
-            onKeyframeNeeded: { [weak self] in
-                self?.sendKeyframeRequest(for: streamID) ?? false
+            onKeyframeNeeded: { [weak self, weak controller] in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return false
+                }
+                return sendKeyframeRequest(for: streamID)
             },
             onResizeStateChanged: nil,
-            onFrameDecoded: { [weak self] metrics in
-                guard let self else { return }
+            onFrameDecoded: { [weak self, weak controller] metrics in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
                 metricsStore.updateClientMetrics(
                     streamID: streamID,
                     decodedFPS: metrics.decodedFPS,
@@ -33,6 +40,7 @@ extension MirageClientService {
                     receivedFrameIntervalP95Ms: metrics.receivedFrameIntervalP95Ms,
                     receivedFrameIntervalP99Ms: metrics.receivedFrameIntervalP99Ms,
                     droppedFrames: metrics.droppedFrames,
+                    decodeBacklogFrames: metrics.decodeBacklogFrames,
                     reassemblerPendingFrameCount: metrics.reassemblerPendingFrameCount,
                     reassemblerPendingKeyframeCount: metrics.reassemblerPendingKeyframeCount,
                     reassemblerPendingBytes: metrics.reassemblerPendingBytes,
@@ -89,38 +97,62 @@ extension MirageClientService {
                     activeJitterHoldMs = metrics.activeJitterHoldMs
                 }
                 sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
-                logAwdlExperimentTelemetryIfNeeded(streamID: streamID, metrics: metrics)
+                logAwdlRadioTelemetryIfNeeded(streamID: streamID, metrics: metrics)
             },
             videoIngressMetricsProvider: { [videoIngressTelemetryStore] streamID in
                 videoIngressTelemetryStore.snapshot(for: streamID)
             },
-            onFirstFrameDecoded: { [weak self] in
-                self?.sessionStore.markFirstFrameDecoded(for: streamID)
+            onFirstFrameDecoded: { [weak self, weak controller] in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
+                sessionStore.markFirstFrameDecoded(for: streamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(streamID)")
             },
-            onFirstFramePresented: { [weak self] in
-                self?.handleStreamFirstFramePresented(streamID: streamID)
-                self?.clearStartupAttempt(for: streamID)
+            onFirstFramePresented: { [weak self, weak controller] in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
+                handleStreamFirstFramePresented(streamID: streamID)
+                clearStartupAttempt(for: streamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(streamID)")
             },
-            onStallEvent: { [weak self] event in
-                guard let self else { return }
+            onStallEvent: { [weak self, weak controller] event in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
                 stallEvents &+= 1
                 handleRuntimeWorkloadSafetyStallEvent(streamID: streamID, event: event)
-                logAwdlExperimentTelemetryIfNeeded()
+                logAwdlRadioTelemetryIfNeeded()
             },
-            onRecoveryStatusChanged: { [weak self] status in
-                self?.sessionStore.setClientRecoveryStatus(for: streamID, status: status)
+            onRecoveryStatusChanged: { [weak self, weak controller] status in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
+                sessionStore.setClientRecoveryStatus(for: streamID, status: status)
                 if status == .idle {
-                    self?.handleDesktopPresentationReady(streamID: streamID)
+                    handleDesktopPresentationReady(streamID: streamID)
                 }
             },
-            onTerminalStartupFailure: { [weak self] failure in
+            onTerminalStartupFailure: { [weak self, weak controller] failure in
+                guard let self,
+                      self.isActiveStreamController(controller, streamID: streamID) else {
+                    return
+                }
                 Task {
-                    await self?.handleTerminalStartupFailure(failure, for: streamID)
+                    await self.handleTerminalStartupFailure(failure, for: streamID)
                 }
             }
         )
+    }
+
+    private func isActiveStreamController(_ controller: StreamController?, streamID: StreamID) -> Bool {
+        guard let controller else { return false }
+        return controllersByStream[streamID] === controller
     }
 
     private func sendReceiverMediaFeedback(
@@ -128,15 +160,21 @@ extension MirageClientService {
         metrics: StreamController.ClientFrameMetrics
     ) {
         let now = CFAbsoluteTimeGetCurrent()
+        let targetFPS = max(1, metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 60)
+        let recoveryStatus = sessionStore.sessionByStreamID(streamID)?.clientRecoveryStatus ?? .idle
+        let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
+        let feedbackInterval = resolvedReceiverMediaFeedbackInterval(
+            targetFPS: targetFPS,
+            recoveryState: recoveryState,
+            metrics: metrics
+        )
         if let lastSendTime = receiverMediaFeedbackLastSendTime[streamID],
-           now - lastSendTime < receiverMediaFeedbackInterval {
+           now - lastSendTime < feedbackInterval {
             return
         }
         receiverMediaFeedbackLastSendTime[streamID] = now
 
         receiverMediaFeedbackSequence &+= 1
-        let recoveryStatus = sessionStore.sessionByStreamID(streamID)?.clientRecoveryStatus ?? .idle
-        let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
         let transportLoss = receiverTransportLossFeedback(
             for: streamID,
             metrics: metrics,
@@ -146,13 +184,33 @@ extension MirageClientService {
             streamID: streamID,
             sequence: receiverMediaFeedbackSequence,
             sentAtUptime: now,
-            targetFPS: max(1, metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 60),
+            targetFPS: targetFPS,
             recoveryState: recoveryState,
             transportLostFrameCount: transportLoss.lostFrameCount,
             transportDiscardedPacketCount: transportLoss.discardedPacketCount,
             metrics: metrics
         )
         queueControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
+    }
+
+    private func resolvedReceiverMediaFeedbackInterval(
+        targetFPS: Int,
+        recoveryState: MirageMediaFeedbackRecoveryState,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> CFAbsoluteTime {
+        let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
+        let receiverCadencePressure = metrics.receivedFPS > 0 &&
+            metrics.receivedFPS < Double(max(1, targetFPS)) * 0.85
+        let pFramePressure = metrics.reassemblerPFrameCompletionLatencyP95Ms > frameBudgetMs * 2.5
+        let backlogPressure = metrics.reassemblerPendingFrameCount > 3 ||
+            metrics.reassemblerPendingBytes > 1_000_000 ||
+            metrics.decodeBacklogFrames > 2 ||
+            metrics.pendingFrameCount > 2
+        let stressed = recoveryState != .idle ||
+            receiverCadencePressure ||
+            pFramePressure ||
+            backlogPressure
+        return stressed ? 0.25 : receiverMediaFeedbackInterval
     }
 
     nonisolated static func makeReceiverMediaFeedback(
@@ -179,7 +237,7 @@ extension MirageClientService {
             reassemblyBacklogFrames: metrics.reassemblerPendingFrameCount,
             reassemblyBacklogKeyframes: metrics.reassemblerPendingKeyframeCount,
             reassemblyBacklogBytes: metrics.reassemblerPendingBytes,
-            decodeBacklogFrames: 0,
+            decodeBacklogFrames: metrics.decodeBacklogFrames,
             presentationBacklogFrames: metrics.pendingFrameCount,
             decodedFPS: metrics.decodedFPS,
             receivedFPS: metrics.receivedFPS,

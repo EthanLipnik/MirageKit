@@ -156,11 +156,14 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     package static let defaultPacingBudgetBps = 24_000_000
     package static let pFramePacketBurst = 2
     package static let keyframePacketBurst = 4
+    package static let startupKeyframeFECBlockSize = 4
     package static let baseContinuityWindowMs = 180.0
     package static let maximumContinuityWindowMs = 300.0
     package static let basePlayoutDelayMs = 24.0
     package static let minimumPlayoutDelayMs = 16.0
-    package static let maximumPlayoutDelayMs = 80.0
+    package static let stableMaximumPlayoutDelayMs = 80.0
+    package static let maximumPlayoutDelayMs = 180.0
+    package static let decodeQueueWindowMs = 600.0
     package static let frameAdmissionHoldSeconds = 2.0
     package static let pacingHoldSeconds = 2.0
     package static let qualityRaiseSuppressionSeconds = 2.0
@@ -173,12 +176,14 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     private var consecutiveStressSamples: Int
     private var consecutiveStableSamples: Int
     private var consecutiveDemoteSamples: Int
+    private var currentPlayoutDelayMs: Double
 
     package init(state: State = .warmup) {
         self.state = state
         consecutiveStressSamples = 0
         consecutiveStableSamples = 0
         consecutiveDemoteSamples = 0
+        currentPlayoutDelayMs = Self.basePlayoutDelayMs
     }
 
     package static func fixedLatencyMode(
@@ -215,12 +220,16 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     ) -> Double {
         let gapPressureMs = max(jitterP99Ms, receivedWorstGapMs ?? 0)
         let pressureDelay: Double
-        if presentationStallCount > 0 || gapPressureMs >= 120 {
-            pressureDelay = 64
+        if presentationStallCount > 0 || gapPressureMs >= 240 {
+            pressureDelay = 180
+        } else if gapPressureMs >= 180 {
+            pressureDelay = 140
+        } else if gapPressureMs >= 120 {
+            pressureDelay = 96
         } else if gapPressureMs >= 80 {
-            pressureDelay = 48
+            pressureDelay = 64
         } else if gapPressureMs >= 50 {
-            pressureDelay = 33
+            pressureDelay = 48
         } else {
             pressureDelay = basePlayoutDelayMs
         }
@@ -242,13 +251,15 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         isLossModeActive: Bool
     ) -> Int {
         if isLossModeActive { return 4 }
-        let safePayload = max(1, maxPayloadSize)
-        let dataFragmentCount = max(0, frameByteCount + safePayload - 1) / safePayload
-        return dataFragmentCount > 32 ? 8 : 0
+        return 0
     }
 
     package static func keyframeFECBlockSize() -> Int {
         4
+    }
+
+    package static func startupKeyframeFECBlockSizeForAwdlRadio() -> Int {
+        startupKeyframeFECBlockSize
     }
 
     package mutating func update(with signal: Signal) -> Decision {
@@ -257,10 +268,12 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             consecutiveStressSamples = 0
             consecutiveStableSamples += 1
             consecutiveDemoteSamples = 0
+            currentPlayoutDelayMs = Self.basePlayoutDelayMs
             return Self.decision(
                 state: state,
                 trigger: .nonAwdl,
                 signal: signal,
+                playoutDelayMs: currentPlayoutDelayMs,
                 allowFrameAdmissionReduction: false,
                 frameAdmissionTargetFPS: nil,
                 qualityReductionAllowed: false
@@ -319,16 +332,63 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             state: state,
             trigger: trigger,
             signal: signal,
+            playoutDelayMs: updatePlayoutDelay(trigger: trigger, signal: signal),
             allowFrameAdmissionReduction: allowAdmission,
             frameAdmissionTargetFPS: admissionTarget,
             qualityReductionAllowed: state == .demote
         )
     }
 
+    private mutating func updatePlayoutDelay(
+        trigger: Trigger,
+        signal: Signal
+    ) -> Double {
+        guard signal.mediaPathProfile.usesAwdlRadioPolicy else {
+            currentPlayoutDelayMs = Self.basePlayoutDelayMs
+            return currentPlayoutDelayMs
+        }
+
+        let measuredDelayMs = Self.playoutDelayMs(
+            jitterP99Ms: signal.jitterP99Ms,
+            receivedWorstGapMs: signal.receivedWorstGapMs,
+            presentationStallCount: signal.presentationStallCount
+        )
+        switch trigger {
+        case .stable, .warmup:
+            if currentPlayoutDelayMs <= Self.basePlayoutDelayMs {
+                currentPlayoutDelayMs = Self.basePlayoutDelayMs
+            } else if consecutiveStableSamples >= Self.stableSamplesForSteady {
+                let frameIntervalMs = 1_000.0 / Double(max(1, signal.currentFrameRate))
+                currentPlayoutDelayMs = max(
+                    Self.basePlayoutDelayMs,
+                    currentPlayoutDelayMs - max(8.0, frameIntervalMs)
+                )
+            }
+        case .nonAwdl:
+            currentPlayoutDelayMs = Self.basePlayoutDelayMs
+        case .jitter,
+             .loss,
+             .reassemblyBacklog,
+             .pFrameLatency,
+             .decodePressure,
+             .presentationUnderflow,
+             .recovery,
+             .demote:
+            currentPlayoutDelayMs = min(
+                Self.maximumPlayoutDelayMs,
+                max(currentPlayoutDelayMs, measuredDelayMs)
+            )
+        }
+
+        let maximumDelay = trigger == .stable ? Self.stableMaximumPlayoutDelayMs : Self.maximumPlayoutDelayMs
+        return min(maximumDelay, max(Self.minimumPlayoutDelayMs, currentPlayoutDelayMs))
+    }
+
     private static func decision(
         state: State,
         trigger: Trigger,
         signal: Signal,
+        playoutDelayMs: Double,
         allowFrameAdmissionReduction: Bool,
         frameAdmissionTargetFPS: Int?,
         qualityReductionAllowed: Bool
@@ -354,11 +414,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
                 pFrameCompletionLatencyP95Ms: signal.pFrameCompletionLatencyP95Ms ?? 0,
                 latePFrameCount: signal.latePFrameCount
             ),
-            playoutDelayMs: playoutDelayMs(
-                jitterP99Ms: signal.jitterP99Ms,
-                receivedWorstGapMs: signal.receivedWorstGapMs,
-                presentationStallCount: signal.presentationStallCount
-            ),
+            playoutDelayMs: playoutDelayMs,
             allowFrameAdmissionReduction: allowFrameAdmissionReduction,
             frameAdmissionTargetFPS: frameAdmissionTargetFPS,
             frameAdmissionHoldSeconds: frameAdmissionHoldSeconds,

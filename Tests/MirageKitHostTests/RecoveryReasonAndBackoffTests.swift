@@ -125,11 +125,11 @@ struct RecoveryReasonMappingTests {
         await context.handlePacketSenderDependencyFrameDrop(
             streamID: 9,
             frameNumber: 7,
-            reason: .expiredBeforeSend
+            reason: .queueEviction
         )
 
         #expect(await context.dependencyRecoveryPendingDropFrameNumber == 7)
-        #expect(await context.dependencyRecoveryPendingDropReason == .expiredBeforeSend)
+        #expect(await context.dependencyRecoveryPendingDropReason == .queueEviction)
         #expect(await context.dependencyRecoveryPendingQueuedBytes == 0)
         #expect(await context.dependencyRecoveryRetryNecessary == false)
 

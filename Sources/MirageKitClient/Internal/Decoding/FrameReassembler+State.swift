@@ -185,7 +185,6 @@ extension FrameReassembler {
             fecRecoveredFragmentCount = 0
             pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
             lastPacketReceivedTime = 0
-            mediaPathProfile = MirageMediaPathProfile.classify(pathKind: transportPathKind, interfaceNames: [])
             startupKeyframeTimeoutOverrideEnabled = false
         }
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")

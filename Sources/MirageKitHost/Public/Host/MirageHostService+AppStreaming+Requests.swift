@@ -62,10 +62,11 @@ extension MirageHostService {
                 return
             }
             let requestedDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
-            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let mediaPathPolicy = effectiveMediaPathPolicy(for: request, clientContext: clientContext)
             let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
                 requested: request.mediaMaxPacketSize,
-                pathKind: pathKind
+                mediaPathProfile: mediaPathPolicy.mediaPathProfile,
+                pathKind: mediaPathPolicy.transportPathKind
             )
             let maxVisibleSlots = max(1, min(Self.appStreamMaxVisibleSlots, request.maxConcurrentVisibleWindows))
             let sharedBitrateBudget = resolvedAppSessionBitrateBudget(requestedBitrate: request.bitrate)

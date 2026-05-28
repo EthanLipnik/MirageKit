@@ -48,24 +48,6 @@ extension StreamPacketSender {
         return min(maxPayload, remaining)
     }
 
-    /// Drops a non-keyframe that expired while fragmentation or pacing was in progress.
-    func dropStaleNonKeyframeDuringFragmentation(
-        item: WorkItem,
-        remainingQueuedBytes: Int,
-        transportCompletionTracker: TransportCompletionTracker
-    ) {
-        stalePacketDropCount &+= 1
-        queueLock.withLock {
-            markDependencyFrameDroppedLocked(
-                item,
-                reason: .expiredDuringSend
-            )
-        }
-        transportCompletionTracker.recordDrop()
-        transportCompletionTracker.close()
-        if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
-    }
-
     /// Drops a frame whose fragment counts cannot be represented on the wire.
     func dropOversizedFrameDuringFragmentation(
         item: WorkItem,

@@ -12,8 +12,8 @@ import Testing
 
 @Suite("AWDL Media Controller")
 struct MirageAwdlMediaControllerTests {
-    @Test("AWDL stable startup uses fixed realtime display defaults")
-    func awdlStableStartupUsesFixedRealtimeDisplayDefaults() {
+    @Test("AWDL stable startup uses realtime defaults")
+    func awdlStableStartupUsesRealtimeDefaults() {
         var controller = MirageAwdlMediaController()
 
         let decision = controller.update(
@@ -79,9 +79,39 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .jitter)
-        #expect(decision.playoutDelayMs == 48)
+        #expect(decision.playoutDelayMs == 64)
         #expect(decision.allowFrameAdmissionReduction == false)
         #expect(decision.frameAdmissionTargetFPS == nil)
+    }
+
+    @Test("AWDL playout stress growth is bounded and decays after stable samples")
+    func awdlPlayoutStressGrowthIsBoundedAndDecaysAfterStableSamples() {
+        var controller = MirageAwdlMediaController()
+        let stressSignal = MirageAwdlMediaController.Signal(
+            mediaPathProfile: .awdlRadio,
+            currentFrameRate: 60,
+            targetFrameRate: 60,
+            jitterP99Ms: 260
+        )
+        let stableSignal = MirageAwdlMediaController.Signal(
+            mediaPathProfile: .awdlRadio,
+            currentFrameRate: 60,
+            targetFrameRate: 60
+        )
+
+        _ = controller.update(with: stressSignal)
+        let stressed = controller.update(with: stressSignal)
+        #expect(stressed.playoutDelayMs == 180)
+
+        let firstStable = controller.update(with: stableSignal)
+        #expect(firstStable.playoutDelayMs <= 80)
+
+        var decayed = firstStable
+        for _ in 0 ..< 12 {
+            decayed = controller.update(with: stableSignal)
+        }
+        #expect(decayed.state == .steady)
+        #expect(decayed.playoutDelayMs == 24)
     }
 
     @Test("AWDL late P-frame pressure grows continuity and reduces admission")
@@ -122,6 +152,12 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.trigger == .recovery)
         #expect(decision.pFrameFECBlockSize == 4)
         #expect(decision.keyframeFECBlockSize == 4)
+        #expect(MirageAwdlMediaController.startupKeyframeFECBlockSizeForAwdlRadio() == 4)
+        #expect(MirageAwdlMediaController.pFrameFECBlockSize(
+            frameByteCount: 1_200,
+            maxPayloadSize: 1_200,
+            isLossModeActive: false
+        ) == 0)
         #expect(decision.allowFrameAdmissionReduction == false)
         #expect(decision.frameAdmissionTargetFPS == nil)
     }

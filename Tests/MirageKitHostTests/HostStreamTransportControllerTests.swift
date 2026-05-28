@@ -6,6 +6,7 @@
 //
 
 #if os(macOS)
+import CoreFoundation
 @testable import MirageKit
 @testable import MirageKitHost
 import Testing

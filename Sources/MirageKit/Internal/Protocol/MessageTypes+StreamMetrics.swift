@@ -155,6 +155,9 @@ package struct StreamMetricsMessage: Codable {
     package let requestedTargetBitrate: Int?
     package let bitrateAdaptationCeiling: Int?
     package let startupBitrate: Int?
+    package let realtimeBitrateCeiling: Int?
+    package let realtimePressureState: String?
+    package let realtimePressureReason: String?
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
@@ -224,6 +227,9 @@ package struct StreamMetricsMessage: Codable {
         requestedTargetBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         startupBitrate: Int? = nil,
+        realtimeBitrateCeiling: Int? = nil,
+        realtimePressureState: String? = nil,
+        realtimePressureReason: String? = nil,
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
@@ -292,6 +298,9 @@ package struct StreamMetricsMessage: Codable {
         self.requestedTargetBitrate = requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.startupBitrate = startupBitrate
+        self.realtimeBitrateCeiling = realtimeBitrateCeiling
+        self.realtimePressureState = realtimePressureState
+        self.realtimePressureReason = realtimePressureReason
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs

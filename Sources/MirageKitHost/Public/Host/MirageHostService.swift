@@ -309,10 +309,6 @@ public final class MirageHostService {
     var appStreamStartupReservedWindowIDs: Set<WindowID> = []
     /// Maximum time a stream startup attempt may wait for registration.
     let startupAttemptTimeoutSeconds: Duration = .seconds(5)
-    static let awdlExperimentEnabledFromEnvironment = MirageEnvironmentValue.isTruthy(
-        ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"]
-    )
-    let awdlExperimentEnabled = MirageHostService.awdlExperimentEnabledFromEnvironment
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
     let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()
     var sendErrorBursts: UInt64 = 0

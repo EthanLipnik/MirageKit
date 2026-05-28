@@ -107,9 +107,11 @@ extension MirageHostService {
         qualityTestIDsByClientID[client.id] = request.testID
         let sessionToken = qualityTestSessionTokensByClientID[client.id] ?? UUID()
 
-        let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+        let pathSnapshot = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0) }
+        let pathKind = pathSnapshot?.kind
         let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
             requested: request.mediaMaxPacketSize,
+            mediaPathProfile: pathSnapshot?.mediaProfile,
             pathKind: pathKind
         )
         let payloadBytes = min(

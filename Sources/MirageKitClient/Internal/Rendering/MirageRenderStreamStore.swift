@@ -103,6 +103,18 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let result: MirageRenderEnqueueResult
 
         state.lock.lock()
+        if generation < state.generation {
+            let now = CFAbsoluteTimeGetCurrent()
+            result = MirageRenderEnqueueResult(
+                cursor: MirageRenderCursor(generation: generation, sequence: 0),
+                didEnqueue: false,
+                pendingFrameCount: state.pendingFrames.count,
+                pendingFrameAgeMs: pendingFrameAgeMsLocked(state: state, now: now),
+                overwrittenPendingFrames: 0
+            )
+            state.lock.unlock()
+            return result
+        }
         state.nextSequence &+= 1
         let frame = MirageRenderFrame(
             pixelBuffer: pixelBuffer,
@@ -314,7 +326,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         )
         let latencyModeChanged = state.latencyMode != effectiveLatencyMode
         state.latencyMode = effectiveLatencyMode
-        state.playoutDelayFrames = state.mediaPathProfile.usesAwdlRadioPolicy ? 0 : target.playoutDelayFrames
+        state.playoutDelayFrames = state.mediaPathProfile.usesAwdlRadioPolicy
+            ? presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
+            : target.playoutDelayFrames
         if latencyModeChanged {
             state.presentationController.reset()
         }
@@ -341,10 +355,9 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         if state.transportPathKind != pathKind {
             state.transportPathKind = pathKind
-            state.mediaPathProfile = MirageMediaPathProfile.classify(pathKind: pathKind, interfaceNames: [])
             state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: state.mediaPathProfile)
             if state.mediaPathProfile.usesAwdlRadioPolicy {
-                state.playoutDelayFrames = 0
+                state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
             }
             state.presentationController.reset()
         }
@@ -358,7 +371,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             state.mediaPathProfile = profile
             state.latencyMode = effectiveLatencyMode(state.latencyMode, mediaPathProfile: profile)
             if profile.usesAwdlRadioPolicy {
-                state.playoutDelayFrames = 0
+                state.playoutDelayFrames = presentationLatencyPolicyLocked(state: state).targetPlayoutDelayFrames
             }
             state.presentationController.reset()
         }

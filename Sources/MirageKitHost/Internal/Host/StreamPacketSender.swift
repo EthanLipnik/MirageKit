@@ -15,14 +15,13 @@ actor StreamPacketSender {
     let maxPayloadSize: Int
     let mediaSecurityKey: MirageMediaPacketKey?
     let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
+    let sendPacketReliably: (@Sendable (Data) async throws -> Void)?
+    let videoTransportMode: MirageVideoTransportMode
     let onSendError: (@Sendable (Error) -> Void)?
+    let duplicatesParameterSetPackets: Bool
     nonisolated let onDependencyFrameDropped:
         (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)?
     let packetBufferPool: PacketBufferPool
-    static let awdlExperimentEnabledFromEnvironment = MirageEnvironmentValue.isTruthy(
-        ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"]
-    )
-    let awdlExperimentEnabled = StreamPacketSender.awdlExperimentEnabledFromEnvironment
     private var sendTask: Task<Void, Never>?
     /// Accessed from encoder callbacks; lifecycle is managed by start/stop.
     private nonisolated(unsafe) var sendContinuation: AsyncStream<Void>.Continuation?
@@ -70,14 +69,20 @@ actor StreamPacketSender {
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        sendPacketReliably: (@Sendable (Data) async throws -> Void)? = nil,
+        videoTransportMode: MirageVideoTransportMode = .unreliableQueued,
         onSendError: (@Sendable (Error) -> Void)? = nil,
+        duplicatesParameterSetPackets: Bool = false,
         onDependencyFrameDropped:
         (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map(MirageMediaPacketKey.init(context:))
         self.sendPacket = sendPacket
+        self.sendPacketReliably = sendPacketReliably
+        self.videoTransportMode = sendPacketReliably == nil ? .unreliableQueued : videoTransportMode
         self.onSendError = onSendError
+        self.duplicatesParameterSetPackets = duplicatesParameterSetPackets && !self.videoTransportMode.usesReliableOrderedDelivery
         self.onDependencyFrameDropped = onDependencyFrameDropped
         packetBufferPool = PacketBufferPool(
             capacity: mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
@@ -240,7 +245,10 @@ extension StreamPacketSender {
 
         if isExpiredNonKeyframe(item, now: now) {
             queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(item, reason: .expiredBeforeEnqueue)
+            markDependencyFrameDroppedLocked(
+                item,
+                reason: .expiredBeforeEnqueue
+            )
             return .dropped
         }
 
@@ -262,14 +270,16 @@ extension StreamPacketSender {
         queuedWorkItems.append(QueuedWorkItem(item: item, accountedBytes: accountedBytes))
         queuedBytes += accountedBytes
 
-        if !item.isKeyframe {
+        if !item.isKeyframe, videoTransportMode.usesReliableOrderedDelivery {
+            enforceReliableQueueBoundsLocked()
+        } else if !item.isKeyframe {
             enforceRealtimeQueueBoundsLocked(now: now)
         }
 
         return .enqueued(queuedBytes: queuedBytes)
     }
 
-    /// Removes the next non-expired work item for the send loop.
+    /// Removes the next queued work item for the send loop.
     private nonisolated func dequeueNextWorkItem() -> WorkItem? {
         queueLock.withLock {
             discardExpiredQueuedNonKeyframesLocked(now: CFAbsoluteTimeGetCurrent())
@@ -302,7 +312,10 @@ extension StreamPacketSender {
         if isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
             stalePacketDropCount &+= 1
             queueLock.withLock {
-                markDependencyFrameDroppedLocked(item, reason: .expiredBeforeSend)
+                markDependencyFrameDroppedLocked(
+                    item,
+                    reason: .expiredBeforeSend
+                )
             }
             reduceQueuedBytes(accountedBytes)
             return

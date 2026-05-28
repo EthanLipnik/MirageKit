@@ -19,6 +19,7 @@ extension StreamController {
             lastPresentedSequenceObserved = snapshot.sequence
             lastPresentedProgressTime = snapshot.submittedTime > 0 ? snapshot.submittedTime : referenceNow
             presentationProgressRequiresSequenceAdvance = false
+            clearFreezeRecoveryEpisode(reason: "presentation-progress")
             return true
         }
 
@@ -27,11 +28,13 @@ extension StreamController {
                 lastPresentedSequenceObserved = max(lastPresentedSequenceObserved, snapshot.sequence)
                 lastPresentedProgressTime = snapshot.submittedTime
                 presentationProgressRequiresSequenceAdvance = false
+                clearFreezeRecoveryEpisode(reason: "presentation-progress")
                 return true
             }
 
             if hasPresentedFirstFrame, !presentationProgressRequiresSequenceAdvance {
                 lastPresentedProgressTime = referenceNow
+                clearFreezeRecoveryEpisode(reason: "presentation-progress")
                 return true
             }
         }
@@ -202,12 +205,17 @@ extension StreamController {
               firstPresentedFrameWaitStartTime > 0 else { return }
         let elapsed = now - firstPresentedFrameWaitStartTime
         let recoveryGrace = Self.firstPresentedFrameBootstrapRecoveryGrace(for: firstPresentedFrameAwaitMode)
+        let hardRecoveryGrace = Self.firstPresentedFrameHardRecoveryGrace(for: firstPresentedFrameAwaitMode)
         guard elapsed >= recoveryGrace else { return }
         guard firstPresentedFrameLastRecoveryRequestTime == 0
             || now - firstPresentedFrameLastRecoveryRequestTime >= Self.firstPresentedFrameRecoveryCooldown else { return }
+        if firstPresentedFrameRecoveryAttemptCount > 0,
+           elapsed < hardRecoveryGrace {
+            return
+        }
 
-        if reassembler.isAwaitingKeyframe,
-           let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress,
+        let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress
+        if let pendingKeyframeProgress,
            Self.shouldDeferForPendingKeyframeProgress(
                pendingKeyframeProgress,
                now: now,
@@ -237,6 +245,13 @@ extension StreamController {
                 "Startup first-frame presenter recovery had no active handler for stream \(streamID) " +
                     "(pendingFrames=\(pendingFrameCount), submitted=0)"
             )
+            let droppedPendingFrames = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+            if droppedPendingFrames > 0 {
+                MirageLogger.client(
+                    "Dropped \(droppedPendingFrames) stale pending render frame(s) before startup keyframe " +
+                        "recovery for stream \(streamID)"
+                )
+            }
         }
 
         let hasPackets = reassembler.hasReceivedPackets
@@ -256,13 +271,14 @@ extension StreamController {
 
         let recoveryAction = Self.bootstrapFirstFrameRecoveryAction(
             hasPackets: hasPackets,
-            awaitingKeyframe: awaitingKeyframe,
             latestSequence: latestSequence,
             baselineSequence: firstPresentedFrameBaselineSequence
         )
 
-        if firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold ||
-            recoveryAction == .hardRecovery {
+        let shouldEscalateToHardRecovery = elapsed >= hardRecoveryGrace &&
+            (firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold ||
+                recoveryAction == .hardRecovery)
+        if shouldEscalateToHardRecovery {
             MirageLogger.client(
                 "Bootstrap first frame recovery escalating to hard reset for stream \(streamID) "
                     + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"

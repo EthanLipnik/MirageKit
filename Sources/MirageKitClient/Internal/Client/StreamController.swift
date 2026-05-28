@@ -79,6 +79,8 @@ actor StreamController {
     var hasTriggeredTerminalStartupFailure = false
     /// Bounded queue of frames waiting to be decoded.
     var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
+    /// Total compressed bytes retained in `queuedFrames`.
+    var queuedFrameBytes = 0
     /// Frames received from callback tasks before their ordered enqueue slot is ready.
     var pendingOrderedFrames: [UInt64: FrameData] = [:]
     var nextExpectedEnqueueOrder: UInt64 = 0
@@ -131,10 +133,6 @@ actor StreamController {
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
-    static let awdlExperimentEnabledFromEnvironment = MirageEnvironmentValue.isTruthy(
-        ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"]
-    )
-    let awdlExperimentEnabled = StreamController.awdlExperimentEnabledFromEnvironment
     var awdlTransportActive: Bool = false
     var adaptiveJitterHoldMs: Int = 0
     var adaptiveJitterStressStreak: Int = 0
@@ -145,6 +143,8 @@ actor StreamController {
     var lastDecodedProgressTime: CFAbsoluteTime = 0
     var lastFreezeRecoveryTime: CFAbsoluteTime = 0
     var consecutiveFreezeRecoveries: Int = 0
+    var freezeRecoveryEpisodeID: UInt64 = 0
+    var freezeRecoveryEpisode: FreezeRecoveryEpisode?
     var freezeMonitorTask: Task<Void, Never>?
     private let nowProvider: @Sendable () -> CFAbsoluteTime
     let applicationForegroundProvider: @Sendable () async -> Bool
@@ -250,6 +250,7 @@ extension StreamController {
         lastDecodedProgressTime = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
+        freezeRecoveryEpisode = nil
         lastRecoveryRequestDispatchTime = 0
         recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         lastSoftRecoveryRequestTime = 0
@@ -311,7 +312,8 @@ extension StreamController {
                         decodeTime: decodeTime,
                         presentationTime: presentationTime,
                         remotePresentationTime: remotePresentationTime,
-                        generation: MirageRenderStreamStore.shared.currentGeneration(for: capturedStreamID),
+                        generation: timingEntry?.renderGeneration ??
+                            MirageRenderStreamStore.shared.currentGeneration(for: capturedStreamID),
                         hostEpoch: timingEntry?.hostEpoch,
                         dimensionToken: timingEntry?.dimensionToken,
                         frameNumber: timingEntry?.frameNumber,
