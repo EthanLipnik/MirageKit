@@ -503,6 +503,59 @@ struct HostAdaptivePFrameControllerTests {
         #expect(evaluation.wireRatio < 1.0)
     }
 
+    @Test("High active bitrate prevents tiny in-budget growth from pinning low quality")
+    func highActiveBitratePreventsTinyInBudgetGrowthFromPinningLowQuality() throws {
+        var controller = HostAdaptivePFrameController()
+        seedCleanBaseline(
+            controller: &controller,
+            wireBytes: 262_500,
+            packetCount: 200,
+            currentBitrateBps: 180_000_000,
+            startupCeilingBps: 180_000_000
+        )
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 900,
+            wireBytes: 900,
+            packetCount: 1,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 180_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.72,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.5
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 1_000,
+            wireBytes: 1_000,
+            packetCount: 1,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 180_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.72,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.6
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.quality >= 0.70)
+        #expect(controller.runtimeCeilingBps == 180_000_000)
+    }
+
     @Test("Same or smaller P-frame raises quality every frame")
     func sameOrSmallerPFrameRaisesQualityEveryFrame() throws {
         var controller = HostAdaptivePFrameController()

@@ -26,6 +26,14 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
     private static let mapperMinimumQuality: Float = 0.03
 
+    private struct DerivedQualityTargets {
+        let frameQuality: Float
+        let keyframeQuality: Float
+        let bpp: Double?
+        let frameRateScale: Double
+        let boostDrop: Float?
+    }
+
     private func applyHostAdaptiveBudgetIfNeeded(
         for outputSize: CGSize,
         logLabel: String?
@@ -196,6 +204,88 @@ extension StreamContext {
         )
     }
 
+    private func derivedQualityTargets(
+        targetBitrateBps: Int,
+        outputSize: CGSize
+    ) -> DerivedQualityTargets {
+        let width = max(2, Int(outputSize.width))
+        let height = max(2, Int(outputSize.height))
+        let derived = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: targetBitrateBps,
+            width: width,
+            height: height,
+            frameRate: currentFrameRate
+        )
+        let qualityBoost = applyLowLatencyHighResolutionCompressionBoost(
+            frameQuality: derived.frameQuality,
+            keyframeQuality: derived.keyframeQuality,
+            width: width,
+            height: height,
+            targetBitrateBps: targetBitrateBps,
+            frameRate: currentFrameRate
+        )
+        let cappedFrameQuality = min(qualityBoost.frameQuality, compressionQualityCeiling)
+        let cappedKeyframeQuality = min(qualityBoost.keyframeQuality, cappedFrameQuality)
+        let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
+            targetBitrateBps: targetBitrateBps,
+            width: width,
+            height: height,
+            frameRate: currentFrameRate
+        )
+        return DerivedQualityTargets(
+            frameQuality: cappedFrameQuality,
+            keyframeQuality: cappedKeyframeQuality,
+            bpp: bpp,
+            frameRateScale: MirageBitrateQualityMapper.frameRateScale(frameRate: currentFrameRate, bpp: bpp),
+            boostDrop: qualityBoost.applied ? qualityBoost.drop : nil
+        )
+    }
+
+    func refreshRuntimeQualityTargets(
+        for targetBitrateBps: Int,
+        reason: String
+    ) async {
+        guard encoderConfig.codec != .proRes4444 else { return }
+        guard currentEncodedSize.width > 0, currentEncodedSize.height > 0 else { return }
+        let targets = derivedQualityTargets(
+            targetBitrateBps: targetBitrateBps,
+            outputSize: currentEncodedSize
+        )
+        guard encoderConfig.frameQuality != targets.frameQuality ||
+            encoderConfig.keyframeQuality != targets.keyframeQuality ||
+            steadyQualityCeiling != targets.frameQuality else {
+            return
+        }
+
+        let previousSteadyQualityCeiling = steadyQualityCeiling
+        encoderConfig.frameQuality = targets.frameQuality
+        encoderConfig.keyframeQuality = targets.keyframeQuality
+        steadyQualityCeiling = targets.frameQuality
+        qualityCeiling = resolvedQualityCeiling
+        qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
+            for: min(targets.keyframeQuality, qualityCeiling)
+        )
+
+        let previousActiveQuality = activeQuality
+        if activeQuality > qualityCeiling {
+            activeQuality = qualityCeiling
+            await encoder?.updateQuality(activeQuality)
+        }
+
+        let targetMbps = Double(targetBitrateBps) / 1_000_000.0
+        let previousText = previousSteadyQualityCeiling.formatted(.number.precision(.fractionLength(2)))
+        let steadyText = steadyQualityCeiling.formatted(.number.precision(.fractionLength(2)))
+        let activeText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+        let previousActiveText = previousActiveQuality.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.metrics(
+            "Runtime quality target refreshed for stream \(streamID): " +
+                "target=\(targetMbps.formatted(.number.precision(.fractionLength(0))))Mbps " +
+                "steady=\(previousText)->\(steadyText) active=\(previousActiveText)->\(activeText) " +
+                "reason=\(reason)"
+        )
+    }
+
     func applyDerivedQuality(for outputSize: CGSize, logLabel: String?) async {
         // ProRes manages its own quality — no bitrate-driven quality mapping
         guard encoderConfig.codec != .proRes4444 else { return }
@@ -208,37 +298,20 @@ extension StreamContext {
             return
         }
 
-        let width = max(2, Int(outputSize.width))
-        let height = max(2, Int(outputSize.height))
-        let derived = MirageBitrateQualityMapper.derivedQualities(
-            targetBitrateBps: targetBitrate,
-            width: width,
-            height: height,
-            frameRate: currentFrameRate
-        )
-        let qualityBoost = applyLowLatencyHighResolutionCompressionBoost(
-            frameQuality: derived.frameQuality,
-            keyframeQuality: derived.keyframeQuality,
-            width: width,
-            height: height,
-            targetBitrateBps: targetBitrate,
-            frameRate: currentFrameRate
-        )
-        let cappedFrameQuality = min(qualityBoost.frameQuality, compressionQualityCeiling)
-        let cappedKeyframeQuality = min(qualityBoost.keyframeQuality, cappedFrameQuality)
+        let targets = derivedQualityTargets(targetBitrateBps: targetBitrate, outputSize: outputSize)
 
-        guard encoderConfig.frameQuality != cappedFrameQuality ||
-            encoderConfig.keyframeQuality != cappedKeyframeQuality else {
+        guard encoderConfig.frameQuality != targets.frameQuality ||
+            encoderConfig.keyframeQuality != targets.keyframeQuality else {
             return
         }
 
-        encoderConfig.frameQuality = cappedFrameQuality
-        encoderConfig.keyframeQuality = cappedKeyframeQuality
-        steadyQualityCeiling = cappedFrameQuality
+        encoderConfig.frameQuality = targets.frameQuality
+        encoderConfig.keyframeQuality = targets.keyframeQuality
+        steadyQualityCeiling = targets.frameQuality
         qualityCeiling = resolvedQualityCeiling
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
-        activeQuality = max(qualityFloor, min(cappedFrameQuality, qualityCeiling))
-        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: min(cappedKeyframeQuality, qualityCeiling))
+        activeQuality = max(qualityFloor, min(targets.frameQuality, qualityCeiling))
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: min(targets.keyframeQuality, qualityCeiling))
 
         await encoder?.updateQuality(activeQuality)
 
@@ -246,23 +319,16 @@ extension StreamContext {
             let mbps = Double(targetBitrate) / 1_000_000.0
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
             let capText = compressionQualityCeiling.formatted(.number.precision(.fractionLength(2)))
-            let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
-                targetBitrateBps: targetBitrate,
-                width: width,
-                height: height,
-                frameRate: currentFrameRate
-            )
+            let bpp = targets.bpp
             let bppText: String = if let bpp {
                 bpp.formatted(.number.precision(.fractionLength(4)))
             } else {
                 "n/a"
             }
-            let scaleText = MirageBitrateQualityMapper
-                .frameRateScale(frameRate: currentFrameRate, bpp: bpp)
-                .formatted(.number.precision(.fractionLength(2)))
+            let scaleText = targets.frameRateScale.formatted(.number.precision(.fractionLength(2)))
             let boostText: String
-            if qualityBoost.applied {
-                let dropText = qualityBoost.drop.formatted(.number.precision(.fractionLength(2)))
+            if let boostDrop = targets.boostDrop {
+                let dropText = boostDrop.formatted(.number.precision(.fractionLength(2)))
                 boostText = ", llHighResBoostDrop \(dropText)"
             } else {
                 boostText = ""

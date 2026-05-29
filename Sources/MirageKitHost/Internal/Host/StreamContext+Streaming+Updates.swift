@@ -28,13 +28,19 @@ extension StreamContext {
             max(realtimeMinimumBitrateFloorBps, normalizedBitrate),
             max(realtimeMinimumBitrateFloorBps, ceiling)
         )
-        guard targetBitrate > 0, targetBitrate != currentTargetBitrateBps else { return }
+        guard targetBitrate > 0 else { return }
+        let bitrateChanged = targetBitrate != currentTargetBitrateBps
+        guard bitrateChanged else {
+            await refreshRuntimeQualityTargets(for: targetBitrate, reason: reason)
+            return
+        }
 
         let previousBitrate = encoderConfig.bitrate
         encoderConfig.bitrate = targetBitrate
         currentTargetBitrateBps = targetBitrate
         await packetSender?.setTargetBitrateBps(targetBitrate)
         await encoder?.updateBitrate(targetBitrate)
+        await refreshRuntimeQualityTargets(for: targetBitrate, reason: reason)
         scheduleRateControlRetuneValidation(
             previousBitrate: previousBitrate,
             targetBitrate: targetBitrate

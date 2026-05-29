@@ -213,6 +213,10 @@ struct HostAdaptivePFrameController: Equatable {
     private static let qualityProbeGrowthTolerance: Float = 0.004
     private static let qualityProbeGrowthMaximumRatio = 1.20
     private static let contentGrowthMaximumQualityScale: Float = 0.96
+    private static let highHeadroomQualityFloorStartBps = 120_000_000
+    private static let highHeadroomQualityFloorFullBps = 180_000_000
+    private static let highHeadroomQualityFloorAtStart: Float = 0.58
+    private static let highHeadroomQualityFloorAtFull: Float = 0.70
 
     private(set) var latestFeedbackSequence: UInt64 = 0
     private(set) var runtimeCeilingBps: Int?
@@ -399,7 +403,15 @@ struct HostAdaptivePFrameController: Equatable {
                 let nextQuality = nextContentGrowthQuality(
                     currentQuality: currentQuality,
                     qualityFloor: qualityFloor,
-                    growthRatio: trend.ratio
+                    growthRatio: trend.ratio,
+                    minimumQuality: contentGrowthMinimumQuality(
+                        qualityFloor: qualityFloor,
+                        steadyQualityCeiling: steadyQualityCeiling,
+                        budget: budget,
+                        currentFrameRate: currentFrameRate,
+                        wireBytes: wireBytes,
+                        packetCount: packetCount
+                    )
                 )
                 decision = makeDecision(
                     input: input,
@@ -466,7 +478,15 @@ struct HostAdaptivePFrameController: Equatable {
             ? nextContentGrowthQuality(
                 currentQuality: currentQuality,
                 qualityFloor: qualityFloor,
-                growthRatio: trend.ratio
+                growthRatio: trend.ratio,
+                minimumQuality: contentGrowthMinimumQuality(
+                    qualityFloor: qualityFloor,
+                    steadyQualityCeiling: steadyQualityCeiling,
+                    budget: budget,
+                    currentFrameRate: currentFrameRate,
+                    wireBytes: wireBytes,
+                    packetCount: packetCount
+                )
             )
             : nextOvershootQuality(
                 currentQuality: currentQuality,
@@ -1146,10 +1166,39 @@ struct HostAdaptivePFrameController: Equatable {
     private func nextContentGrowthQuality(
         currentQuality: Float,
         qualityFloor: Float,
-        growthRatio: Double
+        growthRatio: Double,
+        minimumQuality: Float
     ) -> Float {
         let scale = Float(min(Double(Self.contentGrowthMaximumQualityScale), max(0.08, 1.0 / max(1.0, growthRatio))))
-        return max(qualityFloor, currentQuality * scale)
+        return max(qualityFloor, minimumQuality, currentQuality * scale)
+    }
+
+    private func contentGrowthMinimumQuality(
+        qualityFloor: Float,
+        steadyQualityCeiling: Float,
+        budget: PFrameBudget,
+        currentFrameRate: Int,
+        wireBytes: Int,
+        packetCount: Int
+    ) -> Float {
+        guard wireBytes <= budget.operatingTargetWireBytes,
+              packetCount <= budget.operatingTargetPacketCount else {
+            return qualityFloor
+        }
+        let ceilingBps = bitrateForWireBytes(budget.ceilingWireBytes, currentFrameRate: currentFrameRate)
+        guard ceilingBps >= Self.highHeadroomQualityFloorStartBps else {
+            return qualityFloor
+        }
+        let progressDenominator = max(1, Self.highHeadroomQualityFloorFullBps - Self.highHeadroomQualityFloorStartBps)
+        let progress = Float(
+            max(
+                0.0,
+                min(1.0, Double(ceilingBps - Self.highHeadroomQualityFloorStartBps) / Double(progressDenominator))
+            )
+        )
+        let bitrateBackedFloor = Self.highHeadroomQualityFloorAtStart +
+            progress * (Self.highHeadroomQualityFloorAtFull - Self.highHeadroomQualityFloorAtStart)
+        return max(qualityFloor, min(steadyQualityCeiling, bitrateBackedFloor))
     }
 
     private func reducedQuality(
