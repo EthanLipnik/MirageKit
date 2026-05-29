@@ -13,6 +13,8 @@ import MirageKit
 
 @MainActor
 public extension MirageClientService {
+    nonisolated private static let appStreamStartTimeout: Duration = .seconds(30)
+
     /// Request list of installed apps from host.
     /// - Parameter forceRefresh: Whether host-side app-list caches should be bypassed.
     /// - Parameter forceIconReset: Whether client icon-presence hints should be ignored.
@@ -252,13 +254,23 @@ public extension MirageClientService {
         pendingAppRequestedLatencyMode = request.latencyMode ?? .lowestLatency
         pendingStreamSetupLatencyMode = request.latencyMode ?? .lowestLatency
 
-        try await sendControlMessage(.selectApp, content: request)
+        do {
+            try await sendControlMessage(.selectApp, content: request)
+        } catch {
+            clearPendingAppStreamStartState(appSessionID: appSessionID)
+            throw error
+        }
 
         // Allow time for the host to process the selectApp and start the
         // stream before heartbeat pings fire.  Without this, the heavy
         // icon-update traffic on the control channel can delay pong
         // responses past the 1-second timeout, causing a false disconnect.
         heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
+        scheduleAppStreamStartTimeout(
+            appSessionID: appSessionID,
+            bundleIdentifier: bundleIdentifier,
+            timeout: MirageClientService.appStreamStartTimeout
+        )
 
         streamingAppBundleID = bundleIdentifier
         MirageLogger.client(
@@ -267,6 +279,52 @@ public extension MirageClientService {
                 "\(Int(geometry.displayPixelSize.width))x\(Int(geometry.displayPixelSize.height)) px, " +
                 "encode \(Int(geometry.encodedPixelSize.width))x\(Int(geometry.encodedPixelSize.height)) px"
         )
+    }
+
+    package func scheduleAppStreamStartTimeout(
+        appSessionID: UUID,
+        bundleIdentifier: String,
+        timeout: Duration
+    ) {
+        appStreamStartTimeoutTask?.cancel()
+        appStreamStartTimeoutTask = Task.detached { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            await self?.handleAppStreamStartTimeout(
+                appSessionID: appSessionID,
+                bundleIdentifier: bundleIdentifier,
+                timeout: timeout
+            )
+        }
+    }
+
+    private func handleAppStreamStartTimeout(
+        appSessionID: UUID,
+        bundleIdentifier: String,
+        timeout: Duration
+    ) {
+        guard
+            pendingStreamSetupKind == .app,
+            pendingStreamSetupAppSessionID == appSessionID
+        else {
+            return
+        }
+        MirageLogger.error(
+            .client,
+            "App stream start timed out after \(timeout) bundle=\(bundleIdentifier) appSession=\(appSessionID.uuidString)"
+        )
+        suppressCurrentAwdlProximityRouteIfNeeded(
+            reason: "app stream start timed out before host acknowledgement"
+        )
+        cancelStreamSetup()
+        clearPendingAppStreamStartState(appSessionID: appSessionID)
+        onAppStreamStartupFailed?(AppStreamStartupFailure(
+            bundleIdentifier: bundleIdentifier,
+            message: "App stream start timed out. The host may be busy or unreachable."
+        ))
     }
 
     /// Request a host-side slot swap from hidden inventory into a visible stream slot.

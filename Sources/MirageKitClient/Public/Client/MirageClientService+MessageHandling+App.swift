@@ -17,6 +17,8 @@ extension MirageClientService {
         do {
             let started = try message.decode(AppStreamStartedMessage.self)
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
+            appStreamStartTimeoutTask?.cancel()
+            appStreamStartTimeoutTask = nil
             streamingAppBundleID = started.bundleIdentifier
             appWindowInventory = nil
             storeAppAtlasLayouts(started.atlasLayouts)

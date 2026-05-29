@@ -20,6 +20,8 @@ extension MirageClientService {
     func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
         let previous = controlPathSnapshot
         controlPathSnapshot = snapshot
+        currentControlPathKind = snapshot.kind
+        currentControlPathStatus = MirageClientNetworkPathStatus(snapshot: snapshot)
         recordControlPathHistory(snapshot)
         if previous?.kind != snapshot.kind || previous?.mediaProfile != snapshot.mediaProfile {
             refreshActiveStreamTransportProfiles(for: snapshot)
@@ -90,6 +92,14 @@ extension MirageClientService {
     /// Clears the bounded control-path history after disconnect or connection reset.
     func resetControlPathHistory() {
         controlPathHistory.removeAll(keepingCapacity: false)
+    }
+
+    /// Clears the current control path and any history derived from it.
+    func clearControlPathState() {
+        controlPathSnapshot = nil
+        currentControlPathKind = nil
+        currentControlPathStatus = nil
+        resetControlPathHistory()
     }
 
     func suppressCurrentAwdlProximityRouteIfNeeded(

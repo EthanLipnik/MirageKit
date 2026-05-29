@@ -360,16 +360,10 @@ public final class MirageClientService {
     }
 
     /// Current network path kind used by the active control session.
-    public var currentControlPathKind: MirageNetworkPathKind? {
-        controlPathSnapshot?.kind
-    }
+    public internal(set) var currentControlPathKind: MirageNetworkPathKind?
 
     /// Current control-session path status exposed to app UI.
-    public var currentControlPathStatus: MirageClientNetworkPathStatus? {
-        controlPathSnapshot.map { snapshot in
-            MirageClientNetworkPathStatus(snapshot: snapshot)
-        }
-    }
+    public internal(set) var currentControlPathStatus: MirageClientNetworkPathStatus?
 
     /// Recent control-session path history entries.
     public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
@@ -558,6 +552,7 @@ public final class MirageClientService {
 
     /// Timeout task for desktop stream startup.
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
+    var appStreamStartTimeoutTask: Task<Void, Never>?
 
     /// Timeout task for desktop stream stop acknowledgements.
     var desktopStreamStopTimeoutTask: Task<Void, Never>?

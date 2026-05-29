@@ -13,10 +13,23 @@ extension MirageClientService {
     func clearPendingStreamSetup(kind: StreamSetupKind? = nil, appSessionID: UUID? = nil) {
         if let kind, pendingStreamSetupKind != kind { return }
         if let appSessionID, pendingStreamSetupAppSessionID != appSessionID { return }
+        if kind == nil || kind == .app || pendingStreamSetupKind == .app {
+            appStreamStartTimeoutTask?.cancel()
+            appStreamStartTimeoutTask = nil
+        }
         pendingStreamSetupRequestID = nil
         pendingStreamSetupKind = nil
         pendingStreamSetupAppSessionID = nil
         pendingStreamSetupLatencyMode = nil
+    }
+
+    func clearPendingAppStreamStartState(appSessionID: UUID? = nil) {
+        if let appSessionID, pendingStreamSetupAppSessionID != appSessionID { return }
+        appStreamStartTimeoutTask?.cancel()
+        appStreamStartTimeoutTask = nil
+        pendingAppRequestedColorDepth = nil
+        pendingAppRequestedLatencyMode = nil
+        clearPendingStreamSetup(kind: .app, appSessionID: appSessionID)
     }
 
     func clearPendingDesktopStreamStartState() {

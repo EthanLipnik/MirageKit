@@ -170,11 +170,17 @@ extension MirageClientService {
         desktopStreamRequestStartTime = 0
         lastDesktopStreamStartRequest = nil
         desktopStreamRestartAttempts = 0
+        desktopStreamStartTimeoutTask?.cancel()
+        desktopStreamStartTimeoutTask = nil
+        appStreamStartTimeoutTask?.cancel()
+        appStreamStartTimeoutTask = nil
+        pendingStreamSetupRequestID = nil
+        pendingStreamSetupKind = nil
+        pendingStreamSetupAppSessionID = nil
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
-        controlPathSnapshot = nil
-        resetControlPathHistory()
+        clearControlPathState()
         activeJitterHoldMs = 0
         resetRuntimeWorkloadSafetyState()
         decoderCompatibilityCurrentColorDepthByStream.removeAll()

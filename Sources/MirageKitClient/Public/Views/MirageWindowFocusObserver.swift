@@ -37,6 +37,7 @@ struct MirageWindowFocusObserver: NSViewRepresentable {
     func updateNSView(_: NSView, context _: Context) {}
 }
 
+@MainActor
 private final class FocusTrackingView: NSView {
     var sessionID: StreamSessionID?
     var streamID: StreamID?

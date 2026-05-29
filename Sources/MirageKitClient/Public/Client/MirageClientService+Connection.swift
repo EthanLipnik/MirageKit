@@ -109,7 +109,7 @@ public extension MirageClientService {
         authorizationState = .verifyingTrust
         hasCompletedBootstrap = false
         connectedHost = host
-        resetControlPathHistory()
+        clearControlPathState()
 
         var pendingChannel: MirageControlChannel?
 
@@ -216,7 +216,7 @@ public extension MirageClientService {
         authorizationState = .verifyingTrust
         hasCompletedBootstrap = false
         connectedHost = host
-        resetControlPathHistory()
+        clearControlPathState()
 
         var pendingChannel: MirageControlChannel?
         let helloRequest = try makeSessionHelloRequest()
