@@ -26,7 +26,8 @@ struct HostCaptureCadenceRecoveryPolicyTests {
         var policy = policy(consecutiveBadWindowsRequired: 2)
 
         #expect(policy.evaluate(sample(now: 1)) == .none)
-        #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 3)) == .none)
+        #expect(policy.evaluate(sample(now: 5)) == .restartCapture)
     }
 
     @Test("Established stream cadence recovery does not escalate to virtual display topology")
@@ -38,9 +39,10 @@ struct HostCaptureCadenceRecoveryPolicyTests {
             virtualDisplayReassertsBeforeRecreate: 2
         )
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 1)) == .none)
         #expect(policy.evaluate(sample(now: 3)) == .restartCapture)
-        #expect(policy.evaluate(sample(now: 5)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 5)) == .none)
+        #expect(policy.evaluate(sample(now: 7)) == .restartCapture)
     }
 
     @Test("Pre-presentation cadence recovery may still use topology ladder")
@@ -61,8 +63,9 @@ struct HostCaptureCadenceRecoveryPolicyTests {
     func cooldownPreventsRestartLoops() {
         var policy = policy(consecutiveBadWindowsRequired: 1, actionCooldownSeconds: 8)
 
-        #expect(policy.evaluate(sample(now: 1)) == .restartCapture)
-        #expect(policy.evaluate(sample(now: 2)) == .none)
+        #expect(policy.evaluate(sample(now: 1)) == .none)
+        #expect(policy.evaluate(sample(now: 2)) == .restartCapture)
+        #expect(policy.evaluate(sample(now: 3)) == .none)
     }
 
     @Test("Transport pressure blocks capture recovery")

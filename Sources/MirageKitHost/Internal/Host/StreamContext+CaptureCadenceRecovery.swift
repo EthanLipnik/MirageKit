@@ -428,6 +428,13 @@ extension StreamContext {
                 )
             }
         case .restartCapture:
+            let now = CFAbsoluteTimeGetCurrent()
+            guard !captureRestartShouldWaitForActiveRecovery(now: now) else {
+                MirageLogger.capture(
+                    "event=capture_cadence_recovery action=restart_capture result=skipped_active_keyframe_recovery stream=\(streamID)"
+                )
+                return
+            }
             MirageLogger.capture(
                 "event=capture_cadence_recovery action=restart_capture stream=\(streamID) p99Ms=\(p99Text) worstMs=\(worstText) \(cadenceText)"
             )
@@ -456,6 +463,23 @@ extension StreamContext {
         }
     }
 
+}
+
+extension StreamContext {
+    func captureRestartShouldWaitForActiveRecovery(now: CFAbsoluteTime) -> Bool {
+        suppressEncodedNonKeyframesUntilKeyframe ||
+            frameChainSuppressesPFrames ||
+            isKeyframeEncoding ||
+            pendingKeyframeReason != nil ||
+            pendingKeyframeDeadline > now ||
+            keyframeSendDeadline > now
+    }
+
+    func prepareForCaptureRestartRecoveryKeyframe() async {
+        let emergencyQuality = emergencyKeyframeQuality()
+        pendingEmergencyKeyframeQuality = emergencyQuality
+        await encoder?.prepareForKeyframe(quality: emergencyQuality)
+    }
 }
 
 private extension HostCaptureCadenceRecoveryPolicy.Action {

@@ -79,16 +79,25 @@ extension MirageClientSessionStore {
     /// If the session has not been created yet, the status is applied once the session appears.
     public func setClientRecoveryStatus(
         for streamID: StreamID,
-        status: MirageStreamClientRecoveryStatus
+        status: MirageStreamClientRecoveryStatus,
+        cause: MirageStreamClientRecoveryCause = .none
     ) {
+        let resolvedCause: MirageStreamClientRecoveryCause = status == .idle ? .none : cause
         let matchingSessions = sessionsMatchingStreamOrMediaID(streamID)
         if !matchingSessions.isEmpty {
             pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
-            for session in matchingSessions where session.clientRecoveryStatus != status {
-                session.clientRecoveryStatus = status
+            pendingClientRecoveryCauseByStreamID.removeValue(forKey: streamID)
+            for session in matchingSessions {
+                if session.clientRecoveryStatus != status {
+                    session.clientRecoveryStatus = status
+                }
+                if session.clientRecoveryCause != resolvedCause {
+                    session.clientRecoveryCause = resolvedCause
+                }
             }
         } else {
             pendingClientRecoveryStatusByStreamID[streamID] = status
+            pendingClientRecoveryCauseByStreamID[streamID] = resolvedCause
         }
     }
 

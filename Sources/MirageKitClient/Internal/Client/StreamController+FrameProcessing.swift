@@ -36,6 +36,7 @@ extension StreamController {
         decodeSubmissionHealthyStreak = 0
         currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
         decodeQueueRequiresKeyframe = false
+        recoveryPresentationResetPerformed = false
         await decoder.setDecodeSubmissionLimit(
             limit: decodeSubmissionBaselineLimit,
             reason: "stream pipeline start"
@@ -181,6 +182,7 @@ extension StreamController {
                 dropPendingFrames: true,
                 reason: "recovery-keyframe"
             )
+            recoveryPresentationResetPerformed = true
             if droppedFrames > 0 {
                 MirageLogger.client(
                     "Dropped \(droppedFrames) pending render frame(s) before recovery keyframe \(frameNumber) for stream \(streamID)"
@@ -224,12 +226,14 @@ extension StreamController {
     }
 
     private var shouldResetPresentationForRecoveryKeyframe: Bool {
+        !recoveryPresentationResetPerformed && (
         clientRecoveryStatus == .keyframeRecovery ||
             clientRecoveryStatus == .hardRecovery ||
             clientRecoveryStatus == .postResizeAwaitingFirstFrame ||
             awaitingFirstFrameAfterResize ||
             awaitingFirstPresentedFrameAfterResize ||
             decodeQueueRequiresKeyframe
+        )
     }
 
     private func enqueueFrame(

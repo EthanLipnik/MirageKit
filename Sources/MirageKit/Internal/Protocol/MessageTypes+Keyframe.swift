@@ -16,9 +16,38 @@ package struct KeyframeRequestMessage: Codable {
     /// Stream that needs a keyframe.
     package let streamID: StreamID
 
+    /// Recovery cause that allows the host to distinguish decode-error repair from frame-loss churn.
+    package let recoveryCause: MirageMediaFeedbackRecoveryCause
+
     /// Creates a keyframe request.
-    package init(streamID: StreamID) {
+    package init(
+        streamID: StreamID,
+        recoveryCause: MirageMediaFeedbackRecoveryCause = .none
+    ) {
         self.streamID = streamID
+        self.recoveryCause = recoveryCause
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case streamID
+        case recoveryCause
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        streamID = try container.decode(StreamID.self, forKey: .streamID)
+        recoveryCause = try container.decodeIfPresent(
+            MirageMediaFeedbackRecoveryCause.self,
+            forKey: .recoveryCause
+        ) ?? .none
+    }
+
+    package func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(streamID, forKey: .streamID)
+        if recoveryCause != .none {
+            try container.encode(recoveryCause, forKey: .recoveryCause)
+        }
     }
 }
 

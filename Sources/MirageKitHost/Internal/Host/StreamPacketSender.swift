@@ -21,6 +21,8 @@ actor StreamPacketSender {
     let duplicatesParameterSetPackets: Bool
     nonisolated let onDependencyFrameDropped:
         (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)?
+    nonisolated let onFrameTransportCompleted:
+        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ isKeyframe: Bool, _ didSend: Bool) -> Void)?
     let packetBufferPool: PacketBufferPool
     private var sendTask: Task<Void, Never>?
     /// Accessed from encoder callbacks; lifecycle is managed by start/stop.
@@ -74,7 +76,9 @@ actor StreamPacketSender {
         onSendError: (@Sendable (Error) -> Void)? = nil,
         duplicatesParameterSetPackets: Bool = false,
         onDependencyFrameDropped:
-        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)? = nil
+        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)? = nil,
+        onFrameTransportCompleted:
+        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ isKeyframe: Bool, _ didSend: Bool) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map(MirageMediaPacketKey.init(context:))
@@ -84,6 +88,7 @@ actor StreamPacketSender {
         self.onSendError = onSendError
         self.duplicatesParameterSetPackets = duplicatesParameterSetPackets && !self.videoTransportMode.usesReliableOrderedDelivery
         self.onDependencyFrameDropped = onDependencyFrameDropped
+        self.onFrameTransportCompleted = onFrameTransportCompleted
         packetBufferPool = PacketBufferPool(
             capacity: mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
         )

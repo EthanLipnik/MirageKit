@@ -118,6 +118,8 @@ final class FrameReassembler: @unchecked Sendable {
     var missingFragmentTimeoutCount: UInt64 = 0
     var forwardGapTimeoutCount: UInt64 = 0
     var fecRecoveredFragmentCount: UInt64 = 0
+    var pendingCompletedFrameAckNumbers: [UInt32] = []
+    let pendingCompletedFrameAckLimit = 1024
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
     var lastPacketReceivedTime: CFAbsoluteTime = 0

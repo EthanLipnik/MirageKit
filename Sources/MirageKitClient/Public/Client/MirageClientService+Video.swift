@@ -387,7 +387,11 @@ extension MirageClientService {
             return false
         }
 
-        let request = KeyframeRequestMessage(streamID: streamID)
+        let recoveryCause = sessionStore.sessionByStreamID(streamID)?.clientRecoveryCause ?? .none
+        let request = KeyframeRequestMessage(
+            streamID: streamID,
+            recoveryCause: MirageMediaFeedbackRecoveryCause(recoveryCause)
+        )
         guard sendControlMessageBestEffort(.keyframeRequest, content: request) else {
             MirageLogger.error(.client, "Failed to create keyframe request message")
             return false
@@ -424,5 +428,26 @@ extension MirageClientService {
     ) -> Bool {
         guard let lastRequestTime else { return true }
         return now - lastRequestTime >= cooldown
+    }
+}
+
+private extension MirageMediaFeedbackRecoveryCause {
+    init(_ cause: MirageStreamClientRecoveryCause) {
+        self = switch cause {
+        case .none:
+            .none
+        case .decodeError:
+            .decodeError
+        case .frameLoss:
+            .frameLoss
+        case .freezeTimeout:
+            .freezeTimeout
+        case .memoryBudget:
+            .memoryBudget
+        case .startupTimeout:
+            .startupTimeout
+        case .manual:
+            .manual
+        }
     }
 }

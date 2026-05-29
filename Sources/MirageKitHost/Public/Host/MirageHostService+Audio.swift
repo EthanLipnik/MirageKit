@@ -36,7 +36,10 @@ extension MirageHostService {
         MirageLogger.host(
             "Audio activation requested for client \(clientID), stream \(sourceStreamID): " +
                 "enabled=\(configuration.enabled), layout=\(configuration.channelLayout.rawValue), " +
-                "quality=\(configuration.quality.rawValue)"
+                "quality=\(configuration.quality.rawValue), " +
+                "bitrate=\(configuration.compressedBitrateBps.map(String.init) ?? "default"), " +
+                "ceiling=\(configuration.compressedBitrateCeilingBps.map(String.init) ?? "default"), " +
+                "adaptive=\(configuration.adaptiveCompressionEnabled)"
         )
         if let streamContext = streamsByID[sourceStreamID] {
             await streamContext.setRequestedAudioChannelCount(configuration.channelLayout.channelCount)
@@ -92,14 +95,24 @@ extension MirageHostService {
             throw error
         }
 
+        let audioMediaPath = await audioMediaPathSnapshot(
+            sourceStreamID: sourceStreamID,
+            clientContext: clientContext
+        )
         let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
         if let pipeline = audioPipelinesByClientID[clientID] {
-            await pipeline.updateConfiguration(configuration)
+            await pipeline.updateConfiguration(
+                configuration,
+                transportPathKind: audioMediaPath.transportPathKind,
+                mediaPathProfile: audioMediaPath.mediaPathProfile
+            )
             await pipeline.updateSourceStreamID(sourceStreamID)
         } else {
             let pipeline = HostAudioPipeline(
                 sourceStreamID: sourceStreamID,
                 audioConfiguration: configuration,
+                transportPathKind: audioMediaPath.transportPathKind,
+                mediaPathProfile: audioMediaPath.mediaPathProfile,
                 maxPayloadSize: payloadSize,
                 mediaSecurityContext: nil
             ) { [weak self] packets, encoded, currentStreamID in
@@ -119,6 +132,10 @@ extension MirageHostService {
                         guard let error else { return }
                         self?.dispatchControlWork(clientID: clientID) { [weak self] in
                             guard let self else { return }
+                            if isRecoverableAudioSendPressure(error) {
+                                await audioPipelinesByClientID[clientID]?.recordTransportPressure()
+                                return
+                            }
                             await handleAudioSendError(
                                 clientID: clientID,
                                 streamID: currentStreamID,
@@ -134,6 +151,25 @@ extension MirageHostService {
         await setAudioSourceCaptureHandler(clientID: clientID, streamID: sourceStreamID)
         scheduleAudioFirstSampleWatchdog(clientID: clientID, streamID: sourceStreamID)
         updateHostAudioMuteState()
+    }
+
+    private func audioMediaPathSnapshot(
+        sourceStreamID: StreamID,
+        clientContext: ClientContext
+    ) async -> StreamMediaPathSnapshot {
+        if let streamContext = streamsByID[sourceStreamID] {
+            return await streamContext.streamMediaPathSnapshot
+        }
+        let policy = effectiveMediaPathPolicy(
+            clientContext: clientContext,
+            clientPathKind: nil,
+            clientMediaPathProfile: nil,
+            clientPathSignature: nil
+        )
+        return StreamMediaPathSnapshot(
+            transportPathKind: policy.transportPathKind,
+            mediaPathProfile: policy.mediaPathProfile
+        )
     }
 
     /// Retries audio activation that was deferred until media security became available.
@@ -323,12 +359,12 @@ extension MirageHostService {
         let audioStream = try await clientContext.controlChannel.session.openStream(
             label: "audio/\(sourceStreamID)"
         )
-        let mediaSendProfile = await clientContext.controlChannel.session.mirageMediaSendProfile()
+        let mediaSendProfile = await clientContext.controlChannel.session.mirageAudioSendProfile()
         loomAudioStreamsByClientID[clientID] = audioStream
         transportRegistry.registerAudioStream(audioStream, clientID: clientID, profile: mediaSendProfile)
         audioSendErrorReportedByClientID.remove(clientID)
         _ = await sendPendingAudioStartedIfPossible(clientID: clientID)
-        MirageLogger.host("Opened Loom audio stream for client \(clientID)")
+        MirageLogger.host("Opened Loom audio stream for client \(clientID), sendProfile=\(mediaSendProfile.rawValue)")
     }
 
     private func maybeSendAudioStarted(
@@ -388,6 +424,33 @@ extension MirageHostService {
         } catch {
             MirageLogger.host("Failed sending audioStreamStopped (client likely disconnected): \(error.localizedDescription)")
         }
+    }
+
+    private nonisolated func isRecoverableAudioSendPressure(_ error: Error) -> Bool {
+        if let loomError = error as? LoomError {
+            switch loomError {
+            case let .connectionFailed(underlyingError):
+                return isRecoverableAudioSendPressure(underlyingError)
+            default:
+                return false
+            }
+        }
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case let .connectionFailed(underlyingError):
+                return isRecoverableAudioSendPressure(underlyingError)
+            default:
+                return false
+            }
+        }
+
+        if let failure = error as? LoomConnectionFailure {
+            return failure.posixCode == .ECANCELED ||
+                failure.detail == "Unreliable send queue cancelled."
+        }
+
+        return false
     }
 }
 

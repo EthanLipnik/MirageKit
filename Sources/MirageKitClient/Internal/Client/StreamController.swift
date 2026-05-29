@@ -173,11 +173,18 @@ actor StreamController {
     var onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)?
     /// Called when client recovery state changes.
     var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
+    /// Called when client recovery state or cause changes.
+    var onRecoveryStateChanged: (
+        @MainActor @Sendable (MirageStreamClientRecoveryStatus, MirageStreamClientRecoveryCause) -> Void
+    )?
     /// Called when bounded startup recovery is exhausted before the first frame is presented.
     var onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)?
 
     /// Last recovery status delivered to the app layer.
     var clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle
+    /// Last recovery cause delivered to the app layer.
+    var clientRecoveryCause: MirageStreamClientRecoveryCause = .none
+    var recoveryPresentationResetPerformed = false
 
     /// Set callbacks for stream events
     func setCallbacks(
@@ -189,6 +196,9 @@ actor StreamController {
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable (RuntimeWorkloadSafetyStallEvent) -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
+        onRecoveryStateChanged: (
+            @MainActor @Sendable (MirageStreamClientRecoveryStatus, MirageStreamClientRecoveryCause) -> Void
+        )? = nil,
         onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
@@ -199,15 +209,27 @@ actor StreamController {
         self.onFirstFramePresented = onFirstFramePresented
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
+        self.onRecoveryStateChanged = onRecoveryStateChanged
         self.onTerminalStartupFailure = onTerminalStartupFailure
     }
 
-    func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
-        guard clientRecoveryStatus != status else { return }
+    func setClientRecoveryStatus(
+        _ status: MirageStreamClientRecoveryStatus,
+        cause: MirageStreamClientRecoveryCause = .none
+    ) async {
+        let resolvedCause: MirageStreamClientRecoveryCause = status == .idle ? .none : cause
+        let previousStatus = clientRecoveryStatus
+        guard clientRecoveryStatus != status || clientRecoveryCause != resolvedCause else { return }
         clientRecoveryStatus = status
-        guard let onRecoveryStatusChanged else { return }
+        clientRecoveryCause = resolvedCause
+        if status == .idle || previousStatus == .idle {
+            recoveryPresentationResetPerformed = false
+        }
+        let statusHandler = onRecoveryStatusChanged
+        let stateHandler = onRecoveryStateChanged
         await MainActor.run {
-            onRecoveryStatusChanged(status)
+            statusHandler?(status)
+            stateHandler?(status, resolvedCause)
         }
     }
 
@@ -255,6 +277,7 @@ extension StreamController {
         recoveryKeyframeDispatchTimes.removeAll(keepingCapacity: false)
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        recoveryPresentationResetPerformed = false
         resetStartupRecoveryTracking()
         cancelMemoryBudgetRecoveryTask()
         await setClientRecoveryStatus(.idle)

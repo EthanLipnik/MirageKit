@@ -18,6 +18,16 @@ package enum MirageMediaFeedbackRecoveryState: String, Codable, Sendable, Equata
     case postResizeAwaitingFirstFrame
 }
 
+package enum MirageMediaFeedbackRecoveryCause: String, Codable, Sendable, Equatable {
+    case none
+    case decodeError
+    case frameLoss
+    case freezeTimeout
+    case memoryBudget
+    case startupTimeout
+    case manual
+}
+
 package enum ReceiverMediaFeedbackReliabilityCause: String, Codable, Sendable, Equatable, Hashable {
     case noProgressTimeout
     case absoluteLifetimeTimeout
@@ -59,6 +69,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let rendererAcceptedFPS: Double
     package let rendererPresentedFPS: Double
     package let recoveryState: MirageMediaFeedbackRecoveryState
+    package let recoveryCause: MirageMediaFeedbackRecoveryCause
     package let pFrameCompletionLatencyP50Ms: Double?
     package let pFrameCompletionLatencyP95Ms: Double?
     package let pFrameCompletionLatencyMaxMs: Double?
@@ -74,6 +85,8 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let reassemblerForwardGapTimeouts: UInt64?
     package let fecRecoveredFragmentCount: UInt64?
     package let reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause]
+    package let audioDroppedFrameCount: UInt64?
+    package let audioGateActive: Bool?
 
     package init(
         streamID: StreamID,
@@ -96,6 +109,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         rendererAcceptedFPS: Double,
         rendererPresentedFPS: Double,
         recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageMediaFeedbackRecoveryCause = .none,
         pFrameCompletionLatencyP50Ms: Double? = nil,
         pFrameCompletionLatencyP95Ms: Double? = nil,
         pFrameCompletionLatencyMaxMs: Double? = nil,
@@ -110,7 +124,9 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         reassemblerMissingFragmentTimeouts: UInt64? = nil,
         reassemblerForwardGapTimeouts: UInt64? = nil,
         fecRecoveredFragmentCount: UInt64? = nil,
-        reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = []
+        reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = [],
+        audioDroppedFrameCount: UInt64? = nil,
+        audioGateActive: Bool? = nil
     ) {
         self.streamID = streamID
         self.sequence = sequence
@@ -132,6 +148,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.rendererAcceptedFPS = max(0, rendererAcceptedFPS)
         self.rendererPresentedFPS = max(0, rendererPresentedFPS)
         self.recoveryState = recoveryState
+        self.recoveryCause = recoveryState == .idle ? .none : recoveryCause
         self.pFrameCompletionLatencyP50Ms = pFrameCompletionLatencyP50Ms.map { max(0, $0) }
         self.pFrameCompletionLatencyP95Ms = pFrameCompletionLatencyP95Ms.map { max(0, $0) }
         self.pFrameCompletionLatencyMaxMs = pFrameCompletionLatencyMaxMs.map { max(0, $0) }
@@ -147,6 +164,8 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.reassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
         self.fecRecoveredFragmentCount = fecRecoveredFragmentCount
         self.reliabilityCauses = reliabilityCauses
+        self.audioDroppedFrameCount = audioDroppedFrameCount
+        self.audioGateActive = audioGateActive
     }
 
     package init(
@@ -169,7 +188,8 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         receivedFPS: Double,
         rendererAcceptedFPS: Double,
         rendererPresentedFPS: Double,
-        recoveryState: MirageMediaFeedbackRecoveryState
+        recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageMediaFeedbackRecoveryCause = .none
     ) {
         self.init(
             streamID: streamID,
@@ -192,6 +212,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             rendererAcceptedFPS: rendererAcceptedFPS,
             rendererPresentedFPS: rendererPresentedFPS,
             recoveryState: recoveryState,
+            recoveryCause: recoveryCause,
             pFrameCompletionLatencyP50Ms: nil,
             pFrameCompletionLatencyP95Ms: nil,
             pFrameCompletionLatencyMaxMs: nil,
@@ -206,7 +227,9 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             reassemblerMissingFragmentTimeouts: nil,
             reassemblerForwardGapTimeouts: nil,
             fecRecoveredFragmentCount: nil,
-            reliabilityCauses: []
+            reliabilityCauses: [],
+            audioDroppedFrameCount: nil,
+            audioGateActive: nil
         )
     }
 
@@ -231,6 +254,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case rendererAcceptedFPS
         case rendererPresentedFPS
         case recoveryState
+        case recoveryCause
         case pFrameCompletionLatencyP50Ms
         case pFrameCompletionLatencyP95Ms
         case pFrameCompletionLatencyMaxMs
@@ -246,6 +270,8 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case reassemblerForwardGapTimeouts
         case fecRecoveredFragmentCount
         case reliabilityCauses
+        case audioDroppedFrameCount
+        case audioGateActive
     }
 
     package init(from decoder: Decoder) throws {
@@ -280,6 +306,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
                 MirageMediaFeedbackRecoveryState.self,
                 forKey: .recoveryState
             ) ?? .idle,
+            recoveryCause: try container.decodeIfPresent(
+                MirageMediaFeedbackRecoveryCause.self,
+                forKey: .recoveryCause
+            ) ?? .none,
             pFrameCompletionLatencyP50Ms: try container.decodeIfPresent(
                 Double.self,
                 forKey: .pFrameCompletionLatencyP50Ms
@@ -318,7 +348,9 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             reliabilityCauses: try container.decodeIfPresent(
                 [ReceiverMediaFeedbackReliabilityCause].self,
                 forKey: .reliabilityCauses
-            ) ?? []
+            ) ?? [],
+            audioDroppedFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .audioDroppedFrameCount),
+            audioGateActive: try container.decodeIfPresent(Bool.self, forKey: .audioGateActive)
         )
     }
 
@@ -344,6 +376,9 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encode(rendererAcceptedFPS, forKey: .rendererAcceptedFPS)
         try container.encode(rendererPresentedFPS, forKey: .rendererPresentedFPS)
         try container.encode(recoveryState, forKey: .recoveryState)
+        if recoveryCause != .none {
+            try container.encode(recoveryCause, forKey: .recoveryCause)
+        }
         try container.encodeIfPresent(pFrameCompletionLatencyP50Ms, forKey: .pFrameCompletionLatencyP50Ms)
         try container.encodeIfPresent(pFrameCompletionLatencyP95Ms, forKey: .pFrameCompletionLatencyP95Ms)
         try container.encodeIfPresent(pFrameCompletionLatencyMaxMs, forKey: .pFrameCompletionLatencyMaxMs)
@@ -364,5 +399,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         if !reliabilityCauses.isEmpty {
             try container.encode(reliabilityCauses, forKey: .reliabilityCauses)
         }
+        try container.encodeIfPresent(audioDroppedFrameCount, forKey: .audioDroppedFrameCount)
+        try container.encodeIfPresent(audioGateActive, forKey: .audioGateActive)
     }
 }

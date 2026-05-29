@@ -228,7 +228,6 @@ extension StreamContext {
                 height: CVPixelBufferGetHeight(frame.pixelBuffer)
             )
             updateCaptureSizesIfNeeded(bufferSize)
-            updateMotionState(with: frame.info)
 
             var didResetEncoder = false
             if needsEncoderReset {
@@ -321,6 +320,12 @@ extension StreamContext {
                 )
             }
 
+            if frameChainSuppressesPFrames, !forceKeyframe {
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
+
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
                 idleSkippedCount += 1
@@ -331,18 +336,6 @@ extension StreamContext {
             setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
             await applyTrafficLightCloneStampIfNeeded(frame: frame)
-            let shouldDropForPreEncodeBudget = await applyPreEncodeMotionBudgetIfNeeded(
-                for: frame,
-                now: CFAbsoluteTimeGetCurrent()
-            )
-            if shouldDropForPreEncodeBudget, !forceKeyframe {
-                preEncodeMotionDropLastTime = CFAbsoluteTimeGetCurrent()
-                captureDroppedIntervalCount += 1
-                droppedFrameCount += 1
-                logPreEncodeMotionDropIfNeeded(now: preEncodeMotionDropLastTime)
-                await logStreamStatsIfNeeded()
-                continue
-            }
 
             do {
                 guard let encoder else { continue }
@@ -363,7 +356,7 @@ extension StreamContext {
                         }
                         await encoder.flush()
                     }
-                    await encoder.prepareForKeyframe(quality: keyframeQuality)
+                    await encoder.prepareForKeyframe(quality: pendingEmergencyKeyframeQuality ?? keyframeQuality)
                 }
                 // Pre-increment inFlightCount before the await suspension point.
                 // The VT completion callback can fire during the await and schedule

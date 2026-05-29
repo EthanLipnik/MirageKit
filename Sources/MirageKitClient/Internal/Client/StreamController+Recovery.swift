@@ -370,6 +370,11 @@ extension StreamController {
             return false
         }
         MirageLogger.client("Requesting recovery keyframe (\(reason.logLabel)) for stream \(streamID)")
+        if presentationTier == .activeLive,
+           clientRecoveryStatus != .postResizeAwaitingFirstFrame,
+           clientRecoveryStatus != .hardRecovery {
+            await setClientRecoveryStatus(.keyframeRecovery, cause: reason.recoveryCause)
+        }
         let didSend = await MainActor.run {
             handler()
         }
@@ -525,7 +530,7 @@ extension StreamController {
         MirageLogger.client("Starting soft stream recovery (\(reason.logLabel)) for stream \(streamID)")
         if clientRecoveryStatus != .postResizeAwaitingFirstFrame,
            clientRecoveryStatus != .hardRecovery {
-            await setClientRecoveryStatus(.keyframeRecovery)
+            await setClientRecoveryStatus(.keyframeRecovery, cause: reason.recoveryCause)
         }
         await clearResizeState()
         let postResizeRecoveryActive = capturedPostResizeRecoveryEpisodeID != nil &&
@@ -550,7 +555,7 @@ extension StreamController {
             await armPostResizeRecoveryWindow(reason: "post-resize-soft-recovery")
         }
         if presentationTier == .activeLive {
-            await enterKeyframeRecoveryIfNeeded(reason: "soft-\(reason.logLabel)")
+            await enterKeyframeRecoveryIfNeeded(reason: "soft-\(reason.logLabel)", cause: reason.recoveryCause)
         }
         await requestKeyframeRecoveryIfPossible(reason: reason)
     }

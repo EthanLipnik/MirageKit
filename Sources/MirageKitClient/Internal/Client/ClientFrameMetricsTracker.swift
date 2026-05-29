@@ -112,10 +112,18 @@ private struct FrameIntervalSampler {
 
     mutating func snapshot(now: CFAbsoluteTime) -> Snapshot {
         trim(now: now)
-        guard startIndex < samples.count else {
+        guard lastSampleTime > 0 else {
             return Snapshot(worstGapMs: 0, p95Ms: 0, p99Ms: 0)
         }
-        let activeIntervals = samples[startIndex ..< samples.count].map(\.intervalMs)
+        guard startIndex < samples.count else {
+            let currentGapMs = max(0, (now - lastSampleTime) * 1000)
+            return Snapshot(worstGapMs: currentGapMs, p95Ms: currentGapMs, p99Ms: currentGapMs)
+        }
+        var activeIntervals = samples[startIndex ..< samples.count].map(\.intervalMs)
+        let currentGapMs = max(0, (now - lastSampleTime) * 1000)
+        if currentGapMs > 0 {
+            activeIntervals.append(currentGapMs)
+        }
         guard !activeIntervals.isEmpty else {
             return Snapshot(worstGapMs: 0, p95Ms: 0, p99Ms: 0)
         }

@@ -40,6 +40,23 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush == false)
     }
 
+    @Test("Only decode-error keyframe requests bypass adaptive cooldown")
+    func onlyDecodeErrorKeyframeRequestBypassesAdaptiveCooldown() async {
+        let context = makeContext()
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+
+        let frameLossAck = await context.requestKeyframe(recoveryCause: .frameLoss)
+        #expect(!frameLossAck.accepted)
+
+        let freezeAck = await context.requestKeyframe(recoveryCause: .freezeTimeout)
+        #expect(!freezeAck.accepted)
+
+        let decodeAck = await context.requestKeyframe(recoveryCause: .decodeError)
+        #expect(decodeAck.accepted)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
+    }
+
     @Test("Capture-starved recovery schedules restart when no frame has arrived")
     func captureStarvedRecoveryWithNoFrames() {
         let shouldRestart = StreamContext.shouldScheduleCaptureRestartForRecovery(
@@ -377,6 +394,12 @@ struct HostKeyframeRecoveryTests {
                 isIdleFrame: true
             )
         )
+    }
+}
+
+private extension StreamContext {
+    func setLastSuccessfulKeyframeSendTimeForTesting(_ time: CFAbsoluteTime) {
+        lastSuccessfulKeyframeSendTime = time
     }
 }
 #endif

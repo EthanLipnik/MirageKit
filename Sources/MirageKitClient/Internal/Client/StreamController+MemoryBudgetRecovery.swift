@@ -52,7 +52,7 @@ extension StreamController {
         MirageLogger.client(
             "Memory-budget recovery requesting a single keyframe for stream \(streamID) after deferred stall check"
         )
-        await enterKeyframeRecoveryIfNeeded(reason: "memory-budget")
+        await enterKeyframeRecoveryIfNeeded(reason: "memory-budget", cause: .memoryBudget)
         if await requestKeyframeRecovery(reason: .memoryBudget) {
             lastFreezeRecoveryTime = now
         }

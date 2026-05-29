@@ -15,10 +15,12 @@ import MirageKit
 actor HostAudioPipeline {
     private let encoder: AudioEncoder
     private let packetizer: AudioPacketizer
+    private var compressionBudgetController: HostAudioCompressionBudgetController
     private let onPacketsReady: @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     private var sourceStreamID: StreamID
     private var queue: [CapturedAudioBuffer] = []
     private var queuedDurationSeconds: Double = 0
+    private var pendingCompressionBitrateBps: Int?
     private var pendingDiscontinuity = false
     private var droppedBufferCount: UInt64 = 0
     private var lastDropLogTime: CFAbsoluteTime = 0
@@ -29,6 +31,8 @@ actor HostAudioPipeline {
     init(
         sourceStreamID: StreamID,
         audioConfiguration: MirageAudioConfiguration,
+        transportPathKind: MirageNetworkPathKind = .unknown,
+        mediaPathProfile: MirageMediaPathProfile = .unknown,
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext?,
         maxQueuedDurationSeconds: Double = 0.120,
@@ -36,6 +40,11 @@ actor HostAudioPipeline {
     ) {
         self.sourceStreamID = sourceStreamID
         encoder = AudioEncoder(audioConfiguration: audioConfiguration)
+        compressionBudgetController = HostAudioCompressionBudgetController(
+            configuration: audioConfiguration,
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
+        )
         packetizer = AudioPacketizer(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext
@@ -44,8 +53,17 @@ actor HostAudioPipeline {
         self.onPacketsReady = onPacketsReady
     }
 
-    func updateConfiguration(_ configuration: MirageAudioConfiguration) async {
+    func updateConfiguration(
+        _ configuration: MirageAudioConfiguration,
+        transportPathKind: MirageNetworkPathKind,
+        mediaPathProfile: MirageMediaPathProfile
+    ) async {
         await encoder.updateConfiguration(configuration)
+        pendingCompressionBitrateBps = compressionBudgetController.updateConfiguration(
+            configuration,
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
+        )
     }
 
     func updateSourceStreamID(_ streamID: StreamID) {
@@ -66,7 +84,26 @@ actor HostAudioPipeline {
             droppedBufferCount &+= UInt64(droppedCount)
             logDropsIfNeeded()
         }
+        if let bitrate = compressionBudgetController.recordQueueState(
+            queuedDurationSeconds: queuedDurationSeconds,
+            droppedBuffers: droppedCount,
+            maxQueuedDurationSeconds: maxQueuedDurationSeconds
+        ) {
+            pendingCompressionBitrateBps = bitrate
+        }
         startProcessingIfNeeded()
+    }
+
+    func recordTransportPressure() {
+        if let bitrate = compressionBudgetController.recordTransportPressure() {
+            pendingCompressionBitrateBps = bitrate
+        }
+    }
+
+    func recordReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) {
+        if let bitrate = compressionBudgetController.recordReceiverFeedback(feedback) {
+            pendingCompressionBitrateBps = bitrate
+        }
     }
 
     func stop() {
@@ -95,7 +132,7 @@ actor HostAudioPipeline {
 
     private func startProcessingIfNeeded() {
         guard processingTask == nil else { return }
-        processingTask = Task(priority: .utility) { [weak self] in
+        processingTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             await self.processLoop()
         }
@@ -107,7 +144,11 @@ actor HostAudioPipeline {
             guard !queue.isEmpty else { return }
             let captured = queue.removeFirst()
             queuedDurationSeconds = max(0, queuedDurationSeconds - Self.durationSeconds(for: captured))
+            await applyPendingCompressionBitrateIfNeeded()
             guard let encoded = await encoder.encode(captured) else { continue }
+            if let bitrate = compressionBudgetController.recordSuccessfulFrame() {
+                pendingCompressionBitrateBps = bitrate
+            }
             let currentStreamID = sourceStreamID
             let discontinuity = pendingDiscontinuity
             let packets = await packetizer.packetize(
@@ -121,6 +162,13 @@ actor HostAudioPipeline {
             guard !packets.isEmpty else { continue }
             await onPacketsReady(packets, encoded, currentStreamID)
         }
+    }
+
+    private func applyPendingCompressionBitrateIfNeeded() async {
+        guard let pendingCompressionBitrateBps else { return }
+        self.pendingCompressionBitrateBps = nil
+        pendingDiscontinuity = true
+        await encoder.updateCompressedBitrateBudget(pendingCompressionBitrateBps)
     }
 
     private static func durationSeconds(for buffer: CapturedAudioBuffer) -> Double {

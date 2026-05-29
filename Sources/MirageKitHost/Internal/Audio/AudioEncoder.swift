@@ -85,6 +85,18 @@ actor AudioEncoder {
         aacConverters.removeAll()
     }
 
+    func updateCompressedBitrateBudget(_ bitrateBps: Int) {
+        guard audioConfiguration.enabled,
+              audioConfiguration.quality != .lossless,
+              audioConfiguration.compressedBitrateBps != bitrateBps else {
+            return
+        }
+        audioConfiguration.compressedBitrateBps = bitrateBps
+        activeFallbackSettings = nil
+        loggedFallbackDescription = nil
+        aacConverters.removeAll()
+    }
+
     func encode(_ captured: CapturedAudioBuffer) -> EncodedAudioFrame? {
         guard audioConfiguration.enabled else { return nil }
         guard let inputBuffer = makeInputBuffer(captured) else { return nil }
@@ -125,23 +137,6 @@ actor AudioEncoder {
             }
         }
 
-        if primary.codec == .aacLC {
-            let pcmChannelCount: AVAudioChannelCount = if configuration.channelLayout == .surround51 {
-                AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
-            } else {
-                primary.channelCount
-            }
-            let pcm = AudioEncodeSettings(
-                codec: .pcm16LE,
-                sampleRate: primary.sampleRate,
-                channelCount: pcmChannelCount,
-                bitrate: nil
-            )
-            if !candidates.contains(pcm) {
-                candidates.append(pcm)
-            }
-        }
-
         return candidates
     }
 
@@ -168,10 +163,18 @@ actor AudioEncoder {
             bitrate = nil
         case .low:
             codec = .aacLC
-            bitrate = Self.aacBitrate(quality: .low, channels: channelCount)
+            bitrate = Self.aacBitrate(
+                quality: .low,
+                channels: channelCount,
+                budgetBps: configuration.compressedBitrateBps
+            )
         case .high:
             codec = .aacLC
-            bitrate = Self.aacBitrate(quality: .high, channels: channelCount)
+            bitrate = Self.aacBitrate(
+                quality: .high,
+                channels: channelCount,
+                budgetBps: configuration.compressedBitrateBps
+            )
         }
 
         return AudioEncodeSettings(

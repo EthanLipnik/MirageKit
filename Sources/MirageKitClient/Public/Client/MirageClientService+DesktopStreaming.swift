@@ -55,7 +55,10 @@ public extension MirageClientService {
         MirageLogger.client(
             "Desktop stream audio request: enabled=\(resolvedAudioConfiguration.enabled), " +
                 "layout=\(resolvedAudioConfiguration.channelLayout.rawValue), " +
-                "quality=\(resolvedAudioConfiguration.quality.rawValue), mode=\(mode.rawValue)"
+                "quality=\(resolvedAudioConfiguration.quality.rawValue), " +
+                "bitrate=\(resolvedAudioConfiguration.compressedBitrateBps.map(String.init) ?? "default"), " +
+                "ceiling=\(resolvedAudioConfiguration.compressedBitrateCeilingBps.map(String.init) ?? "default"), " +
+                "adaptive=\(resolvedAudioConfiguration.adaptiveCompressionEnabled), mode=\(mode.rawValue)"
         )
 
         let startupRequestID = UUID()

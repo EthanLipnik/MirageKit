@@ -31,7 +31,13 @@ extension StreamPacketSender {
     nonisolated func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
         guard !videoTransportMode.usesReliableOrderedDelivery else { return false }
         guard !item.isKeyframe, item.sendDeadline.isFinite else { return false }
-        return now >= item.sendDeadline
+        return now >= hardSendDeadline(for: item)
+    }
+
+    /// Returns the hard abandon deadline for dependency-coded P-frames.
+    nonisolated func hardSendDeadline(for item: WorkItem) -> CFAbsoluteTime {
+        let frameInterval = 1.0 / Double(max(1, item.targetFrameRate))
+        return item.sendDeadline + frameInterval * 2.0
     }
 
     /// Drops expired queued non-keyframes while the caller holds `queueLock`.

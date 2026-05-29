@@ -88,7 +88,7 @@ enum LiveAudioSyncPolicy {
                 reason: "waiting-first-video-frame"
             )
         case .staleAfterPresentation:
-            return gatedDecision(
+            return ungatedLiveTailDecision(
                 frames: frames,
                 liveTailDurationSeconds: liveTailDurationSeconds,
                 reason: "stale-video-presentation"
@@ -135,6 +135,21 @@ enum LiveAudioSyncPolicy {
             frames: liveTail.frames,
             droppedCount: liveTail.droppedCount,
             shouldGatePlayback: true,
+            runtimeExtraDelaySeconds: 0,
+            reason: reason
+        )
+    }
+
+    private static func ungatedLiveTailDecision(
+        frames: [DecodedPCMFrame],
+        liveTailDurationSeconds: Double,
+        reason: String
+    ) -> Decision {
+        let liveTail = retainLiveTail(frames, durationSeconds: liveTailDurationSeconds)
+        return Decision(
+            frames: liveTail.frames,
+            droppedCount: liveTail.droppedCount,
+            shouldGatePlayback: false,
             runtimeExtraDelaySeconds: 0,
             reason: reason
         )

@@ -53,8 +53,8 @@ struct AudioLiveSyncPolicyTests {
         #expect(decision.frames.map(\.timestampNs) == [200_000_000, 300_000_000])
     }
 
-    @Test("Policy gates stale video and prevents accumulated playback backlog")
-    func policyGatesWhenVideoPresentationIsStale() {
+    @Test("Policy falls back to live audio when video presentation is stale")
+    func policyFallsBackToLiveAudioWhenVideoPresentationIsStale() {
         let frames = [
             makeFrame(timestampNs: 1_000_000_000),
             makeFrame(timestampNs: 1_100_000_000),
@@ -67,8 +67,9 @@ struct AudioLiveSyncPolicyTests {
             liveTailDurationSeconds: 0.150
         )
 
-        #expect(decision.shouldGatePlayback)
+        #expect(!decision.shouldGatePlayback)
         #expect(decision.reason == "stale-video-presentation")
+        #expect(decision.droppedCount == 1)
         #expect(decision.frames.map(\.timestampNs) == [1_100_000_000, 1_200_000_000])
     }
 

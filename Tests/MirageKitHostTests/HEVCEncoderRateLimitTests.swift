@@ -33,12 +33,12 @@ struct HEVCEncoderRateLimitTests {
             targetBitrateBps: targetBitrate,
             targetFrameRate: await encoder.configuration.targetFrameRate
         )
-        #expect(abs(refreshedLimit.windowSeconds - (1.0 / 120.0)) < 0.0001)
-        #expect(refreshedLimit.bytes == 83_333)
+        #expect(abs(refreshedLimit.windowSeconds - (2.0 / 120.0)) < 0.0001)
+        #expect(refreshedLimit.bytes == 166_667)
     }
 
-    @Test("Rate-limit windows use short windows at high frame rates")
-    func rateLimitWindowsUseShortWindowsAtHighFrameRates() {
+    @Test("Rate-limit windows use short two-frame windows at high frame rates")
+    func rateLimitWindowsUseShortTwoFrameWindowsAtHighFrameRates() {
         let sixtyFPS = VideoEncoder.dataRateLimit(
             targetBitrateBps: 12_000_000,
             targetFrameRate: 60
@@ -48,10 +48,10 @@ struct HEVCEncoderRateLimitTests {
             targetFrameRate: 90
         )
 
-        #expect(abs(sixtyFPS.windowSeconds - (1.0 / 60.0)) < 0.0001)
-        #expect(sixtyFPS.bytes == 25_000)
-        #expect(abs(ninetyFPS.windowSeconds - (1.0 / 90.0)) < 0.0001)
-        #expect(ninetyFPS.bytes == 16_667)
+        #expect(abs(sixtyFPS.windowSeconds - (2.0 / 60.0)) < 0.0001)
+        #expect(sixtyFPS.bytes == 50_000)
+        #expect(abs(ninetyFPS.windowSeconds - (2.0 / 90.0)) < 0.0001)
+        #expect(ninetyFPS.bytes == 33_333)
     }
 
     @Test("AWDL rate-limit windows are shorter to avoid encoder-side bursts")

@@ -99,6 +99,13 @@ package final class MirageControlChannel: @unchecked Sendable {
         }
     }
 
+    /// Starts a best-effort unreliable send and intentionally ignores failures.
+    package func sendBestEffortUnreliable(_ message: ControlMessage) {
+        Task {
+            try? await self.sendSerializedUnreliable(message.serialize())
+        }
+    }
+
     /// Starts a best-effort empty control-message send and intentionally ignores failures.
     package func sendBestEffort(_ type: ControlMessageType) {
         sendBestEffort(ControlMessage(type: type))

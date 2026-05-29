@@ -215,7 +215,7 @@ struct MirageStreamBottleneckKindTests {
     }
 
     @Test("Above-target host encode does not hide client decode deficit")
-    func aboveTargetHostEncodeDoesNotHideClientDecodeDeficit() {
+    func equalReceivedAndDecodedCadenceIsNotDecodeBound() {
         var snapshot = baselineSnapshot()
         snapshot.hostTargetFrameRate = 60
         snapshot.hostFrameBudgetMs = 16.67
@@ -225,6 +225,27 @@ struct MirageStreamBottleneckKindTests {
         snapshot.hostEncodeAttemptFPS = 119.9
         snapshot.hostEncodedFPS = 81.2
         snapshot.receivedFPS = 44
+        snapshot.decodedFPS = 44
+        snapshot.clientRendererEnqueueFPS = 44
+        snapshot.clientUniqueRendererEnqueueFPS = 44
+        snapshot.clientUniqueDeliveredSourceFrameFPS = 42
+        snapshot.clientVisibleFrameFPS = 42
+        snapshot.decodeHealthy = false
+
+        #expect(snapshot.bottleneckKind != .decodeBound)
+    }
+
+    @Test("Above-target host encode does not hide client decode lag")
+    func aboveTargetHostEncodeDoesNotHideClientDecodeLag() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostTargetFrameRate = 60
+        snapshot.hostFrameBudgetMs = 16.67
+        snapshot.hostAverageEncodeMs = 10
+        snapshot.hostCaptureIngressFPS = 120.4
+        snapshot.hostCaptureFPS = 120.4
+        snapshot.hostEncodeAttemptFPS = 119.9
+        snapshot.hostEncodedFPS = 81.2
+        snapshot.receivedFPS = 58
         snapshot.decodedFPS = 44
         snapshot.clientRendererEnqueueFPS = 44
         snapshot.clientUniqueRendererEnqueueFPS = 44

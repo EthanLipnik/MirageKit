@@ -49,7 +49,7 @@ struct DesktopStopFailureSuppressionTests {
 
     @MainActor
     @Test("Terminal startup desktop restart preserves request contract")
-    func terminalStartupDesktopRestartPreservesRequestContract() throws {
+    func terminalStartupDesktopRestartPreservesRequestContract() async throws {
         let originalRequestID = try #require(UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
         let restartRequestID = try #require(UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"))
         var request = StartDesktopStreamMessage(
@@ -114,7 +114,7 @@ struct DesktopStopFailureSuppressionTests {
 
     @MainActor
     @Test("Terminal startup desktop restart is bounded to one attempt")
-    func terminalStartupDesktopRestartIsBoundedToOneAttempt() {
+    func terminalStartupDesktopRestartIsBoundedToOneAttempt() async {
         let service = MirageClientService(deviceName: "Test Device")
         let streamID: StreamID = 56
         let request = StartDesktopStreamMessage(

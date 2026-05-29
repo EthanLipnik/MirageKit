@@ -153,29 +153,40 @@ extension AudioEncoder {
         return UInt64(seconds * 1_000_000_000)
     }
 
-    static func aacBitrate(quality: MirageAudioQuality, channels: Int) -> Int {
-        switch quality {
-        case .low:
-            switch channels {
-            case 1:
-                return 64_000
-            case 2:
-                return 96_000
-            default:
-                return 256_000
-            }
-        case .high:
-            switch channels {
-            case 1:
-                return 128_000
-            case 2:
-                return 192_000
-            default:
-                return 448_000
-            }
-        case .lossless:
-            return 0
+    static func aacBitrate(
+        quality: MirageAudioQuality,
+        channels: Int,
+        budgetBps: Int? = nil
+    ) -> Int {
+        let fallbackLayout: MirageAudioChannelLayout = switch channels {
+        case 1:
+            .mono
+        case 2:
+            .stereo
+        default:
+            .surround51
         }
+        let defaultBitrate = quality.defaultCompressedBitrateBps(for: fallbackLayout) ?? 0
+        guard let budgetBps, budgetBps > 0 else { return defaultBitrate }
+        let floor = minimumAACBitrate(channels: channels)
+        return max(floor, min(defaultBitrate, roundedAACBitrate(budgetBps)))
+    }
+
+    static func minimumAACBitrate(channels: Int) -> Int {
+        switch channels {
+        case 1:
+            40_000
+        case 2:
+            64_000
+        default:
+            160_000
+        }
+    }
+
+    static func roundedAACBitrate(_ bitrateBps: Int) -> Int {
+        let step = 8_000
+        let clamped = max(step, bitrateBps)
+        return max(step, (clamped / step) * step)
     }
 }
 

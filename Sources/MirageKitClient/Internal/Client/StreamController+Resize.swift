@@ -62,7 +62,10 @@ extension StreamController {
                 reassembler.beginKeyframeWait()
             }
             if restartRecoveryLoop, presentationTier == .activeLive {
-                await enterKeyframeRecoveryIfNeeded(reason: "hard-recovery-throttled-\(reason.logLabel)")
+                await enterKeyframeRecoveryIfNeeded(
+                    reason: "hard-recovery-throttled-\(reason.logLabel)",
+                    cause: reason.recoveryCause
+                )
             }
             await requestKeyframeRecoveryIfPossible(reason: reason)
             return
@@ -78,7 +81,7 @@ extension StreamController {
         lastHardRecoveryStartTime = now
 
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
-        await setClientRecoveryStatus(.hardRecovery)
+        await setClientRecoveryStatus(.hardRecovery, cause: reason.recoveryCause)
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -100,7 +103,7 @@ extension StreamController {
         }
         reassembler.beginKeyframeWait()
         if restartRecoveryLoop, presentationTier == .activeLive {
-            await enterKeyframeRecoveryIfNeeded(reason: "hard-\(reason.logLabel)")
+            await enterKeyframeRecoveryIfNeeded(reason: "hard-\(reason.logLabel)", cause: reason.recoveryCause)
         } else {
             await clearKeyframeRecoveryState()
         }

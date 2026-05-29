@@ -88,6 +88,41 @@ struct ClientStreamingAnomalyDiagnosticTests {
         #expect(diagnostic.message.contains("captureAdmissionDrops=31"))
     }
 
+    @Test("Equal received and decoded cadence is not classified as decode-bound")
+    func equalReceivedAndDecodedCadenceIsNotDecodeBound() {
+        let diagnostic = clientStreamingAnomalyDiagnostic(
+            sample: ClientStreamingAnomalySample(
+                streamID: 22,
+                trigger: "decode-submission",
+                decodedFPS: 29,
+                receivedFPS: 29,
+                layerEnqueueFPS: 29,
+                uniqueLayerEnqueueFPS: 29,
+                visibleFrameFPS: 29,
+                visibleFrameCadenceKnown: true,
+                pendingFrameCount: 0,
+                pendingFrameAgeMs: 0,
+                overwrittenPendingFrames: 0,
+                displayLayerNotReadyCount: 0,
+                decodeHealthy: false,
+                decodeSubmissionLimit: 2,
+                presentationTier: .activeLive,
+                decoderOutputPixelFormat: "420f",
+                usingHardwareDecoder: true,
+                targetFrameRate: 60,
+                hostMetrics: makeHostMetrics(
+                    targetFrameRate: 60,
+                    encodedFPS: 60,
+                    captureFPS: 60,
+                    encodeAttemptFPS: 60
+                )
+            )
+        )
+
+        #expect(diagnostic.bottleneckKind != .decodeBound)
+        #expect(diagnostic.label != "decode-bound")
+    }
+
     @Test("Render backpressure is classified as presentation-bound")
     func renderBackpressureIsClassifiedAsPresentationBound() {
         let diagnostic = clientStreamingAnomalyDiagnostic(

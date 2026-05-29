@@ -113,20 +113,39 @@ actor StreamContext {
     var steadyQualityCeiling: Float
     var keyframeQualityFloor: Float
     let compressionQualityCeiling: Float = 0.94
-    let qualityFloorFactor: Float = 0.6
-    let keyframeFloorFactor: Float = 0.6
-    let bitrateCappedQualityFloorFactor: Float = 0.80
-    let bitrateCappedKeyframeFloorFactor: Float = 0.80
-    let uncappedQualityFloorMinimum: Float = 0.10
-    let bitrateCappedQualityFloorMinimum: Float = 0.12
-    let bitrateCappedKeyframeFloorMinimum: Float = 0.12
+    let qualityFloorFactor: Float = 0.45
+    let keyframeFloorFactor: Float = 0.35
+    let bitrateCappedQualityFloorFactor: Float = 0.45
+    let bitrateCappedKeyframeFloorFactor: Float = 0.32
+    let uncappedQualityFloorMinimum: Float = 0.06
+    let bitrateCappedQualityFloorMinimum: Float = 0.04
+    let bitrateCappedKeyframeFloorMinimum: Float = 0.02
     var pendingKeyframeReason: String?
     var pendingKeyframeDeadline: CFAbsoluteTime = 0
     var isKeyframeEncoding: Bool = false
     var pendingKeyframeRequiresFlush: Bool = false
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
+    var pendingEmergencyKeyframeQuality: Float?
     nonisolated(unsafe) var suppressEncodedNonKeyframesUntilKeyframe = false
+    enum HostFrameChainState: Sendable, Equatable {
+        case normal
+        case chainBroken(reason: String, firstBrokenFrame: UInt32?, openedAt: CFAbsoluteTime)
+        case emergencyKeyframePending(reason: String, openedAt: CFAbsoluteTime)
+        case postKeyframeCooling(untilCleanPFrames: Int)
+    }
+    var frameChainState: HostFrameChainState = .normal
+    let recoveryKeyframeCooldown: CFAbsoluteTime = 5.0
+    let postEmergencyKeyframeCleanPFrameCount = 8
+    let recoveryScaleRestoreCleanPFrameCount = 90
+    let emergencyKeyframeBudgetRatio: Double = 0.70
+    var lastSuccessfulKeyframeSendTime: CFAbsoluteTime = 0
+    var latestReceiverRecoveryCause: MirageMediaFeedbackRecoveryCause = .none
+    var frameChainRepairKeyframeRetryTask: Task<Void, Never>?
+    var emergencyRecoveryBaseStreamScale: CGFloat?
+    var emergencyRecoveryScaleIndex: Int = 0
+    var emergencyRecoveryCleanPFrames: Int = 0
+    var emergencyRecoveryScaleChangeInProgress = false
     var lastQualityAdjustmentTime: CFAbsoluteTime = 0
     var qualityRaiseSuppressionUntil: CFAbsoluteTime = 0
     let qualityRaisePostSpikeCooldown: CFAbsoluteTime = 3.0
@@ -134,9 +153,6 @@ actor StreamContext {
     var qualityOverBudgetCount: Int = 0
     var qualityUnderBudgetCount: Int = 0
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
-    var preEncodeMotionBudgetLastLogTime: CFAbsoluteTime = 0
-    var preEncodeMotionDropLastLogTime: CFAbsoluteTime = 0
-    var preEncodeMotionDropLastTime: CFAbsoluteTime = 0
     let qualityDropThreshold: Int = 3
     let qualityRaiseThreshold: Int = 8
     let qualityDropStep: Float = 0.02
@@ -261,8 +277,19 @@ actor StreamContext {
     var receiverHasPresentedFrame = false
     var receiverDecodedFPS: Double = 0
     var receiverPresentationBacklogFrames = 0
+    var receiverReassemblyBacklogFrames = 0
+    var receiverReassemblyBacklogBytes = 0
+    var receiverDecodeBacklogFrames = 0
+    var receiverLostFrameCount: UInt64 = 0
+    var receiverDiscardedPacketCount: UInt64 = 0
+    var receiverPFrameCompletionLatencyP95Ms: Double?
     var receiverAcceptedFPS: Double = 0
     var receiverPresentedFPS: Double = 0
+    var receiverAcknowledgedFrameNumber: UInt32?
+    var receiverAckLagMs: Double?
+    var lastReceiverAckTime: CFAbsoluteTime = 0
+    var recentFrameTransportCompletions: [(frameNumber: UInt32, completedAt: CFAbsoluteTime)] = []
+    let recentFrameTransportCompletionLimit = 240
     var lastReceiverFeedbackTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackLogTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
@@ -317,12 +344,6 @@ actor StreamContext {
     /// Maximum encoded resolution (5K cap)
     static let maxEncodedWidth: CGFloat = 5120
     static let maxEncodedHeight: CGFloat = 2880
-
-    /// Smoothed dirty percentage (0-1) used to avoid keyframes during high motion.
-    var smoothedDirtyPercentage: Double = 0
-    let motionSmoothingFactor: Double = 0.2
-    let keyframeMotionThreshold: Double = 0.25
-    var previousFrameMotionSample: HostFrameMotionSampler.Sample?
 
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?

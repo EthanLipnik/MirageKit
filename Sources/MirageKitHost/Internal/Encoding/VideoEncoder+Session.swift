@@ -258,7 +258,7 @@ extension VideoEncoder {
                 targetFrameRate: clampedFrameRate
             )
         } else {
-            windowSeconds = min(0.05, 1.0 / Double(clampedFrameRate))
+            windowSeconds = min(0.05, 2.0 / Double(clampedFrameRate))
         }
         let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
         let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))

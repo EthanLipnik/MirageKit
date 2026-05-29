@@ -19,5 +19,15 @@ extension LoomAuthenticatedSession {
             ? .proximityInteractiveMedia
             : .interactiveMedia
     }
+
+    func mirageAudioSendProfile() async -> LoomQueuedUnreliableSendProfile {
+        guard let pathSnapshot else {
+            return .interactiveAudio
+        }
+        let mediaProfile = MirageNetworkPathClassifier.classify(pathSnapshot).mediaProfile
+        return mediaProfile.usesAwdlRadioPolicy
+            ? .proximityInteractiveAudio
+            : .interactiveAudio
+    }
 }
 #endif

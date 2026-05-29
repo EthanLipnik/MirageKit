@@ -65,7 +65,6 @@ extension StreamContext {
         )
         if queued {
             noteLossEvent(reason: recoveryReason, enablePFrameFEC: true)
-            markKeyframeRequestIssued()
             scheduleProcessingIfNeeded()
         }
 

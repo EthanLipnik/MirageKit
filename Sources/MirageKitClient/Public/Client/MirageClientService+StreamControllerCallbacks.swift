@@ -29,6 +29,7 @@ extension MirageClientService {
             onResizeStateChanged: nil,
             onFrameDecoded: { [weak self, weak controller] metrics in
                 guard let self,
+                      let controller,
                       self.isActiveStreamController(controller, streamID: streamID) else {
                     return
                 }
@@ -96,7 +97,7 @@ extension MirageClientService {
                 if activeJitterHoldMs != metrics.activeJitterHoldMs {
                     activeJitterHoldMs = metrics.activeJitterHoldMs
                 }
-                sendReceiverMediaFeedback(streamID: streamID, metrics: metrics)
+                sendReceiverMediaFeedback(streamID: streamID, controller: controller, metrics: metrics)
                 logAwdlRadioTelemetryIfNeeded(streamID: streamID, metrics: metrics)
             },
             videoIngressMetricsProvider: { [videoIngressTelemetryStore] streamID in
@@ -128,12 +129,13 @@ extension MirageClientService {
                 handleRuntimeWorkloadSafetyStallEvent(streamID: streamID, event: event)
                 logAwdlRadioTelemetryIfNeeded()
             },
-            onRecoveryStatusChanged: { [weak self, weak controller] status in
+            onRecoveryStatusChanged: nil,
+            onRecoveryStateChanged: { [weak self, weak controller] status, cause in
                 guard let self,
                       self.isActiveStreamController(controller, streamID: streamID) else {
                     return
                 }
-                sessionStore.setClientRecoveryStatus(for: streamID, status: status)
+                sessionStore.setClientRecoveryStatus(for: streamID, status: status, cause: cause)
                 if status == .idle {
                     handleDesktopPresentationReady(streamID: streamID)
                 }
@@ -157,16 +159,22 @@ extension MirageClientService {
 
     private func sendReceiverMediaFeedback(
         streamID: StreamID,
+        controller: StreamController,
         metrics: StreamController.ClientFrameMetrics
     ) {
         let now = CFAbsoluteTimeGetCurrent()
         let targetFPS = max(1, metricsStore.snapshot(for: streamID)?.hostTargetFrameRate ?? 60)
-        let recoveryStatus = sessionStore.sessionByStreamID(streamID)?.clientRecoveryStatus ?? .idle
+        let session = sessionStore.sessionByStreamID(streamID)
+        let recoveryStatus = session?.clientRecoveryStatus ?? .idle
+        let recoveryCause = session?.clientRecoveryCause ?? .none
         let recoveryState = MirageMediaFeedbackRecoveryState(recoveryStatus)
+        let audioDroppedFrameCount = audioFeedbackDroppedFrameCountByStreamID[streamID] ?? 0
+        let audioGateActive = audioVideoGateActiveStreamIDs.contains(streamID)
         let feedbackInterval = resolvedReceiverMediaFeedbackInterval(
             targetFPS: targetFPS,
             recoveryState: recoveryState,
-            metrics: metrics
+            metrics: metrics,
+            hasAudioPressure: audioDroppedFrameCount > 0 || audioGateActive
         )
         if let lastSendTime = receiverMediaFeedbackLastSendTime[streamID],
            now - lastSendTime < feedbackInterval {
@@ -175,6 +183,7 @@ extension MirageClientService {
         receiverMediaFeedbackLastSendTime[streamID] = now
 
         receiverMediaFeedbackSequence &+= 1
+        let ackRanges = controller.reassembler.consumeCompletedFrameAckRanges()
         let transportLoss = receiverTransportLossFeedback(
             for: streamID,
             metrics: metrics,
@@ -186,21 +195,30 @@ extension MirageClientService {
             sentAtUptime: now,
             targetFPS: targetFPS,
             recoveryState: recoveryState,
+            recoveryCause: MirageMediaFeedbackRecoveryCause(recoveryCause),
+            ackRanges: ackRanges,
             transportLostFrameCount: transportLoss.lostFrameCount,
             transportDiscardedPacketCount: transportLoss.discardedPacketCount,
+            audioDroppedFrameCount: audioDroppedFrameCount > 0 ? audioDroppedFrameCount : nil,
+            audioGateActive: audioGateActive ? true : nil,
             metrics: metrics
         )
-        queueControlMessageBestEffort(.receiverMediaFeedback, content: feedback)
+        audioFeedbackDroppedFrameCountByStreamID.removeValue(forKey: streamID)
+        queueControlMessageBestEffortUnreliable(.receiverMediaFeedback, content: feedback)
     }
 
     private func resolvedReceiverMediaFeedbackInterval(
         targetFPS: Int,
         recoveryState: MirageMediaFeedbackRecoveryState,
-        metrics: StreamController.ClientFrameMetrics
+        metrics: StreamController.ClientFrameMetrics,
+        hasAudioPressure: Bool = false
     ) -> CFAbsoluteTime {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
         let receiverCadencePressure = metrics.receivedFPS > 0 &&
             metrics.receivedFPS < Double(max(1, targetFPS)) * 0.85
+        let receiveGapPressure = metrics.receivedWorstGapMs > frameBudgetMs * 3.0 ||
+            metrics.receivedFrameIntervalP95Ms > frameBudgetMs * 2.0 ||
+            metrics.receivedFrameIntervalP99Ms > frameBudgetMs * 2.5
         let pFramePressure = metrics.reassemblerPFrameCompletionLatencyP95Ms > frameBudgetMs * 2.5
         let backlogPressure = metrics.reassemblerPendingFrameCount > 3 ||
             metrics.reassemblerPendingBytes > 1_000_000 ||
@@ -208,9 +226,11 @@ extension MirageClientService {
             metrics.pendingFrameCount > 2
         let stressed = recoveryState != .idle ||
             receiverCadencePressure ||
+            receiveGapPressure ||
             pFramePressure ||
-            backlogPressure
-        return stressed ? 0.25 : receiverMediaFeedbackInterval
+            backlogPressure ||
+            hasAudioPressure
+        return stressed ? 0.10 : receiverMediaFeedbackInterval
     }
 
     nonisolated static func makeReceiverMediaFeedback(
@@ -219,8 +239,12 @@ extension MirageClientService {
         sentAtUptime: Double,
         targetFPS: Int,
         recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageMediaFeedbackRecoveryCause = .none,
+        ackRanges: [MediaFeedbackFrameRange] = [],
         transportLostFrameCount: UInt64 = 0,
         transportDiscardedPacketCount: UInt64 = 0,
+        audioDroppedFrameCount: UInt64? = nil,
+        audioGateActive: Bool? = nil,
         metrics: StreamController.ClientFrameMetrics
     ) -> ReceiverMediaFeedbackMessage {
         ReceiverMediaFeedbackMessage(
@@ -228,7 +252,7 @@ extension MirageClientService {
             sequence: sequence,
             sentAtUptime: sentAtUptime,
             targetFPS: targetFPS,
-            ackRanges: [],
+            ackRanges: ackRanges,
             lostFrameCount: transportLostFrameCount,
             discardedPacketCount: transportDiscardedPacketCount,
             jitterP95Ms: metrics.receivedFrameIntervalP95Ms,
@@ -244,6 +268,7 @@ extension MirageClientService {
             rendererAcceptedFPS: metrics.layerAcceptedFPS,
             rendererPresentedFPS: metrics.visibleFrameFPS,
             recoveryState: recoveryState,
+            recoveryCause: recoveryCause,
             pFrameCompletionLatencyP50Ms: metrics.reassemblerPFrameCompletionLatencyP50Ms,
             pFrameCompletionLatencyP95Ms: metrics.reassemblerPFrameCompletionLatencyP95Ms,
             pFrameCompletionLatencyMaxMs: metrics.reassemblerPFrameCompletionLatencyMaxMs,
@@ -261,7 +286,9 @@ extension MirageClientService {
             reliabilityCauses: receiverReliabilityCauses(
                 recoveryState: recoveryState,
                 metrics: metrics
-            )
+            ),
+            audioDroppedFrameCount: audioDroppedFrameCount,
+            audioGateActive: audioGateActive
         )
     }
 
@@ -366,6 +393,27 @@ private extension MirageMediaFeedbackRecoveryState {
             .hardRecovery
         case .postResizeAwaitingFirstFrame:
             .postResizeAwaitingFirstFrame
+        }
+    }
+}
+
+private extension MirageMediaFeedbackRecoveryCause {
+    init(_ cause: MirageStreamClientRecoveryCause) {
+        self = switch cause {
+        case .none:
+            .none
+        case .decodeError:
+            .decodeError
+        case .frameLoss:
+            .frameLoss
+        case .freezeTimeout:
+            .freezeTimeout
+        case .memoryBudget:
+            .memoryBudget
+        case .startupTimeout:
+            .startupTimeout
+        case .manual:
+            .manual
         }
     }
 }

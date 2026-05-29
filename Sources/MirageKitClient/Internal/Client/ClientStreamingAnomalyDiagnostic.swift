@@ -446,6 +446,13 @@ private func resolvedAnomalyBottleneckKind(
     let presentationGapGrace = max(4.0, targetFPS * 0.10)
     let pendingAgeThresholdMs = max(20.0, (1000.0 / targetFPS) * 1.5)
     let decodeGap = max(0, sample.receivedFPS - sample.decodedFPS)
+    let sourceOrRecoveryCadenceLimited =
+        max(sample.receivedFPS, sample.decodedFPS) > 0 &&
+        max(sample.receivedFPS, sample.decodedFPS) < targetFPS * 0.85 &&
+        abs(sample.receivedFPS - sample.decodedFPS) <= decodeGapGrace
+    if sourceOrRecoveryCadenceLimited {
+        return hostCadencePressure == nil ? .unknown : .hostCadenceLimited
+    }
     if sample.receivedFPS > 0, decodeGap >= decodeGapGrace {
         return .decodeBound
     }

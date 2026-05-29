@@ -466,6 +466,9 @@ public final class MirageClientService {
     /// Number of audio frames dropped to keep audio/video sync.
     var audioSyncDropCount: UInt64 = 0
 
+    /// Audio frames dropped since the last receiver feedback message for each source stream.
+    var audioFeedbackDroppedFrameCountByStreamID: [StreamID: UInt64] = [:]
+
     /// Video stream IDs currently gating audio startup.
     var audioVideoGateActiveStreamIDs: Set<StreamID> = []
 
@@ -530,7 +533,7 @@ public final class MirageClientService {
     var receiverMediaFeedbackSequence: UInt64 = 0
 
     /// Minimum spacing between receiver media feedback messages per stream.
-    let receiverMediaFeedbackInterval: CFAbsoluteTime = 0.5
+    let receiverMediaFeedbackInterval: CFAbsoluteTime = 0.25
 
     /// Minimum spacing between recovery keyframe requests.
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75

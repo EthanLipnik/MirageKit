@@ -28,6 +28,7 @@ extension StreamController {
         onFirstFramePresented = nil
         onStallEvent = nil
         onRecoveryStatusChanged = nil
+        onRecoveryStateChanged = nil
         onTerminalStartupFailure = nil
 
         resizeDebounceTask?.cancel()

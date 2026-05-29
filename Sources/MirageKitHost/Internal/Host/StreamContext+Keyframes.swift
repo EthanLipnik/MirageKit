@@ -33,11 +33,6 @@ extension StreamContext {
         }
     }
 
-    func markKeyframeRequestIssued() {
-        let deadline = CFAbsoluteTimeGetCurrent() + activeKeyframeInFlightCap
-        if deadline > keyframeSendDeadline { keyframeSendDeadline = deadline }
-    }
-
     var activeKeyframeRequestCooldown: CFAbsoluteTime {
         usesConstrainedKeyframeInFlightWindow ? 1.5 : keyframeRequestCooldown
     }
@@ -211,12 +206,39 @@ extension StreamContext {
             CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
         )
         noteLossEvent(reason: label, enablePFrameFEC: false)
-        let queued = queueKeyframe(
+        let now = CFAbsoluteTimeGetCurrent()
+        let budgetDecision = frameBudgetController.recordSenderDeadlineDrop(
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: steadyQualityCeiling,
+            now: now
+        )
+        await applyFrameBudgetDecision(budgetDecision, now: now)
+        startFrameChainRepair(
+            reason: "sender-dependency-drop",
+            firstBrokenFrame: frameNumber,
+            now: now
+        )
+        await noteEmergencyKeyframePrepared(using: budgetDecision)
+        if isRecoveryKeyframeCooldownActive(now: now) {
+            dependencyRecoveryRetryNecessary = true
+            logRecoveryKeyframeCooldownSuppression(reason: label, now: now)
+            scheduleFrameChainRepairKeyframeRetry(
+                reason: label,
+                bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
+            )
+            return
+        }
+        let queued = await scheduleEmergencyChainRepairKeyframe(
             reason: label,
-            checkInFlight: true,
-            requiresFlush: false,
-            requiresReset: false,
-            urgent: true
+            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError,
+            now: now
         )
         guard queued else {
             dependencyRecoveryRetryNecessary = true
@@ -224,17 +246,15 @@ extension StreamContext {
                 "\(label) coalesced frame=\(frameNumber) reason=\(reason.rawValue) "
                     + "queuedBytes=\(queuedBytes) retryNecessary=true"
             )
-            schedulePacketSenderDependencyRecoveryKeyframeRetry(
-                frameNumber: frameNumber,
-                reason: reason
+            scheduleFrameChainRepairKeyframeRetry(
+                reason: label,
+                bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
             )
             return
         }
 
         dependencyRecoveryKeyframeRetryTask?.cancel()
         dependencyRecoveryKeyframeRetryTask = nil
-        markKeyframeRequestIssued()
-        scheduleProcessingIfNeeded()
         MirageLogger.stream(
             "Scheduled coalesced keyframe after packet sender dependency drop "
                 + "frame=\(frameNumber) reason=\(reason.rawValue) queuedBytes=\(queuedBytes) retryNecessary=false"
@@ -272,6 +292,7 @@ extension StreamContext {
         } else {
             cooldownDelay = 0
         }
+        let recoveryCooldownDelay = recoveryKeyframeCooldownRemaining(now: now)
 
         var budgetDelay: CFAbsoluteTime = 0
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -282,7 +303,7 @@ extension StreamContext {
             }
         }
 
-        return max(0.05, inFlightDelay, cooldownDelay, budgetDelay) + 0.025
+        return max(0.05, inFlightDelay, cooldownDelay, recoveryCooldownDelay, budgetDelay) + 0.025
     }
 
     private func retryPacketSenderDependencyRecoveryKeyframe(
@@ -299,12 +320,26 @@ extension StreamContext {
         }
 
         let label = "Packet sender dependency drop retry"
-        let queued = queueKeyframe(
+        let now = CFAbsoluteTimeGetCurrent()
+        if isRecoveryKeyframeCooldownActive(now: now) {
+            dependencyRecoveryRetryNecessary = true
+            logRecoveryKeyframeCooldownSuppression(reason: label, now: now)
+            schedulePacketSenderDependencyRecoveryKeyframeRetry(
+                frameNumber: frameNumber,
+                reason: reason
+            )
+            return
+        }
+        startFrameChainRepair(
+            reason: "sender-dependency-drop-retry",
+            firstBrokenFrame: frameNumber,
+            now: now
+        )
+        await noteEmergencyKeyframePrepared(using: nil)
+        let queued = await scheduleEmergencyChainRepairKeyframe(
             reason: label,
-            checkInFlight: true,
-            requiresFlush: false,
-            requiresReset: false,
-            urgent: true
+            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError,
+            now: now
         )
         guard queued else {
             dependencyRecoveryRetryNecessary = true
@@ -319,7 +354,6 @@ extension StreamContext {
             return
         }
 
-        markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream(
             "Scheduled retried keyframe after packet sender dependency drop "
@@ -348,6 +382,30 @@ extension StreamContext {
         dependencyRecoveryRetryNecessary = false
     }
 
+    func isRecoveryKeyframeCooldownActive(now: CFAbsoluteTime) -> Bool {
+        guard lastSuccessfulKeyframeSendTime > 0 else { return false }
+        return now - lastSuccessfulKeyframeSendTime < recoveryKeyframeCooldown
+    }
+
+    func recoveryKeyframeCooldownRemaining(now: CFAbsoluteTime) -> CFAbsoluteTime {
+        guard lastSuccessfulKeyframeSendTime > 0 else { return 0 }
+        return max(0, recoveryKeyframeCooldown - (now - lastSuccessfulKeyframeSendTime))
+    }
+
+    func recoveryCauseBypassesAdaptiveKeyframeCooldown(
+        _ recoveryCause: MirageMediaFeedbackRecoveryCause
+    ) -> Bool {
+        recoveryCause == .decodeError
+    }
+
+    func logRecoveryKeyframeCooldownSuppression(reason: String, now: CFAbsoluteTime) {
+        let remainingMs = Int((recoveryKeyframeCooldownRemaining(now: now) * 1000).rounded())
+        MirageLogger.stream(
+            "\(reason) skipped (adaptive recovery keyframe cooldown \(remainingMs)ms remaining)"
+        )
+    }
+
+    @discardableResult
     func scheduleCoalescedRecoveryKeyframe(
         reason: String,
         resetFrameNumber: Bool = false,
@@ -355,8 +413,16 @@ extension StreamContext {
         requiresFlush: Bool = false,
         requiresReset: Bool = false,
         advanceEpochOnReset: Bool = true,
-        ignoreExistingInFlight: Bool = false
-    ) async {
+        ignoreExistingInFlight: Bool = false,
+        bypassesRecoveryCooldown: Bool = false
+    ) async -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if !requiresReset,
+           !bypassesRecoveryCooldown,
+           isRecoveryKeyframeCooldownActive(now: now) {
+            logRecoveryKeyframeCooldownSuppression(reason: reason, now: now)
+            return false
+        }
         let effectiveIgnoreExistingInFlight = ignoreExistingInFlight &&
             !usesConstrainedKeyframeInFlightWindow
         if effectiveIgnoreExistingInFlight {
@@ -376,7 +442,7 @@ extension StreamContext {
         )
         guard queued else {
             MirageLogger.stream("\(reason) skipped (recovery keyframe already pending or in flight)")
-            return
+            return false
         }
 
         if noteLoss {
@@ -385,9 +451,9 @@ extension StreamContext {
         if resetFrameNumber {
             await encoder?.resetFrameNumber()
         }
-        markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream("Scheduled coalesced recovery keyframe (\(reason))")
+        return true
     }
 
     func scheduleCoalescedStartupKeyframe(
@@ -408,7 +474,6 @@ extension StreamContext {
         if resetFrameNumber {
             await encoder?.resetFrameNumber()
         }
-        markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger.stream("Scheduled coalesced startup keyframe (\(reason))")
     }
@@ -425,8 +490,7 @@ extension StreamContext {
         }
         let settleThreshold = max(minQueuedBytes, Int(Double(queuePressureBytes) * keyframeQueueSettleFactor))
         let settled = queueBytes <= settleThreshold && inFlightCount == 0
-        let highMotion = smoothedDirtyPercentage >= keyframeMotionThreshold
-        if (settled && !highMotion) || now >= pendingKeyframeDeadline {
+        if settled || now >= pendingKeyframeDeadline {
             pendingKeyframeReason = nil
             pendingKeyframeDeadline = 0
             lastKeyframeTime = now
@@ -457,14 +521,6 @@ extension StreamContext {
         keyframeMaxIntervalSeconds = cadence.maxInterval
     }
 
-    func updateMotionState(with frameInfo: CapturedFrameInfo) {
-        let normalized = max(0.0, min(1.0, Double(frameInfo.dirtyPercentage) / 100.0))
-        if smoothedDirtyPercentage == 0 { smoothedDirtyPercentage = normalized } else {
-            smoothedDirtyPercentage = smoothedDirtyPercentage * (1.0 - motionSmoothingFactor)
-                + normalized * motionSmoothingFactor
-        }
-    }
-
     func shouldQueueScheduledKeyframe(queueBytes: Int) -> Bool {
         guard scheduledKeyframesEnabled else { return false }
         guard shouldEncodeFrames else { return false }
@@ -475,11 +531,10 @@ extension StreamContext {
         let elapsed = now - lastKeyframeTime
         guard elapsed >= keyframeIntervalSeconds else { return false }
 
-        let highMotion = smoothedDirtyPercentage >= keyframeMotionThreshold
         let queueBackedUp = queueBytes >= queuePressureBytes
         let allowDespitePressure = elapsed >= keyframeMaxIntervalSeconds
 
-        if highMotion || queueBackedUp, !allowDespitePressure { return false }
+        if queueBackedUp, !allowDespitePressure { return false }
 
         if now < keyframeSendDeadline {
             extendConstrainedKeyframeInFlightDeadline(now: now, requestLabel: "Scheduled keyframe")
@@ -502,12 +557,15 @@ extension StreamContext {
 
     func markKeyframeSent() {
         lastKeyframeTime = CFAbsoluteTimeGetCurrent()
-        suppressEncodedNonKeyframesUntilKeyframe = false
         pendingKeyframeReason = nil
         pendingKeyframeDeadline = 0
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        if !frameChainSuppressesPFrames {
+            suppressEncodedNonKeyframesUntilKeyframe = false
+            pendingEmergencyKeyframeQuality = nil
+        }
         if dynamicFrameFlags.contains(.discontinuity) { dynamicFrameFlags.remove(.discontinuity) }
     }
 

@@ -157,7 +157,6 @@ extension StreamContext {
             urgent: true
         ) {
             noteLossEvent(reason: "Encoder settings update", enablePFrameFEC: true)
-            markKeyframeRequestIssued()
             scheduleProcessingIfNeeded()
         }
 

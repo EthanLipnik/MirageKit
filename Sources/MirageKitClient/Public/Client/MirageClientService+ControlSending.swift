@@ -44,12 +44,30 @@ extension MirageClientService {
         return true
     }
 
+    /// Attempts to enqueue an unreliable control message without throwing when the control channel is unavailable.
+    func sendControlMessageBestEffortUnreliable(_ message: ControlMessage) -> Bool {
+        guard case .connected = connectionState,
+              let controlChannel else {
+            return false
+        }
+        controlChannel.sendBestEffortUnreliable(message)
+        return true
+    }
+
     /// Encodes and attempts to enqueue a control message without throwing on encode or send failure.
     func sendControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
         guard let message = try? ControlMessage(type: type, content: content) else {
             return false
         }
         return sendControlMessageBestEffort(message)
+    }
+
+    /// Encodes and attempts to enqueue an unreliable control message without throwing on encode or send failure.
+    func sendControlMessageBestEffortUnreliable(_ type: ControlMessageType, content: some Encodable) -> Bool {
+        guard let message = try? ControlMessage(type: type, content: content) else {
+            return false
+        }
+        return sendControlMessageBestEffortUnreliable(message)
     }
 
     /// Enqueues a best-effort control message and intentionally ignores unavailable-channel failures.
@@ -60,6 +78,11 @@ extension MirageClientService {
     /// Encodes and enqueues a best-effort control message while intentionally ignoring failures.
     func queueControlMessageBestEffort(_ type: ControlMessageType, content: some Encodable) {
         _ = sendControlMessageBestEffort(type, content: content)
+    }
+
+    /// Enqueues an unreliable best-effort control message while intentionally ignoring failures.
+    func queueControlMessageBestEffortUnreliable(_ type: ControlMessageType, content: some Encodable) {
+        _ = sendControlMessageBestEffortUnreliable(type, content: content)
     }
 
     /// Refresh the cached control-path classification from the active Loom session.

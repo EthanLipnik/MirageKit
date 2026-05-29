@@ -370,9 +370,9 @@ extension VideoEncoder {
         let clamped = max(0.02, min(compressionQualityCeiling, quality))
         let useQP = clamped < 0.98
         guard useQP else { return QualitySettings(quality: clamped, minQP: nil, maxQP: nil) }
-        let rawMin = 10.0 + (1.0 - Double(clamped)) * 36.0
-        let clampedMin = max(10, min(46, Int(rawMin.rounded())))
-        let maxQP = min(51, clampedMin + 12)
+        let rawMin = 8.0 + (1.0 - Double(clamped)) * 43.0
+        let clampedMin = max(8, min(50, Int(rawMin.rounded())))
+        let maxQP = min(51, clampedMin + 10)
         return QualitySettings(quality: clamped, minQP: clampedMin, maxQP: maxQP)
     }
 

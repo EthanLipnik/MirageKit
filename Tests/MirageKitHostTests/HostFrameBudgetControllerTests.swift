@@ -38,14 +38,14 @@ struct HostFrameBudgetControllerTests {
         #expect(abs(decision.sendDeadline - (10 + 1.0 / 60.0)) < 0.0001)
     }
 
-    @Test("Over-budget P-frame is dropped and cuts quality immediately")
-    func overBudgetPFrameIsDroppedAndCutsQualityImmediately() throws {
+    @Test("Soft over-budget P-frame sends and cuts quality immediately")
+    func softOverBudgetPFrameSendsAndCutsQualityImmediately() throws {
         var controller = HostFrameBudgetController()
 
         let evaluation = controller.evaluateEncodedFrame(
-            byteCount: 130_000,
-            wireBytes: 130_000,
-            packetCount: 99,
+            byteCount: 155_000,
+            wireBytes: 155_000,
+            packetCount: 118,
             isKeyframe: false,
             receiverHealthy: true,
             currentBitrateBps: 60_000_000,
@@ -61,24 +61,24 @@ struct HostFrameBudgetControllerTests {
         )
         let decision = try #require(evaluation.budgetDecision)
 
-        #expect(evaluation.admission == .dropPFrameAndRequestKeyframe)
+        #expect(evaluation.admission == .sendWithQualityDrop)
         #expect(evaluation.isOverBudget)
         #expect(decision.reason == .encodedFrame)
         #expect(decision.state == .pressured)
-        #expect(decision.targetBitrateBps == 37_200_000)
+        #expect(decision.targetBitrateBps == 60_000_000)
         #expect(decision.quality < 0.8)
-        #expect(decision.qualityCeiling == 0.624)
+        #expect(decision.qualityCeiling == 0.704)
         #expect(controller.runtimeCeilingBps == decision.targetBitrateBps)
     }
 
-    @Test("Wire and packet budgets are hard admission limits")
-    func wireAndPacketBudgetsAreHardAdmissionLimits() throws {
+    @Test("Soft wire and packet budget overshoot sends while lowering quality")
+    func softWireAndPacketBudgetOvershootSendsWhileLoweringQuality() throws {
         var controller = HostFrameBudgetController()
 
         let evaluation = controller.evaluateEncodedFrame(
             byteCount: 120_000,
-            wireBytes: 130_000,
-            packetCount: 100,
+            wireBytes: 155_000,
+            packetCount: 118,
             isKeyframe: false,
             receiverHealthy: true,
             currentBitrateBps: 60_000_000,
@@ -94,11 +94,41 @@ struct HostFrameBudgetControllerTests {
         )
         let decision = try #require(evaluation.budgetDecision)
 
-        #expect(evaluation.admission == .dropPFrameAndRequestKeyframe)
+        #expect(evaluation.admission == .sendWithQualityDrop)
         #expect(evaluation.byteRatio < 1.0)
         #expect(evaluation.wireRatio > 1.0)
         #expect(evaluation.packetRatio > 1.0)
         #expect(decision.reason == .encodedFrame)
+    }
+
+    @Test("Major over-budget P-frame starts chain repair")
+    func majorOverBudgetPFrameStartsChainRepair() throws {
+        var controller = HostFrameBudgetController()
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 280_000,
+            wireBytes: 280_000,
+            packetCount: 213,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .dropPFrameStartChainRepair)
+        #expect(evaluation.byteRatio > 2.0)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.state == .severe)
+        #expect(decision.targetBitrateBps == 60_000_000)
     }
 
     @Test("Quality does not raise until consecutive clean frames")
@@ -106,9 +136,9 @@ struct HostFrameBudgetControllerTests {
         var controller = HostFrameBudgetController()
 
         let pressure = controller.evaluateEncodedFrame(
-            byteCount: 130_000,
-            wireBytes: 130_000,
-            packetCount: 99,
+            byteCount: 155_000,
+            wireBytes: 155_000,
+            packetCount: 118,
             isKeyframe: false,
             receiverHealthy: true,
             currentBitrateBps: 60_000_000,
@@ -124,7 +154,7 @@ struct HostFrameBudgetControllerTests {
         )
         let pressureDecision = try #require(pressure.budgetDecision)
 
-        for index in 1 ... 7 {
+        for index in 1 ... 3 {
             let clean = controller.evaluateEncodedFrame(
                 byteCount: 20_000,
                 wireBytes: 20_000,
@@ -161,127 +191,205 @@ struct HostFrameBudgetControllerTests {
             currentQuality: pressureDecision.quality,
             qualityFloor: 0.1,
             steadyQualityCeiling: 0.8,
-            now: 10.9
+            now: 10.5
         )
         let raisedDecision = try #require(raised.budgetDecision)
 
         #expect(raised.admission == .send)
         #expect(raisedDecision.reason == .healthy)
-        #expect(raisedDecision.targetBitrateBps > pressureDecision.targetBitrateBps)
+        #expect(raisedDecision.targetBitrateBps == pressureDecision.targetBitrateBps)
         #expect(raisedDecision.quality > pressureDecision.quality)
     }
 
-    @Test("High-confidence change estimate lowers quality and encoder target")
-    func highConfidenceChangeEstimateLowersQualityAndEncoderTarget() throws {
+    @Test("Healthy receiver feedback alone does not raise transport ceiling")
+    func healthyReceiverFeedbackAloneDoesNotRaiseTransportCeiling() throws {
         var controller = HostFrameBudgetController()
 
-        let optionalDecision = controller.updateForFrameChange(
-            estimate: HostFrameChangeEstimate(
-                changedAreaRatio: 0.72,
-                averageDelta: 0.30,
-                confidence: 0.96
-            ),
-            currentBitrateBps: 80_000_000,
-            requestedTargetBitrateBps: 80_000_000,
-            startupCeilingBps: 100_000_000,
-            minimumBitrateFloorBps: 12_000_000,
+        let optionalFirst = controller.update(
+            with: feedback(sequence: 1),
+            currentBitrateBps: 32_000_000,
+            requestedTargetBitrateBps: 32_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
             currentFrameRate: 60,
             maxPayloadSize: 1_320,
             currentQuality: 0.8,
-            qualityFloor: 0.1,
+            qualityFloor: 0.05,
             steadyQualityCeiling: 0.8,
             now: 10
         )
-        let decision = try #require(optionalDecision)
+        let first = try #require(optionalFirst)
 
-        #expect(decision.reason == .frameChange)
-        #expect(decision.state == .severe)
-        #expect(decision.targetBitrateBps == 36_000_000)
-        #expect(controller.runtimeCeilingBps == 36_000_000)
-        #expect(decision.quality < 0.8)
+        let optionalSecond = controller.update(
+            with: feedback(sequence: 2),
+            currentBitrateBps: first.targetBitrateBps,
+            requestedTargetBitrateBps: 32_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 11
+        )
+        let second = try #require(optionalSecond)
+
+        #expect(second.targetBitrateBps == 32_000_000)
+        #expect(controller.runtimeCeilingBps == 32_000_000)
     }
 
-    @Test("Low-confidence change estimate is ignored")
-    func lowConfidenceChangeEstimateIsIgnored() {
+    @Test("Tiny clean frames at quality ceiling do not raise transport ceiling")
+    func tinyCleanFramesAtQualityCeilingDoNotRaiseTransportCeiling() throws {
         var controller = HostFrameBudgetController()
 
-        let decision = controller.updateForFrameChange(
-            estimate: HostFrameChangeEstimate(
-                changedAreaRatio: 0.92,
-                averageDelta: 0.55,
-                confidence: 0.50
-            ),
-            currentBitrateBps: 80_000_000,
-            requestedTargetBitrateBps: 80_000_000,
-            startupCeilingBps: 100_000_000,
-            minimumBitrateFloorBps: 12_000_000,
-            currentFrameRate: 60,
-            maxPayloadSize: 1_320,
-            currentQuality: 0.8,
-            qualityFloor: 0.1,
-            steadyQualityCeiling: 0.8,
-            now: 10
-        )
+        for index in 0 ..< 60 {
+            let clean = controller.evaluateEncodedFrame(
+                byteCount: 10_000,
+                wireBytes: 10_000,
+                packetCount: 8,
+                isKeyframe: false,
+                receiverHealthy: true,
+                currentBitrateBps: 32_000_000,
+                requestedTargetBitrateBps: 32_000_000,
+                startupCeilingBps: 180_000_000,
+                minimumBitrateFloorBps: 3_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_320,
+                currentQuality: 0.8,
+                qualityFloor: 0.05,
+                steadyQualityCeiling: 0.8,
+                now: 10 + Double(index) / 60.0
+            )
+            #expect(clean.admission == .send)
+            #expect(clean.budgetDecision == nil)
+        }
 
-        #expect(decision == nil)
-        #expect(controller.runtimeCeilingBps == nil)
+        #expect(controller.runtimeCeilingBps == 32_000_000)
     }
 
-    @Test("Motion estimate never overrides encoded-byte admission")
-    func motionEstimateNeverOverridesEncodedByteAdmission() throws {
+    @Test("Near-budget clean frames at quality ceiling can raise transport ceiling")
+    func nearBudgetCleanFramesAtQualityCeilingCanRaiseTransportCeiling() throws {
         var controller = HostFrameBudgetController()
 
-        _ = controller.updateForFrameChange(
-            estimate: HostFrameChangeEstimate(
-                changedAreaRatio: 0.80,
-                averageDelta: 0.36,
-                confidence: 0.98
-            ),
-            currentBitrateBps: 80_000_000,
-            requestedTargetBitrateBps: 80_000_000,
-            startupCeilingBps: 100_000_000,
-            minimumBitrateFloorBps: 12_000_000,
-            currentFrameRate: 60,
-            maxPayloadSize: 1_320,
-            currentQuality: 0.8,
-            qualityFloor: 0.1,
-            steadyQualityCeiling: 0.8,
-            now: 10
-        )
+        for index in 0 ..< 23 {
+            let clean = controller.evaluateEncodedFrame(
+                byteCount: 50_000,
+                wireBytes: 50_000,
+                packetCount: 38,
+                isKeyframe: false,
+                receiverHealthy: true,
+                currentBitrateBps: 32_000_000,
+                requestedTargetBitrateBps: 32_000_000,
+                startupCeilingBps: 180_000_000,
+                minimumBitrateFloorBps: 3_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_320,
+                currentQuality: 0.8,
+                qualityFloor: 0.05,
+                steadyQualityCeiling: 0.8,
+                now: 10 + Double(index) / 60.0
+            )
+            #expect(clean.admission == .send)
+            #expect(clean.budgetDecision == nil)
+        }
 
-        let evaluation = controller.evaluateEncodedFrame(
-            byteCount: 170_000,
-            wireBytes: 170_000,
-            packetCount: 129,
+        let raised = controller.evaluateEncodedFrame(
+            byteCount: 50_000,
+            wireBytes: 50_000,
+            packetCount: 38,
             isKeyframe: false,
             receiverHealthy: true,
-            currentBitrateBps: 80_000_000,
-            requestedTargetBitrateBps: 80_000_000,
-            startupCeilingBps: 100_000_000,
+            currentBitrateBps: 32_000_000,
+            requestedTargetBitrateBps: 32_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10 + 23.0 / 60.0
+        )
+        let decision = try #require(raised.budgetDecision)
+
+        #expect(raised.admission == .send)
+        #expect(decision.reason == .healthy)
+        #expect(decision.quality == 0.8)
+        #expect(decision.targetBitrateBps == 34_560_000)
+    }
+
+    @Test("Modestly over-budget keyframe sends to preserve recovery")
+    func modestlyOverBudgetKeyframeSendsToPreserveRecovery() throws {
+        var controller = HostFrameBudgetController()
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 36_000,
+            wireBytes: 36_000,
+            packetCount: 30,
+            isKeyframe: true,
+            receiverHealthy: false,
+            currentBitrateBps: 14_400_000,
+            requestedTargetBitrateBps: 14_400_000,
+            startupCeilingBps: 14_400_000,
             minimumBitrateFloorBps: 12_000_000,
             currentFrameRate: 60,
             maxPayloadSize: 1_320,
-            currentQuality: 0.4,
+            currentQuality: 0.1,
             qualityFloor: 0.1,
             steadyQualityCeiling: 0.8,
-            now: 10.1
+            now: 10
         )
         let decision = try #require(evaluation.budgetDecision)
 
-        #expect(evaluation.admission == .dropPFrameAndRequestKeyframe)
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(evaluation.isOverBudget)
+        #expect(evaluation.byteRatio <= 2.25)
         #expect(decision.reason == .encodedFrame)
-        #expect(decision.targetBitrateBps < 80_000_000)
     }
 
-    @Test("Recovery keyframe may use bounded multi-frame budget")
-    func recoveryKeyframeMayUseBoundedMultiFrameBudget() throws {
+    @Test("Bounded emergency recovery keyframe can send at transport floor")
+    func boundedEmergencyRecoveryKeyframeCanSendAtTransportFloor() throws {
         var controller = HostFrameBudgetController()
 
         let evaluation = controller.evaluateEncodedFrame(
-            byteCount: 68_000,
-            wireBytes: 76_000,
-            packetCount: 58,
+            byteCount: 10_600,
+            wireBytes: 13_240,
+            packetCount: 11,
             isKeyframe: true,
+            isRecoveryKeyframe: true,
+            receiverHealthy: false,
+            currentBitrateBps: 3_000_000,
+            requestedTargetBitrateBps: 76_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.05,
+            qualityFloor: 0.02,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(evaluation.isOverBudget)
+        #expect(evaluation.byteRatio > 1.0)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.state == .severe)
+        #expect(decision.targetBitrateBps == 3_000_000)
+    }
+
+    @Test("Large recovery keyframe retries instead of sending oversized burst")
+    func largeRecoveryKeyframeRetriesInsteadOfSendingOversizedBurst() throws {
+        var controller = HostFrameBudgetController()
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 66_000,
+            wireBytes: 74_000,
+            packetCount: 57,
+            isKeyframe: true,
+            isRecoveryKeyframe: true,
             receiverHealthy: false,
             currentBitrateBps: 12_000_000,
             requestedTargetBitrateBps: 12_000_000,
@@ -296,12 +404,12 @@ struct HostFrameBudgetControllerTests {
         )
         let decision = try #require(evaluation.budgetDecision)
 
-        #expect(evaluation.admission == .send)
+        #expect(evaluation.admission == .retryEmergencyKeyframeLowerQuality)
         #expect(evaluation.isOverBudget)
         #expect(decision.state == .severe)
         #expect(decision.reason == .encodedFrame)
         #expect(decision.targetBitrateBps == 12_000_000)
-        #expect(abs(evaluation.sendDeadline - (10 + 4.0 / 60.0)) < 0.0001)
+        #expect(abs(evaluation.sendDeadline - (10 + 1.0 / 60.0)) < 0.0001)
     }
 
     @Test("Keyframe beyond recovery budget retries once at emergency quality then drops")
@@ -327,9 +435,10 @@ struct HostFrameBudgetControllerTests {
         )
         let firstDecision = try #require(first.budgetDecision)
 
-        #expect(first.admission == .retryKeyframeAtEmergencyQuality)
+        #expect(first.admission == .retryEmergencyKeyframeLowerQuality)
         #expect(firstDecision.quality < 0.8)
         #expect(firstDecision.keyframeQuality <= firstDecision.quality)
+        #expect(firstDecision.targetBitrateBps == 60_000_000)
 
         let second = controller.evaluateEncodedFrame(
             byteCount: 650_000,
@@ -349,12 +458,12 @@ struct HostFrameBudgetControllerTests {
             now: 10.1
         )
 
-        #expect(second.admission == .dropKeyframeAndWaitForNext)
+        #expect(second.admission == .dropKeyframeWaitForNextLatestFrame)
         #expect(second.budgetDecision?.state == .severe)
     }
 
-    @Test("Receiver feedback pressure lowers host-owned frame budget")
-    func receiverFeedbackPressureLowersHostOwnedFrameBudget() throws {
+    @Test("P-frame latency alone holds ceiling and quality")
+    func pFrameLatencyAloneHoldsCeilingAndQuality() throws {
         var controller = HostFrameBudgetController()
 
         let optionalDecision = controller.update(
@@ -372,11 +481,202 @@ struct HostFrameBudgetControllerTests {
         )
         let decision = try #require(optionalDecision)
 
-        #expect(decision.state == .pressured)
+        #expect(decision.state == .observing)
+        #expect(decision.reason == .healthy)
+        #expect(decision.targetBitrateBps == 100_000_000)
+        #expect(decision.maxFrameBytes == 208_333)
+        #expect(decision.quality == 0.8)
+        #expect(controller.runtimeCeilingBps == 100_000_000)
+    }
+
+    @Test("P-frame latency alone does not block clean-frame quality raise")
+    func pFrameLatencyAloneDoesNotBlockCleanFrameQualityRaise() throws {
+        var controller = HostFrameBudgetController()
+
+        _ = controller.update(
+            with: feedback(sequence: 1, pFrameCompletionLatencyP95Ms: 45),
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.4,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+
+        for index in 1 ... 3 {
+            let clean = controller.evaluateEncodedFrame(
+                byteCount: 20_000,
+                wireBytes: 20_000,
+                packetCount: 16,
+                isKeyframe: false,
+                receiverHealthy: true,
+                currentBitrateBps: 60_000_000,
+                requestedTargetBitrateBps: 60_000_000,
+                startupCeilingBps: 60_000_000,
+                minimumBitrateFloorBps: 12_000_000,
+                currentFrameRate: 60,
+                maxPayloadSize: 1_320,
+                currentQuality: 0.4,
+                qualityFloor: 0.1,
+                steadyQualityCeiling: 0.8,
+                now: 10 + Double(index) * 0.1
+            )
+            #expect(clean.admission == .send)
+            #expect(clean.budgetDecision == nil)
+        }
+
+        let raised = controller.evaluateEncodedFrame(
+            byteCount: 20_000,
+            wireBytes: 20_000,
+            packetCount: 16,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 60_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.4,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10.5
+        )
+        let decision = try #require(raised.budgetDecision)
+
+        #expect(decision.reason == .healthy)
+        #expect(decision.quality > 0.4)
+    }
+
+    @Test("P-frame latency plus backlog can lower ceiling")
+    func pFrameLatencyPlusBacklogCanLowerCeiling() throws {
+        var controller = HostFrameBudgetController()
+
+        let optionalDecision = controller.update(
+            with: feedback(
+                sequence: 1,
+                pFrameCompletionLatencyP95Ms: 55,
+                reassemblyBacklogFrames: 3
+            ),
+            currentBitrateBps: 100_000_000,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 100_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(optionalDecision)
+
+        #expect(decision.state == .severe)
         #expect(decision.reason == .pFrameLatency)
-        #expect(decision.targetBitrateBps == 62_000_000)
-        #expect(decision.maxFrameBytes == 129_166)
+        #expect(decision.targetBitrateBps == 45_000_000)
+        #expect(controller.runtimeCeilingBps == 45_000_000)
         #expect(decision.quality < 0.8)
+    }
+
+    @Test("Receiver cadence alone cannot cut bitrate ceiling")
+    func receiverCadenceAloneCannotCutBitrateCeiling() throws {
+        var controller = HostFrameBudgetController()
+
+        let optionalDecision = controller.update(
+            with: feedback(
+                sequence: 1,
+                receivedFPS: 60,
+                decodedFPS: 60,
+                rendererAcceptedFPS: 60,
+                rendererPresentedFPS: 24
+            ),
+            currentBitrateBps: 100_000_000,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 100_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(optionalDecision)
+
+        #expect(decision.state == .pressured)
+        #expect(decision.reason == .receiverCadence)
+        #expect(decision.targetBitrateBps == 100_000_000)
+        #expect(controller.runtimeCeilingBps == 100_000_000)
+    }
+
+    @Test("Receiver cadence plus reassembly backlog can cut ceiling")
+    func receiverCadencePlusReassemblyBacklogCanCutCeiling() throws {
+        var controller = HostFrameBudgetController()
+
+        let optionalDecision = controller.update(
+            with: feedback(
+                sequence: 1,
+                receivedFPS: 60,
+                decodedFPS: 60,
+                rendererAcceptedFPS: 60,
+                rendererPresentedFPS: 24,
+                reassemblyBacklogFrames: 3
+            ),
+            currentBitrateBps: 100_000_000,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 100_000_000,
+            minimumBitrateFloorBps: 12_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.1,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(optionalDecision)
+
+        #expect(decision.state == .pressured)
+        #expect(decision.reason == .receiverBacklog)
+        #expect(decision.targetBitrateBps == 68_000_000)
+        #expect(controller.runtimeCeilingBps == 68_000_000)
+    }
+
+    @Test("Low received cadence alone cannot cut bitrate ceiling")
+    func lowReceivedCadenceAloneCannotCutBitrateCeiling() throws {
+        var controller = HostFrameBudgetController()
+
+        let optionalDecision = controller.update(
+            with: feedback(
+                sequence: 1,
+                receivedFPS: 9,
+                decodedFPS: 9,
+                rendererAcceptedFPS: 9,
+                rendererPresentedFPS: 9,
+                jitterP95Ms: 210,
+                jitterP99Ms: 232,
+                receivedWorstGapMs: 300
+            ),
+            currentBitrateBps: 180_000_000,
+            requestedTargetBitrateBps: 180_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+        let decision = try #require(optionalDecision)
+
+        #expect(decision.state == .pressured)
+        #expect(decision.reason == .receiverCadence)
+        #expect(decision.targetBitrateBps == 180_000_000)
+        #expect(controller.runtimeCeilingBps == 180_000_000)
     }
 
     private func feedback(
@@ -386,6 +686,9 @@ struct HostFrameBudgetControllerTests {
         decodedFPS: Double = 60,
         rendererAcceptedFPS: Double = 60,
         rendererPresentedFPS: Double = 60,
+        jitterP95Ms: Double = 0,
+        jitterP99Ms: Double = 0,
+        receivedWorstGapMs: Double? = nil,
         reassemblyBacklogFrames: Int = 0,
         reassemblyBacklogBytes: Int = 0,
         lostFrameCount: UInt64 = 0,
@@ -399,8 +702,8 @@ struct HostFrameBudgetControllerTests {
             ackRanges: [],
             lostFrameCount: lostFrameCount,
             discardedPacketCount: discardedPacketCount,
-            jitterP95Ms: 0,
-            jitterP99Ms: 0,
+            jitterP95Ms: jitterP95Ms,
+            jitterP99Ms: jitterP99Ms,
             queueEstimateFrames: 0,
             reassemblyBacklogFrames: reassemblyBacklogFrames,
             reassemblyBacklogKeyframes: 0,
@@ -415,6 +718,7 @@ struct HostFrameBudgetControllerTests {
             pFrameCompletionLatencyP50Ms: nil,
             pFrameCompletionLatencyP95Ms: pFrameCompletionLatencyP95Ms,
             pFrameCompletionLatencyMaxMs: nil,
+            receivedWorstGapMs: receivedWorstGapMs,
             reassemblerForwardGapTimeouts: nil
         )
     }

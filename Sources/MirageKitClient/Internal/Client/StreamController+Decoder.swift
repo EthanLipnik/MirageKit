@@ -247,8 +247,8 @@ extension StreamController {
         if let forcedKeyframeReason {
             await stopTierPromotionProbe()
             reassembler.beginKeyframeWait()
-            await setClientRecoveryStatus(.keyframeRecovery)
-            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-\(forcedKeyframeReason)")
+            await setClientRecoveryStatus(.keyframeRecovery, cause: .manual)
+            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-\(forcedKeyframeReason)", cause: .manual)
             MirageLogger.client(
                 "Tier promotion forcing keyframe for stream \(streamID) (reason: \(forcedKeyframeReason))"
             )
@@ -262,7 +262,7 @@ extension StreamController {
     private func startTierPromotionProbe() async {
         await stopTierPromotionProbe()
         let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
-        await setClientRecoveryStatus(.tierPromotionProbe)
+        await setClientRecoveryStatus(.tierPromotionProbe, cause: .manual)
         tierPromotionProbeTask = Task { [weak self] in
             await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
         }
@@ -302,8 +302,8 @@ extension StreamController {
                 "Tier promotion probe requesting keyframe recovery for stream \(streamID) (no progress)"
             )
             reassembler.beginKeyframeWait()
-            await setClientRecoveryStatus(.keyframeRecovery)
-            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-probe")
+            await setClientRecoveryStatus(.keyframeRecovery, cause: .manual)
+            await enterKeyframeRecoveryIfNeeded(reason: "tier-promotion-probe", cause: .manual)
             await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
             return
         }
@@ -311,7 +311,7 @@ extension StreamController {
         MirageLogger.client(
             "Tier promotion probe requesting single recovery keyframe for stream \(streamID) (no progress)"
         )
-        await setClientRecoveryStatus(.keyframeRecovery)
+        await setClientRecoveryStatus(.keyframeRecovery, cause: .manual)
         await requestKeyframeRecoveryIfPossible(reason: .manualRecovery)
     }
 }

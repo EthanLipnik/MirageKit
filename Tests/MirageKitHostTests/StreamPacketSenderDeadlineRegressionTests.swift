@@ -41,7 +41,7 @@ extension StreamPacketSenderRegressionTests {
                 frameNumber: 302,
                 sequenceNumberStart: 3010,
                 generation: generation,
-                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.100
             )
         )
 
@@ -146,6 +146,52 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("One-frame-late non-keyframe sends instead of breaking dependency chain")
+    func oneFrameLateNonKeyframeSendsInsteadOfBreakingDependencyChain() async throws {
+        let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
+        let dependencyDropCount = Locked(0)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 1200,
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    Issue.record("Failed to deserialize submitted packet")
+                    onComplete(nil)
+                    return
+                }
+                submittedPackets.withLock {
+                    $0.append(StreamPacketSenderSubmittedPacket(frameNumber: header.frameNumber))
+                }
+                onComplete(nil)
+            },
+            onDependencyFrameDropped: { _, _, _ in dependencyDropCount.withLock { $0 += 1 } }
+        )
+
+        await sender.start()
+        let generation = sender.currentGeneration
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 1200),
+                streamID: 45,
+                frameNumber: 305,
+                sequenceNumberStart: 3050,
+                generation: generation,
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.005
+            )
+        )
+
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 1)
+        try await waitForStreamPacketQueuedBytesToDrain(sender)
+
+        let telemetry = await sender.telemetrySnapshot
+        #expect(telemetry.stalePacketDrops == 0)
+        #expect(telemetry.senderLocalDeadlineDrops == 0)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [305])
+        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(await !sender.requiresDependencyRecoveryKeyframe())
+
+        await sender.stop()
+    }
+
     @Test("Queued non-keyframes send in dependency order")
     func queuedNonKeyframesSendInDependencyOrder() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
@@ -218,7 +264,7 @@ extension StreamPacketSenderRegressionTests {
                     frameNumber: UInt32(frameNumber),
                     sequenceNumberStart: UInt32(frameNumber * 10),
                     generation: generation,
-                    sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+                    sendDeadline: CFAbsoluteTimeGetCurrent() - 0.100
                 )
             )
         }
@@ -340,7 +386,7 @@ extension StreamPacketSenderRegressionTests {
                 frameNumber: 501,
                 sequenceNumberStart: 5100,
                 generation: generation,
-                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.100
             )
         )
         sender.enqueue(
@@ -405,7 +451,7 @@ extension StreamPacketSenderRegressionTests {
                 frameNumber: 601,
                 sequenceNumberStart: 6100,
                 generation: generation,
-                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.001
+                sendDeadline: CFAbsoluteTimeGetCurrent() - 0.100
             )
         )
         sender.enqueue(

@@ -26,8 +26,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
 
         #expect(decision?.startupBitrateBps == 32_376_730)
-        #expect(decision?.maximumCeilingBps == 84_000_000)
-        #expect(decision?.minimumBitrateFloorBps == 12_000_000)
+        #expect(decision?.maximumCeilingBps == 180_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 3_000_000)
     }
 
     @Test("Custom adaptive bitrate remains the upper bound")
@@ -60,7 +60,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         )
 
         #expect(decision?.startupBitrateBps == 32_376_730)
-        #expect(decision?.maximumCeilingBps == 84_000_000)
+        #expect(decision?.maximumCeilingBps == 180_000_000)
     }
 
     @Test("Stream context does not treat automatic target bitrate as manual cap")
@@ -76,31 +76,8 @@ struct HostAdaptiveStreamBudgetPolicyTests {
 
         let settings = await context.encoderSettings
         #expect(settings.bitrate == 32_376_730)
-        #expect(await context.bitrateAdaptationCeiling == 84_000_000)
+        #expect(await context.bitrateAdaptationCeiling == 180_000_000)
         #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_376_730)
-    }
-
-    @Test("Severe encoded P-frame budget misses are held before send")
-    func severeEncodedPFrameBudgetMissesAreHeldBeforeSend() async {
-        let context = makeContext(
-            bitrate: 32_000_000,
-            transportPathKind: .wifi,
-            mediaPathProfile: .localWiFi
-        )
-
-        #expect(await context.shouldDropEncodedNonKeyframeForBudget(byteCount: 140_000))
-        #expect(await context.shouldDropEncodedNonKeyframeForBudget(byteCount: 50_000) == false)
-    }
-
-    @Test("Severe encoded P-frame budget misses are still held at bitrate floor")
-    func severeEncodedPFrameBudgetMissesAreStillHeldAtBitrateFloor() async {
-        let context = makeContext(
-            bitrate: 12_000_000,
-            transportPathKind: .wifi,
-            mediaPathProfile: .localWiFi
-        )
-
-        #expect(await context.shouldDropEncodedNonKeyframeForBudget(byteCount: 50_000))
     }
 
     @Test("Disabled runtime adjustment keeps fixed quality budget untouched")

@@ -45,6 +45,9 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.pFrameCompletionLatencyP95Ms == nil)
         #expect(feedback.latePFrameCount == nil)
         #expect(feedback.reliabilityCauses.isEmpty)
+        #expect(feedback.recoveryCause == .none)
+        #expect(feedback.audioDroppedFrameCount == nil)
+        #expect(feedback.audioGateActive == nil)
     }
 
     @Test("Local render and reassembly symptoms are not reported as transport loss")
@@ -55,6 +58,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             sentAtUptime: 100,
             targetFPS: 60,
             recoveryState: .keyframeRecovery,
+            recoveryCause: .frameLoss,
             metrics: metrics(
                 droppedFrames: 42,
                 decodeBacklogFrames: 18,
@@ -75,6 +79,7 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.decodeBacklogFrames == 18)
         #expect(feedback.presentationBacklogFrames == 5)
         #expect(feedback.recoveryState == .keyframeRecovery)
+        #expect(feedback.recoveryCause == .frameLoss)
         #expect(feedback.reliabilityCauses.contains(.keyframeStarvation))
         #expect(feedback.reliabilityCauses.contains(.memoryPressure))
     }
@@ -101,6 +106,84 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.lostFrameCount == 1)
         #expect(feedback.discardedPacketCount == 12)
         #expect(feedback.recoveryState == .idle)
+    }
+
+    @Test("Audio sync pressure is included in receiver feedback")
+    func audioSyncPressureIsIncludedInReceiverFeedback() {
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 9,
+            sentAtUptime: 102,
+            targetFPS: 60,
+            recoveryState: .idle,
+            audioDroppedFrameCount: 4,
+            audioGateActive: true,
+            metrics: metrics()
+        )
+
+        #expect(feedback.audioDroppedFrameCount == 4)
+        #expect(feedback.audioGateActive == true)
+    }
+
+    @Test("Receiver feedback includes completed frame ACK ranges")
+    func receiverFeedbackIncludesCompletedFrameAckRanges() {
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 10,
+            sentAtUptime: 103,
+            targetFPS: 60,
+            recoveryState: .idle,
+            ackRanges: [
+                MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
+                MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
+            ],
+            metrics: metrics()
+        )
+
+        #expect(feedback.ackRanges == [
+            MediaFeedbackFrameRange(startFrame: 40, endFrame: 42),
+            MediaFeedbackFrameRange(startFrame: 45, endFrame: 45)
+        ])
+    }
+
+    @Test("Completed frame ACK ranges coalesce contiguous frames")
+    func completedFrameAckRangesCoalesceContiguousFrames() {
+        let ranges = FrameReassembler.completedFrameAckRanges(from: [10, 11, 12, 15, 16])
+
+        #expect(ranges == [
+            MediaFeedbackFrameRange(startFrame: 10, endFrame: 12),
+            MediaFeedbackFrameRange(startFrame: 15, endFrame: 16)
+        ])
+    }
+
+    @Test("Completed frame ACK ranges split at UInt32 wrap")
+    func completedFrameAckRangesSplitAtUInt32Wrap() {
+        let ranges = FrameReassembler.completedFrameAckRanges(
+            from: [UInt32.max - 1, UInt32.max, 0, 1]
+        )
+
+        #expect(ranges == [
+            MediaFeedbackFrameRange(startFrame: UInt32.max - 1, endFrame: UInt32.max),
+            MediaFeedbackFrameRange(startFrame: 0, endFrame: 1)
+        ])
+    }
+
+    @Test("Receiver feedback metrics report aged receive gaps between frames")
+    func receiverFeedbackMetricsReportAgedReceiveGapsBetweenFrames() {
+        let tracker = ClientFrameMetricsTracker()
+
+        tracker.recordReceivedFrame(now: 10)
+        let activeSnapshot = tracker.snapshot(now: 10.35)
+        let stalledSnapshot = tracker.snapshot(now: 11.25)
+
+        #expect(activeSnapshot.receivedWorstGapMs >= 349)
+        #expect(stalledSnapshot.receivedFPS == 0)
+        #expect(stalledSnapshot.receivedWorstGapMs >= 1_249)
+    }
+
+    @Test("Stream metrics heartbeat can feed receiver feedback at stressed cadence")
+    func streamMetricsHeartbeatCanFeedReceiverFeedbackAtStressedCadence() {
+        #expect(StreamController.metricsDispatchInterval == .milliseconds(100))
     }
 
     private func metrics(

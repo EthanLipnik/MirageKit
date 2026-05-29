@@ -46,6 +46,9 @@ public final class MirageStreamSessionState: Identifiable {
     /// Client-side recovery state surfaced to stream UI.
     public var clientRecoveryStatus: MirageStreamClientRecoveryStatus
 
+    /// Client-side recovery cause reported back to the host.
+    public var clientRecoveryCause: MirageStreamClientRecoveryCause
+
     /// Whether the decoder has produced at least one frame for this session.
     public var hasDecodedFrame: Bool
 
@@ -71,6 +74,7 @@ public final class MirageStreamSessionState: Identifiable {
         atlasRegion: MirageAppAtlasRegion? = nil,
         statistics: MirageStreamStatistics? = nil,
         clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
+        clientRecoveryCause: MirageStreamClientRecoveryCause = .none,
         hasDecodedFrame: Bool = false,
         hasPresentedFrame: Bool = false,
         minWidth: CGFloat = 400,
@@ -92,6 +96,7 @@ public final class MirageStreamSessionState: Identifiable {
         self.atlasRegion = atlasRegion
         self.statistics = statistics
         self.clientRecoveryStatus = clientRecoveryStatus
+        self.clientRecoveryCause = clientRecoveryStatus == .idle ? .none : clientRecoveryCause
         self.hasDecodedFrame = hasDecodedFrame
         self.hasPresentedFrame = hasPresentedFrame
         self.minWidth = minWidth

@@ -174,6 +174,7 @@ extension FrameReassembler {
             lastDeliveredKeyframe = 0
             hasDeliveredKeyframeAnchor = false
             hasSignaledGapFrameLoss = false
+            pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: false)
             clearAwaitingKeyframe()
             droppedFrameCount = 0
             memoryBudgetEvictionCount = 0

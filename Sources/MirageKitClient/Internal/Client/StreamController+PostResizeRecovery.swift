@@ -36,7 +36,7 @@ extension StreamController {
         postResizeDecodeRecoverySuccessCount = 0
         postResizeDecodeErrorGraceDeadline = currentTime + Self.postResizeDecodeErrorGraceInterval
         await decoder.beginRecoveryTracking()
-        await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)
+        await setClientRecoveryStatus(.postResizeAwaitingFirstFrame, cause: .manual)
         if presentationTier == .activeLive {
             await armFirstPresentedFrameAwaiter(reason: reason, mode: .recovery)
         }

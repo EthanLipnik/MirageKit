@@ -218,7 +218,7 @@ extension MirageHostService {
             clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
             return
         }
-        let ack = await context.requestKeyframe()
+        let ack = await context.requestKeyframe(recoveryCause: request.recoveryCause)
         clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
     }
 
@@ -236,6 +236,9 @@ extension MirageHostService {
             return
         }
         await context.applyReceiverMediaFeedback(feedback)
+        if audioSourceStreamByClientID[clientContext.client.id] == feedback.streamID {
+            await audioPipelinesByClientID[clientContext.client.id]?.recordReceiverMediaFeedback(feedback)
+        }
     }
 
     private func clientContextOwnsStream(_ streamID: StreamID, clientContext: ClientContext) -> Bool {

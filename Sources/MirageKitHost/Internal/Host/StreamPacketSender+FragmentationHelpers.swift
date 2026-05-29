@@ -38,6 +38,12 @@ extension StreamPacketSender {
                     )
             }
         }
+        onFrameTransportCompleted?(
+            item.streamID,
+            item.frameNumber,
+            item.isKeyframe,
+            error == nil && !didDrop
+        )
     }
 
     /// Returns the payload length covered by one FEC parity block.

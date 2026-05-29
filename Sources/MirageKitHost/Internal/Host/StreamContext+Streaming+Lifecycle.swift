@@ -25,7 +25,6 @@ extension StreamContext {
     func resumeAfterClientForeground() async {
         guard !shouldEncodeFrames else { return }
         lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
         if let encoder {
             await encoder.resetFrameNumber()
             await encoder.forceKeyframe()
@@ -50,7 +49,6 @@ extension StreamContext {
         guard encodingSuspendedForResize else { return }
         encodingSuspendedForResize = false
         lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
         shouldEncodeFrames = true
         await scheduleCoalescedRecoveryKeyframe(
             reason: "Desktop resize resume",
@@ -66,7 +64,6 @@ extension StreamContext {
         guard !shouldEncodeFrames else { return }
         let now = CFAbsoluteTimeGetCurrent()
         lastKeyframeTime = 0
-        smoothedDirtyPercentage = 0
         if !startupRegistrationLogged {
             startupRegistrationLogged = true
             logStartupEvent("datagram registration confirmed")
@@ -128,6 +125,8 @@ extension StreamContext {
         startupFrameCachingEnabled = false
         dependencyRecoveryKeyframeRetryTask?.cancel()
         dependencyRecoveryKeyframeRetryTask = nil
+        frameChainRepairKeyframeRetryTask?.cancel()
+        frameChainRepairKeyframeRetryTask = nil
 
         if useVirtualDisplay {
             let expectedOwner: WindowSpaceManager.WindowBindingOwner?

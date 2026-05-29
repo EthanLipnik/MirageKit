@@ -34,7 +34,7 @@ extension StreamController {
     static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissLogCooldown: CFAbsoluteTime = 5.0
     static let renderCadenceMissSampleThreshold = 3
-    static let metricsDispatchInterval: Duration = .milliseconds(500)
+    static let metricsDispatchInterval: Duration = .milliseconds(100)
 
     enum RecoveryReason: Equatable {
         case decodeErrorThreshold
@@ -58,6 +58,23 @@ extension StreamController {
                 "memory-budget"
             case .startupKeyframeTimeout:
                 "startup-keyframe-timeout"
+            }
+        }
+
+        var recoveryCause: MirageStreamClientRecoveryCause {
+            switch self {
+            case .decodeErrorThreshold:
+                .decodeError
+            case .frameLoss:
+                .frameLoss
+            case .freezeTimeout:
+                .freezeTimeout
+            case .manualRecovery:
+                .manual
+            case .memoryBudget:
+                .memoryBudget
+            case .startupKeyframeTimeout:
+                .startupTimeout
             }
         }
     }

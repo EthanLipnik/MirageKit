@@ -9,11 +9,14 @@ import Foundation
 import MirageKit
 
 extension StreamController {
-    func enterKeyframeRecoveryIfNeeded(reason: String) async {
+    func enterKeyframeRecoveryIfNeeded(
+        reason: String,
+        cause: MirageStreamClientRecoveryCause = .frameLoss
+    ) async {
         guard presentationTier == .activeLive else { return }
         if clientRecoveryStatus != .postResizeAwaitingFirstFrame,
            clientRecoveryStatus != .hardRecovery {
-            await setClientRecoveryStatus(.keyframeRecovery)
+            await setClientRecoveryStatus(.keyframeRecovery, cause: cause)
         }
         startFreezeMonitorIfNeeded()
         logRecoveryDecision(.requestKeyframe, reason: reason, snapshot: reassembler.keyframeWaitSnapshot)

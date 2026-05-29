@@ -110,6 +110,7 @@ extension FrameReassembler {
             purgeStaleKeyframesLocked()
 
             lastCompletedFrame = frameNumber
+            recordCompletedFrameAckLocked(frameNumber)
             hasSignaledGapFrameLoss = false
             pendingFrames.removeValue(forKey: frameNumber)
 
@@ -239,9 +240,51 @@ extension FrameReassembler {
         lastDeliveredKeyframe = 0
         hasDeliveredKeyframeAnchor = false
         hasSignaledGapFrameLoss = false
+        pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: true)
         clearAwaitingKeyframe()
         beginAwaitingKeyframe()
         MirageLogger.log(.frameAssembly, "Epoch \(epoch) reset (\(reason)) for stream \(streamID)")
+    }
+
+    func consumeCompletedFrameAckRanges() -> [MediaFeedbackFrameRange] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pendingCompletedFrameAckNumbers.isEmpty else { return [] }
+        let ranges = Self.completedFrameAckRanges(from: pendingCompletedFrameAckNumbers)
+        pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: true)
+        return ranges
+    }
+
+    static func completedFrameAckRanges(from frameNumbers: [UInt32]) -> [MediaFeedbackFrameRange] {
+        guard var rangeStart = frameNumbers.first else { return [] }
+        var rangeEnd = rangeStart
+        var ranges: [MediaFeedbackFrameRange] = []
+
+        for frameNumber in frameNumbers.dropFirst() {
+            if frameNumber == rangeEnd {
+                continue
+            }
+            if frameNumber == rangeEnd &+ 1, frameNumber > rangeEnd {
+                rangeEnd = frameNumber
+                continue
+            }
+            ranges.append(MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
+            rangeStart = frameNumber
+            rangeEnd = frameNumber
+        }
+
+        ranges.append(MediaFeedbackFrameRange(startFrame: rangeStart, endFrame: rangeEnd))
+        return ranges
+    }
+
+    private func recordCompletedFrameAckLocked(_ frameNumber: UInt32) {
+        if pendingCompletedFrameAckNumbers.last == frameNumber { return }
+        pendingCompletedFrameAckNumbers.append(frameNumber)
+        if pendingCompletedFrameAckNumbers.count > pendingCompletedFrameAckLimit {
+            pendingCompletedFrameAckNumbers.removeFirst(
+                pendingCompletedFrameAckNumbers.count - pendingCompletedFrameAckLimit
+            )
+        }
     }
 
     func isEpochNewer(_ incoming: UInt16, than current: UInt16) -> Bool {

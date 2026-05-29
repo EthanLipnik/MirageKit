@@ -87,7 +87,7 @@ extension StreamController {
                         )
                     }
                 }
-                await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor")
+                await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor", cause: .freezeTimeout)
                 if await requestKeyframeRecovery(reason: .freezeTimeout) {
                     lastFreezeRecoveryTime = now
                 }
@@ -231,7 +231,7 @@ extension StreamController {
         }
         reassembler.beginKeyframeWait()
         discardQueuedFramesForRecovery()
-        await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor-\(reason)")
+        await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor-\(reason)", cause: .freezeTimeout)
         let didRequest = await requestKeyframeRecovery(reason: .freezeTimeout, bypassRetryGate: true)
         if didRequest {
             lastFreezeRecoveryTime = now

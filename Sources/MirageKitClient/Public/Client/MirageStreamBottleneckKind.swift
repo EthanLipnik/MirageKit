@@ -138,10 +138,15 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.pendingFrameCount > 0
 
         let networkBound = transportAssessment.primaryStress && !transportAssessment.isPacerOnlyStress
+        let sourceOrRecoveryCadenceLimited =
+            max(receivedFPS, decodedFPS) > 0 &&
+            max(receivedFPS, decodedFPS) < targetFPS * 0.85 &&
+            abs(receivedFPS - decodedFPS) <= decodeGapGrace
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (!snapshot.decodeHealthy &&
+                !sourceOrRecoveryCadenceLimited &&
                 !rendererLoopStalled &&
                 !networkBound &&
                 hostEncodedFPS >= targetFPS * 0.90 &&

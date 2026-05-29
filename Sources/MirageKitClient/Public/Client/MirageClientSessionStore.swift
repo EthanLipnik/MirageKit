@@ -42,6 +42,8 @@ public final class MirageClientSessionStore {
     public var postResizeAwaitingFirstFrameStreamIDs: Set<StreamID> = []
     /// Recovery states reported before a session entry existed.
     var pendingClientRecoveryStatusByStreamID: [StreamID: MirageStreamClientRecoveryStatus] = [:]
+    /// Recovery causes reported before a session entry existed.
+    var pendingClientRecoveryCauseByStreamID: [StreamID: MirageStreamClientRecoveryCause] = [:]
 
     // MARK: - Focus State
 
@@ -124,6 +126,12 @@ public final class MirageClientSessionStore {
             pendingClientRecoveryStatusByStreamID[mediaStreamID] ??
             streamSessions.values.first(where: { $0.mediaStreamID == mediaStreamID })?.clientRecoveryStatus ??
             .idle
+        let initialRecoveryCause = initialRecoveryStatus == .idle
+            ? .none
+            : pendingClientRecoveryCauseByStreamID[streamID] ??
+                pendingClientRecoveryCauseByStreamID[mediaStreamID] ??
+                streamSessions.values.first(where: { $0.mediaStreamID == mediaStreamID })?.clientRecoveryCause ??
+                .none
         let initialHasDecodedFrame = pendingFirstDecodedFrameStreamIDs.contains(streamID) ||
             pendingFirstDecodedFrameStreamIDs.contains(mediaStreamID) ||
             streamSessions.values.contains { $0.mediaStreamID == mediaStreamID && $0.hasDecodedFrame }
@@ -142,6 +150,7 @@ public final class MirageClientSessionStore {
             logicalTarget: resolvedLogicalTarget,
             atlasRegion: atlasRegion,
             clientRecoveryStatus: initialRecoveryStatus,
+            clientRecoveryCause: initialRecoveryCause,
             hasDecodedFrame: initialHasDecodedFrame,
             hasPresentedFrame: initialHasPresentedFrame
         )
@@ -151,6 +160,8 @@ public final class MirageClientSessionStore {
         pendingFirstPresentedFrameStreamIDs.remove(mediaStreamID)
         pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
         pendingClientRecoveryStatusByStreamID.removeValue(forKey: mediaStreamID)
+        pendingClientRecoveryCauseByStreamID.removeValue(forKey: streamID)
+        pendingClientRecoveryCauseByStreamID.removeValue(forKey: mediaStreamID)
 
         if let minSize {
             state.minWidth = CGFloat(minSize.width)
@@ -200,6 +211,7 @@ public final class MirageClientSessionStore {
             postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
             presentationTierByStreamID.removeValue(forKey: streamID)
             pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
+            pendingClientRecoveryCauseByStreamID.removeValue(forKey: streamID)
             let mediaStreamStillRendered = streamSessions.contains { candidateSessionID, session in
                 candidateSessionID != sessionID && session.mediaStreamID == mediaStreamID
             }
@@ -207,6 +219,7 @@ public final class MirageClientSessionStore {
                 postResizeAwaitingFirstFrameStreamIDs.remove(mediaStreamID)
                 presentationTierByStreamID.removeValue(forKey: mediaStreamID)
                 pendingClientRecoveryStatusByStreamID.removeValue(forKey: mediaStreamID)
+                pendingClientRecoveryCauseByStreamID.removeValue(forKey: mediaStreamID)
             }
         }
         let removedSession = streamSessions.removeValue(forKey: sessionID)

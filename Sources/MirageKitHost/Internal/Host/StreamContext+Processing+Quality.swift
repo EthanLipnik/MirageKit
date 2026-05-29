@@ -152,65 +152,6 @@ extension StreamContext {
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
     }
 
-    /// Applies a conservative host-local change estimate before submitting the frame to VideoToolbox.
-    /// Returns true when the current non-keyframe should be dropped before it can advance encoder references.
-    func applyPreEncodeMotionBudgetIfNeeded(
-        for frame: CapturedFrame,
-        now: CFAbsoluteTime
-    ) async -> Bool {
-        guard runtimeQualityAdjustmentEnabled else { return false }
-        guard encoderConfig.codec != .proRes4444 else { return false }
-        guard let currentSample = HostFrameMotionSampler.sample(pixelBuffer: frame.pixelBuffer) else {
-            previousFrameMotionSample = nil
-            return false
-        }
-        defer { previousFrameMotionSample = currentSample }
-        guard let estimate = HostFrameMotionSampler.estimate(
-            previous: previousFrameMotionSample,
-            current: currentSample
-        ) else {
-            return false
-        }
-
-        guard let decision = frameBudgetController.updateForFrameChange(
-            estimate: estimate,
-            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
-            requestedTargetBitrateBps: requestedTargetBitrate,
-            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
-            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
-            currentFrameRate: currentFrameRate,
-            maxPayloadSize: maxPayloadSize,
-            currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
-            steadyQualityCeiling: steadyQualityCeiling,
-            now: now
-        ) else {
-            return false
-        }
-
-        await applyFrameBudgetDecision(decision, now: now)
-        logPreEncodeMotionBudgetIfNeeded(estimate: estimate, decision: decision, now: now)
-        return shouldDropPreEncodeMotionFrame(estimate: estimate, decision: decision, now: now)
-    }
-
-    private func shouldDropPreEncodeMotionFrame(
-        estimate: HostFrameChangeEstimate,
-        decision: HostFrameBudgetDecision,
-        now: CFAbsoluteTime
-    ) -> Bool {
-        guard decision.state == .severe else { return false }
-        guard activeQuality <= qualityFloor + 0.01 else { return false }
-        guard now - preEncodeMotionDropLastTime >= 0.20 else { return false }
-        guard estimate.confidence >= 0.92 else { return false }
-        return estimate.changedAreaRatio >= 0.72 || estimate.averageDelta >= 0.26
-    }
-
-    func shouldDropEncodedNonKeyframeForBudget(byteCount: Int) -> Bool {
-        guard runtimeQualityAdjustmentEnabled, byteCount > 0 else { return false }
-        guard let budgetBytes = encodedFrameBudgetBytes() else { return false }
-        return Double(byteCount) > budgetBytes
-    }
-
     func evaluateEncodedFrameBudget(
         byteCount: Int,
         wireBytes: Int,
@@ -233,7 +174,9 @@ extension StreamContext {
             wireBytes: wireBytes,
             packetCount: packetCount,
             isKeyframe: isKeyframe,
+            isRecoveryKeyframe: isKeyframe && keyframeUsesEmergencyBudget,
             receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+            senderHealthy: await senderFrameBudgetIsHealthy(now: now),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -251,20 +194,29 @@ extension StreamContext {
         return decision
     }
 
+    private var keyframeUsesEmergencyBudget: Bool {
+        pendingEmergencyKeyframeQuality != nil || frameChainState != .normal
+    }
+
     func handleDroppedEncodedFrameForBudget(
         byteCount: Int,
         evaluation: HostEncodedFrameAdmissionDecision,
         encodedAt now: CFAbsoluteTime
     ) async {
         droppedFrameCount += 1
+        startFrameChainRepair(
+            reason: "encoded-frame-over-budget",
+            now: now
+        )
         qualityRaiseSuppressionUntil = max(
             qualityRaiseSuppressionUntil,
             now + qualityRaisePostSpikeCooldown
         )
-        await scheduleCoalescedRecoveryKeyframe(
+        await noteEmergencyKeyframePrepared(using: evaluation.budgetDecision)
+        await scheduleEmergencyChainRepairKeyframe(
             reason: "Encoded-frame budget recovery",
-            noteLoss: false,
-            ignoreExistingInFlight: true
+            bypassesRecoveryCooldown: recoveryCauseBypassesAdaptiveKeyframeCooldown(latestReceiverRecoveryCause),
+            now: now
         )
         let budgetBytes = encodedFrameBudgetBytes() ?? 0
         let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
@@ -282,17 +234,25 @@ extension StreamContext {
         encodedAt now: CFAbsoluteTime
     ) async {
         droppedFrameCount += 1
+        startFrameChainRepair(
+            reason: "encoded-keyframe-over-budget",
+            now: now
+        )
         qualityRaiseSuppressionUntil = max(
             qualityRaiseSuppressionUntil,
             now + qualityRaisePostSpikeCooldown
         )
-        if let decision = evaluation.budgetDecision {
-            await encoder?.prepareForKeyframe(quality: decision.keyframeQuality)
+        if keyframeUsesEmergencyBudget {
+            await advanceEmergencyRecoveryScaleIfPossible(
+                reason: "encoded-keyframe-over-budget",
+                now: now
+            )
         }
-        await scheduleCoalescedRecoveryKeyframe(
+        await lowerEmergencyKeyframeQuality(using: evaluation.budgetDecision)
+        await scheduleEmergencyChainRepairKeyframe(
             reason: "Encoded keyframe budget recovery",
-            noteLoss: false,
-            ignoreExistingInFlight: true
+            bypassesRecoveryCooldown: recoveryCauseBypassesAdaptiveKeyframeCooldown(latestReceiverRecoveryCause),
+            now: now
         )
         let budgetBytes = encodedFrameBudgetBytes() ?? 0
         let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
@@ -382,41 +342,35 @@ extension StreamContext {
 
     private func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
         guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
-        let target = Double(max(1, currentFrameRate))
+        if frameChainState != .normal { return false }
+        if realtimePressureState == .recovery { return false }
         if receiverPresentationBacklogFrames > 1 { return false }
-        let receiverFPS = [receiverDecodedFPS, receiverAcceptedFPS, receiverPresentedFPS]
-            .filter { $0 > 0 }
-            .min()
-        guard let receiverFPS else { return true }
-        return receiverFPS >= target * 0.85
+        if receiverReassemblyBacklogFrames > 2 { return false }
+        if receiverReassemblyBacklogBytes > 650_000 { return false }
+        if receiverDecodeBacklogFrames > 1 { return false }
+        if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
+        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        if let receiverAckLagMs,
+           lastReceiverAckTime > 0,
+           now - lastReceiverAckTime <= 1.0,
+           receiverAckLagMs > frameBudgetMs * 2.0 {
+            return false
+        }
+        return true
     }
 
-    private func logPreEncodeMotionBudgetIfNeeded(
-        estimate: HostFrameChangeEstimate,
-        decision: HostFrameBudgetDecision,
-        now: CFAbsoluteTime
-    ) {
-        guard now - preEncodeMotionBudgetLastLogTime >= 0.5 else { return }
-        preEncodeMotionBudgetLastLogTime = now
-        let changedText = estimate.changedAreaRatio.formatted(.number.precision(.fractionLength(2)))
-        let deltaText = estimate.averageDelta.formatted(.number.precision(.fractionLength(2)))
-        let confidenceText = estimate.confidence.formatted(.number.precision(.fractionLength(2)))
-        let bitrateText = "\((Double(decision.targetBitrateBps) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))))Mbps"
-        MirageLogger.metrics(
-            "Pre-encode change estimate: stream=\(streamID) state=\(decision.state.rawValue) " +
-                "target=\(bitrateText) changed=\(changedText) delta=\(deltaText) confidence=\(confidenceText)"
-        )
-    }
-
-    func logPreEncodeMotionDropIfNeeded(now: CFAbsoluteTime) {
-        guard now - preEncodeMotionDropLastLogTime >= 0.5 else { return }
-        preEncodeMotionDropLastLogTime = now
-        let qualityText = Double(activeQuality).formatted(.number.precision(.fractionLength(2)))
-        let floorText = Double(qualityFloor).formatted(.number.precision(.fractionLength(2)))
-        MirageLogger.metrics(
-            "Dropped high-motion frame before encoder for stream \(streamID) " +
-                "(quality=\(qualityText) floor=\(floorText))"
-        )
+    private func senderFrameBudgetIsHealthy(now: CFAbsoluteTime) async -> Bool {
+        guard let packetSender else { return true }
+        let telemetry = await packetSender.telemetrySnapshot
+        if telemetry.senderLocalDeadlineDrops > 0 { return false }
+        if telemetry.nonKeyframeHoldDrops > 0 { return false }
+        if telemetry.queuedBytes > queuePressureBytes { return false }
+        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        let hardTransportBudgetMs = frameBudgetMs * 2.0
+        if telemetry.nonKeyframeSendStartDelayMaxMs > hardTransportBudgetMs { return false }
+        if telemetry.nonKeyframeSendCompletionMaxMs > hardTransportBudgetMs { return false }
+        if telemetry.packetPacerFrameMaxSleepMs > Int(hardTransportBudgetMs.rounded(.up)) { return false }
+        return true
     }
 
     private func logDroppedEncodedFrameForBudgetIfNeeded(

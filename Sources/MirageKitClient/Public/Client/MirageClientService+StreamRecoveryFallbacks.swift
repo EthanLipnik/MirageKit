@@ -69,13 +69,39 @@ extension MirageClientService {
 
                 reassembler.pollTimeouts()
                 let snapshot = reassembler.keyframeWaitSnapshot
-                if let progress = snapshot.latestPendingKeyframeProgress,
-                   now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot) {
+                let hardRecoveryFloor = hardRecoveryNoProgressFloor(for: snapshot)
+                let noProgressDuration = max(0, now - max(startedAt, snapshot.awaitingSince))
+                let keyframeProgressIsFresh = snapshot.latestPendingKeyframeProgress.map { progress in
+                    now - progress.lastProgressTime < packetProgressFreshThreshold(for: snapshot)
+                } ?? false
+                let packetProgressIsFresh = !snapshot.isAwaitingKeyframe &&
+                    snapshot.latestPacketReceivedTime > 0 &&
+                    now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot)
+
+                if noProgressDuration >= hardRecoveryFloor {
+                    MirageLogger.client(
+                        "Foreground recovery escalating to hard recovery for stream \(streamID) " +
+                            "noProgressMs=\(Int((noProgressDuration * 1000).rounded())) " +
+                            "packetProgressFresh=\(packetProgressIsFresh) " +
+                            "keyframeProgressFresh=\(keyframeProgressIsFresh) trigger=\(trigger.logLabel)"
+                    )
+                    await controller.requestRecovery(
+                        reason: .manualRecovery,
+                        awaitFirstPresentedFrame: true,
+                        firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
+                    )
+                    return
+                }
+
+                if snapshot.latestPendingKeyframeProgress != nil,
+                   keyframeProgressIsFresh {
                     continue
                 }
-                if !snapshot.isAwaitingKeyframe,
-                   snapshot.latestPacketReceivedTime > 0,
-                   now - snapshot.latestPacketReceivedTime < packetProgressFreshThreshold(for: snapshot) {
+                if Self.shouldContinueForegroundRecoveryForFreshPackets(
+                    packetProgressIsFresh: packetProgressIsFresh,
+                    noProgressDuration: noProgressDuration,
+                    hardRecoveryFloor: hardRecoveryFloor
+                ) {
                     continue
                 }
 
@@ -89,20 +115,6 @@ extension MirageClientService {
                         )
                     }
                     continue
-                }
-
-                let noProgressDuration = max(0, now - max(startedAt, snapshot.awaitingSince))
-                if noProgressDuration >= hardRecoveryNoProgressFloor(for: snapshot) {
-                    MirageLogger.client(
-                        "Foreground recovery escalating to hard recovery for stream \(streamID) " +
-                            "noProgressMs=\(Int((noProgressDuration * 1000).rounded())) trigger=\(trigger.logLabel)"
-                    )
-                    await controller.requestRecovery(
-                        reason: .manualRecovery,
-                        awaitFirstPresentedFrame: true,
-                        firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
-                    )
-                    return
                 }
             }
         }
@@ -130,6 +142,14 @@ extension MirageClientService {
         case .awdl, .wired, .wifi, .loopback, .other, .unknown:
             2.0
         }
+    }
+
+    nonisolated static func shouldContinueForegroundRecoveryForFreshPackets(
+        packetProgressIsFresh: Bool,
+        noProgressDuration: CFAbsoluteTime,
+        hardRecoveryFloor: CFAbsoluteTime
+    ) -> Bool {
+        packetProgressIsFresh && noProgressDuration < hardRecoveryFloor
     }
 
     private func hardRecoveryNoProgressFloor(for snapshot: FrameReassembler.KeyframeWaitSnapshot) -> CFAbsoluteTime {

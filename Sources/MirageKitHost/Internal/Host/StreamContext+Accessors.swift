@@ -45,6 +45,12 @@ struct StreamStartSnapshot: Sendable {
     let mediaMaxPacketSize: Int
 }
 
+/// Effective media path policy for a stream.
+struct StreamMediaPathSnapshot: Sendable {
+    let transportPathKind: MirageNetworkPathKind
+    let mediaPathProfile: MirageMediaPathProfile
+}
+
 /// Virtual-display geometry captured as one actor-isolated snapshot for stream-setting updates.
 struct VirtualDisplayGeometrySnapshot: Sendable {
     /// Shared display backing the stream.
@@ -192,6 +198,13 @@ extension StreamContext {
             codec: encoderConfig.codec,
             dimensionToken: dimensionToken,
             mediaMaxPacketSize: mediaMaxPacketSize
+        )
+    }
+
+    var streamMediaPathSnapshot: StreamMediaPathSnapshot {
+        StreamMediaPathSnapshot(
+            transportPathKind: transportPathKind,
+            mediaPathProfile: mediaPathProfile
         )
     }
 

@@ -158,7 +158,8 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
 
         goodWindowCount = 0
         badWindowCount += 1
-        guard badWindowCount >= configuration.consecutiveBadWindowsRequired else { return .none }
+        let requiredBadWindows = requiredBadWindowsForAction(sample)
+        guard badWindowCount >= requiredBadWindows else { return .none }
         if lastActionTime > 0, sample.now - lastActionTime < configuration.actionCooldownSeconds {
             return .none
         }
@@ -191,6 +192,15 @@ struct HostCaptureCadenceRecoveryPolicy: Sendable {
         _ = action
         _ = receiverHasPresentedFrame
         return true
+    }
+
+    private func requiredBadWindowsForAction(_ sample: Sample) -> Int {
+        let baseline = max(1, configuration.consecutiveBadWindowsRequired)
+        guard sample.receiverHasPresentedFrame,
+              sample.targetFrameRate <= 60 else {
+            return baseline
+        }
+        return baseline + 1
     }
 
     private static func captureCadenceIsBad(

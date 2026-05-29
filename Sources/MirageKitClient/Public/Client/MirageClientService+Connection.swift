@@ -324,4 +324,17 @@ public extension MirageClientService {
             forceCleanup: true
         )
     }
+
+    /// Immediately tears down the active host connection without sending a disconnect notice.
+    func cancelConnectionImmediately() async {
+        cancelPendingConnectTask()
+        invalidateCurrentConnectAttempt()
+
+        await handleDisconnect(
+            reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
+            state: .disconnected,
+            notifyDelegate: false,
+            forceCleanup: true
+        )
+    }
 }

@@ -83,9 +83,11 @@ extension MirageClientService {
         if let streamID {
             pendingDecodedAudioFramesByStreamID.removeValue(forKey: streamID)
             pendingDecodedAudioDurationByStreamID.removeValue(forKey: streamID)
+            audioFeedbackDroppedFrameCountByStreamID.removeValue(forKey: streamID)
         } else {
             pendingDecodedAudioFramesByStreamID.removeAll()
             pendingDecodedAudioDurationByStreamID.removeAll()
+            audioFeedbackDroppedFrameCountByStreamID.removeAll()
         }
     }
 
@@ -143,6 +145,7 @@ extension MirageClientService {
     ) {
         guard decision.droppedCount > 0 else { return }
         audioSyncDropCount &+= UInt64(decision.droppedCount)
+        audioFeedbackDroppedFrameCountByStreamID[streamID, default: 0] &+= UInt64(decision.droppedCount)
         logAudioSyncDropsIfNeeded(streamID: streamID, reason: decision.reason)
     }
 

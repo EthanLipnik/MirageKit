@@ -59,7 +59,7 @@ extension StreamController {
         firstPresentedFrameRendererRecoveryAttemptCount = 0
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(true)
         if reason != "post-resize", mode == .startup {
-            await setClientRecoveryStatus(.startup)
+            await setClientRecoveryStatus(.startup, cause: .startupTimeout)
         }
 
         MirageLogger

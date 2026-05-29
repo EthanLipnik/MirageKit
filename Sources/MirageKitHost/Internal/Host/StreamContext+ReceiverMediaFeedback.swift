@@ -16,8 +16,16 @@ extension StreamContext {
         lastReceiverFeedbackTime = now
         receiverDecodedFPS = feedback.decodedFPS
         receiverPresentationBacklogFrames = feedback.presentationBacklogFrames
+        receiverReassemblyBacklogFrames = feedback.reassemblyBacklogFrames
+        receiverReassemblyBacklogBytes = feedback.reassemblyBacklogBytes
+        receiverDecodeBacklogFrames = feedback.decodeBacklogFrames
+        receiverLostFrameCount = feedback.lostFrameCount
+        receiverDiscardedPacketCount = feedback.discardedPacketCount
+        receiverPFrameCompletionLatencyP95Ms = feedback.pFrameCompletionLatencyP95Ms
         receiverAcceptedFPS = feedback.rendererAcceptedFPS
         receiverPresentedFPS = feedback.rendererPresentedFPS
+        latestReceiverRecoveryCause = feedback.recoveryCause
+        applyReceiverFrameAcknowledgements(feedback.ackRanges, now: now)
         if feedback.rendererPresentedFPS > 0 || feedback.rendererAcceptedFPS > 0 {
             receiverHasPresentedFrame = true
         }
@@ -55,6 +63,34 @@ extension StreamContext {
         if let frameBudgetDecision {
             await applyFrameBudgetDecision(frameBudgetDecision, now: now)
         }
+    }
+
+    private func applyReceiverFrameAcknowledgements(
+        _ ranges: [MediaFeedbackFrameRange],
+        now: CFAbsoluteTime
+    ) {
+        guard !ranges.isEmpty else { return }
+
+        var newestAckedFrame = receiverAcknowledgedFrameNumber
+        for range in ranges where isFrameNumber(range.endFrame, newerThan: newestAckedFrame) {
+            newestAckedFrame = range.endFrame
+        }
+        guard let ackedFrame = newestAckedFrame,
+              isFrameNumber(ackedFrame, newerThan: receiverAcknowledgedFrameNumber) else {
+            return
+        }
+
+        receiverAcknowledgedFrameNumber = ackedFrame
+        lastReceiverAckTime = now
+        if let completion = recentFrameTransportCompletions.last(where: { $0.frameNumber == ackedFrame }) {
+            receiverAckLagMs = max(0, (now - completion.completedAt) * 1000)
+        }
+    }
+
+    private func isFrameNumber(_ frameNumber: UInt32, newerThan current: UInt32?) -> Bool {
+        guard let current else { return true }
+        let difference = frameNumber &- current
+        return difference != 0 && difference < 0x8000_0000
     }
 
     private func applyTransportFeedbackDecision(
@@ -234,6 +270,8 @@ extension StreamContext {
             return .clientTransportLoss
         case .clientRecovery:
             return .clientRecovery
+        case .senderDeadline:
+            return .clientTransportLoss
         default:
             return .clear
         }

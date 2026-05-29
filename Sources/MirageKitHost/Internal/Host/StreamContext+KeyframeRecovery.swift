@@ -68,8 +68,9 @@ extension StreamContext {
     }
 
     /// Request a keyframe from the encoder.
-    func requestKeyframe() async -> KeyframeRecoveryAckMessage {
-        let accepted = await requestKeyframeRecovery()
+    func requestKeyframe(recoveryCause: MirageMediaFeedbackRecoveryCause = .none) async -> KeyframeRecoveryAckMessage {
+        latestReceiverRecoveryCause = recoveryCause
+        let accepted = await requestKeyframeRecovery(recoveryCause: recoveryCause)
         return keyframeRecoveryAck(accepted: accepted)
     }
 
@@ -79,18 +80,25 @@ extension StreamContext {
         await completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTimeGetCurrent(), reason: "Keyframe request")
     }
 
-    private func requestKeyframeRecovery() async -> Bool {
+    private func requestKeyframeRecovery(recoveryCause: MirageMediaFeedbackRecoveryCause) async -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
         let reason = "Keyframe request"
-        let queued = queueKeyframeRecoveryRequest()
+        let queued = queueKeyframeRecoveryRequest(recoveryCause: recoveryCause)
         guard queued else { return false }
         await completeAcceptedKeyframeRecoveryRequest(now: now, reason: reason)
         return true
     }
 
-    private func queueKeyframeRecoveryRequest() -> Bool {
+    private func queueKeyframeRecoveryRequest(recoveryCause: MirageMediaFeedbackRecoveryCause = .none) -> Bool {
         let reason = "Keyframe request"
         logFreshnessBurstKeyframeRecovery(reason: reason)
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if !recoveryCauseBypassesAdaptiveKeyframeCooldown(recoveryCause),
+           isRecoveryKeyframeCooldownActive(now: now) {
+            logRecoveryKeyframeCooldownSuppression(reason: reason, now: now)
+            return false
+        }
 
         return queueKeyframe(
             reason: reason,
@@ -105,8 +113,12 @@ extension StreamContext {
     private func completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTime, reason: String) async {
         softRecoveryCount += 1
         noteLossEvent(reason: reason, enablePFrameFEC: true)
+        startFrameChainRepair(
+            reason: "client-keyframe-request",
+            now: now
+        )
+        await noteEmergencyKeyframePrepared(using: nil)
         await scheduleCaptureRestartForKeyframeRecoveryIfNeeded(now: now, reason: reason)
-        markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger
             .stream(
@@ -121,6 +133,9 @@ extension StreamContext {
         if keyframeSendDeadline > now {
             deadlineMs = Int(((keyframeSendDeadline - now) * 1000).rounded(.up))
             state = accepted ? .accepted : .inFlight
+        } else if isRecoveryKeyframeCooldownActive(now: now) {
+            deadlineMs = Int((recoveryKeyframeCooldownRemaining(now: now) * 1000).rounded(.up))
+            state = accepted ? .accepted : .cooldown
         } else {
             deadlineMs = Int((activeKeyframeRequestCooldown * 1000).rounded(.up))
             state = accepted ? .accepted : .cooldown

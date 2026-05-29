@@ -58,6 +58,16 @@ extension StreamContext {
                         reason: reason
                     )
                 }
+            },
+            onFrameTransportCompleted: { [weak self] streamID, frameNumber, isKeyframe, didSend in
+                Task(priority: .userInitiated) {
+                    await self?.handleFrameTransportCompleted(
+                        streamID: streamID,
+                        frameNumber: frameNumber,
+                        isKeyframe: isKeyframe,
+                        didSend: didSend
+                    )
+                }
             }
         )
         packetSender = sender
@@ -147,11 +157,8 @@ extension StreamContext {
         guard let packetSender else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
-        if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe {
+        if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe || frameChainSuppressesPFrames {
             return
-        }
-        if isKeyframe {
-            suppressEncodedNonKeyframesUntilKeyframe = false
         }
 
         let frameByteCount = encodedData.count
@@ -175,35 +182,25 @@ extension StreamContext {
         )
 
         switch admissionDecision.admission {
-        case .send:
+        case .send,
+             .sendWithQualityDrop:
             break
-        case .dropPFrameAndRequestKeyframe:
-            suppressEncodedNonKeyframesUntilKeyframe = true
+        case .dropPFrameStartChainRepair:
             await handleDroppedEncodedFrameForBudget(
                 byteCount: frameByteCount,
                 evaluation: admissionDecision,
                 encodedAt: now
             )
             return
-        case .retryKeyframeAtEmergencyQuality,
-             .dropKeyframeAndWaitForNext:
-            suppressEncodedNonKeyframesUntilKeyframe = true
+        case .retryEmergencyKeyframeLowerQuality,
+             .dropKeyframeWaitForCooldown,
+             .dropKeyframeWaitForNextLatestFrame:
             await handleDroppedKeyframeForBudget(
                 byteCount: frameByteCount,
                 evaluation: admissionDecision,
                 encodedAt: now
             )
             return
-        }
-
-        if isKeyframe, admissionDecision.isOverBudget {
-            let ratio = max(admissionDecision.byteRatio, max(admissionDecision.wireRatio, admissionDecision.packetRatio))
-            let ratioText = ratio.formatted(.number.precision(.fractionLength(2)))
-            let frameKB = (Double(frameByteCount) / 1024.0).formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.metrics(
-                "Sending recovery keyframe within extended budget " +
-                    "(frame=\(frameKB)KB ratio=\(ratioText))"
-            )
         }
 
         let reservation = callbackSequencer.reserve(
@@ -358,6 +355,14 @@ extension StreamContext {
 
     func restartDisplayCaptureForCadenceRecovery(reason: String) async {
         guard captureMode == .display, !isResizing, !encodingSuspendedForResize else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !captureRestartShouldWaitForActiveRecovery(now: now) else {
+            MirageLogger.capture(
+                "event=capture_cadence_recovery action=restart_capture result=skipped_active_keyframe_recovery stream=\(streamID) reason=\(reason)"
+            )
+            return
+        }
+        await prepareForCaptureRestartRecoveryKeyframe()
         let restarted = await captureEngine?.restartCaptureForDeliveryValidation(reason: reason) ?? false
         guard restarted else { return }
         await scheduleCoalescedRecoveryKeyframe(

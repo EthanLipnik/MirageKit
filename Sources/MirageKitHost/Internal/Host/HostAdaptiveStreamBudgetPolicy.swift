@@ -39,7 +39,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let label: String
     }
 
-    private static let fallbackMinimumFloorBps = 8_000_000
+    private static let fallbackMinimumFloorBps = 4_000_000
 
     static func resolve(_ request: Request) -> Decision? {
         guard request.runtimeQualityAdjustmentEnabled else { return nil }
@@ -140,16 +140,16 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumBitsPerPixelPerFrame: 0.085,
                 startupCapBps: 16_000_000,
                 maximumCapBps: 24_000_000,
-                minimumFloorBps: 8_000_000,
+                minimumFloorBps: 4_000_000,
                 label: "awdl"
             )
         case .localWiFi:
             return PathBudget(
                 startupBitsPerPixelPerFrame: 0.095,
-                maximumBitsPerPixelPerFrame: 0.250,
+                maximumBitsPerPixelPerFrame: 0.530,
                 startupCapBps: 36_000_000,
-                maximumCapBps: 84_000_000,
-                minimumFloorBps: 12_000_000,
+                maximumCapBps: 180_000_000,
+                minimumFloorBps: 3_000_000,
                 label: "wifi"
             )
         case .wired:
@@ -158,7 +158,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumBitsPerPixelPerFrame: 0.450,
                 startupCapBps: 72_000_000,
                 maximumCapBps: 180_000_000,
-                minimumFloorBps: 16_000_000,
+                minimumFloorBps: 8_000_000,
                 label: "wired"
             )
         case .proximityWiredLike:
@@ -167,7 +167,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumBitsPerPixelPerFrame: 0.650,
                 startupCapBps: 140_000_000,
                 maximumCapBps: 300_000_000,
-                minimumFloorBps: 20_000_000,
+                minimumFloorBps: 12_000_000,
                 label: "proximity"
             )
         case .vpnOrOverlay:
@@ -176,7 +176,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 maximumBitsPerPixelPerFrame: 0.160,
                 startupCapBps: 24_000_000,
                 maximumCapBps: 64_000_000,
-                minimumFloorBps: 8_000_000,
+                minimumFloorBps: 4_000_000,
                 label: "remote"
             )
         case .other,

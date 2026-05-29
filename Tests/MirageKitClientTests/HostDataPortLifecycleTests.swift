@@ -30,6 +30,25 @@ struct HostDataPortLifecycleTests {
         #expect(MirageClientStreamRecoveryTrigger.manual.requestsPresentationRecoveryImmediately)
     }
 
+    @Test("Application-activation packet progress does not suppress hard recovery indefinitely")
+    func applicationActivationPacketProgressExpiresAtHardRecoveryFloor() {
+        #expect(MirageClientService.shouldContinueForegroundRecoveryForFreshPackets(
+            packetProgressIsFresh: true,
+            noProgressDuration: 7.99,
+            hardRecoveryFloor: 8
+        ))
+        #expect(!MirageClientService.shouldContinueForegroundRecoveryForFreshPackets(
+            packetProgressIsFresh: true,
+            noProgressDuration: 8,
+            hardRecoveryFloor: 8
+        ))
+        #expect(!MirageClientService.shouldContinueForegroundRecoveryForFreshPackets(
+            packetProgressIsFresh: false,
+            noProgressDuration: 1,
+            hardRecoveryFloor: 8
+        ))
+    }
+
     @MainActor
     @Test("Application-activation recovery waits for active stream controller")
     func applicationActivationRecoveryWaitsForActiveStreamController() {
