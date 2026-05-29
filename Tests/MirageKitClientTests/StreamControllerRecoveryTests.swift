@@ -28,6 +28,10 @@ private extension StreamController {
     func testSeedLastRecoveryRequestDispatchTime(_ time: CFAbsoluteTime) {
         lastRecoveryRequestDispatchTime = time
     }
+
+    func testSeedRecoveryKeyframeDispatchTimes(_ times: [CFAbsoluteTime]) {
+        recoveryKeyframeDispatchTimes = times
+    }
 }
 
 @Suite("Stream Controller Recovery", .serialized)
@@ -564,7 +568,42 @@ struct StreamControllerRecoveryTests {
 
         #expect(await controller.decodeQueueRequiresKeyframe)
         #expect(await controller.reassembler.isAwaitingKeyframe)
+        #expect(await controller.clientRecoveryCause == .decodeError)
         #expect(releaseCounter.value == 1)
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Keyframe-starved decode recovery bypasses dispatch suppression")
+    func keyframeStarvedDecodeRecoveryBypassesDispatchSuppression() async throws {
+        let keyframeCounter = StreamControllerLockedCounter()
+        let clock = StreamControllerManualTimeProvider(start: 5000)
+        let controller = StreamController(
+            streamID: 4,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+                return true
+            }
+        )
+        await controller.testSeedRecoveryKeyframeDispatchTimes([
+            clock.now - 1.0,
+            clock.now - 2.0,
+            clock.now - 3.0
+        ])
+        let reassembler = await controller.reassembler
+        reassembler.beginKeyframeWait()
+
+        let requested = await controller.requestKeyframeRecovery(
+            reason: .decodeErrorThreshold,
+            bypassRetryGate: true
+        )
+
+        #expect(requested)
         #expect(keyframeCounter.value == 1)
 
         await controller.stop()

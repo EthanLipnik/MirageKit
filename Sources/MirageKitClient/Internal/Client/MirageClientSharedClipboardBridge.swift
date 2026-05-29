@@ -311,6 +311,12 @@ final class MirageClientSharedClipboardBridge {
         }
 
         let snapshot = await ClientClipboardSnapshotReader.shared.snapshot
+        guard snapshot.item.representation.kind != .unsupported,
+              snapshot.item.payload != nil else {
+            clipboardState.recordSuppressedLocalSend(changeCount: snapshot.changeCount)
+            MirageLogger.client("Shared clipboard manual sync skipped: local clipboard has no transferable payload")
+            return .hostAlreadyCurrent
+        }
         guard let localSend = clipboardState.prepareLocalSend(
             currentItem: snapshot.item,
             changeCount: snapshot.changeCount,

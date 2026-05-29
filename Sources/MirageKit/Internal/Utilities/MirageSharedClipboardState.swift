@@ -203,11 +203,10 @@ package struct MirageSharedClipboardState {
         orderingToken: MirageSharedClipboardOrderingToken,
         observedAtMs: Int64? = nil
     ) {
-        let localClipboardChanged = lastObservedChangeCount.map { changeCount > $0 } ?? false
         lastObservedChangeCount = changeCount
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
-        suppressLocalSendUntilChangeCount = localClipboardChanged ? nil : changeCount
+        suppressLocalSendUntilChangeCount = changeCount
         latestAutomaticLocalFingerprint = nil
         if let observedAtMs {
             latestRemoteClipboardObservationToken = orderingToken
@@ -227,12 +226,9 @@ package struct MirageSharedClipboardState {
             return false
         }
 
-        let localClipboardChanged = lastObservedChangeCount.map { changeCount > $0 } ?? false
         lastObservedChangeCount = changeCount
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
-        if !localClipboardChanged {
-            suppressLocalSendUntilChangeCount = changeCount
-        }
+        suppressLocalSendUntilChangeCount = changeCount
         latestAutomaticLocalFingerprint = nil
         latestRemoteClipboardObservationToken = orderingToken
         latestRemoteClipboardObservedAtMs = observedAtMs
@@ -301,6 +297,12 @@ package struct MirageSharedClipboardState {
         nowMs: Int64 = MirageSharedClipboard.currentTimestampMs()
     ) -> MirageSharedClipboardLocalSend? {
         guard isActive else { return nil }
+        guard item.representation.kind != .unsupported,
+              item.payload != nil else {
+            lastObservedChangeCount = changeCount
+            latestAutomaticLocalFingerprint = nil
+            return nil
+        }
         let fingerprint = MirageSharedClipboard.contentFingerprint(for: item)
         if lastObservedChangeCount == changeCount || latestAutomaticLocalFingerprint == fingerprint {
             lastObservedChangeCount = changeCount

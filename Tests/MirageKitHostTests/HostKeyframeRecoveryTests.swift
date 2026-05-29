@@ -57,6 +57,22 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeReason == "Keyframe request")
     }
 
+    @Test("Receiver decode-recovery feedback schedules keyframe even when explicit request is lost")
+    func receiverDecodeRecoveryFeedbackSchedulesKeyframe() async {
+        let context = makeContext()
+
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                recoveryState: .keyframeRecovery,
+                recoveryCause: .decodeError
+            )
+        )
+
+        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
     @Test("Capture-starved recovery schedules restart when no frame has arrived")
     func captureStarvedRecoveryWithNoFrames() {
         let shouldRestart = StreamContext.shouldScheduleCaptureRestartForRecovery(
@@ -393,6 +409,35 @@ struct HostKeyframeRecoveryTests {
                 dirtyPercentage: 0,
                 isIdleFrame: true
             )
+        )
+    }
+
+    private func receiverRecoveryFeedback(
+        recoveryState: MirageMediaFeedbackRecoveryState,
+        recoveryCause: MirageMediaFeedbackRecoveryCause
+    ) -> ReceiverMediaFeedbackMessage {
+        ReceiverMediaFeedbackMessage(
+            streamID: 1,
+            sequence: 1,
+            sentAtUptime: CFAbsoluteTimeGetCurrent(),
+            targetFPS: 60,
+            ackRanges: [],
+            lostFrameCount: 0,
+            discardedPacketCount: 0,
+            jitterP95Ms: 0,
+            jitterP99Ms: 0,
+            queueEstimateFrames: 0,
+            reassemblyBacklogFrames: 0,
+            reassemblyBacklogKeyframes: 0,
+            reassemblyBacklogBytes: 0,
+            decodeBacklogFrames: 0,
+            presentationBacklogFrames: 0,
+            decodedFPS: 0,
+            receivedFPS: 0,
+            rendererAcceptedFPS: 0,
+            rendererPresentedFPS: 0,
+            recoveryState: recoveryState,
+            recoveryCause: recoveryCause
         )
     }
 }

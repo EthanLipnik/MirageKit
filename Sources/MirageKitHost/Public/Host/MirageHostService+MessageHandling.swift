@@ -209,6 +209,9 @@ extension MirageHostService {
 
         guard clientContextOwnsStream(request.streamID, clientContext: clientContext),
               let context = streamsByID[request.streamID] else {
+            MirageLogger.host(
+                "Keyframe request rejected for stream \(request.streamID) from \(clientContext.client.name): no owned stream"
+            )
             let ack = KeyframeRecoveryAckMessage(
                 streamID: request.streamID,
                 deadlineMilliseconds: 500,
@@ -219,6 +222,10 @@ extension MirageHostService {
             return
         }
         let ack = await context.requestKeyframe(recoveryCause: request.recoveryCause)
+        MirageLogger.host(
+            "Keyframe request for stream \(request.streamID) from \(clientContext.client.name) " +
+                "cause=\(request.recoveryCause.rawValue) accepted=\(ack.accepted) state=\(ack.state.rawValue)"
+        )
         clientContext.queueBestEffort(.keyframeRecoveryAck, content: ack)
     }
 

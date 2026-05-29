@@ -388,19 +388,25 @@ extension MirageClientService {
         }
 
         let recoveryCause = sessionStore.sessionByStreamID(streamID)?.clientRecoveryCause ?? .none
+        let mediaRecoveryCause = MirageMediaFeedbackRecoveryCause(recoveryCause)
         let request = KeyframeRequestMessage(
             streamID: streamID,
-            recoveryCause: MirageMediaFeedbackRecoveryCause(recoveryCause)
+            recoveryCause: mediaRecoveryCause
         )
-        guard sendControlMessageBestEffort(.keyframeRequest, content: request) else {
+        guard let message = try? ControlMessage(type: .keyframeRequest, content: request) else {
             MirageLogger.error(.client, "Failed to create keyframe request message")
             return false
         }
+        guard sendControlMessageBestEffort(message) else {
+            MirageLogger.client("Cannot send keyframe request - control channel unavailable")
+            return false
+        }
+        _ = sendControlMessageBestEffortUnreliable(message)
         lastKeyframeRequestTime[streamID] = now
 
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
         MirageLogger.client(
-            "Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)"
+            "Sent keyframe request for stream \(streamID) cause=\(mediaRecoveryCause.rawValue) (cooldown \(cooldownMs)ms)"
         )
         return true
     }

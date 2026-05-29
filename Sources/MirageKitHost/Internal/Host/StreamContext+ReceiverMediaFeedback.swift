@@ -63,6 +63,51 @@ extension StreamContext {
         if let frameBudgetDecision {
             await applyFrameBudgetDecision(frameBudgetDecision, now: now)
         }
+        await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
+    }
+
+    private func scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(
+        _ feedback: ReceiverMediaFeedbackMessage,
+        now: CFAbsoluteTime
+    ) async {
+        let needsKeyframe: Bool = switch feedback.recoveryState {
+        case .keyframeRecovery,
+             .hardRecovery,
+             .postResizeAwaitingFirstFrame:
+            true
+        case .startup:
+            feedback.recoveryCause == .startupTimeout
+        case .idle,
+             .tierPromotionProbe:
+            false
+        }
+        guard needsKeyframe else { return }
+        guard pendingKeyframeReason == nil,
+              now >= keyframeSendDeadline,
+              !isKeyframeEncoding,
+              frameChainRepairKeyframeRetryTask == nil else {
+            return
+        }
+        if case .emergencyKeyframePending = frameChainState {
+            return
+        }
+
+        let bypassesCooldown = recoveryCauseBypassesAdaptiveKeyframeCooldown(feedback.recoveryCause)
+        let reason = "Receiver feedback keyframe recovery"
+        startFrameChainRepair(
+            reason: "receiver-feedback-\(feedback.recoveryCause.rawValue)",
+            now: now
+        )
+        await noteEmergencyKeyframePrepared(using: nil)
+        let queued = await scheduleEmergencyChainRepairKeyframe(
+            reason: reason,
+            bypassesRecoveryCooldown: bypassesCooldown,
+            now: now
+        )
+        MirageLogger.stream(
+            "\(reason) for stream \(streamID) recovery=\(feedback.recoveryState.rawValue) " +
+                "cause=\(feedback.recoveryCause.rawValue) queued=\(queued)"
+        )
     }
 
     private func applyReceiverFrameAcknowledgements(

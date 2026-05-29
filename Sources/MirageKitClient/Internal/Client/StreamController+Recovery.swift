@@ -75,9 +75,15 @@ extension StreamController {
                 "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), requesting keyframe"
         )
         if presentationTier == .activeLive {
-            await enterKeyframeRecoveryIfNeeded(reason: "decode-backpressure")
+            await enterKeyframeRecoveryIfNeeded(
+                reason: "decode-backpressure",
+                cause: .decodeError
+            )
         }
-        await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
+        _ = await requestKeyframeRecovery(
+            reason: .decodeErrorThreshold,
+            bypassRetryGate: true
+        )
     }
 
     /// Handles frame reassembly loss by choosing bootstrap, passive, immediate, or delayed recovery.
@@ -320,8 +326,13 @@ extension StreamController {
             )
             return false
         }
+        let snapshot = reassembler.keyframeWaitSnapshot
+        let keyframeStarvedWithoutProgress = snapshot.isAwaitingKeyframe &&
+            snapshot.latestPendingKeyframeProgress == nil
         trimRecoveryKeyframeDispatchWindow(now: now)
-        if recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit {
+        if recoveryKeyframeDispatchTimes.count >= Self.recoveryKeyframeDispatchLimit,
+           !keyframeStarvedWithoutProgress,
+           reason != .decodeErrorThreshold {
             MirageLogger.client(
                 "Recovery keyframe request suppressed after \(recoveryKeyframeDispatchTimes.count) requests/" +
                     "\(Int(Self.recoveryKeyframeDispatchWindow))s for stream \(streamID); signaling adaptation pressure"
@@ -334,7 +345,6 @@ extension StreamController {
             }
             return false
         }
-        let snapshot = reassembler.keyframeWaitSnapshot
         let keyframeDecision = bypassRetryGate
             ? StreamRecoveryDecision.requestKeyframe
             : keyframeRequestDecision(now: now, reason: reason, snapshot: snapshot)

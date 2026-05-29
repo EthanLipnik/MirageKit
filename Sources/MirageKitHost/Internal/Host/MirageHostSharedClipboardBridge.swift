@@ -156,12 +156,7 @@ final class MirageHostSharedClipboardBridge {
         }
 
         guard item.payload != nil else {
-            let changeCount = await HostClipboardSnapshotReader.shared.changeCount
-            clipboardState.recordRemoteDeclaration(
-                changeCount: changeCount,
-                orderingToken: orderingToken
-            )
-            MirageLogger.host("Recorded metadata-only shared clipboard update from client")
+            MirageLogger.host("Ignoring metadata-only shared clipboard update from client")
             return
         }
 

@@ -69,8 +69,8 @@ struct SharedClipboardTests {
         #expect(localSend?.orderingToken.logicalVersion == 2)
     }
 
-    @Test("Metadata-only host declaration allows existing client clipboard change after recent window")
-    func metadataOnlyHostDeclarationAllowsExistingClientChangeAfterRecentWindow() {
+    @Test("Metadata-only host declaration suppresses pre-existing client clipboard change")
+    func metadataOnlyHostDeclarationSuppressesPreexistingClientChange() {
         var state = MirageSharedClipboardState()
         state.activate(changeCount: 5)
         let observedAtMs: Int64 = 20_000
@@ -90,8 +90,7 @@ struct SharedClipboardTests {
             changeCount: 6,
             nowMs: afterRemoteWindow(from: observedAtMs)
         )
-        #expect(localSend?.text == "client-newer")
-        #expect(localSend?.orderingToken.logicalVersion == 2)
+        #expect(localSend == nil)
     }
 
     @Test("Payload-bearing host observation suppresses client paste sync before apply")
@@ -292,6 +291,24 @@ struct SharedClipboardTests {
         #expect(first?.text == "same")
         #expect(duplicateWithNewChangeCount == nil)
         #expect(changed?.text == "different")
+    }
+
+    @Test("Automatic shared clipboard ignores unsupported local contents")
+    func automaticSharedClipboardIgnoresUnsupportedLocalContents() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 0)
+
+        let unsupported = state.prepareLocalDeclaration(
+            item: .unsupported(),
+            changeCount: 1
+        )
+        let changed = state.prepareLocalDeclaration(
+            item: textItem("supported"),
+            changeCount: 2
+        )
+
+        #expect(unsupported == nil)
+        #expect(changed?.text == "supported")
     }
 
     @Test("Manual shared clipboard does not use automatic duplicate fingerprint suppression")

@@ -134,6 +134,23 @@ struct ClientSharedClipboardTests {
 
         await bridge.setActive(false)
     }
+
+    @MainActor
+    @Test("macOS client does not send unsupported pasteboard contents during paste")
+    func macOSClientDoesNotSendUnsupportedPasteboardContentsDuringPaste() async {
+        let pasteboardSnapshot = PasteboardSnapshot.capture()
+        defer { pasteboardSnapshot.restore() }
+
+        let bridge = MirageClientSharedClipboardBridge()
+        await bridge.setActive(true)
+
+        NSPasteboard.general.clearContents()
+
+        let preparation = await bridge.prepareCurrentClipboardManualSync()
+        #expect(preparation == .hostAlreadyCurrent)
+
+        await bridge.setActive(false)
+    }
     #endif
 }
 
