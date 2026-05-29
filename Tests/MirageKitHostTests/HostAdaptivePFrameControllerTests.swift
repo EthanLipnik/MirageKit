@@ -75,7 +75,7 @@ struct HostAdaptivePFrameControllerTests {
     func oneSlowReceiverPFrameTimingSampleDoesNotCollapseCeiling() throws {
         var controller = HostAdaptivePFrameController()
 
-        _ = controller.recordFrameTransportCompletion(
+        let decision = controller.recordFrameTransportCompletion(
             frameNumber: 20,
             wireBytes: 80_000,
             packetCount: 61,
@@ -98,6 +98,7 @@ struct HostAdaptivePFrameControllerTests {
         #expect(controller.transportCeilingWireBytes == 58_515)
         #expect(controller.runtimeCeilingBps == 28_087_200)
         #expect(abs(controller.holdDownUntil) < 0.0001)
+        #expect(decision == nil)
     }
 
     @Test("Two of three bad receiver P-frame timing samples lower ceiling with mild cap")
@@ -456,6 +457,185 @@ struct HostAdaptivePFrameControllerTests {
         #expect(evaluation.budgetDecision == nil)
     }
 
+    @Test("Under-ceiling P-frame growth cuts next quality without chain repair")
+    func underCeilingPFrameGrowthCutsNextQualityWithoutChainRepair() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 30_000,
+            wireBytes: 30_000,
+            packetCount: 23,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.40,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 34_000,
+            wireBytes: 34_000,
+            packetCount: 26,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.40,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.1
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.quality < 0.40)
+        #expect(evaluation.wireRatio < 1.0)
+    }
+
+    @Test("Same or smaller P-frame raises quality every frame")
+    func sameOrSmallerPFrameRaisesQualityEveryFrame() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 30_000,
+            wireBytes: 30_000,
+            packetCount: 23,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.30,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 29_000,
+            wireBytes: 29_000,
+            packetCount: 22,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.30,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.1
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .send)
+        #expect(decision.reason == .healthy)
+        #expect(decision.quality > 0.30)
+    }
+
+    @Test("Quality probe growth does not immediately cut quality")
+    func qualityProbeGrowthDoesNotImmediatelyCutQuality() {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 30_000,
+            wireBytes: 30_000,
+            packetCount: 23,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.30,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 34_000,
+            wireBytes: 34_000,
+            packetCount: 26,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.38,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.1
+        )
+
+        #expect(evaluation.admission == .send)
+        #expect(evaluation.budgetDecision == nil)
+    }
+
+    @Test("Large growth during quality probe still cuts next quality")
+    func largeGrowthDuringQualityProbeStillCutsNextQuality() throws {
+        var controller = HostAdaptivePFrameController()
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 30_000,
+            wireBytes: 30_000,
+            packetCount: 23,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: 60_000_000,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.30,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 42_000,
+            wireBytes: 42_000,
+            packetCount: 32,
+            isKeyframe: false,
+            receiverHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.38,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.1
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.quality < 0.38)
+    }
+
     @Test("Ceiling probes by five percent after hold-down")
     func ceilingProbesByFivePercentAfterHoldDown() throws {
         var controller = HostAdaptivePFrameController()
@@ -497,6 +677,25 @@ struct HostAdaptivePFrameControllerTests {
     func twelveKBToThirtyNineKBPFrameSendsAndCutsNextQuality() throws {
         var controller = HostAdaptivePFrameController()
         seedCleanBaseline(controller: &controller, wireBytes: 12 * 1024, packetCount: 10)
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 12 * 1024,
+            wireBytes: 12 * 1024,
+            packetCount: 10,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 60_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.9
+        )
 
         let evaluation = controller.evaluateEncodedFrame(
             byteCount: 39 * 1024,

@@ -111,6 +111,21 @@ struct HostAdaptivePFrameController: Equatable {
         )
     }
 
+    private struct PFrameSizeTrend: Equatable {
+        let hasPrevious: Bool
+        let grew: Bool
+        let qualityProbeGrowth: Bool
+        let ratio: Double
+
+        var contentGrowth: Bool {
+            grew && !qualityProbeGrowth
+        }
+
+        var allowsQualityRaise: Bool {
+            !grew || !hasPrevious
+        }
+    }
+
     private enum PFrameServiceState: Equatable {
         case excellent
         case acceptable
@@ -192,10 +207,12 @@ struct HostAdaptivePFrameController: Equatable {
     private static let pFrameSpikeMinimumRatio = 1.25
     private static let pFrameSpikeLogStepScale = 0.35
     private static let pFrameSpikePacketSlack = 8
-    private static let minimumRelativeQualityCutRatio = 1.15
     private static let smallAbsoluteOvershootBytes = 64 * 1024
     private static let adaptiveRepairTargetTolerance = 1.10
     private static let maximumImmediateOvershootRatio = 1.15
+    private static let qualityProbeGrowthTolerance: Float = 0.004
+    private static let qualityProbeGrowthMaximumRatio = 1.20
+    private static let contentGrowthMaximumQualityScale: Float = 0.96
 
     private(set) var latestFeedbackSequence: UInt64 = 0
     private(set) var runtimeCeilingBps: Int?
@@ -210,6 +227,9 @@ struct HostAdaptivePFrameController: Equatable {
     private(set) var adaptiveRepairTargetWireBytes: Int?
     private(set) var adaptiveRepairTargetPacketCount: Int?
     private(set) var holdDownUntil: CFAbsoluteTime = 0
+    private(set) var lastAdmittedPFrameWireBytes: Int?
+    private(set) var lastAdmittedPFramePacketCount: Int?
+    private(set) var lastAdmittedPFrameQuality: Float?
     private var latestCeilingDropTime: CFAbsoluteTime = 0
     private var lastProbeTime: CFAbsoluteTime = 0
     private var pendingCleanBaselineWireBytes: [Int] = []
@@ -370,18 +390,16 @@ struct HostAdaptivePFrameController: Equatable {
         }
 
         let spike = pFrameSpikeAssessment(wireBytes: wireBytes, packetCount: packetCount)
+        let trend = pFrameSizeTrend(wireBytes: wireBytes, packetCount: packetCount, currentQuality: currentQuality)
 
-        if wireBytes <= budget.operatingTargetWireBytes,
-           packetCount <= budget.operatingTargetPacketCount {
+        if wireBytes <= budget.ceilingWireBytes,
+           packetCount <= budget.ceilingPacketCount {
             let decision: HostFrameBudgetDecision?
-            if let baselineWireBytes = recentCleanPFrameBaselineWireBytes,
-               baselineWireBytes >= Self.minimumMeaningfulCleanBaselineSampleBytes,
-               spike.hasBaseline,
-               spike.ratio >= Self.minimumRelativeQualityCutRatio {
-                let nextQuality = nextRelativeSpikeQuality(
+            if trend.contentGrowth {
+                let nextQuality = nextContentGrowthQuality(
                     currentQuality: currentQuality,
                     qualityFloor: qualityFloor,
-                    relativeSpikeRatio: spike.ratio
+                    growthRatio: trend.ratio
                 )
                 decision = makeDecision(
                     input: input,
@@ -395,15 +413,18 @@ struct HostAdaptivePFrameController: Equatable {
                     quality: nextQuality,
                     now: now
                 )
-                return HostEncodedFrameAdmissionDecision(
+                return admittedPFrameDecision(
                     admission: .sendWithQualityDrop,
                     budgetDecision: decision,
                     sendDeadline: budget.sendDeadline,
                     byteRatio: byteRatio,
                     wireRatio: wireRatio,
-                    packetRatio: packetRatio
+                    packetRatio: packetRatio,
+                    wireBytes: wireBytes,
+                    packetCount: packetCount,
+                    currentQuality: currentQuality
                 )
-            } else if receiverHealthy {
+            } else if receiverHealthy, trend.allowsQualityRaise {
                 let raisedQuality = cleanPFrameQuality(
                     currentQuality: currentQuality,
                     qualityFloor: qualityFloor,
@@ -428,53 +449,31 @@ struct HostAdaptivePFrameController: Equatable {
             } else {
                 decision = nil
             }
-            return HostEncodedFrameAdmissionDecision(
+            return admittedPFrameDecision(
                 admission: .send,
                 budgetDecision: decision,
                 sendDeadline: budget.sendDeadline,
                 byteRatio: byteRatio,
                 wireRatio: wireRatio,
-                packetRatio: packetRatio
+                packetRatio: packetRatio,
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                currentQuality: currentQuality
             )
         }
 
-        if spike.hasBaseline, spike.ratio > 1.0 {
-            let nextQuality = nextRelativeSpikeQuality(
+        let nextQuality = trend.contentGrowth
+            ? nextContentGrowthQuality(
                 currentQuality: currentQuality,
                 qualityFloor: qualityFloor,
-                relativeSpikeRatio: spike.ratio
+                growthRatio: trend.ratio
             )
-            let decision = makeDecision(
-                input: input,
-                currentFrameRate: currentFrameRate,
-                maxPayloadSize: maxPayloadSize,
+            : nextOvershootQuality(
                 currentQuality: currentQuality,
                 qualityFloor: qualityFloor,
-                steadyQualityCeiling: steadyQualityCeiling,
-                state: spike.isMajor ? .severe : .pressured,
-                reason: .encodedFrame,
-                quality: nextQuality,
-                now: now
+                operatingTargetWireBytes: budget.operatingTargetWireBytes,
+                wireBytes: wireBytes
             )
-            if wireBytes <= budget.ceilingWireBytes,
-               packetCount <= budget.ceilingPacketCount {
-                return HostEncodedFrameAdmissionDecision(
-                    admission: .sendWithQualityDrop,
-                    budgetDecision: decision,
-                    sendDeadline: budget.sendDeadline,
-                    byteRatio: byteRatio,
-                    wireRatio: wireRatio,
-                    packetRatio: packetRatio
-                )
-            }
-        }
-
-        let nextQuality = nextOvershootQuality(
-            currentQuality: currentQuality,
-            qualityFloor: qualityFloor,
-            operatingTargetWireBytes: budget.operatingTargetWireBytes,
-            wireBytes: wireBytes
-        )
         let pressureState: PressureState = ceilingRatio > 1.50 || spike.isMajor ? .severe : .pressured
         let cutDecision = makeDecision(
             input: input,
@@ -525,13 +524,16 @@ struct HostAdaptivePFrameController: Equatable {
         }
 
         if immediateOvershootSafe || smallAbsoluteOvershoot || (!spike.isMajor && receiverHealthy && senderHealthy) {
-            return HostEncodedFrameAdmissionDecision(
+            return admittedPFrameDecision(
                 admission: .sendWithQualityDrop,
                 budgetDecision: cutDecision,
                 sendDeadline: budget.sendDeadline,
                 byteRatio: byteRatio,
                 wireRatio: wireRatio,
-                packetRatio: packetRatio
+                packetRatio: packetRatio,
+                wireBytes: wireBytes,
+                packetCount: packetCount,
+                currentQuality: currentQuality
             )
         }
 
@@ -552,13 +554,16 @@ struct HostAdaptivePFrameController: Equatable {
             )
         }
 
-        return HostEncodedFrameAdmissionDecision(
+        return admittedPFrameDecision(
             admission: .sendWithQualityDrop,
             budgetDecision: cutDecision,
             sendDeadline: budget.sendDeadline,
             byteRatio: byteRatio,
             wireRatio: wireRatio,
-            packetRatio: packetRatio
+            packetRatio: packetRatio,
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            currentQuality: currentQuality
         )
     }
 
@@ -705,39 +710,16 @@ struct HostAdaptivePFrameController: Equatable {
                 )
                 return nil
             }
-            holdDownUntil = max(holdDownUntil, now + serviceState.holdDownSeconds)
-            latestState = serviceState.pressureState
-            latestReason = .pFrameLatency
-            latestDecisionTime = now
             logCapacitySampleDecision(
                 sample: sample,
                 serviceState: serviceState,
                 currentFrameRate: currentFrameRate,
                 accepted: false,
-                quarantineReason: "slow-hold-only",
+                quarantineReason: "slow-observed",
                 oldCeiling: currentCeilingWireBytes(input: input, currentFrameRate: currentFrameRate),
                 newCeiling: currentCeilingWireBytes(input: input, currentFrameRate: currentFrameRate)
             )
-            return makeDecision(
-                input: input,
-                currentFrameRate: currentFrameRate,
-                maxPayloadSize: maxPayloadSize,
-                currentQuality: currentQuality,
-                qualityFloor: qualityFloor,
-                steadyQualityCeiling: steadyQualityCeiling,
-                state: serviceState.pressureState,
-                reason: .pFrameLatency,
-                quality: reducedQuality(
-                    currentQuality: currentQuality,
-                    qualityFloor: qualityFloor,
-                    qualityCeiling: runtimeQualityCeiling(
-                        steadyQualityCeiling: steadyQualityCeiling,
-                        state: serviceState.pressureState
-                    ),
-                    ratio: serviceState.qualityRatio
-                ),
-                now: now
-            )
+            return nil
 
         case .bad,
              .severe:
@@ -898,6 +880,9 @@ struct HostAdaptivePFrameController: Equatable {
     mutating func resetEncodedOvershootHistory() {
         adaptiveRepairTargetWireBytes = nil
         adaptiveRepairTargetPacketCount = nil
+        lastAdmittedPFrameWireBytes = nil
+        lastAdmittedPFramePacketCount = nil
+        lastAdmittedPFrameQuality = nil
     }
 
     private mutating func setAdaptiveRepairTarget(
@@ -1054,6 +1039,59 @@ struct HostAdaptivePFrameController: Equatable {
         )
     }
 
+    private func pFrameSizeTrend(
+        wireBytes: Int,
+        packetCount: Int,
+        currentQuality: Float
+    ) -> PFrameSizeTrend {
+        guard let previousWireBytes = lastAdmittedPFrameWireBytes,
+              let previousPacketCount = lastAdmittedPFramePacketCount else {
+            return PFrameSizeTrend(
+                hasPrevious: false,
+                grew: false,
+                qualityProbeGrowth: false,
+                ratio: 1.0
+            )
+        }
+        let wireRatio = Double(max(1, wireBytes)) / Double(max(1, previousWireBytes))
+        let packetRatio = Double(max(1, packetCount)) / Double(max(1, previousPacketCount))
+        let ratio = max(1.0, max(wireRatio, packetRatio))
+        let grew = wireBytes > previousWireBytes || packetCount > previousPacketCount
+        let qualityProbeGrowth = grew &&
+            currentQuality > (lastAdmittedPFrameQuality ?? currentQuality) + Self.qualityProbeGrowthTolerance &&
+            ratio <= Self.qualityProbeGrowthMaximumRatio
+        return PFrameSizeTrend(
+            hasPrevious: true,
+            grew: grew,
+            qualityProbeGrowth: qualityProbeGrowth,
+            ratio: ratio
+        )
+    }
+
+    private mutating func admittedPFrameDecision(
+        admission: HostEncodedFrameAdmission,
+        budgetDecision: HostFrameBudgetDecision?,
+        sendDeadline: CFAbsoluteTime,
+        byteRatio: Double,
+        wireRatio: Double,
+        packetRatio: Double,
+        wireBytes: Int,
+        packetCount: Int,
+        currentQuality: Float
+    ) -> HostEncodedFrameAdmissionDecision {
+        lastAdmittedPFrameWireBytes = max(0, wireBytes)
+        lastAdmittedPFramePacketCount = max(0, packetCount)
+        lastAdmittedPFrameQuality = currentQuality
+        return HostEncodedFrameAdmissionDecision(
+            admission: admission,
+            budgetDecision: budgetDecision,
+            sendDeadline: sendDeadline,
+            byteRatio: byteRatio,
+            wireRatio: wireRatio,
+            packetRatio: packetRatio
+        )
+    }
+
     private func receiverPressure(
         feedback: ReceiverMediaFeedbackMessage
     ) -> (state: PressureState, reason: Reason, cutsCeiling: Bool, holdDownSeconds: CFAbsoluteTime, qualityRatio: Double) {
@@ -1105,12 +1143,12 @@ struct HostAdaptivePFrameController: Equatable {
         return max(qualityFloor, currentQuality * scale)
     }
 
-    private func nextRelativeSpikeQuality(
+    private func nextContentGrowthQuality(
         currentQuality: Float,
         qualityFloor: Float,
-        relativeSpikeRatio: Double
+        growthRatio: Double
     ) -> Float {
-        let scale = Float(min(0.85, max(0.08, 1.0 / max(1.0, relativeSpikeRatio))))
+        let scale = Float(min(Double(Self.contentGrowthMaximumQualityScale), max(0.08, 1.0 / max(1.0, growthRatio))))
         return max(qualityFloor, currentQuality * scale)
     }
 
