@@ -65,7 +65,13 @@ extension VideoDecoder {
         MirageLogger.decoder("Decoder reset for new session - awaiting fresh keyframe")
     }
 
-    func decodeFrame(_ data: Data, presentationTime: CMTime, isKeyframe: Bool, contentRect: CGRect) async throws {
+    func decodeFrame(
+        _ data: Data,
+        presentationTime: CMTime,
+        isKeyframe: Bool,
+        frameNumber: UInt32? = nil,
+        contentRect: CGRect
+    ) async throws {
         guard isDecoding else { return }
 
         // CRITICAL: When awaiting dimension change, discard ALL P-frames.
@@ -99,7 +105,7 @@ extension VideoDecoder {
                 let keyframeHeader = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
                 MirageLogger.decoder("Keyframe header: \(keyframeHeader)")
             }
-            let result = try extractFormatDescriptionAndStripParameterSets(from: data)
+            let result = try extractFormatDescriptionAndStripParameterSets(from: data, frameNumber: frameNumber)
             frameData = result
             if shouldLogDecoderDiagnostics {
                 let strippedHeader = frameData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")

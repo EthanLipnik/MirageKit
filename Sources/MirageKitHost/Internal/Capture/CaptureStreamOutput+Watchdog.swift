@@ -16,7 +16,7 @@ import ScreenCaptureKit
 // MARK: - Watchdog and Stall Recovery
 
 extension CaptureStreamOutput {
-    /// Check if SCK has stopped delivering frames and trigger fallback
+    /// Checks capture gaps. Display capture gaps after a delivered frame are treated as dynamic idle.
     func checkForFrameGap() {
         let now = CFAbsoluteTimeGetCurrent()
         let (lastDeliveredFrameTime, lastCompleteFrameTime) = deliveryStateLock.withLock {
@@ -41,15 +41,26 @@ extension CaptureStreamOutput {
         let gap = useCompleteGap ? completeGap : anyGap
         guard gap > gapThreshold else { return }
 
-        // SCK has stopped delivering - mark fallback mode
-        markFallbackModeForGap()
-
         let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
         let softMs = (softLimit * 1000).formatted(.number.precision(.fractionLength(1)))
         let hardMs = (hardLimit * 1000).formatted(.number.precision(.fractionLength(1)))
         let completeGapMs = (completeGap * 1000).formatted(.number.precision(.fractionLength(1)))
         let anyGapMs = (anyGap * 1000).formatted(.number.precision(.fractionLength(1)))
         let mode = useCompleteGap ? "content" : "any"
+
+        if windowID == 0 {
+            logDynamicSCKIdleGapIfNeeded(
+                now: now,
+                gapMs: gapMs,
+                completeGapMs: completeGapMs,
+                anyGapMs: anyGapMs,
+                thresholdMs: (gapThreshold * 1000).formatted(.number.precision(.fractionLength(1))),
+                mode: mode
+            )
+            return
+        }
+
+        markFallbackModeForGap()
 
         var shouldEmitSoftStall = false
         if gap > softLimit {
@@ -97,7 +108,30 @@ extension CaptureStreamOutput {
         }
     }
 
-    /// Mark fallback mode when SCK stops delivering frames.
+    /// Logs dynamic ScreenCaptureKit display idleness without treating it as capture failure.
+    func logDynamicSCKIdleGapIfNeeded(
+        now: CFAbsoluteTime,
+        gapMs: String,
+        completeGapMs: String,
+        anyGapMs: String,
+        thresholdMs: String,
+        mode: String
+    ) {
+        var shouldLog = false
+        deliveryStateLock.withLock {
+            if now - lastDynamicSCKIdleLogTime >= 2.0 {
+                lastDynamicSCKIdleLogTime = now
+                shouldLog = true
+            }
+        }
+        guard shouldLog else { return }
+        MirageLogger.capture(
+            "event=dynamic_sck_idle gapMs=\(gapMs) completeGapMs=\(completeGapMs) " +
+                "anyGapMs=\(anyGapMs) thresholdMs=\(thresholdMs) mode=\(mode)"
+        )
+    }
+
+    /// Mark fallback mode when window capture stops delivering frames.
     func markFallbackModeForGap() {
         // Mark that we're in fallback mode and record start time
         fallbackLock.lock()
@@ -152,36 +186,22 @@ extension CaptureStreamOutput {
 
         let fallbackMs = Int((fallbackDuration * 1000).rounded())
         let gapThreshold = expectationLock.withLock { frameGapThreshold }
-        let requiredDuration = Self.fallbackResumeKeyframeThreshold(
-            frameGapThreshold: gapThreshold,
-            minimumThreshold: Self.keyframeThreshold,
-            multiplier: Self.fallbackResumeKeyframeGapMultiplier
-        )
-        let requiredMs = Int((requiredDuration * 1000).rounded())
+        let thresholdMs = Int((gapThreshold * 1000).rounded())
         let fallbackMsText = "\(fallbackMs)"
-        let requiredMsText = "\(requiredMs)"
+        let thresholdMsText = "\(thresholdMs)"
         onCaptureStall(
             StallSignal(
                 stage: .resumed,
                 message: "stall resumed after \(fallbackMs)ms",
                 gapMs: fallbackMsText,
-                softThresholdMs: requiredMsText,
-                hardThresholdMs: requiredMsText,
+                softThresholdMs: thresholdMsText,
+                hardThresholdMs: thresholdMsText,
                 restartEligible: false
             )
         )
-        if fallbackDuration > requiredDuration {
-            onKeyframeRequest(.fallbackResume)
-            MirageLogger
-                .capture(
-                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=scheduled thresholdMs=\(requiredMs)"
-                )
-        } else {
-            MirageLogger
-                .capture(
-                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=skipped thresholdMs=\(requiredMs)"
-                )
-        }
+        MirageLogger.capture(
+            "event=stall_resumed durationMs=\(fallbackMs) keyframe=skipped_dynamic_capture thresholdMs=\(thresholdMs)"
+        )
     }
 }
 

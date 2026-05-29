@@ -312,45 +312,6 @@ extension SharedVirtualDisplayManager {
         }
     }
 
-    /// Reapplies the tracked mode for a consumer when the OS reports display drift.
-    ///
-    /// This is used after OS display state changes where the display still exists but its mode may need to be
-    /// reasserted. Returns the updated snapshot when the in-place update succeeds.
-    func reassertDisplayMode(for consumer: DisplayConsumer) async -> DisplaySnapshot? {
-        guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
-        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
-        guard let updatedDisplay = await updateDisplayInPlace(
-            display: display,
-            newResolution: display.resolution,
-            refreshRate: refreshRate,
-            colorSpace: display.colorSpace
-        ) else {
-            return nil
-        }
-        sharedDisplay = updatedDisplay
-        syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-        return snapshot(from: updatedDisplay)
-    }
-
-    /// Restarts the driver backing a consumer when cadence validation indicates the display is not ticking natively.
-    ///
-    /// The display snapshot is unchanged; the returned value confirms the consumer and display were still active.
-    func restartCadenceDriver(
-        for consumer: DisplayConsumer,
-        strength: VirtualDisplayKeepalive.Strength = .normal
-    ) async -> DisplaySnapshot? {
-        guard activeConsumers[consumer] != nil, let display = sharedDisplay else { return nil }
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.restart(
-                displayID: display.displayID,
-                spaceID: display.spaceID,
-                refreshRate: display.refreshRate,
-                strength: strength
-            )
-        }
-        return snapshot(from: display)
-    }
-
     /// Samples Core Graphics display timing and decides whether the shared display is using native cadence.
     func validateDisplayCadence(
         _ snapshot: DisplaySnapshot,
@@ -396,37 +357,6 @@ extension SharedVirtualDisplayManager {
             "Virtual display cadence validation for display \(snapshot.displayID): \(validation.logLabel)"
         )
         return validation
-    }
-
-    /// Recreates a display with a stricter profile after cadence validation fails.
-    func recreateDisplayForCadenceRecovery(
-        for consumer: DisplayConsumer
-    )
-    async throws -> DisplayResolutionUpdateResult {
-        guard let consumerInfo = activeConsumers[consumer], let display = sharedDisplay else {
-            return DisplayResolutionUpdateResult(
-                outcome: .noChange,
-                generationChanged: false
-            )
-        }
-
-        let previousGeneration = display.generation
-        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: Int(display.refreshRate.rounded()))
-        sharedDisplay = try await recreateDisplay(
-            newResolution: display.resolution,
-            refreshRate: refreshRate,
-            colorSpace: consumerInfo.colorSpace,
-            preferFastRecreate: false
-        )
-        if let updatedDisplay = sharedDisplay {
-            syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
-        }
-        let generationChanged = (sharedDisplay?.generation ?? previousGeneration) != previousGeneration
-        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-        return DisplayResolutionUpdateResult(
-            outcome: .recreated,
-            generationChanged: generationChanged
-        )
     }
 
 }

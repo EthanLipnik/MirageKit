@@ -66,7 +66,7 @@ extension VideoDecoder {
         )
     }
 
-    func setDimensionChangeHandler(_ handler: @escaping @Sendable () -> Void) {
+    func setDimensionChangeHandler(_ handler: @escaping @Sendable (_ frameNumber: UInt32?) -> Void) {
         onDimensionChange = handler
     }
 

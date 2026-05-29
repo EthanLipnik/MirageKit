@@ -92,12 +92,10 @@ extension StreamPacketSender {
     nonisolated static let maxReliableQueuedBytes: Int = 192 * 1024 * 1024
 
     enum DependencyFrameDropReason: String, Sendable {
-        case expiredBeforeEnqueue = "expired-before-enqueue"
-        case expiredBeforeSend = "expired-before-send"
-        case expiredQueuedFrame = "expired-queued-frame"
         case generationAbort = "generation-abort"
         case oversizedFrame = "oversized-frame"
         case queueEviction = "queue-eviction"
+        case staleChain = "stale-chain"
     }
 
     /// Optional pacing override for one frame.
@@ -175,6 +173,10 @@ extension StreamPacketSender {
     /// Snapshot of sender delay, pacing, and drop telemetry for one reporting window.
     struct TelemetrySnapshot {
         let queuedBytes: Int
+        let unstartedPFrameCount: Int
+        let oldestUnstartedPFrameAgeMs: Double
+        let oldestUnstartedPFrameLatenessMs: Double
+        let lateReservedPFrameStreak: Int
         let sendStartDelayAverageMs: Double
         let sendStartDelayMaxMs: Double
         let sendCompletionAverageMs: Double
@@ -187,8 +189,50 @@ extension StreamPacketSender {
         let packetPacerFrameMaxSleepMs: Int
         let stalePacketDrops: UInt64
         let senderLocalDeadlineDrops: UInt64
+        let lateNonKeyframeSends: UInt64
         let generationAbortDrops: UInt64
         let nonKeyframeHoldDrops: UInt64
+    }
+
+    /// Current sender freshness state read before host-side encode/reservation.
+    struct FreshnessSnapshot: Sendable, Equatable {
+        let queuedBytes: Int
+        let unstartedPFrameCount: Int
+        let oldestUnstartedPFrameAgeMs: Double
+        let oldestUnstartedPFrameLatenessMs: Double
+        let lateReservedPFrameStreak: Int
+
+        func shouldHoldPFrameReservation(frameRate: Int) -> Bool {
+            guard unstartedPFrameCount > 0 else { return false }
+            let frameIntervalMs = 1_000.0 / Double(max(1, frameRate))
+            return unstartedPFrameCount > 1 ||
+                oldestUnstartedPFrameAgeMs > frameIntervalMs * 1.5 ||
+                oldestUnstartedPFrameLatenessMs > 0 ||
+                lateReservedPFrameStreak > 0
+        }
+    }
+
+    /// Per-frame transport completion evidence used by host-owned realtime budgeting.
+    struct FrameTransportCompletion: Sendable, Equatable {
+        let streamID: StreamID
+        let frameNumber: UInt32
+        let isKeyframe: Bool
+        let didSend: Bool
+        let frameByteCount: Int
+        let wireBytes: Int
+        let packetCount: Int
+        let dimensionToken: UInt16
+        let encodedAt: CFAbsoluteTime
+        let startedAt: CFAbsoluteTime
+        let completedAt: CFAbsoluteTime
+
+        var sendCompletionMs: Double {
+            max(0, (completedAt - encodedAt) * 1000)
+        }
+
+        var transportDurationMs: Double {
+            max(0, (completedAt - startedAt) * 1000)
+        }
     }
 
     /// Sleep totals accumulated while pacing packet sends.

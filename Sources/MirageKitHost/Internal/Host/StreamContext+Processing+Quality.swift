@@ -125,19 +125,9 @@ extension StreamContext {
         let smoothnessFirstMode = latencyMode == .smoothest
         let increaseThreshold = smoothnessFirstMode ? 1.02 : 1.10
         let decreaseThreshold = smoothnessFirstMode ? 0.90 : 0.80
-        let hasFreshReceiverFeedback = lastReceiverFeedbackTime > 0 && now - lastReceiverFeedbackTime <= 2.5
-        let receiverHealthy = !smoothnessFirstMode || !hasFreshReceiverFeedback || (
-            receiverPresentationBacklogFrames <= (currentFrameRate >= 90 ? 2 : 1) &&
-                receiverAcceptedFPS >= Double(currentFrameRate) * 0.85 &&
-                receiverPresentedFPS >= Double(currentFrameRate) * 0.85
-        )
-        let receiverUnderRun = smoothnessFirstMode &&
-            hasFreshReceiverFeedback &&
-            receiverPresentedFPS > 0 &&
-            receiverPresentedFPS < Double(currentFrameRate) * 0.75
-        if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 || receiverUnderRun {
+        if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
             desired = min(maxInFlightFrames + 1, maxInFlightFramesCap)
-        } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0, receiverHealthy {
+        } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
             desired = max(maxInFlightFrames - 1, minInFlightFrames)
         }
 
@@ -169,12 +159,13 @@ extension StreamContext {
                 packetRatio: 0
             )
         }
-        let decision = frameBudgetController.evaluateEncodedFrame(
+        let decision = adaptivePFrameController.evaluateEncodedFrame(
             byteCount: byteCount,
             wireBytes: wireBytes,
             packetCount: packetCount,
             isKeyframe: isKeyframe,
             isRecoveryKeyframe: isKeyframe && keyframeUsesEmergencyBudget,
+            adaptiveKeyframeAllowed: !isRecoveryKeyframeCooldownActive(now: now),
             receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
             senderHealthy: await senderFrameBudgetIsHealthy(now: now),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
@@ -188,7 +179,7 @@ extension StreamContext {
             steadyQualityCeiling: steadyQualityCeiling,
             now: now
         )
-        if let budgetDecision = decision.budgetDecision {
+        if !isKeyframe, let budgetDecision = decision.budgetDecision {
             await applyFrameBudgetDecision(budgetDecision, now: now)
         }
         return decision
@@ -198,136 +189,63 @@ extension StreamContext {
         pendingEmergencyKeyframeQuality != nil || frameChainState != .normal
     }
 
-    func handleDroppedEncodedFrameForBudget(
+    func handleDroppedPFrameForTransportBudget(
         byteCount: Int,
+        wireBytes: Int,
+        packetCount: Int,
         evaluation: HostEncodedFrameAdmissionDecision,
         encodedAt now: CFAbsoluteTime
     ) async {
         droppedFrameCount += 1
         startFrameChainRepair(
-            reason: "encoded-frame-over-budget",
+            reason: "transport-p-frame-over-budget",
             now: now
-        )
-        qualityRaiseSuppressionUntil = max(
-            qualityRaiseSuppressionUntil,
-            now + qualityRaisePostSpikeCooldown
         )
         await noteEmergencyKeyframePrepared(using: evaluation.budgetDecision)
         await scheduleEmergencyChainRepairKeyframe(
-            reason: "Encoded-frame budget recovery",
-            bypassesRecoveryCooldown: recoveryCauseBypassesAdaptiveKeyframeCooldown(latestReceiverRecoveryCause),
+            reason: "Transport P-frame chain repair",
+            bypassesRecoveryCooldown: false,
             now: now
         )
-        let budgetBytes = encodedFrameBudgetBytes() ?? 0
-        let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
-        logDroppedEncodedFrameForBudgetIfNeeded(
+        logAdaptivePFrameAdmissionIfNeeded(
+            frameNumber: nil,
             byteCount: byteCount,
-            budgetBytes: budgetBytes,
-            ratio: ratio,
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            evaluation: evaluation,
+            action: "drop-chain-repair",
             now: now
         )
     }
 
-    func handleDroppedKeyframeForBudget(
+    func handleDroppedRecoveryKeyframeForTransportBudget(
         byteCount: Int,
+        wireBytes: Int,
+        packetCount: Int,
         evaluation: HostEncodedFrameAdmissionDecision,
         encodedAt now: CFAbsoluteTime
     ) async {
         droppedFrameCount += 1
-        startFrameChainRepair(
-            reason: "encoded-keyframe-over-budget",
+        await noteEmergencyKeyframePrepared(using: evaluation.budgetDecision)
+        let didLowerScale = await advanceEmergencyRecoveryScaleIfPossible(
+            reason: "adaptive-repair-keyframe-over-budget",
             now: now
         )
-        qualityRaiseSuppressionUntil = max(
-            qualityRaiseSuppressionUntil,
-            now + qualityRaisePostSpikeCooldown
+        scheduleFrameChainRepairKeyframeRetry(
+            reason: didLowerScale
+                ? "Adaptive repair keyframe retry after scale change"
+                : "Adaptive repair keyframe over budget",
+            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
         )
-        if keyframeUsesEmergencyBudget {
-            await advanceEmergencyRecoveryScaleIfPossible(
-                reason: "encoded-keyframe-over-budget",
-                now: now
-            )
-        }
-        await lowerEmergencyKeyframeQuality(using: evaluation.budgetDecision)
-        await scheduleEmergencyChainRepairKeyframe(
-            reason: "Encoded keyframe budget recovery",
-            bypassesRecoveryCooldown: recoveryCauseBypassesAdaptiveKeyframeCooldown(latestReceiverRecoveryCause),
-            now: now
-        )
-        let budgetBytes = encodedFrameBudgetBytes() ?? 0
-        let ratio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
-        logDroppedEncodedFrameForBudgetIfNeeded(
+        logAdaptivePFrameAdmissionIfNeeded(
+            frameNumber: nil,
             byteCount: byteCount,
-            budgetBytes: budgetBytes,
-            ratio: ratio,
+            wireBytes: wireBytes,
+            packetCount: packetCount,
+            evaluation: evaluation,
+            action: "drop-keyframe-retry",
             now: now
         )
-    }
-
-    /// Applies runtime encoder quality changes using queue pressure and encode timing.
-    func adjustQualityForQueue(queueBytes: Int) async {
-        guard let encoder else { return }
-        guard runtimeQualityAdjustmentEnabled else { return }
-        qualityCeiling = resolvedQualityCeiling
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-            await encoder.updateQuality(activeQuality)
-        }
-        let now = CFAbsoluteTimeGetCurrent()
-        if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
-
-        let transportOverBudget = queueBytes > queuePressureBytes
-        let allowsRaise = false
-        let allowTransportQualityRelief = true
-        let baseDropThreshold = qualityDropThreshold
-        let baseDropStep = qualityDropStep
-
-        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
-            state: MirageRuntimeQualityAdjustmentState(
-                activeQuality: activeQuality,
-                qualityOverBudgetCount: qualityOverBudgetCount,
-                qualityUnderBudgetCount: qualityUnderBudgetCount
-            ),
-            qualityFloor: qualityFloor,
-            qualityCeiling: qualityCeiling,
-            transportOverBudget: transportOverBudget,
-            encodedFrameUnderBudget: false,
-            allowsRaise: allowsRaise,
-            allowTransportQualityRelief: allowTransportQualityRelief,
-            qualityDropThreshold: baseDropThreshold,
-            qualityRaiseThreshold: qualityRaiseThreshold,
-            qualityDropStep: baseDropStep,
-            qualityRaiseStep: qualityRaiseStep
-        )
-
-        let previousQuality = activeQuality
-        activeQuality = decision.state.activeQuality
-        qualityOverBudgetCount = decision.state.qualityOverBudgetCount
-        qualityUnderBudgetCount = decision.state.qualityUnderBudgetCount
-
-        switch decision.action {
-        case .hold:
-            return
-
-        case let .drop(reason):
-            guard activeQuality < previousQuality else { return }
-            qualityRaiseSuppressionUntil = max(qualityRaiseSuppressionUntil, now + qualityRaisePostSpikeCooldown)
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.metrics(
-                "Quality down to \(qualityText) (queue \(queueBytes / 1024)KB, reason=\(reason))"
-            )
-
-        case .raise:
-            guard activeQuality > previousQuality else { return }
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.metrics(
-                "Quality up to \(qualityText) (queue \(queueBytes / 1024)KB)"
-            )
-        }
     }
 
     private func encodedFrameBudgetBytes() -> Double? {
@@ -340,14 +258,14 @@ extension StreamContext {
         return max(1.0, Double(targetBitrate) / 8.0 / Double(max(1, currentFrameRate)))
     }
 
-    private func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
+    func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
         guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
-        if receiverPresentationBacklogFrames > 1 { return false }
         if receiverReassemblyBacklogFrames > 2 { return false }
         if receiverReassemblyBacklogBytes > 650_000 { return false }
-        if receiverDecodeBacklogFrames > 1 { return false }
+        if receiverDecodeBacklogFrames > 2 { return false }
+        if receiverPresentationBacklogFrames > 3 { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
         let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
         if let receiverAckLagMs,
@@ -359,6 +277,52 @@ extension StreamContext {
         return true
     }
 
+    func receiverFrameBudgetCanLearnCapacity(now: CFAbsoluteTime) -> Bool {
+        guard receiverFrameBudgetIsHealthy(now: now) else { return false }
+        if startupTransportProtectionDeadline > now { return false }
+        if receiverCapacityLearningQuarantineUntil > now { return false }
+        return true
+    }
+
+    func receiverFrameBudgetCapacityLearningQuarantineReason(now: CFAbsoluteTime) -> String? {
+        if startupTransportProtectionDeadline > now { return "startup" }
+        if receiverCapacityLearningQuarantineUntil > now {
+            return receiverCapacityLearningQuarantineReason ?? "receiver-quarantine"
+        }
+        if frameChainState != .normal { return "chain-repair" }
+        if realtimePressureState == .recovery { return "host-recovery" }
+        if receiverDecodeBacklogFrames > 2 { return "decode-backlog" }
+        if receiverPresentationBacklogFrames > 3 { return "presentation-backlog" }
+        if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return "receiver-loss" }
+        if receiverReassemblyBacklogFrames > 2 || receiverReassemblyBacklogBytes > 650_000 { return "reassembly-backlog" }
+        return nil
+    }
+
+    func updateReceiverCapacityLearningQuarantine(
+        _ feedback: ReceiverMediaFeedbackMessage,
+        now: CFAbsoluteTime
+    ) {
+        let decodeDepth = feedback.decodeQueueDepth ?? feedback.decodeBacklogFrames
+        let presentationDepth = feedback.presentationQueueDepth ?? feedback.presentationBacklogFrames
+        let reason: String? = if feedback.recoveryState != .idle {
+            "recovery-\(feedback.recoveryState.rawValue)"
+        } else if feedback.recoveryCause == .memoryBudget || decodeDepth > 2 {
+            "decode-backlog"
+        } else if presentationDepth > 3 || (feedback.presentationStallCount ?? 0) > 0 {
+            "presentation-backlog"
+        } else {
+            nil
+        }
+        guard let reason else {
+            if receiverCapacityLearningQuarantineUntil <= now {
+                receiverCapacityLearningQuarantineReason = nil
+            }
+            return
+        }
+        receiverCapacityLearningQuarantineUntil = max(receiverCapacityLearningQuarantineUntil, now + 0.5)
+        receiverCapacityLearningQuarantineReason = reason
+    }
+
     private func senderFrameBudgetIsHealthy(now: CFAbsoluteTime) async -> Bool {
         guard let packetSender else { return true }
         let telemetry = await packetSender.telemetrySnapshot
@@ -366,27 +330,79 @@ extension StreamContext {
         if telemetry.nonKeyframeHoldDrops > 0 { return false }
         if telemetry.queuedBytes > queuePressureBytes { return false }
         let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
-        let hardTransportBudgetMs = frameBudgetMs * 2.0
-        if telemetry.nonKeyframeSendStartDelayMaxMs > hardTransportBudgetMs { return false }
-        if telemetry.nonKeyframeSendCompletionMaxMs > hardTransportBudgetMs { return false }
-        if telemetry.packetPacerFrameMaxSleepMs > Int(hardTransportBudgetMs.rounded(.up)) { return false }
+        let hardPacerBudgetMs = frameBudgetMs * 3.0
+        if telemetry.packetPacerFrameMaxSleepMs > Int(hardPacerBudgetMs.rounded(.up)) { return false }
         return true
     }
 
-    private func logDroppedEncodedFrameForBudgetIfNeeded(
+    func applyFrameTransportBudgetFeedback(
+        _ completion: StreamPacketSender.FrameTransportCompletion,
+        now: CFAbsoluteTime
+    ) async {
+        guard runtimeQualityAdjustmentEnabled, completion.didSend else { return }
+        let decision = adaptivePFrameController.recordFrameTransportCompletion(
+            frameNumber: UInt64(completion.frameNumber),
+            wireBytes: completion.wireBytes,
+            packetCount: completion.packetCount,
+            isKeyframe: completion.isKeyframe,
+            sendCompletionMs: completion.sendCompletionMs,
+                timingSource: .localSendCompletion,
+                receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+                capacityLearningAllowed: false,
+                capacityLearningQuarantineReason: "local-send-completion",
+                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            requestedTargetBitrateBps: requestedTargetBitrate,
+            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+            currentFrameRate: currentFrameRate,
+            maxPayloadSize: maxPayloadSize,
+            currentQuality: activeQuality,
+            qualityFloor: qualityFloor,
+            steadyQualityCeiling: steadyQualityCeiling,
+            now: now
+        )
+        guard let decision else { return }
+        await applyFrameBudgetDecision(decision, now: now)
+    }
+
+    func logAdaptivePFrameAdmissionIfNeeded(
+        frameNumber: UInt32?,
         byteCount: Int,
-        budgetBytes: Double,
-        ratio: Double,
+        wireBytes: Int,
+        packetCount: Int,
+        evaluation: HostEncodedFrameAdmissionDecision,
+        action: String,
         now: CFAbsoluteTime
     ) {
         guard now - encodedFrameQualityLastLogTime >= 0.5 else { return }
         encodedFrameQualityLastLogTime = now
-        let budgetKB = (budgetBytes / 1024.0).formatted(.number.precision(.fractionLength(1)))
+        let activeWireBudget = evaluation.wireRatio > 0
+            ? Double(wireBytes) / evaluation.wireRatio
+            : (encodedFrameBudgetBytes() ?? 0)
+        let activePacketBudget = evaluation.packetRatio > 0
+            ? Double(packetCount) / evaluation.packetRatio
+            : 0
+        let baselineWireBytes = adaptivePFrameController.recentCleanPFrameBaselineWireBytes
+        let baselinePackets = adaptivePFrameController.recentCleanPFrameBaselinePacketCount
+        let allowedRatio = baselineWireBytes.map(HostAdaptivePFrameController.allowedPFrameSpikeRatio)
+        let absoluteRatio = max(evaluation.byteRatio, max(evaluation.wireRatio, evaluation.packetRatio))
+        let frameText = frameNumber.map(String.init) ?? "unreserved"
+        let budgetKB = (activeWireBudget / 1024.0).formatted(.number.precision(.fractionLength(1)))
         let frameKB = (Double(byteCount) / 1024.0).formatted(.number.precision(.fractionLength(1)))
-        let ratioText = ratio.formatted(.number.precision(.fractionLength(2)))
+        let wireKB = (Double(wireBytes) / 1024.0).formatted(.number.precision(.fractionLength(1)))
+        let ratioText = absoluteRatio.formatted(.number.precision(.fractionLength(2)))
+        let baselineText = baselineWireBytes.map {
+            (Double($0) / 1024.0).formatted(.number.precision(.fractionLength(1))) + "KB"
+        } ?? "none"
+        let baselinePacketText = baselinePackets.map(String.init) ?? "none"
+        let allowedText = allowedRatio?.formatted(.number.precision(.fractionLength(2))) ?? "none"
+        let packetBudgetText = activePacketBudget.formatted(.number.precision(.fractionLength(1)))
         MirageLogger.metrics(
-            "Dropped encoded frame over budget before send " +
-                "(frame=\(frameKB)KB budget=\(budgetKB)KB ratio=\(ratioText))"
+            "event=adaptive_p_frame_admission action=\(action) frame=\(frameText) " +
+                "frameBytes=\(frameKB) wireBytes=\(wireKB) packets=\(packetCount) " +
+                "activeWireBudget=\(budgetKB) activePacketBudget=\(packetBudgetText) " +
+                "cleanBaseline=\(baselineText) cleanBaselinePackets=\(baselinePacketText) " +
+                "allowedLogRatio=\(allowedText) absoluteRatio=\(ratioText)"
         )
     }
 

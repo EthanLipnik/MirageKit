@@ -22,8 +22,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     var onAudio: (@Sendable (CapturedAudioBuffer) -> Void)?
     /// Protects audio-handler swaps from concurrent SCK callbacks.
     let audioHandlerLock = NSLock()
-    /// Callback used to request a recovery keyframe after capture stalls or discontinuities.
-    let onKeyframeRequest: @Sendable (KeyframeRequestReason) -> Void
     /// Callback used to report soft and hard capture stalls.
     let onCaptureStall: @Sendable (StallSignal) -> Void
     /// Optional admission gate that can drop frames while the stream is intentionally throttled.
@@ -55,10 +53,12 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     var hardStallSignaled: Bool = false
     /// Last wall-clock time a stall signal was emitted.
     var lastStallTime: CFAbsoluteTime = 0
+    /// Last wall-clock time a dynamic display-idle gap was logged.
+    var lastDynamicSCKIdleLogTime: CFAbsoluteTime = 0
     /// Last delivered content rect, used to detect geometry changes.
     var lastContentRect: CGRect = .zero
 
-    /// Timer that detects capture gaps when SCK pauses during menus, drags, or window transitions.
+    /// Timer that reports capture gaps. Display captures may be idle when no content changes.
     var watchdogTimer: DispatchSourceTimer?
     /// Queue that runs watchdog checks off the SCK callback path.
     let watchdogQueue = DispatchQueue(label: "com.mirage.capture.watchdog", qos: .userInteractive)
@@ -131,7 +131,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     init(
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
-        onKeyframeRequest: @escaping @Sendable (KeyframeRequestReason) -> Void,
         onCaptureStall: @escaping @Sendable (StallSignal) -> Void,
         shouldDropFrame: (@Sendable () -> Bool)? = nil,
         windowID: CGWindowID = 0,
@@ -145,7 +144,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     ) {
         self.onFrame = onFrame
         self.onAudio = onAudio
-        self.onKeyframeRequest = onKeyframeRequest
         self.onCaptureStall = onCaptureStall
         self.shouldDropFrame = shouldDropFrame
         self.windowID = windowID
@@ -173,7 +171,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         onAudio = handler
     }
 
-    /// Starts the watchdog timer that checks for frame gaps.
+    /// Starts the watchdog timer that checks for capture gaps.
     private func startWatchdogTimer() {
         let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
         let initialDelayMs = expectationLock.withLock { max(50, Int(frameGapThreshold * 1000)) }
@@ -184,7 +182,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         timer.resume()
         watchdogTimer = timer
         let thresholdMs = expectationLock.withLock { Int(frameGapThreshold * 1000) }
-        MirageLogger.capture("Frame gap watchdog started (\(thresholdMs)ms threshold, 50ms check interval)")
+        MirageLogger.capture("Capture gap watchdog started (\(thresholdMs)ms threshold, 50ms check interval)")
     }
 
     /// Stops the capture gap watchdog.

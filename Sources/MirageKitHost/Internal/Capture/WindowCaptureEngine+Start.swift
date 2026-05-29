@@ -140,9 +140,6 @@ extension WindowCaptureEngine {
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
             onAudio: onAudio,
-            onKeyframeRequest: { [weak self] reason in
-                self?.enqueueKeyframeRequest(reason)
-            },
             onCaptureStall: { [weak self] signal in
                 self?.enqueueCaptureStallSignal(signal)
             },
@@ -362,9 +359,6 @@ extension WindowCaptureEngine {
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
             onAudio: onAudio,
-            onKeyframeRequest: { [weak self] reason in
-                self?.enqueueKeyframeRequest(reason)
-            },
             onCaptureStall: { [weak self] signal in
                 self?.enqueueCaptureStallSignal(signal)
             },

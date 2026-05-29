@@ -79,6 +79,11 @@ final class FrameReassembler: @unchecked Sendable {
         let latencyMs: Double
     }
 
+    struct PendingPFrameTimingSample: Sendable, Equatable {
+        let frameNumber: UInt32
+        let assemblyLatencyMs: Double
+    }
+
     final class FrameLossHandler: @unchecked Sendable {
         private let handler: @Sendable (StreamID, FrameLossReason) -> Void
 
@@ -181,6 +186,8 @@ final class FrameReassembler: @unchecked Sendable {
     /// Prevents repeated frame-loss signals for the same forward gap.
     var hasSignaledGapFrameLoss: Bool = false
     var pFrameCompletionLatencySamples: [PFrameCompletionLatencySample] = []
+    var pendingPFrameTimingSamples: [PendingPFrameTimingSample] = []
+    let pendingPFrameTimingSampleLimit = 256
 
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer

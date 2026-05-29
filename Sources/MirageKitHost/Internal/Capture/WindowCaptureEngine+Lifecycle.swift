@@ -84,25 +84,6 @@ extension WindowCaptureEngine {
         await restartCapture(reason: reason, bypassCooldown: false)
     }
 
-    /// Retries high-refresh desktop capture with ScreenCaptureKit's native display cadence.
-    func retryNativeMinimumFrameIntervalForDeliveryValidation(reason: String) async {
-        guard captureMode == .display,
-              currentFrameRate >= 120 else {
-            return
-        }
-        minimumFrameIntervalPolicy = .nativeRefresh
-        MirageLogger.capture(
-            "event=sck_delivery_validation action=retry_native_minimum_frame_interval targetFPS=\(currentFrameRate) reason=\(reason)"
-        )
-        await restartCapture(reason: reason, bypassCooldown: true)
-    }
-
-    /// Restarts display capture for validation recovery without the generic stall-restart cooldown.
-    @discardableResult
-    func restartCaptureForDeliveryValidation(reason: String) async -> Bool {
-        await restartCapture(reason: reason, bypassCooldown: true)
-    }
-
     @discardableResult
     private func restartCapture(reason: String, bypassCooldown: Bool) async -> Bool {
         cancelScheduledCaptureRestart(reason: "restart_begin")

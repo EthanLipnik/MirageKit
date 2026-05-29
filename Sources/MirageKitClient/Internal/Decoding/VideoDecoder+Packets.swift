@@ -188,7 +188,8 @@ extension FrameReassembler {
                 if isKeyframePacket {
                     MirageLogger.log(
                         .frameAssembly,
-                        "Discarding keyframe with dimension token \(header.dimensionToken); expected \(expectedDimensionToken)"
+                        "Discarding keyframe \(frameNumber) with dimension token \(header.dimensionToken); " +
+                            "expected \(expectedDimensionToken), epoch=\(header.epoch), currentEpoch=\(currentEpoch)"
                     )
                     beginAwaitingKeyframe()
                 }

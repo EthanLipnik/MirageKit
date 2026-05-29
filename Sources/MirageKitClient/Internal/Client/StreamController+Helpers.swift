@@ -16,6 +16,7 @@ extension StreamController {
 
     func updateHostMetrics(_ metrics: StreamMetricsMessage?) {
         latestHostMetricsMessage = metrics
+        latestHostMetricsTime = metrics == nil ? 0 : currentTime
         latestHostCadencePressureSample = metrics.map(HostCadencePressureDiagnosticSample.init(metrics:))
         if let targetFrameRate = metrics?.targetFrameRate {
             reassembler.setTargetFrameRate(targetFrameRate)

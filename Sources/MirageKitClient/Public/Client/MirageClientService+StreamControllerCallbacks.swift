@@ -184,6 +184,12 @@ extension MirageClientService {
 
         receiverMediaFeedbackSequence &+= 1
         let ackRanges = controller.reassembler.consumeCompletedFrameAckRanges()
+        let pFrameTimingSamples = controller.reassembler.consumePFrameTimingSamples()
+        let latestAcceptedTimeline = MirageRenderStreamStore.shared.latestAcceptedFrameTimeline(for: streamID)
+        let latestRenderedTelemetry = MirageRenderStreamStore.shared.renderedFrameTelemetry(for: streamID)
+        let latestAcceptedFrameAgeMs = latestAcceptedTimeline?.displayPresentationAcceptedTime.map {
+            max(0, (now - $0) * 1000)
+        }
         let transportLoss = receiverTransportLossFeedback(
             for: streamID,
             metrics: metrics,
@@ -197,8 +203,14 @@ extension MirageClientService {
             recoveryState: recoveryState,
             recoveryCause: MirageMediaFeedbackRecoveryCause(recoveryCause),
             ackRanges: ackRanges,
+            pFrameTimingSamples: pFrameTimingSamples,
             transportLostFrameCount: transportLoss.lostFrameCount,
             transportDiscardedPacketCount: transportLoss.discardedPacketCount,
+            latestAcceptedFrameNumber: latestAcceptedTimeline?.frameNumber,
+            latestPresentedFrameNumber: latestRenderedTelemetry.renderedFrameNumber,
+            latestPresentedFrameAgeMs: latestAcceptedFrameAgeMs,
+            decodeQueueDepth: metrics.decodeBacklogFrames,
+            presentationQueueDepth: metrics.pendingFrameCount,
             audioDroppedFrameCount: audioDroppedFrameCount > 0 ? audioDroppedFrameCount : nil,
             audioGateActive: audioGateActive ? true : nil,
             metrics: metrics
@@ -241,8 +253,14 @@ extension MirageClientService {
         recoveryState: MirageMediaFeedbackRecoveryState,
         recoveryCause: MirageMediaFeedbackRecoveryCause = .none,
         ackRanges: [MediaFeedbackFrameRange] = [],
+        pFrameTimingSamples: [ReceiverPFrameTimingSample] = [],
         transportLostFrameCount: UInt64 = 0,
         transportDiscardedPacketCount: UInt64 = 0,
+        latestAcceptedFrameNumber: UInt32? = nil,
+        latestPresentedFrameNumber: UInt32? = nil,
+        latestPresentedFrameAgeMs: Double? = nil,
+        decodeQueueDepth: Int? = nil,
+        presentationQueueDepth: Int? = nil,
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil,
         metrics: StreamController.ClientFrameMetrics
@@ -253,6 +271,7 @@ extension MirageClientService {
             sentAtUptime: sentAtUptime,
             targetFPS: targetFPS,
             ackRanges: ackRanges,
+            pFrameTimingSamples: pFrameTimingSamples,
             lostFrameCount: transportLostFrameCount,
             discardedPacketCount: transportDiscardedPacketCount,
             jitterP95Ms: metrics.receivedFrameIntervalP95Ms,
@@ -287,6 +306,11 @@ extension MirageClientService {
                 recoveryState: recoveryState,
                 metrics: metrics
             ),
+            latestAcceptedFrameNumber: latestAcceptedFrameNumber,
+            latestPresentedFrameNumber: latestPresentedFrameNumber,
+            latestPresentedFrameAgeMs: latestPresentedFrameAgeMs,
+            decodeQueueDepth: decodeQueueDepth,
+            presentationQueueDepth: presentationQueueDepth,
             audioDroppedFrameCount: audioDroppedFrameCount,
             audioGateActive: audioGateActive
         )

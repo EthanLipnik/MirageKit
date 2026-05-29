@@ -555,6 +555,7 @@ struct StreamControllerRecoveryTests {
             data: Data([0x01]),
             presentationTime: .zero,
             isKeyframe: false,
+            frameNumber: nil,
             contentRect: .zero,
             releaseBuffer: {
                 releaseCounter.increment()
@@ -568,7 +569,7 @@ struct StreamControllerRecoveryTests {
 
         #expect(await controller.decodeQueueRequiresKeyframe)
         #expect(await controller.reassembler.isAwaitingKeyframe)
-        #expect(await controller.clientRecoveryCause == .decodeError)
+        #expect(await controller.clientRecoveryCause == .memoryBudget)
         #expect(releaseCounter.value == 1)
         #expect(keyframeCounter.value == 1)
 

@@ -175,6 +175,7 @@ extension FrameReassembler {
             hasDeliveredKeyframeAnchor = false
             hasSignaledGapFrameLoss = false
             pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: false)
+            pendingPFrameTimingSamples.removeAll(keepingCapacity: false)
             clearAwaitingKeyframe()
             droppedFrameCount = 0
             memoryBudgetEvictionCount = 0
@@ -189,6 +190,44 @@ extension FrameReassembler {
             startupKeyframeTimeoutOverrideEnabled = false
         }
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")
+    }
+
+    func resetAfterDeliveredDimensionChangeKeyframe(frameNumber: UInt32) {
+        let evictedFrames: Int
+        let releasedPendingBytes: Int
+        lock.lock()
+        do {
+            defer { lock.unlock() }
+            evictedFrames = pendingFrames.count
+            releasedPendingBytes = pendingFrameBytesLocked()
+            for frame in pendingFrames.values {
+                frame.buffer.release()
+            }
+            pendingFrames.removeAll(keepingCapacity: false)
+            if evictedFrames > 0 {
+                droppedFrameCount += UInt64(evictedFrames)
+            }
+            lastCompletedFrame = frameNumber
+            lastDeliveredKeyframe = frameNumber
+            hasDeliveredKeyframeAnchor = true
+            hasSignaledGapFrameLoss = false
+            pendingPFrameTimingSamples.removeAll(keepingCapacity: false)
+            if pendingCompletedFrameAckNumbers.last != frameNumber {
+                pendingCompletedFrameAckNumbers.append(frameNumber)
+                if pendingCompletedFrameAckNumbers.count > pendingCompletedFrameAckLimit {
+                    pendingCompletedFrameAckNumbers.removeFirst(
+                        pendingCompletedFrameAckNumbers.count - pendingCompletedFrameAckLimit
+                    )
+                }
+            }
+            clearAwaitingKeyframe()
+            pFrameCompletionLatencySamples.removeAll(keepingCapacity: false)
+        }
+        MirageLogger.log(
+            .frameAssembly,
+            "Reassembler reset for dimension change preserving keyframe anchor \(frameNumber) " +
+                "for stream \(streamID); evictedFrames=\(evictedFrames), releasedBytes=\(releasedPendingBytes)"
+        )
     }
 
     func pollTimeouts() {
@@ -281,11 +320,19 @@ extension FrameReassembler {
         }
     }
 
-    func recordPFrameCompletionLatencyLocked(frame: PendingFrame, now: Date) {
+    func recordPFrameCompletionLatencyLocked(frameNumber: UInt32, frame: PendingFrame, now: Date) {
         let latencyMs = max(0, frame.lastProgressAt.timeIntervalSince(frame.receivedAt) * 1000)
         pFrameCompletionLatencySamples.append(
             PFrameCompletionLatencySample(completedAt: now, latencyMs: latencyMs)
         )
+        pendingPFrameTimingSamples.append(
+            PendingPFrameTimingSample(frameNumber: frameNumber, assemblyLatencyMs: latencyMs)
+        )
+        if pendingPFrameTimingSamples.count > pendingPFrameTimingSampleLimit {
+            pendingPFrameTimingSamples.removeFirst(
+                pendingPFrameTimingSamples.count - pendingPFrameTimingSampleLimit
+            )
+        }
         trimPFrameCompletionLatencySamplesLocked(now: now)
     }
 

@@ -141,11 +141,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         package var keyframeFECBlockSize: Int
         package var continuityWindowMs: Double
         package var playoutDelayMs: Double
-        package var allowFrameAdmissionReduction: Bool
-        package var frameAdmissionTargetFPS: Int?
-        package var frameAdmissionHoldSeconds: Double
         package var pacingHoldSeconds: Double
-        package var qualityRaiseSuppressionSeconds: Double
         package var qualityReductionAllowed: Bool
 
         package var usesFixedRealtimeDisplayPolicy: Bool {
@@ -164,9 +160,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
     package static let stableMaximumPlayoutDelayMs = 80.0
     package static let maximumPlayoutDelayMs = 180.0
     package static let decodeQueueWindowMs = 600.0
-    package static let frameAdmissionHoldSeconds = 2.0
     package static let pacingHoldSeconds = 2.0
-    package static let qualityRaiseSuppressionSeconds = 2.0
 
     private static let stressSamplesRequired = 2
     private static let stableSamplesForSteady = 3
@@ -274,8 +268,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
                 trigger: .nonAwdl,
                 signal: signal,
                 playoutDelayMs: currentPlayoutDelayMs,
-                allowFrameAdmissionReduction: false,
-                frameAdmissionTargetFPS: nil,
                 qualityReductionAllowed: false
             )
         }
@@ -322,19 +314,11 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
             state = .steady
         }
 
-        let admissionTarget = Self.admissionTargetFrameRate(
-            signal: signal,
-            state: state,
-            trigger: trigger
-        )
-        let allowAdmission = admissionTarget != nil
         return Self.decision(
             state: state,
             trigger: trigger,
             signal: signal,
             playoutDelayMs: updatePlayoutDelay(trigger: trigger, signal: signal),
-            allowFrameAdmissionReduction: allowAdmission,
-            frameAdmissionTargetFPS: admissionTarget,
             qualityReductionAllowed: state == .demote
         )
     }
@@ -389,8 +373,6 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         trigger: Trigger,
         signal: Signal,
         playoutDelayMs: Double,
-        allowFrameAdmissionReduction: Bool,
-        frameAdmissionTargetFPS: Int?,
         qualityReductionAllowed: Bool
     ) -> Decision {
         Decision(
@@ -415,11 +397,7 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
                 latePFrameCount: signal.latePFrameCount
             ),
             playoutDelayMs: playoutDelayMs,
-            allowFrameAdmissionReduction: allowFrameAdmissionReduction,
-            frameAdmissionTargetFPS: frameAdmissionTargetFPS,
-            frameAdmissionHoldSeconds: frameAdmissionHoldSeconds,
             pacingHoldSeconds: pacingHoldSeconds,
-            qualityRaiseSuppressionSeconds: qualityRaiseSuppressionSeconds,
             qualityReductionAllowed: qualityReductionAllowed
         )
     }
@@ -457,33 +435,5 @@ package struct MirageAwdlMediaController: Sendable, Equatable {
         if presentationUnderflow { return .presentationUnderflow }
         if jitterStress || receivedGapStress { return .jitter }
         return .stable
-    }
-
-    private static func admissionTargetFrameRate(
-        signal: Signal,
-        state: State,
-        trigger: Trigger
-    ) -> Int? {
-        guard state == .stressed || state == .demote else { return nil }
-        switch trigger {
-        case .jitter,
-             .warmup,
-             .stable,
-             .recovery,
-             .nonAwdl:
-            return nil
-        case .demote:
-            return min(60, max(1, signal.currentFrameRate))
-        case .loss,
-             .reassemblyBacklog,
-             .pFrameLatency,
-             .decodePressure,
-             .presentationUnderflow:
-            let current = max(1, signal.currentFrameRate)
-            if current > 90 { return 90 }
-            if current > 60 { return 60 }
-            if current > 30 { return 30 }
-            return max(15, current)
-        }
     }
 }

@@ -254,6 +254,69 @@ struct SharedClipboardTests {
         #expect(state.prepareLocalSend(currentItem: textItem("host-value"), changeCount: 2) == nil)
     }
 
+    @Test("Host-applied pasteboard change is not echoed after chunk transfer delay")
+    func hostAppliedPasteboardChangeIsNotEchoedAfterChunkTransferDelay() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 10)
+        let observedAtMs: Int64 = 80_000
+        let appliedAtMs: Int64 = 84_000
+
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 8,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000018")!
+        )
+        _ = state.recordRemoteTransferObservation(
+            changeCount: 10,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+        state.recordRemoteWrite(
+            changeCount: 11,
+            orderingToken: remoteToken,
+            observedAtMs: appliedAtMs
+        )
+
+        #expect(
+            state.shouldSuppressLocalSend(
+                changeCount: 12,
+                nowMs: appliedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+            )
+        )
+        #expect(
+            state.prepareLocalSend(
+                currentItem: textItem("host-value"),
+                changeCount: 12,
+                nowMs: appliedAtMs + MirageSharedClipboard.recentRemoteClipboardChangeWindowMilliseconds
+            ) == nil
+        )
+    }
+
+    @Test("Client clipboard changes after host write window still sync")
+    func clientClipboardChangesAfterHostWriteWindowStillSync() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 10)
+        let observedAtMs: Int64 = 90_000
+
+        let remoteToken = MirageSharedClipboardOrderingToken(
+            logicalVersion: 8,
+            changeID: UUID(uuidString: "00000000-0000-0000-0000-000000000019")!
+        )
+        state.recordRemoteWrite(
+            changeCount: 11,
+            orderingToken: remoteToken,
+            observedAtMs: observedAtMs
+        )
+
+        let localSend = state.prepareLocalSend(
+            currentItem: textItem("client-value"),
+            changeCount: 12,
+            nowMs: afterRemoteWindow(from: observedAtMs)
+        )
+
+        #expect(localSend?.text == "client-value")
+        #expect(localSend?.orderingToken.logicalVersion == 9)
+    }
+
     @Test("Manual shared clipboard stays live across repeated client pastes")
     func manualSharedClipboardStaysLiveAcrossRepeatedClientPastes() {
         var clientState = MirageSharedClipboardState()

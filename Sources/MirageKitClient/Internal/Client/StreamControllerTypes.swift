@@ -143,6 +143,7 @@ extension StreamController {
         let data: Data
         let presentationTime: CMTime
         let isKeyframe: Bool
+        let frameNumber: UInt32?
         let contentRect: CGRect
         let releaseBuffer: @Sendable () -> Void
     }

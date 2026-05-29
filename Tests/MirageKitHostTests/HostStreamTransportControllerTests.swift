@@ -13,8 +13,8 @@ import Testing
 
 @Suite("Host Stream Transport Controller")
 struct HostStreamTransportControllerTests {
-    @Test("Receiver recovery feedback suppresses quality raises without changing frame admission")
-    func receiverRecoveryFeedbackSuppressesQualityRaisesWithoutFrameAdmission() {
+    @Test("Receiver recovery feedback returns a transport hold decision")
+    func receiverRecoveryFeedbackReturnsTransportHoldDecision() {
         var controller = HostStreamTransportController()
 
         let decision = controller.update(
@@ -23,13 +23,11 @@ struct HostStreamTransportControllerTests {
             now: 10
         )
 
-        #expect(decision?.frameAdmissionTargetFPS == nil)
-        #expect(decision?.qualityRaiseSuppressionDeadline == 12)
-        #expect(decision?.frameAdmissionTrigger == .clear)
+        #expect(decision?.pressureTrigger == .clear)
     }
 
-    @Test("Receiver backlog pressure enables temporary pre-encode frame admission")
-    func receiverBacklogPressureEnablesTemporaryPreEncodeFrameAdmission() {
+    @Test("Receiver backlog pressure reports transport pressure without FPS admission")
+    func receiverBacklogPressureReportsTransportPressureWithoutFPSAdmission() {
         var controller = HostStreamTransportController()
 
         let firstSample = controller.update(
@@ -45,9 +43,7 @@ struct HostStreamTransportControllerTests {
             now: 20.5
         )
 
-        #expect(pressure?.frameAdmissionTargetFPS == 90)
-        #expect(pressure?.frameAdmissionDeadline == 22.5)
-        #expect(pressure?.frameAdmissionTrigger == .clientReassemblyBacklog)
+        #expect(pressure?.pressureTrigger == .clientReassemblyBacklog)
 
         let stale = controller.update(
             with: feedback(sequence: 2, targetFPS: 120, reassemblyBacklogFrames: 8),
@@ -56,19 +52,17 @@ struct HostStreamTransportControllerTests {
         )
         #expect(stale == nil)
 
-        let cleared = controller.update(
+        let stable = controller.update(
             with: feedback(sequence: 3, targetFPS: 120),
             currentFrameRate: 120,
             now: 22.6
         )
 
-        #expect(cleared?.frameAdmissionTargetFPS == nil)
-        #expect(cleared?.frameAdmissionDeadline == 0)
-        #expect(cleared?.frameAdmissionTrigger == .clear)
+        #expect(stable == nil)
     }
 
-    @Test("Sustained 120 Hz receiver pressure escalates admission relief to sixty")
-    func sustainedOneTwentyReceiverPressureEscalatesAdmissionReliefToSixty() {
+    @Test("Sustained 120 Hz receiver pressure keeps reporting pressure")
+    func sustainedOneTwentyReceiverPressureKeepsReportingPressure() {
         var controller = HostStreamTransportController()
 
         _ = controller.update(
@@ -76,7 +70,7 @@ struct HostStreamTransportControllerTests {
             currentFrameRate: 120,
             now: 20
         )
-        let firstRelief = controller.update(
+        let firstPressure = controller.update(
             with: feedback(sequence: 2, targetFPS: 120, reassemblyBacklogFrames: 8),
             currentFrameRate: 120,
             now: 20.5
@@ -86,19 +80,18 @@ struct HostStreamTransportControllerTests {
             currentFrameRate: 120,
             now: 21
         )
-        let persistentRelief = controller.update(
+        let persistentPressure = controller.update(
             with: feedback(sequence: 4, targetFPS: 120, reassemblyBacklogFrames: 8),
             currentFrameRate: 120,
             now: 21.5
         )
 
-        #expect(firstRelief?.frameAdmissionTargetFPS == 90)
-        #expect(persistentRelief?.frameAdmissionTargetFPS == 60)
-        #expect(persistentRelief?.frameAdmissionTrigger == .clientReassemblyBacklog)
+        #expect(firstPressure?.pressureTrigger == .clientReassemblyBacklog)
+        #expect(persistentPressure?.pressureTrigger == .clientReassemblyBacklog)
     }
 
-    @Test("Receiver jitter alone does not enable frame admission")
-    func receiverJitterAloneDoesNotEnableFrameAdmission() {
+    @Test("Receiver jitter alone does not produce non-AWDL pressure")
+    func receiverJitterAloneDoesNotProduceNonAwdlPressure() {
         var controller = HostStreamTransportController()
 
         let firstSample = controller.update(
@@ -116,8 +109,8 @@ struct HostStreamTransportControllerTests {
         #expect(secondSample == nil)
     }
 
-    @Test("AWDL receiver jitter enables pacing without frame admission")
-    func awdlReceiverJitterEnablesPacingWithoutFrameAdmission() {
+    @Test("AWDL receiver jitter enables pacing")
+    func awdlReceiverJitterEnablesPacing() {
         var controller = HostStreamTransportController()
 
         let firstSample = controller.update(
@@ -137,9 +130,7 @@ struct HostStreamTransportControllerTests {
             now: 60.5
         )
 
-        #expect(pressure?.frameAdmissionTargetFPS == nil)
-        #expect(pressure?.frameAdmissionDeadline == 0)
-        #expect(pressure?.frameAdmissionTrigger == .clientJitter)
+        #expect(pressure?.pressureTrigger == .clientJitter)
         #expect(pressure?.awdlPacingDeadline == 62.5)
         #expect(pressure?.awdlPacingTrigger == .clientJitter)
         #expect(pressure?.awdlPolicyState == .stressed)
@@ -158,8 +149,8 @@ struct HostStreamTransportControllerTests {
         #expect(cleared?.awdlPacingTrigger == .clear)
     }
 
-    @Test("AWDL P-frame latency enables pacing and pre-encode admission relief")
-    func awdlPFrameLatencyEnablesPacingAndAdmissionRelief() {
+    @Test("AWDL P-frame latency enables pacing")
+    func awdlPFrameLatencyEnablesPacing() {
         var controller = HostStreamTransportController()
 
         let firstSample = controller.update(
@@ -179,16 +170,15 @@ struct HostStreamTransportControllerTests {
             now: 70.5
         )
 
-        #expect(pressure?.frameAdmissionTargetFPS == 30)
-        #expect(pressure?.frameAdmissionTrigger == .clientPFrameLatency)
+        #expect(pressure?.pressureTrigger == .clientPFrameLatency)
         #expect(pressure?.awdlPacingDeadline == 72.5)
         #expect(pressure?.awdlPacingTrigger == .clientPFrameLatency)
         #expect(pressure?.awdlPolicyState == .stressed)
         #expect(pressure?.awdlPolicyTrigger == .pFrameLatency)
     }
 
-    @Test("Receiver transport loss requires sustained samples before admission")
-    func receiverTransportLossRequiresSustainedSamplesBeforeAdmission() {
+    @Test("Receiver transport loss requires sustained samples before pressure")
+    func receiverTransportLossRequiresSustainedSamplesBeforePressure() {
         var controller = HostStreamTransportController()
 
         let firstSample = controller.update(
@@ -203,12 +193,11 @@ struct HostStreamTransportControllerTests {
         )
 
         #expect(firstSample == nil)
-        #expect(pressure?.frameAdmissionTargetFPS == 30)
-        #expect(pressure?.frameAdmissionTrigger == .clientTransportLoss)
+        #expect(pressure?.pressureTrigger == .clientTransportLoss)
     }
 
-    @Test("Recovery and keyframe backlog suppress frame admission")
-    func recoveryAndKeyframeBacklogSuppressFrameAdmission() {
+    @Test("Recovery and keyframe backlog returns hold decision")
+    func recoveryAndKeyframeBacklogReturnsHoldDecision() {
         var controller = HostStreamTransportController()
 
         _ = controller.update(
@@ -228,9 +217,7 @@ struct HostStreamTransportControllerTests {
             now: 51
         )
 
-        #expect(keyframeBacklog?.frameAdmissionTargetFPS == nil)
-        #expect(keyframeBacklog?.frameAdmissionTrigger == .clear)
-        #expect(keyframeBacklog?.qualityRaiseSuppressionDeadline == 53)
+        #expect(keyframeBacklog?.pressureTrigger == .clear)
     }
 
     private func feedback(

@@ -36,8 +36,6 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.keyframeFECBlockSize == 4)
         #expect(decision.continuityWindowMs == 180)
         #expect(decision.playoutDelayMs == 24)
-        #expect(decision.allowFrameAdmissionReduction == false)
-        #expect(decision.frameAdmissionTargetFPS == nil)
         #expect(
             MirageAwdlMediaController.fixedLatencyMode(
                 requestedLatencyMode: .smoothest,
@@ -61,11 +59,10 @@ struct MirageAwdlMediaControllerTests {
 
         #expect(decision.state == .steady)
         #expect(decision.trigger == .stable)
-        #expect(decision.frameAdmissionTargetFPS == nil)
     }
 
-    @Test("AWDL jitter grows playout without pre-encode admission")
-    func awdlJitterGrowsPlayoutWithoutPreEncodeAdmission() {
+    @Test("AWDL jitter grows playout")
+    func awdlJitterGrowsPlayout() {
         var controller = MirageAwdlMediaController()
         let signal = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -80,8 +77,6 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .jitter)
         #expect(decision.playoutDelayMs == 64)
-        #expect(decision.allowFrameAdmissionReduction == false)
-        #expect(decision.frameAdmissionTargetFPS == nil)
     }
 
     @Test("AWDL playout stress growth is bounded and decays after stable samples")
@@ -114,8 +109,8 @@ struct MirageAwdlMediaControllerTests {
         #expect(decayed.playoutDelayMs == 24)
     }
 
-    @Test("AWDL late P-frame pressure grows continuity and reduces admission")
-    func awdlLatePFramePressureGrowsContinuityAndReducesAdmission() {
+    @Test("AWDL late P-frame pressure grows continuity")
+    func awdlLatePFramePressureGrowsContinuity() {
         var controller = MirageAwdlMediaController()
         let signal = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
@@ -131,8 +126,6 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.state == .stressed)
         #expect(decision.trigger == .pFrameLatency)
         #expect(decision.continuityWindowMs == 300)
-        #expect(decision.allowFrameAdmissionReduction)
-        #expect(decision.frameAdmissionTargetFPS == 30)
     }
 
     @Test("AWDL forward-gap timeout enters recovery without admission throttling")
@@ -158,8 +151,6 @@ struct MirageAwdlMediaControllerTests {
             maxPayloadSize: 1_200,
             isLossModeActive: false
         ) == 0)
-        #expect(decision.allowFrameAdmissionReduction == false)
-        #expect(decision.frameAdmissionTargetFPS == nil)
     }
 
     @Test("Sustained high-refresh AWDL pressure demotes to sixty")
@@ -182,6 +173,5 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.trigger == .demote)
         #expect(decision.targetFrameRate == 60)
         #expect(decision.qualityReductionAllowed)
-        #expect(decision.frameAdmissionTargetFPS == 60)
     }
 }

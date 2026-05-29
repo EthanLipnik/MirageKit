@@ -48,12 +48,23 @@ package struct MediaFeedbackFrameRange: Codable, Sendable, Equatable {
     }
 }
 
+package struct ReceiverPFrameTimingSample: Codable, Sendable, Equatable {
+    package let frameNumber: UInt32
+    package let assemblyLatencyMs: Double
+
+    package init(frameNumber: UInt32, assemblyLatencyMs: Double) {
+        self.frameNumber = frameNumber
+        self.assemblyLatencyMs = max(0, assemblyLatencyMs)
+    }
+}
+
 package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let streamID: StreamID
     package let sequence: UInt64
     package let sentAtUptime: Double
     package let targetFPS: Int
     package let ackRanges: [MediaFeedbackFrameRange]
+    package let pFrameTimingSamples: [ReceiverPFrameTimingSample]
     package let lostFrameCount: UInt64
     package let discardedPacketCount: UInt64
     package let jitterP95Ms: Double
@@ -85,6 +96,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let reassemblerForwardGapTimeouts: UInt64?
     package let fecRecoveredFragmentCount: UInt64?
     package let reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause]
+    package let latestAcceptedFrameNumber: UInt32?
+    package let latestPresentedFrameNumber: UInt32?
+    package let latestPresentedFrameAgeMs: Double?
+    package let decodeQueueDepth: Int?
+    package let presentationQueueDepth: Int?
     package let audioDroppedFrameCount: UInt64?
     package let audioGateActive: Bool?
 
@@ -94,6 +110,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         sentAtUptime: Double,
         targetFPS: Int,
         ackRanges: [MediaFeedbackFrameRange],
+        pFrameTimingSamples: [ReceiverPFrameTimingSample] = [],
         lostFrameCount: UInt64,
         discardedPacketCount: UInt64,
         jitterP95Ms: Double,
@@ -125,6 +142,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         reassemblerForwardGapTimeouts: UInt64? = nil,
         fecRecoveredFragmentCount: UInt64? = nil,
         reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = [],
+        latestAcceptedFrameNumber: UInt32? = nil,
+        latestPresentedFrameNumber: UInt32? = nil,
+        latestPresentedFrameAgeMs: Double? = nil,
+        decodeQueueDepth: Int? = nil,
+        presentationQueueDepth: Int? = nil,
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil
     ) {
@@ -133,6 +155,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.sentAtUptime = sentAtUptime
         self.targetFPS = max(1, min(240, targetFPS))
         self.ackRanges = ackRanges
+        self.pFrameTimingSamples = Array(pFrameTimingSamples.prefix(Self.maximumPFrameTimingSamples))
         self.lostFrameCount = lostFrameCount
         self.discardedPacketCount = discardedPacketCount
         self.jitterP95Ms = max(0, jitterP95Ms)
@@ -164,6 +187,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.reassemblerForwardGapTimeouts = reassemblerForwardGapTimeouts
         self.fecRecoveredFragmentCount = fecRecoveredFragmentCount
         self.reliabilityCauses = reliabilityCauses
+        self.latestAcceptedFrameNumber = latestAcceptedFrameNumber
+        self.latestPresentedFrameNumber = latestPresentedFrameNumber
+        self.latestPresentedFrameAgeMs = latestPresentedFrameAgeMs.map { max(0, $0) }
+        self.decodeQueueDepth = decodeQueueDepth.map { max(0, $0) }
+        self.presentationQueueDepth = presentationQueueDepth.map { max(0, $0) }
         self.audioDroppedFrameCount = audioDroppedFrameCount
         self.audioGateActive = audioGateActive
     }
@@ -174,6 +202,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         sentAtUptime: Double,
         targetFPS: Int,
         ackRanges: [MediaFeedbackFrameRange],
+        pFrameTimingSamples: [ReceiverPFrameTimingSample] = [],
         lostFrameCount: UInt64,
         discardedPacketCount: UInt64,
         jitterP95Ms: Double,
@@ -197,6 +226,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             sentAtUptime: sentAtUptime,
             targetFPS: targetFPS,
             ackRanges: ackRanges,
+            pFrameTimingSamples: pFrameTimingSamples,
             lostFrameCount: lostFrameCount,
             discardedPacketCount: discardedPacketCount,
             jitterP95Ms: jitterP95Ms,
@@ -228,10 +258,17 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             reassemblerForwardGapTimeouts: nil,
             fecRecoveredFragmentCount: nil,
             reliabilityCauses: [],
+            latestAcceptedFrameNumber: nil,
+            latestPresentedFrameNumber: nil,
+            latestPresentedFrameAgeMs: nil,
+            decodeQueueDepth: nil,
+            presentationQueueDepth: nil,
             audioDroppedFrameCount: nil,
             audioGateActive: nil
         )
     }
+
+    private static let maximumPFrameTimingSamples = 96
 
     private enum CodingKeys: String, CodingKey {
         case streamID
@@ -239,6 +276,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case sentAtUptime
         case targetFPS
         case ackRanges
+        case pFrameTimingSamples
         case lostFrameCount
         case discardedPacketCount
         case jitterP95Ms
@@ -270,6 +308,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case reassemblerForwardGapTimeouts
         case fecRecoveredFragmentCount
         case reliabilityCauses
+        case latestAcceptedFrameNumber
+        case latestPresentedFrameNumber
+        case latestPresentedFrameAgeMs
+        case decodeQueueDepth
+        case presentationQueueDepth
         case audioDroppedFrameCount
         case audioGateActive
     }
@@ -282,6 +325,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             sentAtUptime: try container.decode(Double.self, forKey: .sentAtUptime),
             targetFPS: try container.decode(Int.self, forKey: .targetFPS),
             ackRanges: try container.decodeIfPresent([MediaFeedbackFrameRange].self, forKey: .ackRanges) ?? [],
+            pFrameTimingSamples: try container.decodeIfPresent(
+                [ReceiverPFrameTimingSample].self,
+                forKey: .pFrameTimingSamples
+            ) ?? [],
             lostFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .lostFrameCount) ?? 0,
             discardedPacketCount: try container.decodeIfPresent(UInt64.self, forKey: .discardedPacketCount) ?? 0,
             jitterP95Ms: try container.decodeIfPresent(Double.self, forKey: .jitterP95Ms) ?? 0,
@@ -349,6 +396,20 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
                 [ReceiverMediaFeedbackReliabilityCause].self,
                 forKey: .reliabilityCauses
             ) ?? [],
+            latestAcceptedFrameNumber: try container.decodeIfPresent(
+                UInt32.self,
+                forKey: .latestAcceptedFrameNumber
+            ),
+            latestPresentedFrameNumber: try container.decodeIfPresent(
+                UInt32.self,
+                forKey: .latestPresentedFrameNumber
+            ),
+            latestPresentedFrameAgeMs: try container.decodeIfPresent(
+                Double.self,
+                forKey: .latestPresentedFrameAgeMs
+            ),
+            decodeQueueDepth: try container.decodeIfPresent(Int.self, forKey: .decodeQueueDepth),
+            presentationQueueDepth: try container.decodeIfPresent(Int.self, forKey: .presentationQueueDepth),
             audioDroppedFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .audioDroppedFrameCount),
             audioGateActive: try container.decodeIfPresent(Bool.self, forKey: .audioGateActive)
         )
@@ -361,6 +422,9 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encode(sentAtUptime, forKey: .sentAtUptime)
         try container.encode(targetFPS, forKey: .targetFPS)
         try container.encode(ackRanges, forKey: .ackRanges)
+        if !pFrameTimingSamples.isEmpty {
+            try container.encode(pFrameTimingSamples, forKey: .pFrameTimingSamples)
+        }
         try container.encode(lostFrameCount, forKey: .lostFrameCount)
         try container.encode(discardedPacketCount, forKey: .discardedPacketCount)
         try container.encode(jitterP95Ms, forKey: .jitterP95Ms)
@@ -399,6 +463,11 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         if !reliabilityCauses.isEmpty {
             try container.encode(reliabilityCauses, forKey: .reliabilityCauses)
         }
+        try container.encodeIfPresent(latestAcceptedFrameNumber, forKey: .latestAcceptedFrameNumber)
+        try container.encodeIfPresent(latestPresentedFrameNumber, forKey: .latestPresentedFrameNumber)
+        try container.encodeIfPresent(latestPresentedFrameAgeMs, forKey: .latestPresentedFrameAgeMs)
+        try container.encodeIfPresent(decodeQueueDepth, forKey: .decodeQueueDepth)
+        try container.encodeIfPresent(presentationQueueDepth, forKey: .presentationQueueDepth)
         try container.encodeIfPresent(audioDroppedFrameCount, forKey: .audioDroppedFrameCount)
         try container.encodeIfPresent(audioGateActive, forKey: .audioGateActive)
     }

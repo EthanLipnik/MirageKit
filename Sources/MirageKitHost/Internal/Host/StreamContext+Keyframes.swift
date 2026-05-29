@@ -146,23 +146,6 @@ extension StreamContext {
         )
     }
 
-    func forceKeyframeAfterFallbackResume() {
-        let now = CFAbsoluteTimeGetCurrent()
-        if !mediaPathProfile.usesAwdlRadioPolicy, now >= keyframeSendDeadline {
-            keyframeSendDeadline = 0
-            lastKeyframeRequestTime = 0
-        }
-        let queued = queueKeyframe(
-            reason: "Fallback resume keyframe",
-            checkInFlight: true,
-            requiresFlush: false,
-            requiresReset: false,
-            urgent: true,
-            countsAgainstRecoveryBudget: false
-        )
-        if !queued { MirageLogger.stream("Fallback resume keyframe skipped (unable to queue)") }
-    }
-
     func forceKeyframeAfterCaptureRestart(
         restartStreak: Int,
         shouldEscalateRecovery: Bool
@@ -201,24 +184,35 @@ extension StreamContext {
         MirageLogger.stream(
             "\(label) observed frame=\(frameNumber) reason=\(reason.rawValue) queuedBytes=\(queuedBytes)"
         )
-        qualityRaiseSuppressionUntil = max(
-            qualityRaiseSuppressionUntil,
-            CFAbsoluteTimeGetCurrent() + qualityRaisePostSpikeCooldown
-        )
         noteLossEvent(reason: label, enablePFrameFEC: false)
         let now = CFAbsoluteTimeGetCurrent()
-        let budgetDecision = frameBudgetController.recordSenderDeadlineDrop(
-            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
-            requestedTargetBitrateBps: requestedTargetBitrate,
-            startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
-            minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
-            currentFrameRate: currentFrameRate,
-            maxPayloadSize: maxPayloadSize,
-            currentQuality: activeQuality,
-            qualityFloor: qualityFloor,
-            steadyQualityCeiling: steadyQualityCeiling,
-            now: now
-        )
+        let budgetDecision = if reason == .staleChain {
+            adaptivePFrameController.recordFreshnessPressure(
+                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+                requestedTargetBitrateBps: requestedTargetBitrate,
+                startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+                minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: activeQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                now: now
+            )
+        } else {
+            adaptivePFrameController.recordSenderDeadlineDrop(
+                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+                requestedTargetBitrateBps: requestedTargetBitrate,
+                startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+                minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: activeQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                now: now
+            )
+        }
         await applyFrameBudgetDecision(budgetDecision, now: now)
         startFrameChainRepair(
             reason: "sender-dependency-drop",

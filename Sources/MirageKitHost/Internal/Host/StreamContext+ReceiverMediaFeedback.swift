@@ -14,21 +14,19 @@ extension StreamContext {
     func applyReceiverMediaFeedback(_ feedback: ReceiverMediaFeedbackMessage) async {
         let now = CFAbsoluteTimeGetCurrent()
         lastReceiverFeedbackTime = now
-        receiverDecodedFPS = feedback.decodedFPS
-        receiverPresentationBacklogFrames = feedback.presentationBacklogFrames
         receiverReassemblyBacklogFrames = feedback.reassemblyBacklogFrames
         receiverReassemblyBacklogBytes = feedback.reassemblyBacklogBytes
-        receiverDecodeBacklogFrames = feedback.decodeBacklogFrames
+        receiverDecodeBacklogFrames = feedback.decodeQueueDepth ?? feedback.decodeBacklogFrames
+        receiverPresentationBacklogFrames = feedback.presentationQueueDepth ?? feedback.presentationBacklogFrames
+        receiverLatestAcceptedFrameNumber = feedback.latestAcceptedFrameNumber
+        receiverLatestPresentedFrameNumber = feedback.latestPresentedFrameNumber
+        receiverLatestPresentedFrameAgeMs = feedback.latestPresentedFrameAgeMs
         receiverLostFrameCount = feedback.lostFrameCount
         receiverDiscardedPacketCount = feedback.discardedPacketCount
-        receiverPFrameCompletionLatencyP95Ms = feedback.pFrameCompletionLatencyP95Ms
-        receiverAcceptedFPS = feedback.rendererAcceptedFPS
-        receiverPresentedFPS = feedback.rendererPresentedFPS
         latestReceiverRecoveryCause = feedback.recoveryCause
-        applyReceiverFrameAcknowledgements(feedback.ackRanges, now: now)
-        if feedback.rendererPresentedFPS > 0 || feedback.rendererAcceptedFPS > 0 {
-            receiverHasPresentedFrame = true
-        }
+        updateReceiverCapacityLearningQuarantine(feedback, now: now)
+        let ackFrameBudgetDecision = applyReceiverFrameAcknowledgements(feedback.ackRanges, now: now)
+        let pFrameTimingDecision = applyReceiverPFrameTimingSamples(feedback.pFrameTimingSamples, now: now)
         let transportDecision = transportController.update(
             with: feedback,
             currentFrameRate: currentFrameRate,
@@ -36,7 +34,7 @@ extension StreamContext {
             mediaPathProfile: mediaPathProfile,
             now: now
         )
-        let frameBudgetDecision = frameBudgetController.update(
+        let frameBudgetDecision = adaptivePFrameController.update(
             with: feedback,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
@@ -63,6 +61,14 @@ extension StreamContext {
         if let frameBudgetDecision {
             await applyFrameBudgetDecision(frameBudgetDecision, now: now)
         }
+        if let ackFrameBudgetDecision {
+            await applyFrameBudgetDecision(ackFrameBudgetDecision, now: now)
+        }
+        if let pFrameTimingDecision {
+            await applyFrameBudgetDecision(pFrameTimingDecision, now: now)
+        }
+        noteReceiverAcceptedKeyframeIfNeeded(feedback, now: now)
+        noteReceiverPresentationRecoveryEvidenceIfNeeded(feedback, now: now)
         await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
     }
 
@@ -82,6 +88,16 @@ extension StreamContext {
             false
         }
         guard needsKeyframe else { return }
+        let hasTransportRecoveryEvidence = receiverFeedbackHasTransportRecoveryEvidence(feedback)
+        let hasConfirmedNoProgressFreeze = receiverFeedbackHasConfirmedNoProgressFreeze(feedback)
+        if feedback.recoveryCause == .freezeTimeout,
+           !hasTransportRecoveryEvidence,
+           !hasConfirmedNoProgressFreeze {
+            MirageLogger.stream(
+                "Receiver freeze keyframe recovery ignored for stream \(streamID) without transport evidence"
+            )
+            return
+        }
         guard pendingKeyframeReason == nil,
               now >= keyframeSendDeadline,
               !isKeyframeEncoding,
@@ -92,7 +108,8 @@ extension StreamContext {
             return
         }
 
-        let bypassesCooldown = recoveryCauseBypassesAdaptiveKeyframeCooldown(feedback.recoveryCause)
+        let bypassesCooldown = recoveryCauseBypassesAdaptiveKeyframeCooldown(feedback.recoveryCause) ||
+            (feedback.recoveryCause == .freezeTimeout && (hasTransportRecoveryEvidence || hasConfirmedNoProgressFreeze))
         let reason = "Receiver feedback keyframe recovery"
         startFrameChainRepair(
             reason: "receiver-feedback-\(feedback.recoveryCause.rawValue)",
@@ -106,15 +123,39 @@ extension StreamContext {
         )
         MirageLogger.stream(
             "\(reason) for stream \(streamID) recovery=\(feedback.recoveryState.rawValue) " +
-                "cause=\(feedback.recoveryCause.rawValue) queued=\(queued)"
+            "cause=\(feedback.recoveryCause.rawValue) queued=\(queued)"
         )
+    }
+
+    private func receiverFeedbackHasTransportRecoveryEvidence(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
+        feedback.lostFrameCount > 0 ||
+            feedback.discardedPacketCount > 0 ||
+            feedback.reassemblyBacklogFrames > 0 ||
+            feedback.reassemblyBacklogBytes > 0 ||
+            (feedback.reassemblerIncompleteFrameTimeouts ?? 0) > 0 ||
+            (feedback.reassemblerMissingFragmentTimeouts ?? 0) > 0 ||
+            (feedback.reassemblerForwardGapTimeouts ?? 0) > 0 ||
+            feedback.reliabilityCauses.contains(.forwardGapStall) ||
+            feedback.reliabilityCauses.contains(.noProgressTimeout) ||
+            feedback.reliabilityCauses.contains(.keyframeStarvation)
+    }
+
+    private func receiverFeedbackHasConfirmedNoProgressFreeze(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
+        guard feedback.recoveryCause == .freezeTimeout,
+              feedback.recoveryState == .keyframeRecovery || feedback.recoveryState == .hardRecovery else {
+            return false
+        }
+        let presentedAgeMs = feedback.latestPresentedFrameAgeMs ?? 0
+        return presentedAgeMs >= 1_500 &&
+            feedback.receivedFPS <= 0.5 &&
+            feedback.decodedFPS <= 0.5
     }
 
     private func applyReceiverFrameAcknowledgements(
         _ ranges: [MediaFeedbackFrameRange],
         now: CFAbsoluteTime
-    ) {
-        guard !ranges.isEmpty else { return }
+    ) -> HostFrameBudgetDecision? {
+        guard !ranges.isEmpty else { return nil }
 
         var newestAckedFrame = receiverAcknowledgedFrameNumber
         for range in ranges where isFrameNumber(range.endFrame, newerThan: newestAckedFrame) {
@@ -122,7 +163,7 @@ extension StreamContext {
         }
         guard let ackedFrame = newestAckedFrame,
               isFrameNumber(ackedFrame, newerThan: receiverAcknowledgedFrameNumber) else {
-            return
+            return nil
         }
 
         receiverAcknowledgedFrameNumber = ackedFrame
@@ -130,6 +171,113 @@ extension StreamContext {
         if let completion = recentFrameTransportCompletions.last(where: { $0.frameNumber == ackedFrame }) {
             receiverAckLagMs = max(0, (now - completion.completedAt) * 1000)
         }
+        noteReceiverAcceptedKeyframeIfNeeded(in: ranges, now: now)
+        return nil
+    }
+
+    private func noteReceiverAcceptedKeyframeIfNeeded(
+        in ranges: [MediaFeedbackFrameRange],
+        now: CFAbsoluteTime
+    ) {
+        guard let pendingReceiverAcceptedKeyframeFrameNumber else { return }
+        guard ranges.contains(where: {
+            frameNumber(pendingReceiverAcceptedKeyframeFrameNumber, isInside: $0)
+        }) else {
+            return
+        }
+        handleReceiverAcceptedKeyframe(
+            frameNumber: pendingReceiverAcceptedKeyframeFrameNumber,
+            evidence: "ack",
+            now: now
+        )
+    }
+
+    private func noteReceiverAcceptedKeyframeIfNeeded(
+        _ feedback: ReceiverMediaFeedbackMessage,
+        now: CFAbsoluteTime
+    ) {
+        guard let pendingFrameNumber = pendingReceiverAcceptedKeyframeFrameNumber else { return }
+        let acceptedFrame = feedback.latestAcceptedFrameNumber
+        let presentedFrame = feedback.latestPresentedFrameNumber
+        guard acceptedFrame.map({ receiverFrame($0, covers: pendingFrameNumber) }) == true ||
+            presentedFrame.map({ receiverFrame($0, covers: pendingFrameNumber) }) == true else {
+            return
+        }
+        handleReceiverAcceptedKeyframe(
+            frameNumber: pendingFrameNumber,
+            evidence: "receiver-feedback-latest-frame",
+            now: now
+        )
+    }
+
+    private func receiverFrame(_ latestFrame: UInt32, covers pendingFrame: UInt32) -> Bool {
+        latestFrame == pendingFrame || isFrameNumber(latestFrame, newerThan: pendingFrame)
+    }
+
+    private func frameNumber(_ frameNumber: UInt32, isInside range: MediaFeedbackFrameRange) -> Bool {
+        if range.startFrame <= range.endFrame {
+            return frameNumber >= range.startFrame && frameNumber <= range.endFrame
+        }
+        return frameNumber >= range.startFrame || frameNumber <= range.endFrame
+    }
+
+    private func noteReceiverPresentationRecoveryEvidenceIfNeeded(
+        _ feedback: ReceiverMediaFeedbackMessage,
+        now: CFAbsoluteTime
+    ) {
+        guard let pendingFrameNumber = pendingReceiverAcceptedKeyframeFrameNumber,
+              feedback.recoveryState == .idle,
+              !receiverFeedbackHasTransportRecoveryEvidence(feedback),
+              let completion = recentFrameTransportCompletions.last(where: {
+                  $0.frameNumber == pendingFrameNumber && $0.isKeyframe && $0.didSend
+              }),
+              now - completion.completedAt >= 0.10 else {
+            return
+        }
+        handleReceiverAcceptedKeyframe(
+            frameNumber: pendingFrameNumber,
+            evidence: "idle-feedback",
+            now: now
+        )
+    }
+
+    private func applyReceiverPFrameTimingSamples(
+        _ samples: [ReceiverPFrameTimingSample],
+        now: CFAbsoluteTime
+    ) -> HostFrameBudgetDecision? {
+        guard runtimeQualityAdjustmentEnabled, !samples.isEmpty else { return nil }
+        var latestDecision: HostFrameBudgetDecision?
+        let canLearnCapacity = receiverFrameBudgetCanLearnCapacity(now: now)
+        let quarantineReason = receiverFrameBudgetCapacityLearningQuarantineReason(now: now)
+        for sample in samples {
+            guard let completion = recentFrameTransportCompletions.last(where: {
+                $0.frameNumber == sample.frameNumber && !$0.isKeyframe && $0.didSend
+            }) else {
+                continue
+            }
+            latestDecision = adaptivePFrameController.recordFrameTransportCompletion(
+                frameNumber: UInt64(completion.frameNumber),
+                wireBytes: completion.wireBytes,
+                packetCount: completion.packetCount,
+                isKeyframe: false,
+                sendCompletionMs: sample.assemblyLatencyMs,
+                timingSource: .clientAssembled,
+                receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+                capacityLearningAllowed: canLearnCapacity,
+                capacityLearningQuarantineReason: quarantineReason,
+                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+                requestedTargetBitrateBps: requestedTargetBitrate,
+                startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
+                minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,
+                currentFrameRate: currentFrameRate,
+                maxPayloadSize: maxPayloadSize,
+                currentQuality: activeQuality,
+                qualityFloor: qualityFloor,
+                steadyQualityCeiling: steadyQualityCeiling,
+                now: now
+            ) ?? latestDecision
+        }
+        return latestDecision
     }
 
     private func isFrameNumber(_ frameNumber: UInt32, newerThan current: UInt32?) -> Bool {
@@ -142,13 +290,6 @@ extension StreamContext {
         _ decision: HostStreamTransportController.Decision,
         now: CFAbsoluteTime
     ) async {
-        qualityRaiseSuppressionUntil = max(
-            qualityRaiseSuppressionUntil,
-            decision.qualityRaiseSuppressionDeadline
-        )
-        transportFrameAdmissionTargetFPS = decision.frameAdmissionTargetFPS
-        transportFrameAdmissionDeadline = decision.frameAdmissionDeadline
-        refreshReceiverFrameAdmission(now: now)
         if mediaPathProfile.usesAwdlRadioPolicy, decision.awdlPacingDeadline > now {
             await packetSender?.activateAwdlPressurePacing(
                 until: decision.awdlPacingDeadline,
@@ -156,14 +297,6 @@ extension StreamContext {
             )
         }
 
-        if !mediaPathProfile.usesAwdlRadioPolicy ||
-            decision.frameAdmissionTargetFPS != nil ||
-            receiverFrameAdmissionLastLoggedTargetFPS != nil {
-            logReceiverFrameAdmissionChangeIfNeeded(
-                now: now,
-                trigger: decision.frameAdmissionTrigger
-            )
-        }
     }
 
     func applyFrameBudgetDecision(
@@ -172,16 +305,8 @@ extension StreamContext {
     ) async {
         realtimePressureState = decision.state
         realtimePressureReason = decision.reason.rawValue
-        realtimeRuntimeBitrateCeilingBps = frameBudgetController.runtimeCeilingBps
+        realtimeRuntimeBitrateCeilingBps = adaptivePFrameController.runtimeCeilingBps
         realtimeRuntimeQualityCeiling = decision.state == .observing ? nil : decision.qualityCeiling
-        qualityRaiseSuppressionUntil = max(
-            qualityRaiseSuppressionUntil,
-            decision.qualityRaiseSuppressionDeadline
-        )
-        realtimeFrameAdmissionTargetFPS = nil
-        realtimeFrameAdmissionDeadline = 0
-        refreshReceiverFrameAdmission(now: now)
-
         await applyRealtimeBudgetBitrate(
             decision.targetBitrateBps,
             ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
@@ -189,110 +314,24 @@ extension StreamContext {
         )
         await applyFrameBudgetQuality(decision)
 
-        logReceiverFrameAdmissionChangeIfNeeded(
-            now: now,
-            trigger: frameAdmissionTrigger(for: decision)
-        )
         logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
-    }
-
-    func receiverFrameAdmissionIsActive(now: CFAbsoluteTime) -> Bool {
-        refreshReceiverFrameAdmission(now: now)
-        guard let targetFPS = receiverFrameAdmissionTargetFPS else { return false }
-        guard targetFPS < currentFrameRate else { return false }
-        if receiverFrameAdmissionDeadline > 0, now >= receiverFrameAdmissionDeadline {
-            receiverFrameAdmissionTargetFPS = nil
-            receiverFrameAdmissionDeadline = 0
-            receiverFrameAdmissionLastAdmitTime = 0
-            return false
-        }
-        return true
-    }
-
-    @discardableResult
-    private func refreshReceiverFrameAdmission(now: CFAbsoluteTime) -> Bool {
-        if transportFrameAdmissionDeadline > 0, now >= transportFrameAdmissionDeadline {
-            transportFrameAdmissionTargetFPS = nil
-            transportFrameAdmissionDeadline = 0
-        }
-        if realtimeFrameAdmissionDeadline > 0, now >= realtimeFrameAdmissionDeadline {
-            realtimeFrameAdmissionTargetFPS = nil
-            realtimeFrameAdmissionDeadline = 0
-        }
-
-        var candidates: [(targetFPS: Int, deadline: CFAbsoluteTime)] = []
-        if let targetFPS = transportFrameAdmissionTargetFPS, targetFPS < currentFrameRate {
-            candidates.append((targetFPS, transportFrameAdmissionDeadline))
-        }
-        if let targetFPS = realtimeFrameAdmissionTargetFPS, targetFPS < currentFrameRate {
-            candidates.append((targetFPS, realtimeFrameAdmissionDeadline))
-        }
-        let nextTarget = candidates.map(\.targetFPS).min()
-        let nextDeadline = candidates.map(\.deadline).max() ?? 0
-        let changed = receiverFrameAdmissionTargetFPS != nextTarget ||
-            receiverFrameAdmissionDeadline != nextDeadline
-        receiverFrameAdmissionTargetFPS = nextTarget
-        receiverFrameAdmissionDeadline = nextDeadline
-        if nextTarget == nil {
-            receiverFrameAdmissionLastAdmitTime = 0
-        }
-        return changed
-    }
-
-    func shouldDropForReceiverFrameAdmission(now: CFAbsoluteTime) -> Bool {
-        guard receiverFrameAdmissionIsActive(now: now),
-              let targetFPS = receiverFrameAdmissionTargetFPS else {
-            return false
-        }
-        if pendingKeyframeReason != nil ||
-            pendingKeyframeDeadline > now ||
-            pendingKeyframeRequiresFlush ||
-            isKeyframeEncoding {
-            receiverFrameAdmissionLastAdmitTime = now
-            return false
-        }
-
-        let interval = 1.0 / Double(max(1, targetFPS))
-        if receiverFrameAdmissionLastAdmitTime == 0 ||
-            now - receiverFrameAdmissionLastAdmitTime >= interval {
-            receiverFrameAdmissionLastAdmitTime = now
-            return false
-        }
-        return true
-    }
-
-    private func logReceiverFrameAdmissionChangeIfNeeded(
-        now: CFAbsoluteTime,
-        trigger: HostStreamTransportController.FrameAdmissionTrigger
-    ) {
-        let logTarget = receiverFrameAdmissionIsActive(now: now) ? receiverFrameAdmissionTargetFPS : nil
-        guard logTarget != receiverFrameAdmissionLastLoggedTargetFPS ||
-            trigger != receiverFrameAdmissionLastLoggedTrigger ||
-            now - receiverFrameAdmissionLastLogTime >= 1.0 else {
-            return
-        }
-        receiverFrameAdmissionLastLogTime = now
-        receiverFrameAdmissionLastLoggedTargetFPS = logTarget
-        receiverFrameAdmissionLastLoggedTrigger = trigger
-        if let targetFPS = logTarget {
-            MirageLogger.metrics(
-                "Receiver transport pressure limiting pre-encode admission to \(targetFPS)fps for stream \(streamID) trigger=\(trigger.rawValue)"
-            )
-        } else {
-            MirageLogger.metrics(
-                "Receiver transport pressure cleared pre-encode admission limit for stream \(streamID) trigger=\(trigger.rawValue)"
-            )
-        }
     }
 
     private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async {
         let previousQuality = activeQuality
-        qualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling)
+        if decision.state == .observing {
+            qualityCeiling = resolvedQualityCeiling
+        } else {
+            qualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling)
+        }
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
             for: min(decision.keyframeQuality, qualityCeiling)
         )
-        activeQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
+        let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
+        activeQuality = decision.state == .observing
+            ? max(previousQuality, decisionQuality)
+            : decisionQuality
         guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
@@ -302,41 +341,18 @@ extension StreamContext {
         )
     }
 
-    private func frameAdmissionTrigger(
-        for decision: HostFrameBudgetDecision
-    ) -> HostStreamTransportController.FrameAdmissionTrigger {
-        switch decision.reason {
-        case .pFrameLatency:
-            return .clientPFrameLatency
-        case .receiverCadence,
-             .receiverBacklog:
-            return .clientReassemblyBacklog
-        case .receiverLoss:
-            return .clientTransportLoss
-        case .clientRecovery:
-            return .clientRecovery
-        case .senderDeadline:
-            return .clientTransportLoss
-        default:
-            return .clear
-        }
-    }
-
     private func logRealtimeBudgetDecisionIfNeeded(
         now: CFAbsoluteTime,
         decision: HostFrameBudgetDecision
     ) {
-        let admission = receiverFrameAdmissionIsActive(now: now) ? receiverFrameAdmissionTargetFPS : nil
         guard realtimeLastLoggedState != decision.state ||
             realtimeLastLoggedBitrateCeilingBps != realtimeRuntimeBitrateCeilingBps ||
-            realtimeLastLoggedAdmissionTargetFPS != admission ||
             now - realtimeLastLogTime >= 2.0 else {
             return
         }
         realtimeLastLogTime = now
         realtimeLastLoggedState = decision.state
         realtimeLastLoggedBitrateCeilingBps = realtimeRuntimeBitrateCeilingBps
-        realtimeLastLoggedAdmissionTargetFPS = admission
 
         let ceilingText = realtimeRuntimeBitrateCeilingBps
             .map { mirageFormattedMegabitRate($0) }
@@ -344,16 +360,19 @@ extension StreamContext {
         let currentBitrateText = (currentTargetBitrateBps ?? encoderConfig.bitrate)
             .map { mirageFormattedMegabitRate($0) }
             ?? "auto"
-        let admissionText = admission.map { "\($0)fps" } ?? "none"
         let qualityText = realtimeRuntimeQualityCeiling
             .map { formatAwdlMetric(Double($0)) }
+            ?? "none"
+        let cleanPFrameText = adaptivePFrameController.recentCleanPFrameBaselineWireBytes
+            .map { "\($0)B" }
             ?? "none"
         MirageLogger.metrics(
             "Frame budget: stream=\(streamID) " +
                 "state=\(decision.state.rawValue) reason=\(decision.reason.rawValue) " +
                 "runtimeCeiling=\(ceilingText) currentBitrate=\(currentBitrateText) " +
-                "qualityCeiling=\(qualityText) admission=\(admissionText) " +
-                "frameBytes=\(decision.maxFrameBytes) wireBytes=\(decision.maxWireBytes) packets=\(decision.maxPacketCount)"
+                "qualityCeiling=\(qualityText) " +
+                "frameBytes=\(decision.maxFrameBytes) wireBytes=\(decision.maxWireBytes) " +
+                "packets=\(decision.maxPacketCount) cleanPFrameBaseline=\(cleanPFrameText)"
         )
     }
 
@@ -368,7 +387,7 @@ extension StreamContext {
         decision: HostStreamTransportController.Decision?
     ) async {
         guard MirageSteadyStateDiagnostics.isEnabled else { return }
-        let trigger = decision?.awdlPacingTrigger ?? decision?.frameAdmissionTrigger ?? .none
+        let trigger = decision?.awdlPacingTrigger ?? decision?.pressureTrigger ?? .none
         let hasReceiverStress = trigger != .none ||
             feedback.recoveryState != .idle ||
             feedback.lostFrameCount > 0 ||
@@ -392,7 +411,6 @@ extension StreamContext {
 
         lastAwdlReceiverFeedbackLogTime = now
         lastAwdlReceiverFeedbackTrigger = trigger
-        let admission = decision?.frameAdmissionTargetFPS.map { "\($0)fps" } ?? "none"
         let latestAwdlPolicy = transportController.latestAwdlMediaDecision
         let policyState = decision?.awdlPolicyState?.rawValue ?? latestAwdlPolicy?.state.rawValue ?? "observing"
         let policyTrigger = decision?.awdlPolicyTrigger?.rawValue ?? latestAwdlPolicy?.trigger.rawValue ?? "none"
@@ -413,7 +431,7 @@ extension StreamContext {
         MirageLogger.metrics(
             "AWDL host receiver feedback: stream=\(streamID) " +
                 "trigger=\(trigger.rawValue) policy=\(policyState)/\(policyTrigger) " +
-                "pacingHold=\(pacing) admission=\(admission) policyTargetFPS=\(policyTargetFPS) " +
+                "pacingHold=\(pacing) policyTargetFPS=\(policyTargetFPS) " +
                 "loomProfile=\(loomProfile) " +
                 "loomMaxOutstandingPackets=\(loomMaxOutstandingPackets) " +
                 "loomMaxOutstandingBytes=\(loomMaxOutstandingBytes) " +
@@ -426,6 +444,7 @@ extension StreamContext {
                 "nonKeyframeContentProcessedMaxMs=\(formatAwdlMetric(packetTelemetry?.nonKeyframeSendCompletionMaxMs ?? 0)) " +
                 "pacerFrameMaxSleepMs=\(packetTelemetry?.packetPacerFrameMaxSleepMs ?? 0) " +
                 "senderLocalDeadlineDrops=\(packetTelemetry?.senderLocalDeadlineDrops ?? 0) " +
+                "lateNonKeyframeSends=\(packetTelemetry?.lateNonKeyframeSends ?? 0) " +
                 "senderStaleDrops=\(packetTelemetry?.stalePacketDrops ?? 0) " +
                 "targetFPS=\(feedback.targetFPS) " +
                 "rxFPS=\(formatAwdlMetric(feedback.receivedFPS)) " +

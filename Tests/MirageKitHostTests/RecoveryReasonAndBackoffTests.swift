@@ -15,19 +15,6 @@ import Testing
 
 @Suite("Recovery Reason Mapping")
 struct RecoveryReasonMappingTests {
-    @Test("Fallback resume keyframe is urgent without reset or flush")
-    func fallbackResumeDoesNotResetEpoch() async {
-        let context = makeContext()
-
-        await context.forceKeyframeAfterFallbackResume()
-
-        #expect(await context.pendingKeyframeReason == "Fallback resume keyframe")
-        #expect(await context.pendingKeyframeUrgent)
-        #expect(await context.pendingKeyframeRequiresFlush == false)
-        #expect(await context.pendingKeyframeRequiresReset == false)
-        #expect(context.epoch == 0)
-    }
-
     @Test("Capture restart keyframe resets only when escalation is requested")
     func captureRestartResetRequiresEscalation() async {
         let nonEscalated = makeContext()

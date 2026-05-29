@@ -39,6 +39,7 @@ extension StreamController {
         lastHardRecoveryStartTime = 0
         resetStartupRecoveryTracking()
         latestHostMetricsMessage = nil
+        latestHostMetricsTime = 0
         latestHostCadencePressureSample = nil
         latestRenderTelemetrySnapshot = nil
         renderCadenceMissStreak = 0
@@ -56,7 +57,7 @@ extension StreamController {
         MirageRenderStreamStore.shared.clear(for: streamID)
         // Replace decoder callbacks before stopping so a late decoder signal cannot retain or re-enter this controller.
         await decoder.setErrorThresholdHandler {}
-        await decoder.setDimensionChangeHandler {}
+        await decoder.setDimensionChangeHandler { _ in }
         await decoder.stopDecoding()
         await GlobalDecodeBudgetController.shared.unregister(streamID: streamID)
     }

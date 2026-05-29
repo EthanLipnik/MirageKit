@@ -144,6 +144,7 @@ extension StreamController {
         let noMediaProgress = metricsSnapshot.receivedFPS <= 0.5 && metricsSnapshot.decodedFPS <= 0.5
         let stalePendingFrame = pendingFrameCount > 0 &&
             pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs
+        let transportFreezeEvidence = hasTransportFreezeEvidence(now: now)
 
         if pendingFrameCount > 0,
            !stalePendingFrame,
@@ -153,12 +154,80 @@ extension StreamController {
             return true
         }
 
-        if stalePendingFrame || noMediaProgress {
+        if noMediaProgress, transportFreezeEvidence {
             await requestFreezeKeyframeRecovery(
                 now: now,
-                reason: stalePendingFrame ? "stale-pending-render-frame" : "no-media-progress",
+                reason: "no-media-progress",
                 pendingFrameCount: pendingFrameCount,
                 pendingFrameAgeMs: pendingFrameAgeMs
+            )
+            return true
+        }
+
+        if noMediaProgress, !stalePendingFrame {
+            if hostMediaAppearsDynamicallyIdle(now: now) {
+                await maybeLogStreamingAnomalyDiagnostic(
+                    trigger: "freeze-recovery-dynamic-sck-idle",
+                    decodedFPS: metricsSnapshot.decodedFPS,
+                    receivedFPS: metricsSnapshot.receivedFPS
+                )
+                MirageLogger.client(
+                    "Presentation stall has no media progress for stream \(streamID), but host capture appears idle; " +
+                        "preserving dynamic SCK idle state"
+                )
+                return true
+            }
+            if freezeRecoveryEpisode == nil {
+                armFreezePresenterProbe(now: now)
+                await maybeLogStreamingAnomalyDiagnostic(
+                    trigger: "freeze-recovery-no-media-probe",
+                    decodedFPS: metricsSnapshot.decodedFPS,
+                    receivedFPS: metricsSnapshot.receivedFPS
+                )
+                MirageLogger.client(
+                    "Presentation stall has no media progress for stream \(streamID) while host media is active; " +
+                        "arming bounded recovery probe"
+                )
+                return true
+            }
+            if let episode = freezeRecoveryEpisode,
+               episode.state == .presenterProbe,
+               now - episode.lastActionTime >= Self.freezePresenterProbeGrace {
+                await requestFreezeKeyframeRecovery(
+                    now: now,
+                    reason: "no-media-progress-with-active-host",
+                    pendingFrameCount: pendingFrameCount,
+                    pendingFrameAgeMs: pendingFrameAgeMs
+                )
+                return true
+            }
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-no-media-without-transport-evidence",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
+            MirageLogger.client(
+                "Presentation stall has no media progress for stream \(streamID), but no transport failure evidence; " +
+                    "preserving decode chain"
+            )
+            return true
+        }
+
+        if stalePendingFrame {
+            let droppedPendingFrames = MirageRenderStreamStore.shared.clearPendingFrames(for: streamID)
+            lastFreezeRecoveryTime = now
+            consecutiveFreezeRecoveries &+= 1
+            Task { @MainActor [weak self] in
+                await self?.onStallEvent?(.presentationRecovery)
+            }
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-stale-presentation-only",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
+            MirageLogger.client(
+                "Dropped \(droppedPendingFrames) stale pending render frame(s) during presentation-only " +
+                    "freeze recovery for stream \(streamID); preserving decode chain"
             )
             return true
         }
@@ -166,6 +235,18 @@ extension StreamController {
         if let episode = freezeRecoveryEpisode,
            episode.state == .presenterProbe,
            now - episode.lastActionTime >= Self.freezePresenterProbeGrace {
+            guard transportFreezeEvidence else {
+                await maybeLogStreamingAnomalyDiagnostic(
+                    trigger: "freeze-recovery-presenter-probe-timeout-without-transport-evidence",
+                    decodedFPS: metricsSnapshot.decodedFPS,
+                    receivedFPS: metricsSnapshot.receivedFPS
+                )
+                MirageLogger.client(
+                    "Freeze presenter probe timed out for stream \(streamID), but transport is not implicated; " +
+                        "preserving decode chain"
+                )
+                return true
+            }
             await requestFreezeKeyframeRecovery(
                 now: now,
                 reason: "presenter-probe-timeout",
@@ -176,6 +257,61 @@ extension StreamController {
         }
 
         return false
+    }
+
+    func hostMediaAppearsDynamicallyIdle(now: CFAbsoluteTime) -> Bool {
+        guard let hostMetrics = latestHostMetricsMessage,
+              latestHostMetricsTime > 0,
+              now - latestHostMetricsTime <= max(2.0, Self.freezeTimeout * 2.0) else {
+            return false
+        }
+        let captureIngressFPS = hostMetrics.captureIngressFPS ?? 0
+        let captureFPS = hostMetrics.captureFPS ?? 0
+        let encodeAttemptFPS = hostMetrics.encodeAttemptFPS ?? 0
+        return hostMetrics.encodedFPS <= 0.5 &&
+            hostMetrics.idleEncodedFPS <= 0.5 &&
+            captureIngressFPS <= 0.5 &&
+            captureFPS <= 0.5 &&
+            encodeAttemptFPS <= 0.5
+    }
+
+    func hasTransportFreezeEvidence(now: CFAbsoluteTime) -> Bool {
+        let reassemblerMetrics = reassembler.snapshotMetrics
+        let hasReassemblyLoss = reassemblerMetrics.forwardGapTimeouts > 0 ||
+            reassemblerMetrics.missingFragmentTimeouts > 0 ||
+            reassemblerMetrics.incompleteFrameTimeouts > 0 ||
+            reassemblerMetrics.incompleteFrameNoProgressTimeouts > 0 ||
+            reassemblerMetrics.incompleteFrameLifetimeTimeouts > 0
+        if hasReassemblyLoss { return true }
+
+        let latestPacketTime = reassembler.latestPacketReceivedTime
+        guard latestPacketTime > 0,
+              now - latestPacketTime >= Self.freezeTimeout,
+              let hostMetrics = latestHostMetricsMessage,
+              latestHostMetricsTime > 0,
+              now - latestHostMetricsTime <= max(2.0, Self.freezeTimeout * 2.0) else {
+            return false
+        }
+
+        let targetFPS = Double(max(1, hostMetrics.targetFrameRate))
+        let frameBudgetMs = 1_000.0 / targetFPS
+        let currentBitrate = hostMetrics.currentBitrate ??
+            hostMetrics.realtimeBitrateCeiling ??
+            hostMetrics.encoderRequestedBitrateBps ??
+            hostMetrics.requestedTargetBitrate ??
+            0
+        let estimatedFrameBytes = currentBitrate > 0
+            ? currentBitrate / 8 / max(1, hostMetrics.targetFrameRate)
+            : 0
+        let queuePressureBytes = max(128 * 1024, estimatedFrameBytes * 4)
+        let hasTransportDrops = (hostMetrics.senderLocalDeadlineDrops ?? 0) > 0 ||
+            (hostMetrics.stalePacketDrops ?? 0) > 0 ||
+            (hostMetrics.generationAbortDrops ?? 0) > 0 ||
+            (hostMetrics.nonKeyframeHoldDrops ?? 0) > 0
+        let hasSevereSendLatency = (hostMetrics.nonKeyframeSendCompletionMaxMs ?? 0) >= max(120.0, frameBudgetMs * 6.0) ||
+            (hostMetrics.sendCompletionMaxMs ?? 0) >= max(160.0, frameBudgetMs * 8.0)
+        let hasQueueBacklog = (hostMetrics.sendQueueBytes ?? 0) >= queuePressureBytes
+        return hasTransportDrops || hasSevereSendLatency || hasQueueBacklog
     }
 
     func armFreezePresenterProbe(now: CFAbsoluteTime) {

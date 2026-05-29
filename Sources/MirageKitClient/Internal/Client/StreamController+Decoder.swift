@@ -70,6 +70,7 @@ extension StreamController {
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         latestHostMetricsMessage = nil
+        latestHostMetricsTime = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
         lastSourceBoundDiagnosticSignature = nil
         latestHostCadencePressureSample = nil

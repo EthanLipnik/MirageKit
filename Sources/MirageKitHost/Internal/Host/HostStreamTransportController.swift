@@ -11,7 +11,7 @@ import MirageKit
 
 #if os(macOS)
 struct HostStreamTransportController: Equatable {
-    enum FrameAdmissionTrigger: String, Sendable, Equatable {
+    enum PressureTrigger: String, Sendable, Equatable {
         case none
         case senderQueue
         case pacerDebt
@@ -24,28 +24,19 @@ struct HostStreamTransportController: Equatable {
     }
 
     struct Decision: Equatable {
-        var frameAdmissionTargetFPS: Int?
-        var frameAdmissionDeadline: CFAbsoluteTime
-        var qualityRaiseSuppressionDeadline: CFAbsoluteTime
-        var frameAdmissionTrigger: FrameAdmissionTrigger
+        var pressureTrigger: PressureTrigger
         var awdlPacingDeadline: CFAbsoluteTime
-        var awdlPacingTrigger: FrameAdmissionTrigger
+        var awdlPacingTrigger: PressureTrigger
         var awdlPolicyState: MirageAwdlMediaController.State?
         var awdlPolicyTrigger: MirageAwdlMediaController.Trigger?
         var awdlTargetFrameRate: Int?
     }
 
-    private static let frameAdmissionHoldSeconds: CFAbsoluteTime = MirageAwdlMediaController.frameAdmissionHoldSeconds
     private static let awdlPacingHoldSeconds: CFAbsoluteTime = MirageAwdlMediaController.pacingHoldSeconds
-    private static let qualityRaiseRecoverySuppressionSeconds: CFAbsoluteTime =
-        MirageAwdlMediaController.qualityRaiseSuppressionSeconds
     private static let pressureSamplesRequired = 2
 
     private(set) var latestFeedbackSequence: UInt64 = 0
-    private(set) var frameAdmissionTargetFPS: Int?
-    private(set) var frameAdmissionDeadline: CFAbsoluteTime = 0
     private(set) var awdlPacingDeadline: CFAbsoluteTime = 0
-    private(set) var qualityRaiseSuppressionDeadline: CFAbsoluteTime = 0
     private(set) var latestAwdlMediaDecision: MirageAwdlMediaController.Decision?
     private var consecutivePressureSamples = 0
     private var awdlMediaController = MirageAwdlMediaController()
@@ -72,25 +63,14 @@ struct HostStreamTransportController: Equatable {
         if feedback.recoveryState != .idle ||
             feedback.reassemblyBacklogKeyframes > 0 ||
             awdlDecision?.state == .recovery {
-            let suppressionHold = awdlDecision?.qualityRaiseSuppressionSeconds ??
-                Self.qualityRaiseRecoverySuppressionSeconds
-            let suppressionDeadline = now + suppressionHold
-            qualityRaiseSuppressionDeadline = max(qualityRaiseSuppressionDeadline, suppressionDeadline)
             consecutivePressureSamples = 0
-            if frameAdmissionTargetFPS != nil {
-                frameAdmissionTargetFPS = nil
-                frameAdmissionDeadline = 0
-            }
             let awdlDeadline = activateAwdlPacingIfNeeded(
                 mediaProfile: mediaProfile,
                 now: now,
                 holdSeconds: awdlDecision?.pacingHoldSeconds ?? Self.awdlPacingHoldSeconds
             )
             return Decision(
-                frameAdmissionTargetFPS: frameAdmissionTargetFPS,
-                frameAdmissionDeadline: frameAdmissionDeadline,
-                qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: .clear,
+                pressureTrigger: .clear,
                 awdlPacingDeadline: awdlDeadline,
                 awdlPacingTrigger: awdlDeadline > 0 ? .clientRecovery : .clear,
                 awdlPolicyState: awdlDecision?.state,
@@ -113,26 +93,13 @@ struct HostStreamTransportController: Equatable {
             consecutivePressureSamples += 1
             guard consecutivePressureSamples >= Self.pressureSamplesRequired else { return nil }
             if mediaProfile.usesAwdlRadioPolicy {
-                let reliefFPS = pressureTrigger == .clientJitter ? nil :
-                    awdlDecision?.frameAdmissionTargetFPS ??
-                    Self.reliefFrameRate(
-                        currentFrameRate: currentFrameRate,
-                        activeTargetFPS: frameAdmissionTargetFPS,
-                        pressureSampleCount: consecutivePressureSamples
-                    )
-                frameAdmissionTargetFPS = reliefFPS
-                frameAdmissionDeadline = reliefFPS == nil ? 0 :
-                    now + (awdlDecision?.frameAdmissionHoldSeconds ?? Self.frameAdmissionHoldSeconds)
                 let awdlDeadline = activateAwdlPacingIfNeeded(
                     mediaProfile: mediaProfile,
                     now: now,
                     holdSeconds: awdlDecision?.pacingHoldSeconds ?? Self.awdlPacingHoldSeconds
                 )
                 return Decision(
-                    frameAdmissionTargetFPS: reliefFPS,
-                    frameAdmissionDeadline: frameAdmissionDeadline,
-                    qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                    frameAdmissionTrigger: pressureTrigger,
+                    pressureTrigger: pressureTrigger,
                     awdlPacingDeadline: awdlDeadline,
                     awdlPacingTrigger: pressureTrigger,
                     awdlPolicyState: awdlDecision?.state,
@@ -140,18 +107,8 @@ struct HostStreamTransportController: Equatable {
                     awdlTargetFrameRate: awdlDecision?.targetFrameRate
                 )
             }
-            let reliefFPS = Self.reliefFrameRate(
-                currentFrameRate: currentFrameRate,
-                activeTargetFPS: frameAdmissionTargetFPS,
-                pressureSampleCount: consecutivePressureSamples
-            )
-            frameAdmissionTargetFPS = reliefFPS
-            frameAdmissionDeadline = now + Self.frameAdmissionHoldSeconds
             return Decision(
-                frameAdmissionTargetFPS: reliefFPS,
-                frameAdmissionDeadline: frameAdmissionDeadline,
-                qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: pressureTrigger,
+                pressureTrigger: pressureTrigger,
                 awdlPacingDeadline: 0,
                 awdlPacingTrigger: .clear,
                 awdlPolicyState: nil,
@@ -164,13 +121,8 @@ struct HostStreamTransportController: Equatable {
         if mediaProfile.usesAwdlRadioPolicy {
             if awdlPacingDeadline > 0, now >= awdlPacingDeadline {
                 awdlPacingDeadline = 0
-                frameAdmissionTargetFPS = nil
-                frameAdmissionDeadline = 0
                 return Decision(
-                    frameAdmissionTargetFPS: nil,
-                    frameAdmissionDeadline: 0,
-                    qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                    frameAdmissionTrigger: .clear,
+                    pressureTrigger: .clear,
                     awdlPacingDeadline: 0,
                     awdlPacingTrigger: .clear,
                     awdlPolicyState: awdlDecision?.state,
@@ -180,22 +132,6 @@ struct HostStreamTransportController: Equatable {
             }
             return nil
         }
-        if frameAdmissionDeadline > 0, now >= frameAdmissionDeadline {
-            frameAdmissionTargetFPS = nil
-            frameAdmissionDeadline = 0
-            return Decision(
-                frameAdmissionTargetFPS: nil,
-                frameAdmissionDeadline: 0,
-                qualityRaiseSuppressionDeadline: qualityRaiseSuppressionDeadline,
-                frameAdmissionTrigger: .clear,
-                awdlPacingDeadline: 0,
-                awdlPacingTrigger: .clear,
-                awdlPolicyState: nil,
-                awdlPolicyTrigger: nil,
-                awdlTargetFrameRate: nil
-            )
-        }
-
         return nil
     }
 
@@ -229,19 +165,20 @@ struct HostStreamTransportController: Equatable {
 
     private static func pressureTrigger(
         for awdlTrigger: MirageAwdlMediaController.Trigger
-    ) -> FrameAdmissionTrigger? {
+    ) -> PressureTrigger? {
         switch awdlTrigger {
         case .jitter:
             .clientJitter
         case .loss:
             .clientTransportLoss
-        case .reassemblyBacklog,
-             .decodePressure,
-             .presentationUnderflow,
-             .demote:
+        case .reassemblyBacklog:
             .clientReassemblyBacklog
         case .pFrameLatency:
             .clientPFrameLatency
+        case .decodePressure,
+             .presentationUnderflow,
+             .demote:
+            nil
         case .recovery,
              .warmup,
              .stable,
@@ -254,7 +191,7 @@ struct HostStreamTransportController: Equatable {
         feedback: ReceiverMediaFeedbackMessage,
         currentFrameRate: Int,
         mediaPathProfile: MirageMediaPathProfile
-    ) -> FrameAdmissionTrigger? {
+    ) -> PressureTrigger? {
         let reassemblyBacklogStress = feedback.reassemblyBacklogFrames >= 8 ||
             feedback.reassemblyBacklogBytes >= 2_000_000
         let droppedStress = feedback.lostFrameCount >= 6 ||
@@ -283,23 +220,5 @@ struct HostStreamTransportController: Equatable {
         return nil
     }
 
-    private static func reliefFrameRate(
-        currentFrameRate: Int,
-        activeTargetFPS: Int?,
-        pressureSampleCount: Int
-    ) -> Int {
-        let current = max(1, currentFrameRate)
-        if current > 90 {
-            if let activeTargetFPS,
-               activeTargetFPS <= 90,
-               pressureSampleCount >= pressureSamplesRequired * 2 {
-                return 60
-            }
-            return 90
-        }
-        if current > 60 { return 60 }
-        if current > 30 { return 30 }
-        return max(15, current)
-    }
 }
 #endif

@@ -93,86 +93,6 @@ struct FreshnessBurstTests {
         #expect(await context.encoderConfig.captureQueueDepth == 8)
     }
 
-    @Test("Lowest-latency non-keyframe sender delay still enters freshness burst")
-    func lowestLatencyNonKeyframeSenderDelayStillEntersFreshnessBurst() async {
-        let context = makeContext(
-            bitrate: 120_000_000,
-            captureQueueDepth: 8
-        )
-        let telemetry = makeSenderTelemetry(
-            sendCompletionMaxMs: 55,
-            nonKeyframeSendCompletionMaxMs: 55
-        )
-
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-
-        #expect(await context.freshnessBurstActive)
-        #expect(await context.freshnessBurstEntryCount == 1)
-        #expect(await context.pendingKeyframeReason == nil)
-    }
-
-    @Test("Modest non-keyframe sender delay does not enter freshness burst")
-    func modestNonKeyframeSenderDelayDoesNotEnterFreshnessBurst() async {
-        let context = makeContext(
-            bitrate: 120_000_000,
-            captureQueueDepth: 8
-        )
-        let telemetry = makeSenderTelemetry(
-            sendCompletionMaxMs: 25,
-            nonKeyframeSendCompletionMaxMs: 25
-        )
-
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-
-        #expect(!(await context.freshnessBurstActive))
-        #expect(await context.freshnessBurstEntryCount == 0)
-        #expect(await context.senderFrameBudgetDelayOverrunCount == 0)
-    }
-
-    @Test("Smoothest non-keyframe sender delay uses soft drain instead of recovery burst")
-    func smoothestNonKeyframeSenderDelayUsesSoftDrainInsteadOfRecoveryBurst() async {
-        let context = makeContext(
-            bitrate: 120_000_000,
-            captureQueueDepth: 8,
-            latencyMode: .smoothest
-        )
-        let telemetry = makeSenderTelemetry(
-            sendCompletionMaxMs: 55,
-            nonKeyframeSendCompletionMaxMs: 55
-        )
-
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-        await context.applySenderFrameBudgetRecoveryIfNeeded(
-            packetTelemetry: telemetry,
-            frameBudgetMs: 16.7
-        )
-
-        #expect(!(await context.freshnessBurstActive))
-        #expect(!(await context.latencyBurstActive))
-        #expect(await context.latencyBurstDrainsNewestFrames)
-        #expect(await context.freshnessBurstEntryCount == 0)
-
-        await context.expireSoftFreshnessDrainIfNeeded(at: CFAbsoluteTimeGetCurrent() + 1)
-        #expect(!(await context.latencyBurstDrainsNewestFrames))
-    }
-
     @Test("AWDL freshness burst resets sender queue and requests flush keyframe")
     func awdlFreshnessBurstResetsSenderQueueAndRequestsFlushKeyframe() async throws {
         let context = makeContext(
@@ -239,32 +159,6 @@ struct FreshnessBurstTests {
             latencyMode: latencyMode,
             transportPathKind: transportPathKind,
             enteredBitrate: bitrate
-        )
-    }
-
-    private func makeSenderTelemetry(
-        queuedBytes: Int = 0,
-        sendStartDelayMaxMs: Double = 0,
-        sendCompletionMaxMs: Double = 0,
-        nonKeyframeSendStartDelayMaxMs: Double = 0,
-        nonKeyframeSendCompletionMaxMs: Double = 0
-    ) -> StreamPacketSender.TelemetrySnapshot {
-        StreamPacketSender.TelemetrySnapshot(
-            queuedBytes: queuedBytes,
-            sendStartDelayAverageMs: sendStartDelayMaxMs,
-            sendStartDelayMaxMs: sendStartDelayMaxMs,
-            sendCompletionAverageMs: sendCompletionMaxMs,
-            sendCompletionMaxMs: sendCompletionMaxMs,
-            nonKeyframeSendStartDelayMaxMs: nonKeyframeSendStartDelayMaxMs,
-            nonKeyframeSendCompletionMaxMs: nonKeyframeSendCompletionMaxMs,
-            packetPacerSleepAverageMs: 0,
-            packetPacerSleepTotalMs: 0,
-            packetPacerSleepMaxMs: 0,
-            packetPacerFrameMaxSleepMs: 0,
-            stalePacketDrops: 0,
-            senderLocalDeadlineDrops: 0,
-            generationAbortDrops: 0,
-            nonKeyframeHoldDrops: 0
         )
     }
 }

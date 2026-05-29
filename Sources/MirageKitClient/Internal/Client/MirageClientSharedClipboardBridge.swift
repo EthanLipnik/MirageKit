@@ -310,6 +310,14 @@ final class MirageClientSharedClipboardBridge {
             return .hostAlreadyCurrent
         }
 
+        let latestChangeCount = await ClientClipboardSnapshotReader.shared.changeCount
+        if latestChangeCount != currentChangeCount,
+           clipboardState.shouldSuppressLocalSend(changeCount: latestChangeCount, nowMs: nowMs) {
+            clipboardState.recordSuppressedLocalSend(changeCount: latestChangeCount)
+            MirageLogger.client("Shared clipboard manual sync skipped: host clipboard is current")
+            return .hostAlreadyCurrent
+        }
+
         let snapshot = await ClientClipboardSnapshotReader.shared.snapshot
         guard snapshot.item.representation.kind != .unsupported,
               snapshot.item.payload != nil else {

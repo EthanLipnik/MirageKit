@@ -310,12 +310,6 @@ actor WindowCaptureEngine {
         return frame
     }
 
-    nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
-        Task(priority: .userInitiated) {
-            await self.markKeyframeRequested(reason: reason)
-        }
-    }
-
     nonisolated func enqueueCaptureStallSignal(_ signal: CaptureStreamOutput.StallSignal) {
         Task(priority: .userInitiated) {
             await self.handleCaptureStallSignal(signal)
@@ -347,9 +341,9 @@ actor WindowCaptureEngine {
             return
         }
 
-        guard signal.restartEligible else { return }
-        let debounce = activeStallPolicy.restartDebounce
-        scheduleCaptureRestart(reason: signal.message, debounce: debounce)
+        if signal.restartEligible {
+            MirageLogger.capture("event=restart_suppressed reason=capture_stall source=\(signal.message)")
+        }
     }
 
     func scheduleCaptureRestart(reason: String, debounce: CFAbsoluteTime) {

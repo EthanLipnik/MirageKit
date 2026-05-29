@@ -22,7 +22,7 @@ actor StreamPacketSender {
     nonisolated let onDependencyFrameDropped:
         (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)?
     nonisolated let onFrameTransportCompleted:
-        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ isKeyframe: Bool, _ didSend: Bool) -> Void)?
+        (@Sendable (_ completion: FrameTransportCompletion) -> Void)?
     let packetBufferPool: PacketBufferPool
     private var sendTask: Task<Void, Never>?
     /// Accessed from encoder callbacks; lifecycle is managed by start/stop.
@@ -43,6 +43,7 @@ actor StreamPacketSender {
     nonisolated(unsafe) var queuedSenderLocalDeadlineDropCount: UInt64 = 0
     nonisolated(unsafe) var queuedGenerationAbortDropCount: UInt64 = 0
     nonisolated(unsafe) var queuedNonKeyframeHoldDropCount: UInt64 = 0
+    nonisolated(unsafe) var lateReservedPFrameStreak: Int = 0
     let queueLock = NSLock()
 
     var pacerRateBps: Int = 0
@@ -64,6 +65,7 @@ actor StreamPacketSender {
     var nonKeyframeSendStartDelayMaxMs: Double = 0
     var nonKeyframeSendCompletionMaxMs: Double = 0
     var stalePacketDropCount: UInt64 = 0
+    var lateNonKeyframeSendCount: UInt64 = 0
     var generationAbortDropCount: UInt64 = 0
     var nonKeyframeHoldDropCount: UInt64 = 0
 
@@ -78,7 +80,7 @@ actor StreamPacketSender {
         onDependencyFrameDropped:
         (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ reason: DependencyFrameDropReason) -> Void)? = nil,
         onFrameTransportCompleted:
-        (@Sendable (_ streamID: StreamID, _ frameNumber: UInt32, _ isKeyframe: Bool, _ didSend: Bool) -> Void)? = nil
+        (@Sendable (_ completion: FrameTransportCompletion) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map(MirageMediaPacketKey.init(context:))
@@ -221,12 +223,10 @@ extension StreamPacketSender {
     /// Enqueues encoded frame work from encoder callbacks.
     nonisolated func enqueue(_ item: WorkItem) {
         let accountedBytes = accountedWireBytes(for: item)
-        let now = CFAbsoluteTimeGetCurrent()
         let admission = queueLock.withLock {
             enqueueLocked(
                 item,
-                accountedBytes: accountedBytes,
-                now: now
+                accountedBytes: accountedBytes
             )
         }
         guard case .enqueued = admission else { return }
@@ -236,24 +236,12 @@ extension StreamPacketSender {
     /// Applies queue admission, keyframe supersession, and realtime queue bounds while locked.
     private nonisolated func enqueueLocked(
         _ item: WorkItem,
-        accountedBytes: Int,
-        now: CFAbsoluteTime
+        accountedBytes: Int
     )
     -> QueueAdmissionResult {
         guard sendContinuation != nil else { return .dropped }
-        discardExpiredQueuedNonKeyframesLocked(now: now)
-
         guard item.generation == generation else {
             queuedGenerationAbortDropCount &+= 1
-            return .dropped
-        }
-
-        if isExpiredNonKeyframe(item, now: now) {
-            queuedStalePacketDropCount &+= 1
-            markDependencyFrameDroppedLocked(
-                item,
-                reason: .expiredBeforeEnqueue
-            )
             return .dropped
         }
 
@@ -278,7 +266,7 @@ extension StreamPacketSender {
         if !item.isKeyframe, videoTransportMode.usesReliableOrderedDelivery {
             enforceReliableQueueBoundsLocked()
         } else if !item.isKeyframe {
-            enforceRealtimeQueueBoundsLocked(now: now)
+            enforceRealtimeQueueBoundsLocked()
         }
 
         return .enqueued(queuedBytes: queuedBytes)
@@ -287,7 +275,6 @@ extension StreamPacketSender {
     /// Removes the next queued work item for the send loop.
     private nonisolated func dequeueNextWorkItem() -> WorkItem? {
         queueLock.withLock {
-            discardExpiredQueuedNonKeyframesLocked(now: CFAbsoluteTimeGetCurrent())
             guard !queuedWorkItems.isEmpty else { return nil }
             return queuedWorkItems.removeFirst().item
         }
@@ -314,17 +301,27 @@ extension StreamPacketSender {
             reduceQueuedBytes(accountedBytes)
             return
         }
-        if isExpiredNonKeyframe(item, now: CFAbsoluteTimeGetCurrent()) {
+        let sendStartTime = CFAbsoluteTimeGetCurrent()
+        let latenessMs = nonKeyframeDeadlineLatenessMs(item, now: sendStartTime)
+        if shouldAbandonReservedPFrameForFreshness(item, latenessMs: latenessMs) {
+            queuedSenderLocalDeadlineDropCount &+= 1
             stalePacketDropCount &+= 1
+            reduceQueuedBytes(accountedBytes)
             queueLock.withLock {
                 markDependencyFrameDroppedLocked(
                     item,
-                    reason: .expiredBeforeSend
+                    reason: .staleChain
                 )
             }
-            reduceQueuedBytes(accountedBytes)
+            let roundedLatenessMs = ((latenessMs ?? 0) * 10).rounded() / 10
+            MirageLogger.stream(
+                "event=reserved_p_frame_stale_chain frame=\(item.frameNumber) stream=\(item.streamID) " +
+                    "latenessMs=\(roundedLatenessMs) streak=\(lateReservedPFrameStreak) " +
+                    "wireBytes=\(item.wireBytes)"
+            )
             return
         }
+        recordReservedPFrameLatenessIfNeeded(item, now: sendStartTime)
         if item.isKeyframe, newestKeyframeGeneration == currentGeneration,
            newestKeyframe > 0, item.frameNumber < newestKeyframe {
             stalePacketDropCount &+= 1

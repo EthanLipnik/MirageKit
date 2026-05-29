@@ -72,9 +72,8 @@ extension WindowCaptureEngine {
         }
     }
 
-    /// Reason a capture output requested a replacement keyframe.
+    /// Reason a capture engine requested a replacement keyframe.
     enum CaptureKeyframeRequestReason: Equatable {
-        case fallbackResume
         case captureRestart(restartStreak: Int, shouldEscalateRecovery: Bool)
     }
 

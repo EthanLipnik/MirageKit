@@ -18,13 +18,6 @@ import AppKit
 import ScreenCaptureKit
 
 extension WindowCaptureEngine {
-    func markKeyframeRequested(reason: CaptureStreamOutput.KeyframeRequestReason) {
-        switch reason {
-        case .fallbackResume:
-            enqueuePendingKeyframeRequest(.fallbackResume)
-        }
-    }
-
     func markCaptureRestartKeyframeRequested(
         restartStreak: Int,
         shouldEscalateRecovery: Bool
@@ -41,16 +34,11 @@ extension WindowCaptureEngine {
         switch (pendingKeyframeRequest, reason) {
         case (.none, _):
             pendingKeyframeRequest = reason
-        case (.some(.fallbackResume), .captureRestart):
-            pendingKeyframeRequest = reason
         case let (.some(.captureRestart(existingStreak, existingEscalation)), .captureRestart(newStreak, newEscalation)):
             pendingKeyframeRequest = .captureRestart(
                 restartStreak: max(existingStreak, newStreak),
                 shouldEscalateRecovery: existingEscalation || newEscalation
             )
-        case (.some(.captureRestart), .fallbackResume),
-             (.some(.fallbackResume), .fallbackResume):
-            break
         }
     }
 

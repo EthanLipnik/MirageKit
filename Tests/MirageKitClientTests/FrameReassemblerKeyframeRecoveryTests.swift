@@ -77,6 +77,46 @@ struct FrameReassemblerKeyframeRecoveryTests {
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
+    @Test("Dimension-change reset preserves delivered keyframe anchor")
+    func dimensionChangeResetPreservesDeliveredKeyframeAnchor() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = FrameReassemblerLockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+
+        let keyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            keyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 100,
+                payload: keyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        reassembler.resetAfterDeliveredDimensionChangeKeyframe(frameNumber: 100)
+
+        let pFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x11])
+        reassembler.processPacket(
+            pFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 101,
+                payload: pFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+        #expect(reassembler.hasKeyframeAnchor == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
+    }
+
     @Test("Keyframe FEC recovery infers startup block size from fragment layout")
     func keyframeFECRecoveryInfersStartupBlockSize() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)

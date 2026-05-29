@@ -13,8 +13,12 @@ extension StreamPacketSender {
     /// Current telemetry counters without resetting the reporting window.
     var telemetrySnapshot: TelemetrySnapshot {
         let queueSnapshot = queueLock.withLock {
-            (
+            let freshness = freshnessSnapshotLocked(now: CFAbsoluteTimeGetCurrent())
+            return (
                 queuedBytes: self.queuedBytes,
+                unstartedPFrameCount: freshness.unstartedPFrameCount,
+                oldestUnstartedPFrameAgeMs: freshness.oldestUnstartedPFrameAgeMs,
+                oldestUnstartedPFrameLatenessMs: freshness.oldestUnstartedPFrameLatenessMs,
                 staleDrops: queuedStalePacketDropCount,
                 senderLocalDeadlineDrops: queuedSenderLocalDeadlineDropCount,
                 generationDrops: queuedGenerationAbortDropCount,
@@ -23,6 +27,10 @@ extension StreamPacketSender {
         }
         return TelemetrySnapshot(
             queuedBytes: queueSnapshot.queuedBytes,
+            unstartedPFrameCount: queueSnapshot.unstartedPFrameCount,
+            oldestUnstartedPFrameAgeMs: queueSnapshot.oldestUnstartedPFrameAgeMs,
+            oldestUnstartedPFrameLatenessMs: queueSnapshot.oldestUnstartedPFrameLatenessMs,
+            lateReservedPFrameStreak: lateReservedPFrameStreak,
             sendStartDelayAverageMs: average(total: sendStartDelayTotalMs, count: sendStartDelayCount),
             sendStartDelayMaxMs: sendStartDelayMaxMs,
             sendCompletionAverageMs: average(total: sendCompletionTotalMs, count: sendCompletionCount),
@@ -35,6 +43,7 @@ extension StreamPacketSender {
             packetPacerFrameMaxSleepMs: pacerFrameSleepMaxMs,
             stalePacketDrops: stalePacketDropCount + queueSnapshot.staleDrops,
             senderLocalDeadlineDrops: queueSnapshot.senderLocalDeadlineDrops,
+            lateNonKeyframeSends: lateNonKeyframeSendCount,
             generationAbortDrops: generationAbortDropCount + queueSnapshot.generationDrops,
             nonKeyframeHoldDrops: nonKeyframeHoldDropCount + queueSnapshot.nonKeyframeHoldDrops
         )
@@ -59,6 +68,7 @@ extension StreamPacketSender {
         nonKeyframeSendCompletionMaxMs = 0
         resetPacketPacerTelemetryCounters()
         stalePacketDropCount = 0
+        lateNonKeyframeSendCount = 0
         generationAbortDropCount = 0
         nonKeyframeHoldDropCount = 0
         queueLock.withLock {

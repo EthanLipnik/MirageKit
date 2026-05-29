@@ -121,6 +121,7 @@ actor StreamController {
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var lastSourceBoundDiagnosticSignature: String?
     var latestHostMetricsMessage: StreamMetricsMessage?
+    var latestHostMetricsTime: CFAbsoluteTime = 0
     var latestHostCadencePressureSample: HostCadencePressureDiagnosticSample?
     var latestRenderTelemetrySnapshot: RenderTelemetrySnapshot?
     var renderCadenceMissStreak: Int = 0
@@ -301,10 +302,13 @@ extension StreamController {
 
         // Set up dimension change handler - reset reassembler when dimensions change
         let capturedStreamID = streamID
-        await decoder.setDimensionChangeHandler { [weak self] in
+        await decoder.setDimensionChangeHandler { [weak self] frameNumber in
             guard let self else { return }
             Task {
-                await self.resetReassemblerForDimensionChange(streamID: capturedStreamID)
+                await self.resetReassemblerForDimensionChange(
+                    streamID: capturedStreamID,
+                    preservingKeyframeFrameNumber: frameNumber
+                )
             }
         }
 

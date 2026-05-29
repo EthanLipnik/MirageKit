@@ -59,6 +59,7 @@ extension StreamController {
                         frame.data,
                         presentationTime: frame.presentationTime,
                         isKeyframe: frame.isKeyframe,
+                        frameNumber: frame.frameNumber,
                         contentRect: frame.contentRect
                     )
                     await recordDecodeSuccessIfNeeded()
@@ -116,15 +117,26 @@ extension StreamController {
     }
 
     /// Resets frame assembly and cadence correction after the decoder observes a dimension change.
-    func resetReassemblerForDimensionChange(streamID capturedStreamID: StreamID) {
-        reassembler.reset()
+    func resetReassemblerForDimensionChange(
+        streamID capturedStreamID: StreamID,
+        preservingKeyframeFrameNumber frameNumber: UInt32?
+    ) {
+        if let frameNumber {
+            reassembler.resetAfterDeliveredDimensionChangeKeyframe(frameNumber: frameNumber)
+        } else {
+            reassembler.reset()
+        }
         streamCadenceClock.reset(targetFPS: streamCadenceTarget.sourceFPS)
         _ = MirageRenderStreamStore.shared.resetPresentation(
             for: streamID,
             dropPendingFrames: true,
             reason: "dimension-change"
         )
-        MirageLogger.client("Reassembler reset due to dimension change for stream \(capturedStreamID)")
+        let frameText = frameNumber.map(String.init) ?? "unknown"
+        MirageLogger.client(
+            "Reassembler reset due to dimension change for stream \(capturedStreamID); " +
+                "preservedKeyframe=\(frameText)"
+        )
     }
 
     /// Stops frame processing and releases queued compressed frame buffers.
@@ -215,6 +227,7 @@ extension StreamController {
             data: data,
             presentationTime: timing.streamPresentationTime,
             isKeyframe: isKeyframe,
+            frameNumber: frameNumber,
             contentRect: contentRect,
             releaseBuffer: releaseBuffer
         )

@@ -83,8 +83,8 @@ extension StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Expired queued P-frame opens dependency recovery")
-    func expiredQueuedPFrameOpensDependencyRecovery() async throws {
+    @Test("Past-deadline queued P-frame sends after queue unblocks")
+    func pastDeadlineQueuedPFrameSendsAfterQueueUnblocks() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let blockedFirstPacket = Locked(false)
@@ -150,11 +150,12 @@ extension StreamPacketSenderRegressionTests {
         try await waitForStreamPacketQueuedBytesToDrain(sender)
 
         let telemetry = await sender.telemetrySnapshot
-        #expect(telemetry.stalePacketDrops == 1)
-        #expect(telemetry.senderLocalDeadlineDrops == 1)
-        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [700])
-        #expect(dependencyDropCount.read { $0 == 1 })
-        #expect(await sender.requiresDependencyRecoveryKeyframe())
+        #expect(telemetry.stalePacketDrops == 0)
+        #expect(telemetry.senderLocalDeadlineDrops == 0)
+        #expect(telemetry.lateNonKeyframeSends == 1)
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [700, 701, 702])
+        #expect(dependencyDropCount.read { $0 == 0 })
+        #expect(await !sender.requiresDependencyRecoveryKeyframe())
 
         await sender.stop()
     }

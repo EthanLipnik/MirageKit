@@ -37,10 +37,6 @@ extension SharedVirtualDisplayManager {
         let invalidateSelector = NSSelectorFromString("invalidate")
         let displayObject = displayContext.display
 
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
-        }
-
         await withDisplayMutation(kind: .virtualDisplayDestroy) {
             if (displayObject as AnyObject).responds(to: invalidateSelector) {
                 _ = (displayObject as AnyObject).perform(invalidateSelector)
@@ -69,10 +65,6 @@ extension SharedVirtualDisplayManager {
     func destroyDisplay(_ display: ManagedDisplayContext, removalWaitMs: Int = 3000) async {
         let displayID = display.displayID
         MirageLogger.host("Destroying virtual display, displayID=\(displayID)")
-
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
-        }
 
         let invalidateSelector = NSSelectorFromString("invalidate")
         let displayObject = display.displayRef.value

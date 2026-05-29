@@ -127,7 +127,7 @@ extension FrameReassembler {
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
 
             if !frame.isKeyframe {
-                recordPFrameCompletionLatencyLocked(frame: frame, now: Date())
+                recordPFrameCompletionLatencyLocked(frameNumber: frameNumber, frame: frame, now: Date())
                 MirageFrameIntegrityDiagnostics.shared.recordPFrame(
                     source: .reassembledPFrame,
                     streamID: streamID,
@@ -241,6 +241,7 @@ extension FrameReassembler {
         hasDeliveredKeyframeAnchor = false
         hasSignaledGapFrameLoss = false
         pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: true)
+        pendingPFrameTimingSamples.removeAll(keepingCapacity: true)
         clearAwaitingKeyframe()
         beginAwaitingKeyframe()
         MirageLogger.log(.frameAssembly, "Epoch \(epoch) reset (\(reason)) for stream \(streamID)")
@@ -253,6 +254,21 @@ extension FrameReassembler {
         let ranges = Self.completedFrameAckRanges(from: pendingCompletedFrameAckNumbers)
         pendingCompletedFrameAckNumbers.removeAll(keepingCapacity: true)
         return ranges
+    }
+
+    func consumePFrameTimingSamples(limit: Int = 96) -> [ReceiverPFrameTimingSample] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !pendingPFrameTimingSamples.isEmpty else { return [] }
+        let sampleLimit = max(1, limit)
+        let samples = pendingPFrameTimingSamples.suffix(sampleLimit).map {
+            ReceiverPFrameTimingSample(
+                frameNumber: $0.frameNumber,
+                assemblyLatencyMs: $0.assemblyLatencyMs
+            )
+        }
+        pendingPFrameTimingSamples.removeAll(keepingCapacity: true)
+        return samples
     }
 
     static func completedFrameAckRanges(from frameNumbers: [UInt32]) -> [MediaFeedbackFrameRange] {

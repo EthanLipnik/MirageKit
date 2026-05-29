@@ -166,8 +166,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Sender-local deadline-past P-frames trigger dependency recovery")
-    func senderLocalDeadlinePastPFramesTriggerDependencyRecovery() async throws {
+    @Test("Sender-local deadline-past P-frames still send")
+    func senderLocalDeadlinePastPFramesStillSend() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
@@ -202,19 +202,20 @@ struct StreamPacketSenderRegressionTests {
             )
         }
 
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
 
-        #expect(submittedPackets.read { $0.isEmpty })
-        #expect(dependencyDropCount.read { $0 == 1 })
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [1, 2])
+        #expect(dependencyDropCount.read { $0 == 0 })
         let localSnapshot = await sender.telemetrySnapshot
-        #expect(localSnapshot.senderLocalDeadlineDrops == 2)
-        #expect(localSnapshot.stalePacketDrops == 2)
-        #expect(await sender.requiresDependencyRecoveryKeyframe())
+        #expect(localSnapshot.senderLocalDeadlineDrops == 0)
+        #expect(localSnapshot.lateNonKeyframeSends == 2)
+        #expect(localSnapshot.stalePacketDrops == 0)
+        #expect(await !sender.requiresDependencyRecoveryKeyframe())
         await sender.stop()
     }
 
-    @Test("Repeated sender-local deadline drops coalesce dependency recovery")
-    func repeatedSenderLocalDeadlineDropsCoalesceDependencyRecovery() async throws {
+    @Test("Repeated sender-local deadline-past P-frames enter stale-chain repair")
+    func repeatedSenderLocalDeadlinePastPFramesEnterStaleChainRepair() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(
@@ -249,13 +250,14 @@ struct StreamPacketSenderRegressionTests {
             )
         }
 
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitForStreamPacketSubmissionCount(submittedPackets, expectedCount: 2)
 
-        #expect(submittedPackets.read { $0.isEmpty })
+        #expect(submittedPackets.read { $0.map(\.frameNumber) } == [1, 2])
         #expect(dependencyDropCount.read { $0 == 1 })
         let localSnapshot = await sender.telemetrySnapshot
-        #expect(localSnapshot.senderLocalDeadlineDrops == 3)
-        #expect(localSnapshot.stalePacketDrops == 3)
+        #expect(localSnapshot.senderLocalDeadlineDrops == 1)
+        #expect(localSnapshot.lateNonKeyframeSends == 2)
+        #expect(localSnapshot.stalePacketDrops == 1)
         #expect(await sender.requiresDependencyRecoveryKeyframe())
         await sender.stop()
     }

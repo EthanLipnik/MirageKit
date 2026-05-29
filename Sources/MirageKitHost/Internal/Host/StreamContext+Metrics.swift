@@ -58,25 +58,11 @@ extension StreamContext {
             await applyUltraValidationDowngradeIfNeeded(encoderValidation)
             let currentBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate
             let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-            if let packetTelemetry {
-                await applySenderFrameBudgetRecoveryIfNeeded(
-                    packetTelemetry: packetTelemetry,
-                    frameBudgetMs: frameBudgetMs
-                )
-            }
             let encodedWidth = Int(currentEncodedSize.width)
             let encodedHeight = Int(currentEncodedSize.height)
             let captureCadenceMetrics = streamCaptureCadenceMetrics(
                 telemetry: captureTelemetry,
                 policy: capturePolicy
-            )
-            await applyCaptureCadenceRecoveryIfNeeded(
-                captureTelemetry: captureTelemetry,
-                captureCadence: captureCadenceMetrics,
-                packetTelemetry: packetTelemetry,
-                averageEncodeMs: resolvedAverageEncodeMs,
-                frameBudgetMs: frameBudgetMs,
-                now: now
             )
             let message = StreamMetricsMessage(
                 streamID: streamID,

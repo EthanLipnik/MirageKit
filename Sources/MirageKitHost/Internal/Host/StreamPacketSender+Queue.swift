@@ -27,37 +27,76 @@ extension StreamPacketSender {
         return max(0, max(item.wireBytes, fecPayloadBudgetBytes(for: item)))
     }
 
-    /// Returns whether an unreliable non-keyframe missed its sender-local deadline.
-    nonisolated func isExpiredNonKeyframe(_ item: WorkItem, now: CFAbsoluteTime) -> Bool {
-        guard !videoTransportMode.usesReliableOrderedDelivery else { return false }
-        guard !item.isKeyframe, item.sendDeadline.isFinite else { return false }
-        return now >= hardSendDeadline(for: item)
-    }
-
-    /// Returns the hard abandon deadline for dependency-coded P-frames.
+    /// Returns the local lateness threshold for dependency-coded P-frames.
     nonisolated func hardSendDeadline(for item: WorkItem) -> CFAbsoluteTime {
         let frameInterval = 1.0 / Double(max(1, item.targetFrameRate))
         return item.sendDeadline + frameInterval * 2.0
     }
 
-    /// Drops expired queued non-keyframes while the caller holds `queueLock`.
-    nonisolated func discardExpiredQueuedNonKeyframesLocked(now: CFAbsoluteTime) {
-        guard !queuedWorkItems.isEmpty else { return }
-        var retainedItems: [QueuedWorkItem] = []
-        retainedItems.reserveCapacity(queuedWorkItems.count)
-        for queuedItem in queuedWorkItems {
-            if isExpiredNonKeyframe(queuedItem.item, now: now) {
-                queuedBytes = max(0, queuedBytes - queuedItem.accountedBytes)
-                queuedStalePacketDropCount &+= 1
-                markDependencyFrameDroppedLocked(
-                    queuedItem.item,
-                    reason: .expiredQueuedFrame
-                )
-            } else {
-                retainedItems.append(queuedItem)
+    /// Returns the P-frame lateness in milliseconds once it passes the local lateness threshold.
+    nonisolated func nonKeyframeDeadlineLatenessMs(_ item: WorkItem, now: CFAbsoluteTime) -> Double? {
+        guard !videoTransportMode.usesReliableOrderedDelivery else { return nil }
+        guard !item.isKeyframe, item.sendDeadline.isFinite else { return nil }
+        let deadline = hardSendDeadline(for: item)
+        guard now > deadline else { return nil }
+        return (now - deadline) * 1000
+    }
+
+    /// Records that a reserved P-frame is late but still being sent to preserve the dependency chain.
+    @discardableResult
+    func recordReservedPFrameLatenessIfNeeded(_ item: WorkItem, now: CFAbsoluteTime) -> Double? {
+        guard let latenessMs = nonKeyframeDeadlineLatenessMs(item, now: now) else {
+            if !item.isKeyframe { lateReservedPFrameStreak = 0 }
+            return nil
+        }
+        lateReservedPFrameStreak += 1
+        lateNonKeyframeSendCount &+= 1
+        MirageLogger.stream(
+            "event=reserved_p_frame_late_sent frame=\(item.frameNumber) stream=\(item.streamID) " +
+                "latenessMs=\((latenessMs * 10).rounded() / 10) streak=\(lateReservedPFrameStreak) " +
+                "wireBytes=\(item.wireBytes)"
+        )
+        return latenessMs
+    }
+
+    /// Returns whether an unstarted reserved P-frame is too stale to drain in Most Responsive mode.
+    nonisolated func shouldAbandonReservedPFrameForFreshness(_ item: WorkItem, latenessMs: Double?) -> Bool {
+        guard !videoTransportMode.usesReliableOrderedDelivery,
+              !item.isKeyframe,
+              let latenessMs else {
+            return false
+        }
+        _ = latenessMs
+        return lateReservedPFrameStreak >= 2
+    }
+
+    /// Current queue freshness snapshot used to avoid reserving a new stale P-frame behind old work.
+    nonisolated func freshnessSnapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> FreshnessSnapshot {
+        queueLock.withLock {
+            freshnessSnapshotLocked(now: now)
+        }
+    }
+
+    /// Builds a freshness snapshot while the caller holds `queueLock`.
+    nonisolated func freshnessSnapshotLocked(now: CFAbsoluteTime) -> FreshnessSnapshot {
+        var oldestAgeMs = 0.0
+        var oldestLatenessMs = 0.0
+        var unstartedPFrameCount = 0
+        for queuedItem in queuedWorkItems where !queuedItem.item.isKeyframe {
+            unstartedPFrameCount += 1
+            let ageMs = max(0, (now - queuedItem.item.encodedAt) * 1000)
+            oldestAgeMs = max(oldestAgeMs, ageMs)
+            if let latenessMs = nonKeyframeDeadlineLatenessMs(queuedItem.item, now: now) {
+                oldestLatenessMs = max(oldestLatenessMs, latenessMs)
             }
         }
-        queuedWorkItems = retainedItems
+        return FreshnessSnapshot(
+            queuedBytes: queuedBytes,
+            unstartedPFrameCount: unstartedPFrameCount,
+            oldestUnstartedPFrameAgeMs: oldestAgeMs,
+            oldestUnstartedPFrameLatenessMs: oldestLatenessMs,
+            lateReservedPFrameStreak: lateReservedPFrameStreak
+        )
     }
 
     /// Drops queued non-keyframes while preserving queued keyframes.
@@ -113,8 +152,7 @@ extension StreamPacketSender {
     }
 
     /// Enforces realtime queue bounds by evicting non-keyframes first.
-    nonisolated func enforceRealtimeQueueBoundsLocked(now: CFAbsoluteTime) {
-        discardExpiredQueuedNonKeyframesLocked(now: now)
+    nonisolated func enforceRealtimeQueueBoundsLocked() {
         while queuedWorkItems.count > Self.maxQueuedWorkItems || queuedBytes > Self.maxQueuedBytes {
             guard let evictionIndex = queuedWorkItems.firstIndex(where: { !$0.item.isKeyframe }) else { break }
             let evictedItem = queuedWorkItems.remove(at: evictionIndex)
@@ -148,17 +186,6 @@ extension StreamPacketSender {
         reason: DependencyFrameDropReason
     ) {
         guard !item.isKeyframe else { return }
-        switch reason {
-        case .expiredBeforeEnqueue,
-             .expiredBeforeSend,
-             .expiredQueuedFrame:
-            queuedSenderLocalDeadlineDropCount &+= 1
-        case .generationAbort,
-             .oversizedFrame,
-             .queueEviction:
-            break
-        }
-
         if dependencyBaselineKeyframeGeneration == item.generation,
            dependencyBaselineKeyframeFrameNumber >= item.frameNumber {
             return
@@ -216,6 +243,7 @@ extension StreamPacketSender {
         latestKeyframeGeneration = 0
         latestDependencyDropFrameNumber = 0
         latestDependencyDropGeneration = 0
+        lateReservedPFrameStreak = 0
     }
 
     /// Clears queued work and dependency tracking while preserving lifecycle and telemetry counters.

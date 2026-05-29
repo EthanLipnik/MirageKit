@@ -64,9 +64,9 @@ actor StreamContext {
     var encoder: VideoEncoder?
     var isRunning = false
 
-    /// Dimension token for rejecting old-dimension P-frames after resize.
-    /// Incremented each time encoder dimensions change. Sent in every frame header
-    /// so client can discard frames with mismatched tokens.
+    /// Dimension token for rejecting old-dimension P-frames after client-visible geometry changes.
+    /// Emergency recovery scale changes keep this token stable because the keyframe SPS carries
+    /// the decoder dimensions while the client presentation surface remains unchanged.
     /// Using nonisolated(unsafe) because we need to access from @Sendable encoder callback
     /// and the access pattern is safe (token is incremented on actor, read in callback)
     nonisolated(unsafe) var dimensionToken: UInt16 = 0
@@ -105,8 +105,6 @@ actor StreamContext {
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
-    var captureCadenceRecoveryPolicy = HostCaptureCadenceRecoveryPolicy()
-    var screenCaptureDeliveryRecovery = ScreenCaptureDeliveryRecovery()
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
@@ -142,21 +140,13 @@ actor StreamContext {
     var lastSuccessfulKeyframeSendTime: CFAbsoluteTime = 0
     var latestReceiverRecoveryCause: MirageMediaFeedbackRecoveryCause = .none
     var frameChainRepairKeyframeRetryTask: Task<Void, Never>?
+    var pendingReceiverAcceptedKeyframeFrameNumber: UInt32?
     var emergencyRecoveryBaseStreamScale: CGFloat?
     var emergencyRecoveryScaleIndex: Int = 0
     var emergencyRecoveryCleanPFrames: Int = 0
     var emergencyRecoveryScaleChangeInProgress = false
-    var lastQualityAdjustmentTime: CFAbsoluteTime = 0
-    var qualityRaiseSuppressionUntil: CFAbsoluteTime = 0
-    let qualityRaisePostSpikeCooldown: CFAbsoluteTime = 3.0
-    let qualityAdjustmentCooldown: CFAbsoluteTime = 0.35
-    var qualityOverBudgetCount: Int = 0
-    var qualityUnderBudgetCount: Int = 0
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
-    let qualityDropThreshold: Int = 3
-    let qualityRaiseThreshold: Int = 8
-    let qualityDropStep: Float = 0.02
-    let qualityRaiseStep: Float = 0.02
+    var senderFreshnessLastLogTime: CFAbsoluteTime = 0
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     var freshnessBurstActive = false
@@ -250,49 +240,35 @@ actor StreamContext {
     let transportSendErrorThreshold: Int = 6
     let transportSendErrorRecoveryCooldown: CFAbsoluteTime = 2.0
     var transportSendErrorBursts: UInt64 = 0
-    var senderFrameBudgetDelayOverrunCount: Int = 0
-    let senderFrameBudgetDelayOverrunThreshold: Int = 2
-    let senderFrameBudgetDelayRecoveryMultiplier: Double = 2.0
     var transportController = HostStreamTransportController()
-    var frameBudgetController = HostFrameBudgetController()
+    var adaptivePFrameController = HostAdaptivePFrameController()
     var realtimeRuntimeQualityCeiling: Float?
     var realtimeRuntimeBitrateCeilingBps: Int?
-    var realtimePressureState: HostFrameBudgetController.PressureState = .observing
+    var realtimePressureState: HostAdaptivePFrameController.PressureState = .observing
     var realtimePressureReason: String?
-    var realtimeLastLoggedState: HostFrameBudgetController.PressureState = .observing
+    var realtimeLastLoggedState: HostAdaptivePFrameController.PressureState = .observing
     var realtimeLastLoggedBitrateCeilingBps: Int?
-    var realtimeLastLoggedAdmissionTargetFPS: Int?
     var realtimeLastLogTime: CFAbsoluteTime = 0
     nonisolated(unsafe) var realtimeMinimumBitrateFloorBps: Int = 12_000_000
-    var transportFrameAdmissionTargetFPS: Int?
-    var transportFrameAdmissionDeadline: CFAbsoluteTime = 0
-    var realtimeFrameAdmissionTargetFPS: Int?
-    var realtimeFrameAdmissionDeadline: CFAbsoluteTime = 0
-    var receiverFrameAdmissionTargetFPS: Int?
-    var receiverFrameAdmissionDeadline: CFAbsoluteTime = 0
-    var receiverFrameAdmissionLastAdmitTime: CFAbsoluteTime = 0
-    var receiverFrameAdmissionLastLogTime: CFAbsoluteTime = 0
-    var receiverFrameAdmissionLastLoggedTargetFPS: Int?
-    var receiverFrameAdmissionLastLoggedTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
-    var receiverHasPresentedFrame = false
-    var receiverDecodedFPS: Double = 0
-    var receiverPresentationBacklogFrames = 0
     var receiverReassemblyBacklogFrames = 0
     var receiverReassemblyBacklogBytes = 0
     var receiverDecodeBacklogFrames = 0
+    var receiverPresentationBacklogFrames = 0
+    var receiverLatestAcceptedFrameNumber: UInt32?
+    var receiverLatestPresentedFrameNumber: UInt32?
+    var receiverLatestPresentedFrameAgeMs: Double?
+    var receiverCapacityLearningQuarantineUntil: CFAbsoluteTime = 0
+    var receiverCapacityLearningQuarantineReason: String?
     var receiverLostFrameCount: UInt64 = 0
     var receiverDiscardedPacketCount: UInt64 = 0
-    var receiverPFrameCompletionLatencyP95Ms: Double?
-    var receiverAcceptedFPS: Double = 0
-    var receiverPresentedFPS: Double = 0
     var receiverAcknowledgedFrameNumber: UInt32?
     var receiverAckLagMs: Double?
     var lastReceiverAckTime: CFAbsoluteTime = 0
-    var recentFrameTransportCompletions: [(frameNumber: UInt32, completedAt: CFAbsoluteTime)] = []
+    var recentFrameTransportCompletions: [StreamPacketSender.FrameTransportCompletion] = []
     let recentFrameTransportCompletionLimit = 240
     var lastReceiverFeedbackTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackLogTime: CFAbsoluteTime = 0
-    var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.FrameAdmissionTrigger = .none
+    var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.PressureTrigger = .none
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -319,10 +295,6 @@ actor StreamContext {
 
     /// Recovery request tracking.
     var softRecoveryCount: UInt64 = 0
-    let captureStarvationRestartThreshold: CFAbsoluteTime = 0.75
-    let captureStarvationRestartCooldown: CFAbsoluteTime = 1.0
-    let captureStarvationRestartDebounce: CFAbsoluteTime = 0.08
-    var lastCaptureStarvationRestartTime: CFAbsoluteTime = 0
 
     /// Loss-mode deadline for adaptive redundancy and pacing.
     /// When active, keyframes and P-frames include FEC parity fragments.

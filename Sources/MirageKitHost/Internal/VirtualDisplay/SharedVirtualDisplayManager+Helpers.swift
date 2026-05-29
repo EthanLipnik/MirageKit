@@ -177,10 +177,6 @@ extension SharedVirtualDisplayManager {
             displayRef: display.displayRef
         )
 
-        await MainActor.run {
-            VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
-        }
-
         return updatedDisplay
     }
 
@@ -392,16 +388,6 @@ extension SharedVirtualDisplayManager {
             MirageLogger.host(
                 "Virtual display selection decision: rung=\(attempt.label), requested=\(Int(normalizedRequested.width))x\(Int(normalizedRequested.height)), resolved=\(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)), scale=\(displayScaleFactor), aspectDelta=\(aspectDeltaPercent)%"
             )
-
-            let keepaliveDisplayID = displayContext.displayID
-            let keepaliveRefreshRate = displayContext.refreshRate
-            await MainActor.run {
-                VirtualDisplayKeepaliveController.shared.start(
-                    displayID: keepaliveDisplayID,
-                    spaceID: spaceID,
-                    refreshRate: keepaliveRefreshRate
-                )
-            }
 
             return managedContext
         }

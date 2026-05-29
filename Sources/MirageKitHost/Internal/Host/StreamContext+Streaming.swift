@@ -59,14 +59,9 @@ extension StreamContext {
                     )
                 }
             },
-            onFrameTransportCompleted: { [weak self] streamID, frameNumber, isKeyframe, didSend in
+            onFrameTransportCompleted: { [weak self] completion in
                 Task(priority: .userInitiated) {
-                    await self?.handleFrameTransportCompleted(
-                        streamID: streamID,
-                        frameNumber: frameNumber,
-                        isKeyframe: isKeyframe,
-                        didSend: didSend
-                    )
+                    await self?.handleFrameTransportCompleted(completion)
                 }
             }
         )
@@ -186,17 +181,19 @@ extension StreamContext {
              .sendWithQualityDrop:
             break
         case .dropPFrameStartChainRepair:
-            await handleDroppedEncodedFrameForBudget(
+            await handleDroppedPFrameForTransportBudget(
                 byteCount: frameByteCount,
+                wireBytes: projectedPlan.wireBytes,
+                packetCount: projectedPlan.packetCount,
                 evaluation: admissionDecision,
                 encodedAt: now
             )
             return
-        case .retryEmergencyKeyframeLowerQuality,
-             .dropKeyframeWaitForCooldown,
-             .dropKeyframeWaitForNextLatestFrame:
-            await handleDroppedKeyframeForBudget(
+        case .dropKeyframeRetryLowerScale:
+            await handleDroppedRecoveryKeyframeForTransportBudget(
                 byteCount: frameByteCount,
+                wireBytes: projectedPlan.wireBytes,
+                packetCount: projectedPlan.packetCount,
                 evaluation: admissionDecision,
                 encodedAt: now
             )
@@ -214,6 +211,17 @@ extension StreamContext {
                 "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
             )
         } else {
+            if admissionDecision.admission == .sendWithQualityDrop {
+                logAdaptivePFrameAdmissionIfNeeded(
+                    frameNumber: reservation.frameNumber,
+                    byteCount: frameByteCount,
+                    wireBytes: projectedPlan.wireBytes,
+                    packetCount: projectedPlan.packetCount,
+                    evaluation: admissionDecision,
+                    action: "send-quality-drop",
+                    now: now
+                )
+            }
             MirageFrameIntegrityDiagnostics.shared.recordPFrame(
                 source: .encodedPFrame,
                 streamID: streamID,
@@ -351,25 +359,6 @@ extension StreamContext {
     func restartDisplayCaptureForStartupRecovery(reason: String) async {
         guard captureMode == .display else { return }
         await captureEngine?.restartCapture(reason: reason)
-    }
-
-    func restartDisplayCaptureForCadenceRecovery(reason: String) async {
-        guard captureMode == .display, !isResizing, !encodingSuspendedForResize else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        guard !captureRestartShouldWaitForActiveRecovery(now: now) else {
-            MirageLogger.capture(
-                "event=capture_cadence_recovery action=restart_capture result=skipped_active_keyframe_recovery stream=\(streamID) reason=\(reason)"
-            )
-            return
-        }
-        await prepareForCaptureRestartRecoveryKeyframe()
-        let restarted = await captureEngine?.restartCaptureForDeliveryValidation(reason: reason) ?? false
-        guard restarted else { return }
-        await scheduleCoalescedRecoveryKeyframe(
-            reason: "Capture cadence recovery",
-            noteLoss: true,
-            ignoreExistingInFlight: true
-        )
     }
 
     func hasObservedDisplayStartupSample() async -> Bool {

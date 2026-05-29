@@ -77,11 +77,11 @@ extension StreamController {
         if presentationTier == .activeLive {
             await enterKeyframeRecoveryIfNeeded(
                 reason: "decode-backpressure",
-                cause: .decodeError
+                cause: .memoryBudget
             )
         }
         _ = await requestKeyframeRecovery(
-            reason: .decodeErrorThreshold,
+            reason: .memoryBudget,
             bypassRetryGate: true
         )
     }

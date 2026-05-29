@@ -14,46 +14,6 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
-    func applySenderFrameBudgetRecoveryIfNeeded(
-        packetTelemetry: StreamPacketSender.TelemetrySnapshot,
-        frameBudgetMs: Double
-    ) async {
-        let queueBytes = max(0, packetTelemetry.queuedBytes)
-        let nonKeyframeSendDelayMaxMs = max(
-            packetTelemetry.nonKeyframeSendStartDelayMaxMs,
-            packetTelemetry.nonKeyframeSendCompletionMaxMs
-        )
-        let lowQueuePressure = queueBytes <= queuePressureBytes
-        let hasNonKeyframeDelay = nonKeyframeSendDelayMaxMs > 0
-        let recoveryThresholdMs = max(
-            1.0,
-            frameBudgetMs * senderFrameBudgetDelayRecoveryMultiplier
-        )
-        let exceedsFrameBudget = hasNonKeyframeDelay &&
-            nonKeyframeSendDelayMaxMs > recoveryThresholdMs
-
-        if exceedsFrameBudget, lowQueuePressure {
-            senderFrameBudgetDelayOverrunCount += 1
-        } else {
-            senderFrameBudgetDelayOverrunCount = 0
-            return
-        }
-
-        guard senderFrameBudgetDelayOverrunCount >= senderFrameBudgetDelayOverrunThreshold else { return }
-        senderFrameBudgetDelayOverrunCount = 0
-        if usesSoftSenderDelaySmoothing {
-            enterSoftFreshnessDrainIfNeeded(
-                frameBudgetMs: frameBudgetMs,
-                reason: "non-keyframe sender delay exceeded frame budget"
-            )
-            return
-        }
-        _ = await enterFreshnessBurstIfNeeded(
-            queueBytes: queueBytes,
-            reason: "non-keyframe sender delay exceeded frame budget"
-        )
-    }
-
     nonisolated func enqueueCapturedFrame(_ frame: CapturedFrame) {
         guard shouldEncodeFrames else {
             Task(priority: .userInitiated) { await self.handleCapturedFrameWhileStartupGated(frame) }
@@ -184,10 +144,8 @@ extension StreamContext {
         expireSoftFreshnessDrainIfNeeded()
 
         while inFlightCount < maxInFlightFrames {
-            let now = CFAbsoluteTimeGetCurrent()
             let queueBytesBeforeDrain = packetSender?.queuedByteCount ?? 0
-            let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames ||
-                receiverFrameAdmissionIsActive(now: now) {
+            let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
                 .newest
             } else if queueBytesBeforeDrain > queuePressureBytes {
                 .newest
@@ -204,13 +162,6 @@ extension StreamContext {
                 )
             }
             guard let frame = drainResult.frame else { return }
-
-            if shouldDropForReceiverFrameAdmission(now: now) {
-                captureDroppedIntervalCount += 1
-                droppedFrameCount += 1
-                await logStreamStatsIfNeeded()
-                continue
-            }
 
             let encoderStuck = inFlightCount > 0 && lastEncodeActivityTime > 0 &&
                 (CFAbsoluteTimeGetCurrent() - lastEncodeActivityTime) * 1000 > maxEncodeTimeMs
@@ -268,8 +219,6 @@ extension StreamContext {
             if !forceKeyframe, let captureEngine {
                 if let pendingReason = await captureEngine.consumePendingKeyframeRequest() {
                     switch pendingReason {
-                    case .fallbackResume:
-                        forceKeyframeAfterFallbackResume()
                     case let .captureRestart(restartStreak, shouldEscalateRecovery):
                         forceKeyframeAfterCaptureRestart(
                             restartStreak: restartStreak,
@@ -279,6 +228,13 @@ extension StreamContext {
                 }
             }
             if !forceKeyframe { forceKeyframe = shouldEmitPendingKeyframe(queueBytes: queueBytes) }
+
+            if !forceKeyframe, shouldSkipPFrameBeforeReservationForFreshness(now: CFAbsoluteTimeGetCurrent()) {
+                backpressureDropIntervalCount += 1
+                droppedFrameCount += 1
+                await logStreamStatsIfNeeded()
+                continue
+            }
 
             if freshnessBurstActive {
                 if await exitFreshnessBurstIfNeeded(
@@ -299,10 +255,6 @@ extension StreamContext {
                 )
                 await logStreamStatsIfNeeded()
                 continue
-            }
-
-            if !freshnessBurstActive {
-                await adjustQualityForQueue(queueBytes: queueBytes)
             }
 
             if queueBytes > backpressureTriggerBytes, freshnessBurstActive, !forceKeyframe {
@@ -426,6 +378,28 @@ extension StreamContext {
         case .noSession:
             encodeSkipNoSessionIntervalCount += 1
         }
+    }
+
+    private func shouldSkipPFrameBeforeReservationForFreshness(now: CFAbsoluteTime) -> Bool {
+        guard useLowLatencyPipeline,
+              frameChainState == .normal,
+              let packetSender else {
+            return false
+        }
+        let snapshot = packetSender.freshnessSnapshot(now: now)
+        guard snapshot.shouldHoldPFrameReservation(frameRate: currentFrameRate) else { return false }
+        if now - senderFreshnessLastLogTime >= 0.5 {
+            senderFreshnessLastLogTime = now
+            let oldestAge = snapshot.oldestUnstartedPFrameAgeMs.formatted(.number.precision(.fractionLength(1)))
+            let oldestLate = snapshot.oldestUnstartedPFrameLatenessMs.formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.metrics(
+                "event=sender_freshness_pre_reservation_skip stream=\(streamID) " +
+                    "pendingP=\(snapshot.unstartedPFrameCount) oldestAgeMs=\(oldestAge) " +
+                    "oldestLateMs=\(oldestLate) lateStreak=\(snapshot.lateReservedPFrameStreak) " +
+                    "queuedBytes=\(snapshot.queuedBytes)"
+            )
+        }
+        return true
     }
 }
 #endif

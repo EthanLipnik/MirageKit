@@ -56,15 +56,12 @@ extension StreamContext {
 
     /// Clears capture, startup, and pressure state that is no longer valid after reconfiguration.
     private func clearCaptureAndPressureStateForReconfiguration() {
-        lastCaptureStarvationRestartTime = 0
         clearBackpressureState(log: false)
         lastCapturedFrame = nil
         cachedStartupFrame = nil
         lastCapturedFrameTime = 0
         freshnessBurstActive = false
         startupFrameCachingEnabled = false
-        captureCadenceRecoveryPolicy.reset()
-        screenCaptureDeliveryRecovery.reset()
     }
 
     /// Restores latency-burst capture queue overrides and disables burst drain mode.

@@ -54,6 +54,32 @@ struct AppStreamRecoveryParityTests {
         #expect(encodedDimensions.height == 1_664)
     }
 
+    @MainActor
+    @Test("Emergency recovery scale keeps dimension token stable")
+    func emergencyRecoveryScaleKeepsDimensionTokenStable() async throws {
+        let context = makeContext(streamID: 78)
+        await context.configureForDedicatedVirtualDisplayTest(
+            baseCaptureSize: CGSize(width: 2_048, height: 1_536),
+            windowFrame: CGRect(x: 0, y: 0, width: 1_024, height: 768),
+            displaySnapshot: makeDisplaySnapshot(),
+            visibleBounds: CGRect(x: 0, y: 0, width: 1_024, height: 768)
+        )
+        let initialToken = await context.streamStartSnapshot.dimensionToken
+
+        try await context.updateEmergencyRecoveryScale(0.75, reason: "test")
+
+        #expect(await context.streamStartSnapshot.dimensionToken == initialToken)
+        #expect(abs((await context.streamScale) - 0.75) < 0.001)
+        #expect(abs((await context.requestedStreamScale) - 1.0) < 0.001)
+        let recoveryDimensions = await context.encodedDimensions
+        #expect(recoveryDimensions.width == 1_536)
+        #expect(recoveryDimensions.height == 1_152)
+
+        try await context.updateStreamScale(0.5)
+
+        #expect(await context.streamStartSnapshot.dimensionToken == initialToken &+ 1)
+    }
+
     private func makeContext(streamID: StreamID) -> StreamContext {
         StreamContext(
             streamID: streamID,

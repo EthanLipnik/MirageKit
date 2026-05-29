@@ -11,10 +11,6 @@ import Foundation
 
 #if os(macOS)
 extension CaptureStreamOutput {
-    enum KeyframeRequestReason {
-        case fallbackResume
-    }
-
     enum StallStage: String {
         case soft
         case hard
@@ -66,10 +62,10 @@ extension CaptureStreamOutput {
             rate(for: cadenceAdmittedFrameCount)
         }
 
-        /// SCK delivery rate used for post-capture validation.
+        /// SCK complete-frame delivery rate used for diagnostics.
         ///
-        /// Complete frames are the signal that the keepalive is actually dirtying the captured display.
-        /// Renderable/idle counts are still tracked separately for diagnostics.
+        /// Low or zero FPS can be healthy when ScreenCaptureKit has no changed display content to deliver.
+        /// Renderable/idle counts are tracked separately for diagnostics.
         var observedSCKFPS: Double? {
             completeFrameFPS
         }

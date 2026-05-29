@@ -237,13 +237,16 @@ package struct MirageSharedClipboardState {
 
     package mutating func recordRemoteWrite(
         changeCount: Int,
-        orderingToken: MirageSharedClipboardOrderingToken
+        orderingToken: MirageSharedClipboardOrderingToken,
+        observedAtMs: Int64 = MirageSharedClipboard.currentTimestampMs()
     ) {
         lastObservedChangeCount = changeCount
         latestOrderingToken = orderingToken
         maxKnownLogicalVersion = max(maxKnownLogicalVersion, orderingToken.logicalVersion)
         suppressLocalSendUntilChangeCount = changeCount
         latestAutomaticLocalFingerprint = nil
+        latestRemoteClipboardObservationToken = orderingToken
+        latestRemoteClipboardObservedAtMs = observedAtMs
     }
 
     package func shouldSuppressLocalSend(

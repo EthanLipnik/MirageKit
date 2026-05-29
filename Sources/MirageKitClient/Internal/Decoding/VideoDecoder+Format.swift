@@ -14,7 +14,7 @@ import VideoToolbox
 import MirageKit
 
 extension VideoDecoder {
-    func extractFormatDescriptionAndStripParameterSets(from data: Data) throws -> Data {
+    func extractFormatDescriptionAndStripParameterSets(from data: Data, frameNumber: UInt32?) throws -> Data {
         // ProRes frames are self-contained — no NAL units or parameter sets
         if codec == .proRes4444 {
             return try extractProResFormatDescription(from: data)
@@ -25,7 +25,12 @@ extension VideoDecoder {
             // Extract VPS, SPS, PPS from the parameter sets portion
             let (vps, sps, pps) = extractParameterSets(from: framed.parameterSets)
             if let vpsData = vps, let spsData = sps, let ppsData = pps {
-                try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
+                try updateFormatDescription(
+                    vpsData: vpsData,
+                    spsData: spsData,
+                    ppsData: ppsData,
+                    frameNumber: frameNumber
+                )
                 // Return the frame data portion (already stripped of parameter sets)
                 var strippedData = framed.frameData
                 strippedData = stripSEINALUnits(from: strippedData)
@@ -120,7 +125,12 @@ extension VideoDecoder {
             return data // Return original data, will try again on next keyframe
         }
 
-        try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
+        try updateFormatDescription(
+            vpsData: vpsData,
+            spsData: spsData,
+            ppsData: ppsData,
+            frameNumber: frameNumber
+        )
 
         // Return data with parameter sets stripped (the remaining AVCC data)
         if parameterSetsEnd > 0, parameterSetsEnd < data.count {
@@ -214,7 +224,12 @@ extension VideoDecoder {
         return (vps, sps, pps)
     }
 
-    private func updateFormatDescription(vpsData: Data, spsData: Data, ppsData: Data) throws {
+    private func updateFormatDescription(
+        vpsData: Data,
+        spsData: Data,
+        ppsData: Data,
+        frameNumber: UInt32?
+    ) throws {
         try vpsData.withUnsafeBytes { vpsPtr in
             try spsData.withUnsafeBytes { spsPtr in
                 try ppsData.withUnsafeBytes { ppsPtr in
@@ -308,7 +323,7 @@ extension VideoDecoder {
                             // A keyframe carrying the new dimensions is already in-flight and
                             // being processed here. Triggering another threshold-based keyframe
                             // recovery causes an avoidable keyframe-wait stall loop during resize.
-                            self.onDimensionChange?()
+                            self.onDimensionChange?(frameNumber)
                             self.errorTracker?.clearForDimensionChange()
                         } else if shouldRecreateForErrors {
                             self.errorTracker?.markSessionRecreated()

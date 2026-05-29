@@ -7,6 +7,7 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
+import Foundation
 import Testing
 
 @Suite("Receiver Media Feedback Policy")
@@ -43,11 +44,51 @@ struct ReceiverMediaFeedbackPolicyTests {
         let feedback = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: payload)
 
         #expect(feedback.pFrameCompletionLatencyP95Ms == nil)
+        #expect(feedback.pFrameTimingSamples.isEmpty)
         #expect(feedback.latePFrameCount == nil)
         #expect(feedback.reliabilityCauses.isEmpty)
         #expect(feedback.recoveryCause == .none)
+        #expect(feedback.latestAcceptedFrameNumber == nil)
+        #expect(feedback.latestPresentedFrameNumber == nil)
+        #expect(feedback.latestPresentedFrameAgeMs == nil)
+        #expect(feedback.decodeQueueDepth == nil)
+        #expect(feedback.presentationQueueDepth == nil)
         #expect(feedback.audioDroppedFrameCount == nil)
         #expect(feedback.audioGateActive == nil)
+    }
+
+    @Test("Receiver feedback timing samples encode and decode")
+    func receiverFeedbackTimingSamplesEncodeAndDecode() throws {
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 11,
+            sentAtUptime: 104,
+            targetFPS: 60,
+            recoveryState: .idle,
+            pFrameTimingSamples: [
+                ReceiverPFrameTimingSample(frameNumber: 40, assemblyLatencyMs: 6.5),
+                ReceiverPFrameTimingSample(frameNumber: 41, assemblyLatencyMs: 12.25)
+            ],
+            latestAcceptedFrameNumber: 41,
+            latestPresentedFrameNumber: 40,
+            latestPresentedFrameAgeMs: 14.5,
+            decodeQueueDepth: 2,
+            presentationQueueDepth: 1,
+            metrics: metrics()
+        )
+
+        let encoded = try JSONEncoder().encode(feedback)
+        let decoded = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: encoded)
+
+        #expect(decoded.pFrameTimingSamples == [
+            ReceiverPFrameTimingSample(frameNumber: 40, assemblyLatencyMs: 6.5),
+            ReceiverPFrameTimingSample(frameNumber: 41, assemblyLatencyMs: 12.25)
+        ])
+        #expect(decoded.latestAcceptedFrameNumber == 41)
+        #expect(decoded.latestPresentedFrameNumber == 40)
+        #expect(decoded.latestPresentedFrameAgeMs == 14.5)
+        #expect(decoded.decodeQueueDepth == 2)
+        #expect(decoded.presentationQueueDepth == 1)
     }
 
     @Test("Local render and reassembly symptoms are not reported as transport loss")
@@ -166,6 +207,59 @@ struct ReceiverMediaFeedbackPolicyTests {
             MediaFeedbackFrameRange(startFrame: UInt32.max - 1, endFrame: UInt32.max),
             MediaFeedbackFrameRange(startFrame: 0, endFrame: 1)
         ])
+    }
+
+    @Test("P-frame timing samples are emitted only for completed P-frames")
+    func pFrameTimingSamplesAreEmittedOnlyForCompletedPFrames() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        reassembler.setFrameHandler { _, _, _, _, _, _, release in
+            release()
+        }
+
+        let keyframe = Data([0x10, 0x00, 0x00, 0x00])
+        reassembler.processPacket(
+            keyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 1,
+                payload: keyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(reassembler.consumePFrameTimingSamples().isEmpty)
+
+        let pFrameFragment0 = Data([0x20, 0x00, 0x00, 0x00])
+        reassembler.processPacket(
+            pFrameFragment0,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 2,
+                payload: pFrameFragment0,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 8
+            )
+        )
+        #expect(reassembler.consumePFrameTimingSamples().isEmpty)
+
+        let pFrameFragment1 = Data([0x20, 0x01, 0x00, 0x00])
+        reassembler.processPacket(
+            pFrameFragment1,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: pFrameFragment1,
+                fragmentIndex: 1,
+                fragmentCount: 2,
+                frameByteCount: 8
+            )
+        )
+
+        let samples = reassembler.consumePFrameTimingSamples()
+        #expect(samples.count == 1)
+        #expect(samples.first?.frameNumber == 2)
+        #expect((samples.first?.assemblyLatencyMs ?? -1) >= 0)
     }
 
     @Test("Receiver feedback metrics report aged receive gaps between frames")

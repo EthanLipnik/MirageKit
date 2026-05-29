@@ -18,12 +18,6 @@ extension CaptureStreamOutput {
     /// Display-capture stalls should recover quickly when frames stop arriving.
     static let displayStallThreshold: CFAbsoluteTime = 0.6
 
-    /// Minimum fallback duration before requesting a resume keyframe.
-    static let keyframeThreshold: CFAbsoluteTime = 1.0
-
-    /// Scales fallback-resume keyframe requests with expected frame-gap tolerance.
-    static let fallbackResumeKeyframeGapMultiplier: CFAbsoluteTime = 2.5
-
     func fullBufferContentRect(
         bufferWidth: Int,
         bufferHeight: Int
@@ -56,16 +50,6 @@ extension CaptureStreamOutput {
             return min(max(configuredStallLimit, minDisplayThreshold), maxDisplayThreshold)
         }
         return max(configuredStallLimit, windowStallThreshold)
-    }
-
-    nonisolated static func fallbackResumeKeyframeThreshold(
-        frameGapThreshold: CFAbsoluteTime,
-        minimumThreshold: CFAbsoluteTime = 1.0,
-        multiplier: CFAbsoluteTime = 2.5
-    ) -> CFAbsoluteTime {
-        let safeMultiplier = max(1.0, multiplier)
-        let safeGap = max(0, frameGapThreshold)
-        return max(minimumThreshold, safeGap * safeMultiplier)
     }
 }
 #endif

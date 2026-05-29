@@ -57,8 +57,8 @@ actor VideoDecoder {
     var inFlightDecodeSubmissions: Int = 0
     var decodeSubmissionWaiters: [CheckedContinuation<Void, Never>] = []
 
-    /// Handler called when video dimensions change - used to reset reassembler
-    var onDimensionChange: (@Sendable () -> Void)?
+    /// Handler called when video dimensions change - used to reset reassembler.
+    var onDimensionChange: (@Sendable (_ frameNumber: UInt32?) -> Void)?
 
     /// When true, discard all P-frames and only process keyframes.
     /// Set when client initiates a resize request - P-frames at new dimensions will fail

@@ -39,9 +39,6 @@ extension StreamContext {
             previousBitrate: previousBitrate,
             targetBitrate: targetBitrate
         )
-        if currentEncodedSize != .zero {
-            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Realtime budget")
-        }
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
@@ -427,6 +424,87 @@ extension StreamContext {
                 try await rollbackResizeFailure(rollbackSnapshot, logLabel: "Stream scale update")
             } catch {
                 MirageLogger.error(.stream, error: error, message: "Stream scale update rollback failed: ")
+            }
+            throw error
+        }
+    }
+
+    func updateEmergencyRecoveryScale(_ newScale: CGFloat, reason: String) async throws {
+        let clampedScale = StreamContext.clampStreamScale(newScale)
+        let rollbackSnapshot = makeResizeRollbackSnapshot()
+        let previousScale = streamScale
+        let derivedBaseSize: CGSize
+        if baseCaptureSize != .zero {
+            derivedBaseSize = baseCaptureSize
+        } else if previousScale > 0 {
+            let fallbackSize = currentCaptureSize == .zero ? currentEncodedSize : currentCaptureSize
+            derivedBaseSize = CGSize(
+                width: fallbackSize.width / previousScale,
+                height: fallbackSize.height / previousScale
+            )
+        } else {
+            derivedBaseSize = currentCaptureSize
+        }
+        guard derivedBaseSize.width > 0, derivedBaseSize.height > 0 else { return }
+
+        let resolvedScale = resolvedStreamScale(
+            for: derivedBaseSize,
+            requestedScale: clampedScale,
+            logLabel: nil
+        )
+        guard abs(Double(resolvedScale - streamScale)) > 0.0001 else { return }
+
+        isResizing = true
+        defer { isResizing = false }
+
+        currentContentRect = .zero
+
+        await packetSender?.bumpGeneration(reason: "emergency recovery scale update")
+        resetPipelineStateForReconfiguration(reason: "emergency recovery scale update")
+
+        baseCaptureSize = derivedBaseSize
+        streamScale = resolvedScale
+        adaptiveStreamScaleReason = "emergency-recovery-\(reason)"
+
+        let outputSize = scaledOutputSize(for: derivedBaseSize)
+        let scaledWidth = Int(outputSize.width)
+        let scaledHeight = Int(outputSize.height)
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+        MirageLogger.stream(
+            "Emergency recovery scale update sizing: base \(Int(derivedBaseSize.width))x\(Int(derivedBaseSize.height)), " +
+                "requested \(requestedStreamScale), recoveryScale \(streamScale), " +
+                "encoded \(scaledWidth)x\(scaledHeight), token \(dimensionToken)"
+        )
+
+        do {
+            if let captureEngine {
+                switch captureMode {
+                case .display:
+                    try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
+                case .window:
+                    if !lastWindowFrame.isEmpty {
+                        try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
+                    }
+                }
+            }
+
+            if let encoder {
+                try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+                updateQueueLimits()
+            }
+            updateQueueLimits()
+
+            await applyDerivedQuality(for: outputSize, logLabel: "Emergency recovery scale update")
+            MirageLogger.stream(
+                "Emergency recovery scale updated to \(streamScale), encoding at " +
+                    "\(Int(outputSize.width))x\(Int(outputSize.height)), token \(dimensionToken)"
+            )
+        } catch {
+            do {
+                try await rollbackResizeFailure(rollbackSnapshot, logLabel: "Emergency recovery scale update")
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Emergency recovery scale rollback failed: ")
             }
             throw error
         }
