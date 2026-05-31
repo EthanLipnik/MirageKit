@@ -96,11 +96,17 @@ extension MirageHostService {
     async throws -> DesktopMainDisplayCaptureFallback {
         let display = try await findMainSCDisplayWithRetry(maxAttempts: maxAttempts, delayMs: delayMs)
         let displayID = display.display.displayID
-        let resolution = CGSize(
-            width: CGFloat(display.display.width),
-            height: CGFloat(display.display.height)
-        )
         let bounds = CGDisplayBounds(displayID)
+        let pixelWidth = CGDisplayPixelsWide(displayID)
+        let pixelHeight = CGDisplayPixelsHigh(displayID)
+        let resolution = if pixelWidth > 0, pixelHeight > 0 {
+            CGSize(width: CGFloat(pixelWidth), height: CGFloat(pixelHeight))
+        } else {
+            CGSize(
+                width: CGFloat(display.display.width),
+                height: CGFloat(display.display.height)
+            )
+        }
         guard resolution.width > 0, resolution.height > 0 else {
             throw MirageError.protocolError("Main display fallback has invalid capture resolution")
         }

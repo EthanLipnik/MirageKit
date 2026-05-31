@@ -65,6 +65,7 @@ extension StreamContext {
         bitrateAdaptationCeiling = decision.maximumCeilingBps
         realtimeRuntimeBitrateCeilingBps = decision.startupBitrateBps
         realtimeMinimumBitrateFloorBps = decision.minimumBitrateFloorBps
+        realtimeSenderPacingBitrateBps = decision.startupBitrateBps
         await packetSender?.setTargetBitrateBps(decision.startupBitrateBps)
         if encoder != nil, previousBitrate != decision.startupBitrateBps {
             await encoder?.updateBitrate(decision.startupBitrateBps)

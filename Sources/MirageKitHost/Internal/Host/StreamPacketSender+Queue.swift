@@ -63,10 +63,9 @@ extension StreamPacketSender {
     nonisolated func shouldAbandonReservedPFrameForFreshness(_ item: WorkItem, latenessMs: Double?) -> Bool {
         guard !videoTransportMode.usesReliableOrderedDelivery,
               !item.isKeyframe,
-              let latenessMs else {
+              latenessMs != nil else {
             return false
         }
-        _ = latenessMs
         return lateReservedPFrameStreak >= 2
     }
 

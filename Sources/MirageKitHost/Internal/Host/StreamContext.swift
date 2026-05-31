@@ -125,6 +125,7 @@ actor StreamContext {
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
     var pendingEmergencyKeyframeQuality: Float?
+    var lastClientInputTime: CFAbsoluteTime = 0
     nonisolated(unsafe) var suppressEncodedNonKeyframesUntilKeyframe = false
     enum HostFrameChainState: Sendable, Equatable {
         case normal
@@ -244,6 +245,8 @@ actor StreamContext {
     var adaptivePFrameController = HostAdaptivePFrameController()
     var realtimeRuntimeQualityCeiling: Float?
     var realtimeRuntimeBitrateCeilingBps: Int?
+    var realtimeEncoderRateHintBps: Int?
+    var realtimeSenderPacingBitrateBps: Int?
     var realtimePressureState: HostAdaptivePFrameController.PressureState = .observing
     var realtimePressureReason: String?
     var realtimeLastLoggedState: HostAdaptivePFrameController.PressureState = .observing

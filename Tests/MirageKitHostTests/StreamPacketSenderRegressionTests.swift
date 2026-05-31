@@ -214,8 +214,8 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
-    @Test("Repeated sender-local deadline-past P-frames enter stale-chain repair")
-    func repeatedSenderLocalDeadlinePastPFramesEnterStaleChainRepair() async throws {
+    @Test("Repeated sender-local deadline-past P-frames enter stale-chain repair after two late sends")
+    func repeatedSenderLocalDeadlinePastPFramesEnterStaleChainRepairAfterTwoLateSends() async throws {
         let submittedPackets = Locked<[StreamPacketSenderSubmittedPacket]>([])
         let dependencyDropCount = Locked(0)
         let sender = StreamPacketSender(

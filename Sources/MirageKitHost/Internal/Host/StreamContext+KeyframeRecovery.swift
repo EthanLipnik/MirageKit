@@ -63,7 +63,7 @@ extension StreamContext {
             now: now
         )
         await noteEmergencyKeyframePrepared(using: nil)
-        scheduleProcessingIfNeeded()
+        scheduleProcessingForPendingKeyframe(reason: reason, now: now)
         MirageLogger
             .stream(
                 "Recovery keyframe requests=\(softRecoveryCount)"

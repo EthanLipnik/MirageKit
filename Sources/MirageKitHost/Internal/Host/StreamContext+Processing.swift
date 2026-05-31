@@ -308,7 +308,9 @@ extension StreamContext {
                         }
                         await encoder.flush()
                     }
-                    await encoder.prepareForKeyframe(quality: pendingEmergencyKeyframeQuality ?? keyframeQuality)
+                    await encoder.prepareForKeyframe(
+                        quality: pendingEmergencyKeyframeQuality ?? keyframeQuality
+                    )
                 }
                 // Pre-increment inFlightCount before the await suspension point.
                 // The VT completion callback can fire during the await and schedule

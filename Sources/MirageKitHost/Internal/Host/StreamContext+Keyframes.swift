@@ -7,11 +7,16 @@
 //  Keyframe scheduling and motion heuristics.
 //
 
+import CoreMedia
 import Foundation
 import MirageKit
 
 #if os(macOS)
 extension StreamContext {
+    func noteClientInput(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        lastClientInputTime = now
+    }
+
     func markDiscontinuity(reason: String, advanceEpoch: Bool) {
         if dynamicFrameFlags.contains(.discontinuity) { return }
         if advanceEpoch { epoch &+= 1 }
@@ -389,7 +394,7 @@ extension StreamContext {
     func recoveryCauseBypassesAdaptiveKeyframeCooldown(
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
-        recoveryCause == .decodeError
+        recoveryCause == .decodeError || recoveryCause == .freezeTimeout
     }
 
     func logRecoveryKeyframeCooldownSuppression(reason: String, now: CFAbsoluteTime) {
@@ -445,7 +450,7 @@ extension StreamContext {
         if resetFrameNumber {
             await encoder?.resetFrameNumber()
         }
-        scheduleProcessingIfNeeded()
+        scheduleProcessingForPendingKeyframe(reason: reason, now: now)
         MirageLogger.stream("Scheduled coalesced recovery keyframe (\(reason))")
         return true
     }
@@ -681,6 +686,56 @@ extension StreamContext {
         let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
         guard runtimeQualityAdjustmentEnabled else { return base }
         return min(activeQuality, max(keyframeQualityFloor, base))
+    }
+
+    @discardableResult
+    func enqueueSyntheticFrameFromLastCaptureIfNeeded(
+        now: CFAbsoluteTime,
+        reason: String
+    ) -> Bool {
+        guard !frameInbox.hasPending else { return false }
+        guard let lastCapturedFrame else { return false }
+        let frameDuration: CMTime
+        if lastCapturedFrame.duration.isValid,
+           lastCapturedFrame.duration.seconds > 0 {
+            frameDuration = lastCapturedFrame.duration
+        } else {
+            frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, currentFrameRate)))
+        }
+        let presentationTime = lastCapturedFrame.presentationTime.isValid
+            ? CMTimeAdd(lastCapturedFrame.presentationTime, frameDuration)
+            : CMTime(seconds: now, preferredTimescale: 1_000_000)
+        let syntheticFrame = CapturedFrame(
+            pixelBuffer: lastCapturedFrame.pixelBuffer,
+            presentationTime: presentationTime,
+            duration: frameDuration,
+            captureTime: now,
+            info: CapturedFrameInfo(
+                contentRect: lastCapturedFrame.info.contentRect,
+                dirtyPercentage: 0,
+                isIdleFrame: false
+            ),
+            backingSampleBuffer: lastCapturedFrame.backingSampleBuffer
+        )
+        syntheticFrameCount += 1
+        syntheticIntervalCount += 1
+        let enqueued = frameInbox.enqueue(syntheticFrame)
+        if enqueued {
+            MirageLogger.metrics(
+                "Synthetic recovery frame queued for stream \(streamID): reason=\(reason)"
+            )
+        }
+        return enqueued
+    }
+
+    func scheduleProcessingForPendingKeyframe(
+        reason: String,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) {
+        if pendingKeyframeReason != nil {
+            _ = enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason)
+        }
+        scheduleProcessingIfNeeded()
     }
 }
 #endif

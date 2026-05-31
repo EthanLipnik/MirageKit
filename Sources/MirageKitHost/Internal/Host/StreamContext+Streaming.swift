@@ -67,6 +67,7 @@ extension StreamContext {
         )
         packetSender = sender
         await sender.start()
+        realtimeSenderPacingBitrateBps = encoderConfig.bitrate
         await sender.setTargetBitrateBps(encoderConfig.bitrate)
     }
 

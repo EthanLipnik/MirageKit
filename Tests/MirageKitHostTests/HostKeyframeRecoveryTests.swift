@@ -40,8 +40,8 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush == false)
     }
 
-    @Test("Only decode-error keyframe requests bypass adaptive cooldown")
-    func onlyDecodeErrorKeyframeRequestsBypassAdaptiveCooldown() async {
+    @Test("Decode-error and freeze keyframe requests bypass adaptive cooldown")
+    func decodeErrorAndFreezeKeyframeRequestsBypassAdaptiveCooldown() async {
         let context = makeContext()
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -50,7 +50,7 @@ struct HostKeyframeRecoveryTests {
         #expect(!frameLossAck.accepted)
 
         let freezeAck = await context.requestKeyframe(recoveryCause: .freezeTimeout)
-        #expect(!freezeAck.accepted)
+        #expect(freezeAck.accepted)
 
         let decodeContext = makeContext()
         await decodeContext.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -131,6 +131,62 @@ struct HostKeyframeRecoveryTests {
         }
         let expectedCoolingFrames = await context.postEmergencyKeyframeCleanPFrameCount
         #expect(remaining == expectedCoolingFrames)
+    }
+
+    @Test("Recovery keyframe accepts idle receiver presentation evidence")
+    func recoveryKeyframeAcceptsIdleReceiverPresentationEvidence() async throws {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.setFrameChainStateForTesting(
+            .emergencyKeyframePending(reason: "unit-test", openedAt: now),
+            suppressPFrames: true
+        )
+
+        await context.handleFrameTransportCompleted(
+            frameTransportCompletion(frameNumber: 44, isKeyframe: true, didSend: true, now: now - 0.20)
+        )
+
+        await context.applyReceiverMediaFeedback(
+            receiverRecoveryFeedback(
+                sequence: 2,
+                recoveryState: .idle,
+                recoveryCause: .none,
+                latestAcceptedFrameNumber: 44,
+                latestPresentedFrameNumber: 44
+            )
+        )
+
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+        let acceptedState = await context.frameChainState
+        guard case let .postKeyframeCooling(remaining) = acceptedState else {
+            Issue.record("Expected post-keyframe cooling after receiver presentation evidence")
+            return
+        }
+        let expectedCoolingFrames = await context.postEmergencyKeyframeCleanPFrameCount
+        #expect(remaining == expectedCoolingFrames)
+    }
+
+    @Test("Emergency repair keyframe carries discontinuity reset")
+    func emergencyRepairKeyframeCarriesDiscontinuityReset() async {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.startFrameChainRepair(
+            reason: "unit-test",
+            firstBrokenFrame: 40,
+            now: now
+        )
+        let queued = await context.scheduleEmergencyChainRepairKeyframe(
+            reason: "unit-test",
+            bypassesRecoveryCooldown: true,
+            now: now
+        )
+
+        #expect(queued)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(context.epoch == 1)
+        #expect(context.dynamicFrameFlags.contains(.discontinuity))
     }
 
     @Test("Low-latency high-res boost does not force compression at 600 Mbps")
@@ -309,14 +365,14 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.lastCapturedFrame?.info.isIdleFrame == true)
     }
 
-    @Test("Recovery keyframe requests do not reopen idle capture hot path")
-    func recoveryKeyframeRequestsDoNotReopenIdleCaptureHotPath() async {
+    @Test("Recovery keyframe requests synthesize cached idle frame")
+    func recoveryKeyframeRequestsSynthesizeCachedIdleFrame() async {
         let context = makeContext()
 
-        _ = await context.requestKeyframe()
         await context.recordCaptureIngress(makeIdleFrame())
+        _ = await context.requestKeyframe()
 
-        #expect(context.frameInbox.pendingCount == 0)
+        #expect(context.frameInbox.pendingCount == 1)
         #expect(await context.pendingKeyframeReason == "Keyframe request")
     }
 
@@ -433,7 +489,9 @@ struct HostKeyframeRecoveryTests {
         recoveryCause: MirageMediaFeedbackRecoveryCause,
         ackRanges: [MediaFeedbackFrameRange] = [],
         reassemblerIncompleteFrameTimeouts: UInt64? = nil,
-        reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = []
+        reliabilityCauses: [ReceiverMediaFeedbackReliabilityCause] = [],
+        latestAcceptedFrameNumber: UInt32? = nil,
+        latestPresentedFrameNumber: UInt32? = nil
     ) -> ReceiverMediaFeedbackMessage {
         ReceiverMediaFeedbackMessage(
             streamID: 1,
@@ -458,7 +516,9 @@ struct HostKeyframeRecoveryTests {
             recoveryState: recoveryState,
             recoveryCause: recoveryCause,
             reassemblerIncompleteFrameTimeouts: reassemblerIncompleteFrameTimeouts,
-            reliabilityCauses: reliabilityCauses
+            reliabilityCauses: reliabilityCauses,
+            latestAcceptedFrameNumber: latestAcceptedFrameNumber,
+            latestPresentedFrameNumber: latestPresentedFrameNumber
         )
     }
 

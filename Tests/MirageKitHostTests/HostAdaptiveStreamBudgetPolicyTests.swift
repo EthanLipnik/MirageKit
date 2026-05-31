@@ -13,8 +13,8 @@ import Testing
 
 @Suite("Host Adaptive Stream Budget Policy")
 struct HostAdaptiveStreamBudgetPolicyTests {
-    @Test("WiFi automatic stream starts below client saturation ceiling")
-    func wifiAutomaticStreamStartsBelowClientSaturationCeiling() {
+    @Test("WiFi automatic stream starts at requested target below saturation ceiling")
+    func wifiAutomaticStreamStartsAtRequestedTargetBelowSaturationCeiling() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
             request(
                 requestedBitrateBps: 76_700_000,
@@ -25,7 +25,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision?.startupBitrateBps == 32_376_730)
+        #expect(decision?.startupBitrateBps == 76_700_000)
         #expect(decision?.maximumCeilingBps == 180_000_000)
         #expect(decision?.minimumBitrateFloorBps == 3_000_000)
     }
@@ -43,7 +43,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision?.startupBitrateBps == 32_376_730)
+        #expect(decision?.startupBitrateBps == 60_000_000)
         #expect(decision?.maximumCeilingBps == 60_000_000)
     }
 
@@ -59,7 +59,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             )
         )
 
-        #expect(decision?.startupBitrateBps == 32_376_730)
+        #expect(decision?.startupBitrateBps == 40_000_000)
         #expect(decision?.maximumCeilingBps == 180_000_000)
     }
 
@@ -75,9 +75,9 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         await context.applyDerivedQuality(for: CGSize(width: 2752, height: 2064), logLabel: nil)
 
         let settings = await context.encoderSettings
-        #expect(settings.bitrate == 32_376_730)
+        #expect(settings.bitrate == 76_700_000)
         #expect(await context.bitrateAdaptationCeiling == 180_000_000)
-        #expect(await context.realtimeRuntimeBitrateCeilingBps == 32_376_730)
+        #expect(await context.realtimeRuntimeBitrateCeilingBps == 76_700_000)
     }
 
     @Test("Disabled runtime adjustment keeps fixed quality budget untouched")

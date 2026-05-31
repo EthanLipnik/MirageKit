@@ -96,7 +96,7 @@ extension StreamContext {
         let usesDisplayRefreshCadence = desktopCaptureUsesDisplayRefreshCadenceOverride ?? isMirageDisplay
         let captureEngine = try await setupAndStartCaptureEngine(usesDisplayRefreshCadence: usesDisplayRefreshCadence)
         let resolvedExcludedWindows = excludedWindows.map(\.window)
-        let captureSizeForSCK = isMirageDisplay ? outputSize : nil
+        let captureSizeForSCK = resolution == nil ? nil : outputSize
         try await captureEngine.startDisplayCapture(
             display: display,
             resolution: captureSizeForSCK,

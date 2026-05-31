@@ -166,7 +166,7 @@ extension StreamContext {
             isKeyframe: isKeyframe,
             isRecoveryKeyframe: isKeyframe && keyframeUsesEmergencyBudget,
             adaptiveKeyframeAllowed: !isRecoveryKeyframeCooldownActive(now: now),
-            receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+            receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
             senderHealthy: await senderFrameBudgetIsHealthy(now: now),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
@@ -281,6 +281,29 @@ extension StreamContext {
         guard receiverFrameBudgetIsHealthy(now: now) else { return false }
         if startupTransportProtectionDeadline > now { return false }
         if receiverCapacityLearningQuarantineUntil > now { return false }
+        return true
+    }
+
+    func receiverFrameBudgetCanRaiseQuality(now: CFAbsoluteTime) -> Bool {
+        guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
+        if frameChainState != .normal { return false }
+        if realtimePressureState == .recovery { return false }
+        if receiverReassemblyBacklogFrames > 0 { return false }
+        if receiverReassemblyBacklogBytes > 0 { return false }
+        if receiverDecodeBacklogFrames > 0 { return false }
+        if receiverPresentationBacklogFrames > 0 { return false }
+        if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
+        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        if let receiverLatestPresentedFrameAgeMs,
+           receiverLatestPresentedFrameAgeMs > frameBudgetMs * 4.0 {
+            return false
+        }
+        if let receiverAckLagMs,
+           lastReceiverAckTime > 0,
+           now - lastReceiverAckTime <= 1.0,
+           receiverAckLagMs > frameBudgetMs * 3.0 {
+            return false
+        }
         return true
     }
 

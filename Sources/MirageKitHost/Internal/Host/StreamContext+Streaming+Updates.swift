@@ -17,6 +17,8 @@ extension StreamContext {
     func applyRealtimeBudgetBitrate(
         _ bitrate: Int,
         ceilingBitrateBps: Int?,
+        encoderRateHintBps: Int? = nil,
+        senderPacingBitrateBps: Int? = nil,
         reason: String
     ) async {
         guard isRunning else { return }
@@ -29,26 +31,39 @@ extension StreamContext {
             max(realtimeMinimumBitrateFloorBps, ceiling)
         )
         guard targetBitrate > 0 else { return }
-        let bitrateChanged = targetBitrate != currentTargetBitrateBps
-        guard bitrateChanged else {
-            await refreshRuntimeQualityTargets(for: targetBitrate, reason: reason)
+        let encoderRateHint = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: encoderRateHintBps ?? targetBitrate
+        ) ?? targetBitrate
+        let senderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: senderPacingBitrateBps ?? targetBitrate
+        ) ?? targetBitrate
+        let transportBitrateChanged = targetBitrate != currentTargetBitrateBps
+        let encoderHintChanged = encoderRateHint != encoderConfig.bitrate
+        let senderPacingChanged = senderPacingBitrate != realtimeSenderPacingBitrateBps
+        guard transportBitrateChanged || encoderHintChanged || senderPacingChanged else {
+            await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
             return
         }
 
         let previousBitrate = encoderConfig.bitrate
-        encoderConfig.bitrate = targetBitrate
+        encoderConfig.bitrate = encoderRateHint
         currentTargetBitrateBps = targetBitrate
-        await packetSender?.setTargetBitrateBps(targetBitrate)
-        await encoder?.updateBitrate(targetBitrate)
-        await refreshRuntimeQualityTargets(for: targetBitrate, reason: reason)
-        scheduleRateControlRetuneValidation(
-            previousBitrate: previousBitrate,
-            targetBitrate: targetBitrate
-        )
+        realtimeEncoderRateHintBps = encoderRateHint
+        realtimeSenderPacingBitrateBps = senderPacingBitrate
+        await packetSender?.setTargetBitrateBps(senderPacingBitrate)
+        if encoderHintChanged {
+            await encoder?.updateBitrate(encoderRateHint)
+            scheduleRateControlRetuneValidation(
+                previousBitrate: previousBitrate,
+                targetBitrate: encoderRateHint
+            )
+        }
+        await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
-                "target=\(targetBitrate) ceiling=\(ceiling) reason=\(reason)"
+                "target=\(targetBitrate) ceiling=\(ceiling) encoderHint=\(encoderRateHint) " +
+                "senderPacing=\(senderPacingBitrate) reason=\(reason)"
         )
         logBitrateContract(event: "realtime_budget_update")
     }
@@ -106,6 +121,7 @@ extension StreamContext {
             currentTargetBitrateBps = encoderConfig.bitrate
             requestedTargetBitrate = updatedRequestedTargetBitrate
             if bitrateChanged {
+                realtimeSenderPacingBitrateBps = encoderConfig.bitrate
                 await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
                 await encoder?.updateBitrate(encoderConfig.bitrate)
                 scheduleRateControlRetuneValidation(
@@ -139,6 +155,7 @@ extension StreamContext {
         ultraValidationFailureHandled = false
         ultraValidationSuccessLogged = false
 
+        realtimeSenderPacingBitrateBps = encoderConfig.bitrate
         await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
         if let encoder {
             try await encoder.updateConfiguration(encoderConfig)

@@ -36,6 +36,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let startupCapBps: Int
         let maximumCapBps: Int
         let minimumFloorBps: Int
+        let honorsRequestedStartup: Bool
         let label: String
     }
 
@@ -74,13 +75,15 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             min(hostMaximum, clientCeiling ?? hostMaximum)
         )
 
-        let clientStartupLimited = if let requestedTarget {
+        let clientStartupLimited = if let requestedTarget, pathBudget.honorsRequestedStartup {
+            requestedTarget
+        } else if let requestedTarget {
             min(hostStartup, requestedTarget)
         } else {
             hostStartup
         }
         var startupBitrate = min(maximumCeiling, max(1, clientStartupLimited))
-        if let requestedTarget, requestedTarget > hostStartup {
+        if let requestedTarget, !pathBudget.honorsRequestedStartup, requestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
         }
 
@@ -141,6 +144,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupCapBps: 16_000_000,
                 maximumCapBps: 24_000_000,
                 minimumFloorBps: 4_000_000,
+                honorsRequestedStartup: false,
                 label: "awdl"
             )
         case .localWiFi:
@@ -150,6 +154,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupCapBps: 36_000_000,
                 maximumCapBps: 180_000_000,
                 minimumFloorBps: 3_000_000,
+                honorsRequestedStartup: true,
                 label: "wifi"
             )
         case .wired:
@@ -159,6 +164,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupCapBps: 72_000_000,
                 maximumCapBps: 180_000_000,
                 minimumFloorBps: 8_000_000,
+                honorsRequestedStartup: true,
                 label: "wired"
             )
         case .proximityWiredLike:
@@ -168,6 +174,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupCapBps: 140_000_000,
                 maximumCapBps: 300_000_000,
                 minimumFloorBps: 12_000_000,
+                honorsRequestedStartup: true,
                 label: "proximity"
             )
         case .vpnOrOverlay:
@@ -177,6 +184,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                 startupCapBps: 24_000_000,
                 maximumCapBps: 64_000_000,
                 minimumFloorBps: 4_000_000,
+                honorsRequestedStartup: false,
                 label: "remote"
             )
         case .other,
@@ -197,6 +205,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
                     startupCapBps: 18_000_000,
                     maximumCapBps: 48_000_000,
                     minimumFloorBps: fallbackMinimumFloorBps,
+                    honorsRequestedStartup: false,
                     label: "unknown"
                 )
             }

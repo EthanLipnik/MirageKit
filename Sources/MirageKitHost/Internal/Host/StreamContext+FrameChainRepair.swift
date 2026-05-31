@@ -68,8 +68,9 @@ extension StreamContext {
         let queued = await scheduleCoalescedRecoveryKeyframe(
             reason: reason,
             noteLoss: false,
-            requiresFlush: false,
-            requiresReset: false,
+            requiresFlush: true,
+            requiresReset: true,
+            advanceEpochOnReset: true,
             ignoreExistingInFlight: false,
             bypassesRecoveryCooldown: bypassesRecoveryCooldown
         )

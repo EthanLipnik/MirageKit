@@ -29,6 +29,14 @@ extension MirageHostService {
                 sessionActive: sessionActive,
                 path: "input_fast"
             )
+            let inputStreamID = inputMessage.streamID
+            dispatchMainWork { [weak self] in
+                guard let self,
+                      let streamContext = self.streamsByID[inputStreamID] else {
+                    return
+                }
+                await streamContext.noteClientInput()
+            }
 
             if let customInputHandler = streamRegistry.customInputHandler(streamID: inputMessage.streamID) {
                 HostKeyboardInputDiagnostics.logTargetResolution(

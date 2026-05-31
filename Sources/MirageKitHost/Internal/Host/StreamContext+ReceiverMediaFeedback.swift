@@ -310,11 +310,17 @@ extension StreamContext {
         await applyRealtimeBudgetBitrate(
             decision.targetBitrateBps,
             ceilingBitrateBps: realtimeRuntimeBitrateCeilingBps,
+            encoderRateHintBps: decision.targetBitrateBps,
+            senderPacingBitrateBps: realtimeSenderPacingBitrate(for: decision),
             reason: decision.reason.rawValue
         )
         await applyFrameBudgetQuality(decision)
 
         logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
+    }
+
+    private func realtimeSenderPacingBitrate(for decision: HostFrameBudgetDecision) -> Int {
+        decision.targetBitrateBps
     }
 
     private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async {
