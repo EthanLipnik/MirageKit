@@ -44,7 +44,7 @@ extension StreamContext {
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
-            steadyQualityCeiling: steadyQualityCeiling,
+            steadyQualityCeiling: configuredQualityCeiling,
             now: now
         )
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -273,7 +273,7 @@ extension StreamContext {
                 maxPayloadSize: maxPayloadSize,
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
-                steadyQualityCeiling: steadyQualityCeiling,
+                steadyQualityCeiling: configuredQualityCeiling,
                 now: now
             ) ?? latestDecision
         }
@@ -314,7 +314,10 @@ extension StreamContext {
             senderPacingBitrateBps: realtimeSenderPacingBitrate(for: decision),
             reason: decision.reason.rawValue
         )
-        await applyFrameBudgetQuality(decision)
+        let qualityChanged = await applyFrameBudgetQuality(decision)
+        if qualityChanged {
+            queueStillQualityRefreshKeyframeIfNeeded(decision: decision, now: now)
+        }
 
         logRealtimeBudgetDecisionIfNeeded(now: now, decision: decision)
     }
@@ -323,7 +326,7 @@ extension StreamContext {
         decision.targetBitrateBps
     }
 
-    private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async {
+    private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async -> Bool {
         let previousQuality = activeQuality
         if decision.state == .observing {
             qualityCeiling = resolvedQualityCeiling
@@ -338,13 +341,36 @@ extension StreamContext {
         activeQuality = decision.state == .observing
             ? max(previousQuality, decisionQuality)
             : decisionQuality
-        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return }
+        guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return false }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
             "Frame budget updated quality for stream \(streamID): " +
                 "active=\(formatAwdlMetric(Double(activeQuality))) " +
                 "ceiling=\(formatAwdlMetric(Double(qualityCeiling))) reason=\(decision.reason.rawValue)"
         )
+        return true
+    }
+
+    private func queueStillQualityRefreshKeyframeIfNeeded(
+        decision: HostFrameBudgetDecision,
+        now: CFAbsoluteTime
+    ) {
+        guard decision.state == .observing, decision.reason == .healthy else { return }
+        let policy = activeFrameFreshnessPolicy
+        guard sourceIsStill(now: now, policy: policy),
+              !inputIsActive(now: now, policy: policy) else {
+            return
+        }
+        guard now - lastStillQualityRefreshKeyframeTime >= policy.stillQualityKeyframeInterval else { return }
+        let queued = queueKeyframe(
+            reason: "Still quality refresh",
+            checkInFlight: true,
+            countsAgainstRecoveryBudget: false
+        )
+        if queued {
+            lastStillQualityRefreshKeyframeTime = now
+            shouldAdmitIdleQualityProbeFrame = true
+        }
     }
 
     private func logRealtimeBudgetDecisionIfNeeded(

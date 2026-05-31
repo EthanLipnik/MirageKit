@@ -201,7 +201,7 @@ extension StreamContext {
                 maxPayloadSize: maxPayloadSize,
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
-                steadyQualityCeiling: steadyQualityCeiling,
+                steadyQualityCeiling: configuredQualityCeiling,
                 now: now
             )
         } else {
@@ -214,7 +214,7 @@ extension StreamContext {
                 maxPayloadSize: maxPayloadSize,
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
-                steadyQualityCeiling: steadyQualityCeiling,
+                steadyQualityCeiling: configuredQualityCeiling,
                 now: now
             )
         }

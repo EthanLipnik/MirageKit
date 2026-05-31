@@ -168,6 +168,8 @@ extension StreamContext {
             adaptiveKeyframeAllowed: !isRecoveryKeyframeCooldownActive(now: now),
             receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
             senderHealthy: await senderFrameBudgetIsHealthy(now: now),
+            inputActive: inputIsActive(now: now),
+            sourceStill: sourceIsStill(now: now),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -176,7 +178,7 @@ extension StreamContext {
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
-            steadyQualityCeiling: steadyQualityCeiling,
+            steadyQualityCeiling: configuredQualityCeiling,
             now: now
         )
         if !isKeyframe, let budgetDecision = decision.budgetDecision {
@@ -258,6 +260,50 @@ extension StreamContext {
         return max(1.0, Double(targetBitrate) / 8.0 / Double(max(1, currentFrameRate)))
     }
 
+    var activeFrameFreshnessPolicy: HostFrameFreshnessPolicy {
+        HostFrameFreshnessPolicy.policy(for: latencyMode, frameRate: currentFrameRate)
+    }
+
+    func inputIsActive(
+        now: CFAbsoluteTime,
+        policy: HostFrameFreshnessPolicy? = nil
+    ) -> Bool {
+        let activePolicy = policy ?? activeFrameFreshnessPolicy
+        return activePolicy.inputIsActive(lastInputTime: lastClientInputTime, now: now)
+    }
+
+    func sourceIsStill(
+        now: CFAbsoluteTime,
+        policy: HostFrameFreshnessPolicy? = nil
+    ) -> Bool {
+        let activePolicy = policy ?? activeFrameFreshnessPolicy
+        return activePolicy.sourceIsStill(
+            lastNonIdleCaptureTime: lastNonIdleCapturedFrameTime,
+            latestFrameIsIdle: lastCapturedFrame?.info.isIdleFrame == true,
+            now: now
+        )
+    }
+
+    func updateIdleQualityProbeAdmissionHint(now: CFAbsoluteTime) {
+        shouldAdmitIdleQualityProbeFrame = pendingKeyframeReason != nil ||
+            shouldConsiderStillQualityProbe(now: now)
+    }
+
+    func shouldEncodeStillQualityProbeFrame(now: CFAbsoluteTime) -> Bool {
+        shouldConsiderStillQualityProbe(now: now)
+    }
+
+    private func shouldConsiderStillQualityProbe(now: CFAbsoluteTime) -> Bool {
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: policy)
+        guard sourceIsStill(now: now, policy: policy) else { return false }
+        guard runtimeQualityAdjustmentEnabled, !inputActive else { return false }
+        guard activeQuality + 0.005 < configuredQualityCeiling else { return false }
+        guard now - lastStillQualityProbeEncodeTime >= policy.stillQualityProbeInterval else { return false }
+        guard (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes else { return false }
+        return receiverFrameBudgetCanRaiseQuality(now: now)
+    }
+
     func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
         guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
         if frameChainState != .normal { return false }
@@ -290,14 +336,21 @@ extension StreamContext {
         if realtimePressureState == .recovery { return false }
         if receiverReassemblyBacklogFrames > 0 { return false }
         if receiverReassemblyBacklogBytes > 0 { return false }
-        if receiverDecodeBacklogFrames > 0 { return false }
-        if receiverPresentationBacklogFrames > 0 { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
-        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
-        if let receiverLatestPresentedFrameAgeMs,
-           receiverLatestPresentedFrameAgeMs > frameBudgetMs * 4.0 {
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: policy)
+        let sourceStill = sourceIsStill(now: now, policy: policy)
+        let allowedDecodeBacklog = sourceStill && !inputActive ? 1 : 0
+        if receiverDecodeBacklogFrames > allowedDecodeBacklog { return false }
+        if !policy.allowsPresentationFreshness(
+            depth: receiverPresentationBacklogFrames,
+            latestPresentedFrameAgeMs: receiverLatestPresentedFrameAgeMs,
+            inputActive: inputActive,
+            sourceStill: sourceStill
+        ) {
             return false
         }
+        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
         if let receiverAckLagMs,
            lastReceiverAckTime > 0,
            now - lastReceiverAckTime <= 1.0,
@@ -381,7 +434,7 @@ extension StreamContext {
             maxPayloadSize: maxPayloadSize,
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
-            steadyQualityCeiling: steadyQualityCeiling,
+            steadyQualityCeiling: configuredQualityCeiling,
             now: now
         )
         guard let decision else { return }

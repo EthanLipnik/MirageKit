@@ -190,7 +190,7 @@ struct HostAdaptivePFrameController: Equatable {
     private static let burstLimitRatio = 1.00
     private static let pFrameServiceTargetMsAt60FPS = 8.0
     private static let pFrameExcellentMsAt60FPS = 8.0
-    private static let pFrameAcceptableMsAt60FPS = 14.0
+    private static let pFrameAcceptableMsAt60FPS = 17.0
     private static let pFrameSlowMsAt60FPS = 20.0
     private static let pFrameBadMsAt60FPS = 30.0
     private static let learnedThroughputUtilization = 0.80
@@ -214,6 +214,9 @@ struct HostAdaptivePFrameController: Equatable {
     private static let contentGrowthCutMinimumWireDelta = 3 * 1024
     private static let contentGrowthCutMinimumPacketDelta = 3
     private static let contentGrowthCutMinimumWireBytes = 256 * 1024
+    private static let interactiveMotionGrowthCutMinimumWireBytes = 48 * 1024
+    private static let interactiveMotionGrowthCutMinimumRatio = 2.0
+    private static let pressureQualityRaiseHoldSeconds: CFAbsoluteTime = 0.45
     private static let pFrameSpikeBaselinePivotKB = 16.0
     private static let pFrameSpikeMaximumRatio = 3.5
     private static let pFrameSpikeMinimumRatio = 1.25
@@ -244,6 +247,7 @@ struct HostAdaptivePFrameController: Equatable {
     private(set) var adaptiveRepairTargetWireBytes: Int?
     private(set) var adaptiveRepairTargetPacketCount: Int?
     private(set) var holdDownUntil: CFAbsoluteTime = 0
+    private(set) var qualityRaiseSuppressedUntil: CFAbsoluteTime = 0
     private(set) var lastAdmittedPFrameWireBytes: Int?
     private(set) var lastAdmittedPFramePacketCount: Int?
     private(set) var lastAdmittedPFrameQuality: Float?
@@ -369,6 +373,8 @@ struct HostAdaptivePFrameController: Equatable {
         adaptiveKeyframeAllowed: Bool = true,
         receiverHealthy: Bool,
         senderHealthy: Bool = true,
+        inputActive: Bool = false,
+        sourceStill: Bool = false,
         currentBitrateBps: Int?,
         requestedTargetBitrateBps: Int?,
         startupCeilingBps: Int?,
@@ -442,7 +448,12 @@ struct HostAdaptivePFrameController: Equatable {
         if wireBytes <= budget.operatingTargetWireBytes,
            packetCount <= budget.operatingTargetPacketCount {
             let decision: HostFrameBudgetDecision?
-            if shouldCutForPFrameGrowth(trend, spike: spike) {
+            if shouldCutForPFrameGrowth(
+                trend,
+                spike: spike,
+                inputActive: inputActive,
+                sourceStill: sourceStill
+            ) {
                 let nextQuality = nextPFrameSizeQuality(
                     currentQuality: currentQuality,
                     qualityFloor: qualityFloor,
@@ -482,7 +493,10 @@ struct HostAdaptivePFrameController: Equatable {
                     packetCount: packetCount,
                     currentQuality: currentQuality
                 )
-            } else if receiverHealthy, senderHealthy, trend.allowsQualityRaise {
+            } else if receiverHealthy,
+                      senderHealthy,
+                      trend.allowsQualityRaise,
+                      canRaiseQuality(now: now) {
                 let raisedQuality = cleanPFrameQuality(
                     currentQuality: currentQuality,
                     qualityFloor: qualityFloor,
@@ -1147,7 +1161,20 @@ struct HostAdaptivePFrameController: Equatable {
         )
     }
 
-    private func shouldCutForPFrameGrowth(_ trend: PFrameSizeTrend, spike: PFrameSpikeAssessment) -> Bool {
+    private func shouldCutForPFrameGrowth(
+        _ trend: PFrameSizeTrend,
+        spike: PFrameSpikeAssessment,
+        inputActive: Bool,
+        sourceStill: Bool
+    ) -> Bool {
+        if shouldCutForInteractiveMotionGrowth(
+            trend,
+            spike: spike,
+            inputActive: inputActive,
+            sourceStill: sourceStill
+        ) {
+            return true
+        }
         if spike.isMajor {
             return trend.wireBytes >= Self.contentGrowthCutMinimumWireBytes
         }
@@ -1160,6 +1187,21 @@ struct HostAdaptivePFrameController: Equatable {
         }
         return trend.ratio > trend.allowedGrowthRatio ||
             trend.packetCount > trend.allowedPacketCount
+    }
+
+    private func shouldCutForInteractiveMotionGrowth(
+        _ trend: PFrameSizeTrend,
+        spike: PFrameSpikeAssessment,
+        inputActive: Bool,
+        sourceStill: Bool
+    ) -> Bool {
+        guard inputActive, !sourceStill else { return false }
+        guard trend.contentGrowth || spike.isMajor else { return false }
+        guard trend.wireBytes >= Self.interactiveMotionGrowthCutMinimumWireBytes else { return false }
+        if spike.isMajor { return true }
+        guard trend.ratio >= Self.interactiveMotionGrowthCutMinimumRatio else { return false }
+        return trend.wireDelta >= Self.contentGrowthCutMinimumWireDelta ||
+            trend.packetDelta >= Self.contentGrowthCutMinimumPacketDelta
     }
 
     private mutating func admittedPFrameDecision(
@@ -1258,11 +1300,26 @@ struct HostAdaptivePFrameController: Equatable {
     ) -> Float {
         let wireScale = Double(max(1, budget.operatingTargetWireBytes)) / Double(max(1, wireBytes))
         let packetScale = Double(max(1, budget.operatingTargetPacketCount)) / Double(max(1, packetCount))
-        let growthScale = trend.contentGrowth ? 1.0 / max(1.0, trend.ratio) : 1.0
-        let spikeScale = spike.isMajor ? 1.0 / max(1.0, spike.ratio) : 1.0
+        let growthScale = trend.contentGrowth
+            ? min(1.0, trend.allowedGrowthRatio / max(trend.allowedGrowthRatio, trend.ratio))
+            : 1.0
+        let spikeScale = spike.isMajor
+            ? min(1.0, spike.allowedRatio / max(spike.allowedRatio, spike.ratio))
+            : 1.0
         let targetScale = min(wireScale, packetScale, growthScale, spikeScale)
         let boundedScale = Float(min(Self.reactiveQualityMaximumScale, max(0.08, targetScale)))
         return max(qualityFloor, currentQuality * boundedScale)
+    }
+
+    private func canRaiseQuality(now: CFAbsoluteTime) -> Bool {
+        now >= qualityRaiseSuppressedUntil
+    }
+
+    private mutating func suppressQualityRaiseAfterPressure(now: CFAbsoluteTime) {
+        qualityRaiseSuppressedUntil = max(
+            qualityRaiseSuppressedUntil,
+            now + Self.pressureQualityRaiseHoldSeconds
+        )
     }
 
     private mutating func raiseTransportCeilingForQualityRaise(
@@ -1590,6 +1647,9 @@ struct HostAdaptivePFrameController: Equatable {
         let budget = pFrameBudget(input: input, currentFrameRate: currentFrameRate, maxPayloadSize: maxPayloadSize, now: now)
         let ceiling = runtimeQualityCeiling(steadyQualityCeiling: steadyQualityCeiling, state: state)
         let boundedQuality = max(qualityFloor, min(ceiling, quality))
+        if shouldSuppressQualityRaiseAfterPressure(state: state, reason: reason) {
+            suppressQualityRaiseAfterPressure(now: now)
+        }
         latestState = state
         latestReason = reason
         latestDecisionTime = now
@@ -1617,6 +1677,24 @@ struct HostAdaptivePFrameController: Equatable {
 
     private func wireBytesForBitrate(_ bitrate: Int, currentFrameRate: Int) -> Int {
         max(1, Int((Double(max(1, bitrate)) / 8.0 / Double(max(1, currentFrameRate))).rounded(.down)))
+    }
+
+    private func shouldSuppressQualityRaiseAfterPressure(state: PressureState, reason: Reason) -> Bool {
+        guard state != .observing else { return false }
+        switch reason {
+        case .encodedFrame,
+             .pFrameLatency,
+             .receiverFreshness,
+             .senderDeadline,
+             .adaptiveRepair:
+            return true
+        case .startup,
+             .healthy,
+             .receiverBacklog,
+             .receiverLoss,
+             .clientRecovery:
+            return false
+        }
     }
 
     private func bitrateForWireBytes(_ wireBytes: Int, currentFrameRate: Int) -> Int {

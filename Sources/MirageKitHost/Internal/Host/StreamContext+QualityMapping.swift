@@ -308,6 +308,7 @@ extension StreamContext {
 
         encoderConfig.frameQuality = targets.frameQuality
         encoderConfig.keyframeQuality = targets.keyframeQuality
+        configuredQualityCeiling = targets.frameQuality
         steadyQualityCeiling = targets.frameQuality
         qualityCeiling = resolvedQualityCeiling
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)

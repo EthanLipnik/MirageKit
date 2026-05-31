@@ -21,9 +21,10 @@ extension StreamContext {
         }
         if frame.info.isIdleFrame {
             Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
-            return
+            guard shouldAdmitIdleQualityProbeFrame else { return }
+        } else {
+            Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
         }
-        Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
         if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
         }
@@ -37,9 +38,12 @@ extension StreamContext {
 
     func recordCaptureIngress(_ frame: CapturedFrame) {
         captureIngressIntervalCount += 1
-        lastCapturedFrameTime = CFAbsoluteTimeGetCurrent()
+        let now = CFAbsoluteTimeGetCurrent()
+        lastCapturedFrameTime = now
         lastCapturedFrame = frame
         if frame.info.isIdleFrame { idleSkippedCount += 1 }
+        if !frame.info.isIdleFrame { lastNonIdleCapturedFrameTime = now }
+        updateIdleQualityProbeAdmissionHint(now: now)
         if startupBaseTime > 0, !startupFirstCaptureLogged {
             startupFirstCaptureLogged = true
             logStartupEvent("first captured frame")
@@ -229,7 +233,8 @@ extension StreamContext {
             }
             if !forceKeyframe { forceKeyframe = shouldEmitPendingKeyframe(queueBytes: queueBytes) }
 
-            if !forceKeyframe, shouldSkipPFrameBeforeReservationForFreshness(now: CFAbsoluteTimeGetCurrent()) {
+            let frameAdmissionTime = CFAbsoluteTimeGetCurrent()
+            if !forceKeyframe, shouldSkipPFrameBeforeReservationForFreshness(now: frameAdmissionTime) {
                 backpressureDropIntervalCount += 1
                 droppedFrameCount += 1
                 await logStreamStatsIfNeeded()
@@ -280,9 +285,16 @@ extension StreamContext {
 
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
-                idleSkippedCount += 1
-                await logStreamStatsIfNeeded()
-                continue
+                if forceKeyframe {
+                    shouldAdmitIdleQualityProbeFrame = false
+                } else if shouldEncodeStillQualityProbeFrame(now: frameAdmissionTime) {
+                    lastStillQualityProbeEncodeTime = frameAdmissionTime
+                    shouldAdmitIdleQualityProbeFrame = false
+                } else {
+                    updateIdleQualityProbeAdmissionHint(now: frameAdmissionTime)
+                    await logStreamStatsIfNeeded()
+                    continue
+                }
             }
 
             setContentRect(resolvedOutgoingContentRect(for: frame))
@@ -389,7 +401,17 @@ extension StreamContext {
             return false
         }
         let snapshot = packetSender.freshnessSnapshot(now: now)
-        guard snapshot.shouldHoldPFrameReservation(frameRate: currentFrameRate) else { return false }
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: policy)
+        let sourceStill = sourceIsStill(now: now, policy: policy)
+        guard policy.shouldHoldPFrameReservation(
+            unstartedPFrameCount: snapshot.unstartedPFrameCount,
+            oldestUnstartedPFrameAgeMs: snapshot.oldestUnstartedPFrameAgeMs,
+            oldestUnstartedPFrameLatenessMs: snapshot.oldestUnstartedPFrameLatenessMs,
+            lateReservedPFrameStreak: snapshot.lateReservedPFrameStreak,
+            inputActive: inputActive,
+            sourceStill: sourceStill
+        ) else { return false }
         if now - senderFreshnessLastLogTime >= 0.5 {
             senderFreshnessLastLogTime = now
             let oldestAge = snapshot.oldestUnstartedPFrameAgeMs.formatted(.number.precision(.fractionLength(1)))
@@ -398,7 +420,7 @@ extension StreamContext {
                 "event=sender_freshness_pre_reservation_skip stream=\(streamID) " +
                     "pendingP=\(snapshot.unstartedPFrameCount) oldestAgeMs=\(oldestAge) " +
                     "oldestLateMs=\(oldestLate) lateStreak=\(snapshot.lateReservedPFrameStreak) " +
-                    "queuedBytes=\(snapshot.queuedBytes)"
+                    "queuedBytes=\(snapshot.queuedBytes) inputActive=\(inputActive) sourceStill=\(sourceStill)"
             )
         }
         return true

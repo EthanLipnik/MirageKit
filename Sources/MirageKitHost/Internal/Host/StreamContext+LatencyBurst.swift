@@ -14,9 +14,9 @@ import MirageKit
 extension StreamContext {
     var resolvedQualityCeiling: Float {
         min(
-            steadyQualityCeiling,
+            configuredQualityCeiling,
             compressionQualityCeiling,
-            realtimeRuntimeQualityCeiling ?? compressionQualityCeiling
+            realtimeRuntimeQualityCeiling ?? configuredQualityCeiling
         )
     }
 

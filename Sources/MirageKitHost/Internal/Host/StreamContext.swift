@@ -101,6 +101,7 @@ actor StreamContext {
     var syntheticFrameCount: UInt64 = 0
     var syntheticIntervalCount: UInt64 = 0
     var lastCapturedFrame: CapturedFrame?
+    var lastNonIdleCapturedFrameTime: CFAbsoluteTime = 0
     var cachedStartupFrame: CapturedFrame?
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
@@ -108,6 +109,7 @@ actor StreamContext {
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
+    var configuredQualityCeiling: Float
     var steadyQualityCeiling: Float
     var keyframeQualityFloor: Float
     let compressionQualityCeiling: Float = 0.94
@@ -148,6 +150,9 @@ actor StreamContext {
     var emergencyRecoveryScaleChangeInProgress = false
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
+    var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
+    var lastStillQualityRefreshKeyframeTime: CFAbsoluteTime = 0
+    nonisolated(unsafe) var shouldAdmitIdleQualityProbeFrame = false
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     var freshnessBurstActive = false
@@ -468,6 +473,7 @@ actor StreamContext {
         maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
         let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, compressionQualityCeiling)
+        configuredQualityCeiling = cappedFrameQuality
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = cappedFrameQuality
         let hasBitrateCap = (resolvedEncoderConfig.bitrate ?? 0) > 0

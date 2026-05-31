@@ -794,8 +794,8 @@ struct HostAdaptivePFrameControllerTests {
         ) == 10)
     }
 
-    @Test("Twelve KB to thirty-nine KB P-frame sends without cutting inside headroom")
-    func twelveKBToThirtyNineKBPFrameSendsWithoutCuttingInsideHeadroom() {
+    @Test("Twelve KB to thirty-nine KB P-frame sends without cutting during input motion")
+    func twelveKBToThirtyNineKBPFrameSendsWithoutCuttingDuringInputMotion() {
         var controller = HostAdaptivePFrameController()
         seedCleanBaseline(controller: &controller, wireBytes: 12 * 1024, packetCount: 10)
         _ = controller.evaluateEncodedFrame(
@@ -806,6 +806,8 @@ struct HostAdaptivePFrameControllerTests {
             adaptiveKeyframeAllowed: true,
             receiverHealthy: true,
             senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
             currentBitrateBps: controller.runtimeCeilingBps,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 180_000_000,
@@ -826,6 +828,8 @@ struct HostAdaptivePFrameControllerTests {
             adaptiveKeyframeAllowed: true,
             receiverHealthy: true,
             senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
             currentBitrateBps: controller.runtimeCeilingBps,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 180_000_000,
@@ -840,6 +844,142 @@ struct HostAdaptivePFrameControllerTests {
 
         #expect(evaluation.admission == .send)
         #expect(evaluation.budgetDecision == nil)
+    }
+
+    @Test("Interactive sub-budget motion spike cuts quality on the encoded frame")
+    func interactiveSubBudgetMotionSpikeCutsQualityOnEncodedFrame() throws {
+        var controller = HostAdaptivePFrameController()
+        seedCleanBaseline(
+            controller: &controller,
+            wireBytes: 12 * 1024,
+            packetCount: 10,
+            currentBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000
+        )
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 12 * 1024,
+            wireBytes: 12 * 1024,
+            packetCount: 10,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.9
+        )
+
+        let evaluation = controller.evaluateEncodedFrame(
+            byteCount: 96 * 1024,
+            wireBytes: 96 * 1024,
+            packetCount: 80,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 11
+        )
+        let decision = try #require(evaluation.budgetDecision)
+
+        #expect(evaluation.admission == .sendWithQualityDrop)
+        #expect(evaluation.wireRatio < 1.0)
+        #expect(decision.reason == .encodedFrame)
+        #expect(decision.quality < 0.60)
+        #expect(decision.targetBitrateBps < 100_000_000)
+    }
+
+    @Test("Motion spike suppresses immediate healthy re-raise")
+    func motionSpikeSuppressesImmediateHealthyReraise() throws {
+        var controller = HostAdaptivePFrameController()
+        seedCleanBaseline(controller: &controller, wireBytes: 12 * 1024, packetCount: 10)
+        _ = controller.evaluateEncodedFrame(
+            byteCount: 12 * 1024,
+            wireBytes: 12 * 1024,
+            packetCount: 10,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 10.9
+        )
+        let pressure = controller.evaluateEncodedFrame(
+            byteCount: 96 * 1024,
+            wireBytes: 96 * 1024,
+            packetCount: 80,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: 0.8,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 11
+        )
+        let pressureQuality = try #require(pressure.budgetDecision?.quality)
+
+        let immediateRecovery = controller.evaluateEncodedFrame(
+            byteCount: 20 * 1024,
+            wireBytes: 20 * 1024,
+            packetCount: 16,
+            isKeyframe: false,
+            adaptiveKeyframeAllowed: true,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: controller.runtimeCeilingBps,
+            requestedTargetBitrateBps: 100_000_000,
+            startupCeilingBps: 180_000_000,
+            minimumBitrateFloorBps: 3_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_320,
+            currentQuality: pressureQuality,
+            qualityFloor: 0.05,
+            steadyQualityCeiling: 0.8,
+            now: 11.1
+        )
+
+        #expect(immediateRecovery.admission == .send)
+        #expect(immediateRecovery.budgetDecision == nil)
     }
 
     @Test("Twelve MB to twenty-five MB P-frame cuts quality inside headroom")
