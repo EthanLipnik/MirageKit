@@ -92,6 +92,7 @@ public struct MirageReceiverHealthController: Sendable {
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
         allowsBackoff: Bool = true,
+        prefersQualityRecovery: Bool = false,
         minimumHealthyFrameRate: Int? = nil,
         minimumBitrateFloorBps: Int = 12_000_000
     ) -> Action {
@@ -109,6 +110,7 @@ public struct MirageReceiverHealthController: Sendable {
             now: now,
             allowsNewProbe: allowsNewProbe,
             allowsBackoff: allowsBackoff,
+            prefersQualityRecovery: prefersQualityRecovery,
             minimumHealthyFrameRate: minimumHealthyFrameRate,
             minimumBitrateFloorBps: minimumBitrateFloorBps
         )
@@ -122,6 +124,7 @@ public struct MirageReceiverHealthController: Sendable {
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         allowsNewProbe: Bool = true,
         allowsBackoff: Bool = true,
+        prefersQualityRecovery: Bool = false,
         minimumHealthyFrameRate: Int? = nil,
         minimumBitrateFloorBps: Int = 12_000_000
     ) -> Action {
@@ -183,7 +186,8 @@ public struct MirageReceiverHealthController: Sendable {
                 currentBitrateBps: currentBitrateBps,
                 ceilingBps: ceilingBps,
                 now: now,
-                allowsNewProbe: allowsNewProbe
+                allowsNewProbe: allowsNewProbe,
+                prefersQualityRecovery: prefersQualityRecovery
             )
 
         case .backingOff:
@@ -206,7 +210,8 @@ public struct MirageReceiverHealthController: Sendable {
                     currentBitrateBps: currentBitrateBps,
                     ceilingBps: ceilingBps,
                     now: now,
-                    allowsNewProbe: allowsNewProbe
+                    allowsNewProbe: allowsNewProbe,
+                    prefersQualityRecovery: prefersQualityRecovery
                 )
             }
         }

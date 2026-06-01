@@ -181,7 +181,8 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
 
     /// Whether the active path uses Apple's USB-C proximity interface.
     public var usesUSBProximityInterface: Bool {
-        interfaceNames.containsInterfaceName(withPrefix: "anpi")
+        interfaceNames.containsInterfaceName(withPrefix: "anpi") ||
+            interfaceNames.containsInterfaceName(withPrefix: "apni")
     }
 
     /// Whether the active path uses Apple's AWDL radio interface.
@@ -222,7 +223,7 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
             $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
         if mediaProfile == .proximityWiredLike,
-           normalizedNames.contains(where: { $0.hasPrefix("anpi") }) {
+           normalizedNames.contains(where: { $0.hasPrefix("anpi") || $0.hasPrefix("apni") }) {
             return .applePrivateNCM
         }
         if mediaProfile == .proximityWiredLike,

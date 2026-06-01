@@ -24,6 +24,8 @@ public struct MirageAwdlRouteHealthController: Sendable {
     private var severeSampleCount: Int = 0
     private var earlyStartupFailureSampleCount: Int = 0
     private var hasEmittedDecision = false
+    private var previousDroppedFrames: UInt64?
+    private var previousPresentationStallCount: UInt64?
 
     public init(
         startedOnAwdl: Bool = false,
@@ -48,6 +50,8 @@ public struct MirageAwdlRouteHealthController: Sendable {
         severeSampleCount = 0
         earlyStartupFailureSampleCount = 0
         hasEmittedDecision = false
+        previousDroppedFrames = nil
+        previousPresentationStallCount = nil
     }
 
     /// Advances AWDL health using the latest active stream snapshots.
@@ -70,17 +74,18 @@ public struct MirageAwdlRouteHealthController: Sendable {
 
         let snapshot = Self.worstAwdlSnapshot(from: snapshots)
         let sample = MirageReceiverHealthController.sample(from: snapshot)
+        let localStartupFailure = registerEarlyStartupFailure(snapshot)
         let assessment = Self.assess(
             sample: sample,
             snapshot: snapshot,
             currentBitrateBps: currentBitrateBps,
-            startupBitrateBps: startupBitrateBps
+            startupBitrateBps: startupBitrateBps,
+            localStartupFailure: localStartupFailure
         )
         let age = now - streamStartedAt
         let isAtBitrateFloor = currentBitrateBps.map {
             $0 <= MirageReceiverHealthController.minimumBitrateBps
         } ?? false
-        let localStartupFailure = Self.hasEarlyStartupFailure(snapshot)
         if assessment.isDegraded {
             degradedSampleCount += 1
         } else {
@@ -132,7 +137,8 @@ public struct MirageAwdlRouteHealthController: Sendable {
         sample: ReceiverHealthSample,
         snapshot: MirageClientMetricsSnapshot,
         currentBitrateBps: Int?,
-        startupBitrateBps: Int?
+        startupBitrateBps: Int?,
+        localStartupFailure: Bool
     ) -> AwdlSampleAssessment {
         let receivedGapMs = max(0, snapshot.clientReceivedWorstGapMs)
         let pFrameP95Ms = max(0, snapshot.clientPFrameCompletionLatencyP95Ms)
@@ -145,7 +151,6 @@ public struct MirageAwdlRouteHealthController: Sendable {
             currentBitrateBps: currentBitrateBps,
             startupBitrateBps: startupBitrateBps
         )
-        let localStartupFailure = Self.hasEarlyStartupFailure(snapshot)
         let degraded = sample.hasTransportPressure ||
             mediaDeliveryFailure ||
             sample.hasReceiverMediaLatencyPressure ||
@@ -183,10 +188,34 @@ public struct MirageAwdlRouteHealthController: Sendable {
         return currentBitrateBps <= Int(Double(startupBitrateBps) * bitrateCollapseRatio)
     }
 
-    private static func hasEarlyStartupFailure(_ snapshot: MirageClientMetricsSnapshot) -> Bool {
-        snapshot.clientPresentationStallCount > 0 ||
-            snapshot.clientDroppedFrames > 0 ||
-            snapshot.clientDecodeBacklogFrames >= earlyDecodeBacklogFrameThreshold
+    /// Treats only NEW drops/stalls since the previous sample as early-startup
+    /// failure, so a one-time startup keyframe catch-up burst (which leaves the
+    /// cumulative counters > 0 for the rest of the stream) cannot evict an
+    /// otherwise-healthy AWDL link. The decode backlog is instantaneous and is
+    /// evaluated as-is.
+    private mutating func registerEarlyStartupFailure(
+        _ snapshot: MirageClientMetricsSnapshot
+    ) -> Bool {
+        let newDrops = Self.newlyAccrued(
+            snapshot.clientDroppedFrames,
+            previous: previousDroppedFrames
+        )
+        let newStalls = Self.newlyAccrued(
+            snapshot.clientPresentationStallCount,
+            previous: previousPresentationStallCount
+        )
+        previousDroppedFrames = snapshot.clientDroppedFrames
+        previousPresentationStallCount = snapshot.clientPresentationStallCount
+        return newStalls > 0 ||
+            newDrops > 0 ||
+            snapshot.clientDecodeBacklogFrames >= Self.earlyDecodeBacklogFrameThreshold
+    }
+
+    /// Increase of a monotonic counter since the previous sample, resetting
+    /// cleanly if the counter rolled back (e.g. a full reassembler reset).
+    private static func newlyAccrued(_ current: UInt64, previous: UInt64?) -> UInt64 {
+        guard let previous else { return 0 }
+        return current >= previous ? current - previous : current
     }
 
     private static func reason(

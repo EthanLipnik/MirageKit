@@ -28,11 +28,12 @@ extension MirageClientService {
     ) async throws -> BootstrappedControlSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
-        let attempts = controlSessionAttempts(for: host)
-        recordControlSessionAttemptPlan(attempts, host: host)
+        let plannedHost = try await refreshedHostForPendingAwdlScopedAddressIfNeeded(host)
+        let attempts = controlSessionAttempts(for: plannedHost)
+        recordControlSessionAttemptPlan(attempts, host: plannedHost)
         if attempts.isEmpty, let debugRouteOverride {
             throw MirageError.protocolError(
-                "Debug route override \(debugRouteOverride.displayName) matched no available connection route for \(host.name); forced routes do not fall back automatically."
+                "Debug route override \(debugRouteOverride.displayName) matched no available connection route for \(plannedHost.name); forced routes do not fall back automatically."
             )
         }
         var lastFailureReason: String?
@@ -82,7 +83,7 @@ extension MirageClientService {
                 try throwIfConnectAttemptIsStale(attemptID)
                 try await performBootstrap(
                     over: controlChannel,
-                    provisionalHost: host,
+                    provisionalHost: plannedHost,
                     requestTakeoverIfBusy: requestTakeoverIfBusy,
                     protocolVersionOverride: bootstrapProtocolVersionOverride
                 )
@@ -145,7 +146,7 @@ extension MirageClientService {
                 }
 
                 if let networkMismatchReason = Self.localNetworkMismatchReason(
-                    for: host,
+                    for: plannedHost,
                     classification: classification,
                     localNetwork: ControlSessionNetworkDiagnostics(snapshot: localNetworkMonitor.snapshot)
                 ) {
@@ -155,7 +156,7 @@ extension MirageClientService {
                     throw MirageError.connectionRejected(
                         MirageConnectionRejection(
                             reason: .localNetworkBlocked,
-                            hostName: host.name,
+                            hostName: plannedHost.name,
                             recoveryHint: networkMismatchReason
                         )
                     )
@@ -166,8 +167,39 @@ extension MirageClientService {
         }
 
         throw MirageError.protocolError(
-            lastFailureReason ?? "Failed to bootstrap control session to \(host.name)"
+            lastFailureReason ?? "Failed to bootstrap control session to \(plannedHost.name)"
         )
+    }
+
+    func refreshedHostForPendingAwdlScopedAddressIfNeeded(_ host: LoomPeer) async throws -> LoomPeer {
+        let initialAttempts = controlSessionAttempts(for: host)
+        guard shouldWaitForPendingAwdlScopedAddress(host: host, attempts: initialAttempts) else {
+            return host
+        }
+
+        let deadline = CFAbsoluteTimeGetCurrent() + 0.45
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(50))
+            guard let refreshedHost = loomNode.discovery?.discoveredPeers.first(where: {
+                $0.deviceID == host.deviceID
+            }) else {
+                continue
+            }
+            let refreshedAttempts = controlSessionAttempts(for: refreshedHost)
+            if !hasPendingAwdlScopedAddressResolution(for: refreshedHost),
+               refreshedAttempts.contains(where: { $0.routeTier == .awdl }) {
+                MirageLogger.client(
+                    "Replanned control attempts for \(host.name): awdl0 scoped address resolved"
+                )
+                return refreshedHost
+            }
+        }
+
+        MirageLogger.client(
+            "Continuing control connection for \(host.name): awdl0 scoped address did not resolve before fallback"
+        )
+        return host
     }
 
     func controlSessionAttemptGroup(

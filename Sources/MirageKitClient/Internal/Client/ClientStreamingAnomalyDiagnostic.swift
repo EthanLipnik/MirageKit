@@ -401,6 +401,12 @@ func clientStreamingAnomalyDiagnostic(
         "hostEncodeAttempt=\(hostEncodeAttemptText)fps captureAdmissionDrops=\(captureAdmissionDropsText) " +
         "hostCaptureGapP99=\(hostCaptureGapP99Text)ms hostCaptureWorstGap=\(hostCaptureWorstGapText)ms " +
         "hostDisplayDrift=\(hostCaptureDriftText) virtualTimingSuspect=\(virtualTimingText) " +
+        // Idle-vs-wedge distinguishers: high raw-callback + high idle frames with low
+        // renderable cadence = benign static content (SCK delivering no-change frames);
+        // low raw-callback = SCK starved / wedged virtual display (a real cadence bug).
+        "hostRawCallbackFPS=\(formattedFPS(sample.hostMetrics?.captureCadence?.rawScreenCallbackFPS)) " +
+        "hostObservedSCKFPS=\(formattedFPS(sample.hostMetrics?.captureCadence?.observedSCKFPS)) " +
+        "hostIdleFrames=\(sample.hostMetrics?.captureCadence?.idleFrameCount.map(String.init) ?? "--") " +
         "sendQueue=\(hostQueueText) sendStart=\(formattedMs(sample.hostMetrics?.sendStartDelayAverageMs))ms " +
         "sendDone=\(formattedMs(sample.hostMetrics?.sendCompletionAverageMs))ms " +
         "sendStartMax=\(formattedMs(sample.hostMetrics?.sendStartDelayMaxMs))ms " +

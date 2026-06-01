@@ -12,10 +12,11 @@ extension MirageReceiverHealthController {
     public mutating func noteProbeSucceeded(
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {
+        let qualityRecovery = pendingPromotion?.qualityRecovery == true
         state = .stable
         lastTransitionAt = now
         resetSampleCounters()
-        nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
+        nextProbeAllowedAt = now + probeCooldown(success: true, now: now, qualityRecovery: qualityRecovery)
         pendingPromotion = nil
     }
 
@@ -23,10 +24,11 @@ extension MirageReceiverHealthController {
     public mutating func noteProbeFailed(
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {
+        let qualityRecovery = pendingPromotion?.qualityRecovery == true
         state = .stable
         lastTransitionAt = now
         resetSampleCounters()
-        nextProbeAllowedAt = now + probeCooldown(success: false, now: now)
+        nextProbeAllowedAt = now + probeCooldown(success: false, now: now, qualityRecovery: qualityRecovery)
         if let pendingPromotion {
             recordFailedPromotion(
                 failedBitrateBps: pendingPromotion.targetBitrateBps,
@@ -43,20 +45,24 @@ extension MirageReceiverHealthController {
         currentBitrateBps: Int,
         ceilingBps: Int,
         now: CFAbsoluteTime,
-        allowsNewProbe: Bool
+        allowsNewProbe: Bool,
+        prefersQualityRecovery: Bool = false
     ) -> Action {
         guard allowsNewProbe,
               let probeTarget = probeTargetBitrate(
                   sample: sample,
                   currentBitrateBps: currentBitrateBps,
                   ceilingBps: ceilingBps,
-                  now: now
+                  now: now,
+                  prefersQualityRecovery: prefersQualityRecovery
               ) else {
             return .none
         }
+        let qualityRecovery = allowsQualityRecoveryProbe(preferred: prefersQualityRecovery)
         pendingPromotion = ReceiverPendingPromotion(
             previousBitrateBps: currentBitrateBps,
             targetBitrateBps: probeTarget,
+            qualityRecovery: qualityRecovery,
             cleanSampleCount: 0,
             startedAt: now
         )
@@ -91,7 +97,14 @@ extension MirageReceiverHealthController {
             state = .backingOff
             lastTransitionAt = now
             resetSampleCounters()
-            nextProbeAllowedAt = max(nextProbeAllowedAt, now + probeCooldown(success: false, now: now))
+            nextProbeAllowedAt = max(
+                nextProbeAllowedAt,
+                now + probeCooldown(
+                    success: false,
+                    now: now,
+                    qualityRecovery: pendingPromotion.qualityRecovery
+                )
+            )
             guard pendingPromotion.previousBitrateBps < currentBitrateBps else { return nil }
             return .backoff(targetBitrateBps: pendingPromotion.previousBitrateBps)
         }
@@ -99,7 +112,14 @@ extension MirageReceiverHealthController {
         guard sample.allowsProbePromotion else {
             if now - pendingPromotion.startedAt >= Self.pendingProbeTimeoutSeconds {
                 self.pendingPromotion = nil
-                nextProbeAllowedAt = max(nextProbeAllowedAt, now + Self.failedProbeCooldownSeconds)
+                nextProbeAllowedAt = max(
+                    nextProbeAllowedAt,
+                    now + probeCooldown(
+                        success: false,
+                        now: now,
+                        qualityRecovery: pendingPromotion.qualityRecovery
+                    )
+                )
             } else {
                 self.pendingPromotion = pendingPromotion
             }
@@ -107,12 +127,19 @@ extension MirageReceiverHealthController {
         }
 
         pendingPromotion.cleanSampleCount += 1
-        if pendingPromotion.cleanSampleCount >= Self.pendingProbeHealthySampleThreshold {
+        let requiredCleanSamples = pendingPromotion.qualityRecovery
+            ? Self.qualityRecoveryPendingProbeHealthySampleThreshold
+            : Self.pendingProbeHealthySampleThreshold
+        if pendingPromotion.cleanSampleCount >= requiredCleanSamples {
             self.pendingPromotion = nil
             state = .stable
             lastTransitionAt = now
             resetSampleCounters()
-            nextProbeAllowedAt = now + probeCooldown(success: true, now: now)
+            nextProbeAllowedAt = now + probeCooldown(
+                success: true,
+                now: now,
+                qualityRecovery: pendingPromotion.qualityRecovery
+            )
             clearPromotionCeilingIfReached(currentBitrateBps)
         } else {
             self.pendingPromotion = pendingPromotion
@@ -125,21 +152,30 @@ extension MirageReceiverHealthController {
         sample: ReceiverHealthSample,
         currentBitrateBps: Int,
         ceilingBps: Int,
-        now: CFAbsoluteTime
+        now: CFAbsoluteTime,
+        prefersQualityRecovery: Bool = false
     ) -> Int? {
         guard sample.isTransportClean else { return nil }
         guard sample.allowsProbePromotion else { return nil }
         let fastStartActive = isFastStartActive(now: now)
         let conservativeProximity = promotionRecoveryMode == .conservativeProximity
+        let qualityRecovery = allowsQualityRecoveryProbe(preferred: prefersQualityRecovery)
         let healthySampleThreshold = if conservativeProximity {
             Self.conservativeProbeHealthySampleThreshold
+        } else if qualityRecovery {
+            Self.qualityRecoveryProbeHealthySampleThreshold
         } else if fastStartActive {
             Self.fastStartProbeHealthySampleThreshold
         } else {
             Self.probeHealthySampleThreshold
         }
         guard promotionHealthySampleCount >= healthySampleThreshold else { return nil }
-        guard now >= nextProbeAllowedAt else { return nil }
+        let qualityRecoveryAllowedAt = (lastTransitionAt ?? nextProbeAllowedAt) +
+            Self.qualityRecoveryProbeCooldownBypassSeconds
+        let requiredProbeAllowedAt = qualityRecovery
+            ? min(nextProbeAllowedAt, qualityRecoveryAllowedAt)
+            : nextProbeAllowedAt
+        guard now >= requiredProbeAllowedAt else { return nil }
         let effectiveCeilingBps = effectivePromotionCeiling(
             configuredCeilingBps: ceilingBps,
             currentBitrateBps: currentBitrateBps,
@@ -149,6 +185,8 @@ extension MirageReceiverHealthController {
 
         let increaseFloorBps = if conservativeProximity {
             Self.conservativeProbeIncreaseFloorBps
+        } else if qualityRecovery {
+            Self.qualityRecoveryProbeIncreaseFloorBps
         } else if fastStartActive {
             Self.fastStartProbeIncreaseFloorBps
         } else {
@@ -156,6 +194,8 @@ extension MirageReceiverHealthController {
         }
         let increasePercent = if conservativeProximity {
             Self.conservativeProbeIncreasePercent
+        } else if qualityRecovery {
+            Self.qualityRecoveryProbeIncreasePercent
         } else if fastStartActive {
             Self.fastStartProbeIncreasePercent
         } else {
@@ -163,6 +203,8 @@ extension MirageReceiverHealthController {
         }
         let increaseMaximumStepBps = if conservativeProximity {
             Self.conservativeProbeIncreaseMaximumStepBps
+        } else if qualityRecovery {
+            Self.qualityRecoveryProbeIncreaseMaximumStepBps
         } else if fastStartActive {
             Self.fastStartProbeIncreaseMaximumStepBps
         } else {
@@ -179,6 +221,10 @@ extension MirageReceiverHealthController {
         )
         guard nextBitrate > currentBitrateBps else { return nil }
         return nextBitrate
+    }
+
+    private func allowsQualityRecoveryProbe(preferred: Bool) -> Bool {
+        preferred && promotionRecoveryMode != .conservativeProximity
     }
 
     /// Learns a promotion ceiling from a failed probe.

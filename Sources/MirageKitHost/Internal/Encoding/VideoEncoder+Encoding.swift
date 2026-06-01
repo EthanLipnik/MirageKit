@@ -127,6 +127,9 @@ extension VideoEncoder {
             handler: encodedFrameHandler,
             encodeStartTime: encodeStartTime,
             sessionVersion: currentSessionVersion,
+            captureTime: frame.captureTime,
+            captureDirtyPercentage: frame.info.dirtyPercentage,
+            captureIsIdleFrame: frame.info.isIdleFrame,
             performanceTracker: performanceTracker,
             encodedOutputTelemetry: encodedOutputTelemetry,
             completion: frameCompletionHandler,
@@ -281,9 +284,17 @@ extension VideoEncoder {
 
             if info.frameNumber < 10 || isKeyframe {
                 let bytesKB = Double(data.count) / 1024.0
+                let captureToCallbackMs = info.captureTime > 0
+                    ? (encodeEndTime - info.captureTime) * 1_000
+                    : 0
+                let captureToCallbackText = captureToCallbackMs.formatted(.number.precision(.fractionLength(1)))
+                let dirtyText = info.captureDirtyPercentage.formatted(.number.precision(.fractionLength(1)))
                 MirageLogger.debug(
                     .timing,
-                    "Encoder frame \(info.frameNumber): \(String(format: "%.2f", encodingDuration))ms, \(String(format: "%.1f", bytesKB))KB\(isKeyframe ? " (keyframe)" : "")"
+                    "Encoder frame \(info.frameNumber): \(String(format: "%.2f", encodingDuration))ms, " +
+                        "captureToCallback=\(captureToCallbackText)ms, " +
+                        "\(String(format: "%.1f", bytesKB))KB dirty=\(dirtyText)% " +
+                        "idle=\(info.captureIsIdleFrame)\(isKeyframe ? " (keyframe)" : "")"
                 )
             }
 

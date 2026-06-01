@@ -48,6 +48,35 @@ struct MirageEffectiveMediaPathPolicyTests {
         #expect(clientAwdl.mediaPathProfile == .awdlRadio)
     }
 
+    @Test("APNI host route is not masked by client generic wired route")
+    func apniHostRouteIsNotMaskedByClientGenericWiredRoute() {
+        let hostSnapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["apni2"],
+            usesWiFi: false,
+            usesWired: true,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+        #expect(hostSnapshot.kind == .wired)
+        #expect(hostSnapshot.mediaProfile == .proximityWiredLike)
+
+        let policy = MirageEffectiveMediaPathPolicy.resolve(
+            hostSnapshot: hostSnapshot,
+            clientPathKind: .wired,
+            clientMediaPathProfile: .wired,
+            clientPathSignature: "client-en5"
+        )
+
+        #expect(policy.transportPathKind == .wired)
+        #expect(policy.mediaPathProfile == .proximityWiredLike)
+    }
+
     @Test("Nil or unknown client profile falls back to host")
     func nilOrUnknownClientProfileFallsBackToHost() {
         let nilClient = MirageEffectiveMediaPathPolicy.resolve(

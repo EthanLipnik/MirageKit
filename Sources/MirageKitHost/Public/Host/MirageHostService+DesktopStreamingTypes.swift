@@ -89,7 +89,6 @@ func aspectFitPixelSize(contentSize: CGSize, containerSize: CGSize) -> CGSize {
 }
 
 let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
-let desktopLowestLatencyFixedQualityBitrateCapBps = 150_000_000
 
 extension MirageHostService {
     /// Current desktop-stream state, or `nil` when no desktop stream is active.

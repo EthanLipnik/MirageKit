@@ -210,6 +210,9 @@ final class EncodeInfo: @unchecked Sendable {
     let handler: (@Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void)?
     let encodeStartTime: CFAbsoluteTime
     let sessionVersion: UInt64
+    let captureTime: CFAbsoluteTime
+    let captureDirtyPercentage: Float
+    let captureIsIdleFrame: Bool
     let performanceTracker: EncodePerformanceTracker?
     let encodedOutputTelemetry: EncodedOutputTelemetryTracker?
     let completion: (@Sendable () -> Void)?
@@ -224,6 +227,9 @@ final class EncodeInfo: @unchecked Sendable {
         handler: (@Sendable (Data, Bool, CMTime, @escaping @Sendable () -> Void) -> Void)?,
         encodeStartTime: CFAbsoluteTime = 0,
         sessionVersion: UInt64 = 0,
+        captureTime: CFAbsoluteTime = 0,
+        captureDirtyPercentage: Float = 100,
+        captureIsIdleFrame: Bool = false,
         performanceTracker: EncodePerformanceTracker?,
         encodedOutputTelemetry: EncodedOutputTelemetryTracker?,
         completion: (@Sendable () -> Void)?,
@@ -235,6 +241,9 @@ final class EncodeInfo: @unchecked Sendable {
         self.handler = handler
         self.encodeStartTime = encodeStartTime
         self.sessionVersion = sessionVersion
+        self.captureTime = captureTime
+        self.captureDirtyPercentage = captureDirtyPercentage
+        self.captureIsIdleFrame = captureIsIdleFrame
         self.performanceTracker = performanceTracker
         self.encodedOutputTelemetry = encodedOutputTelemetry
         self.completion = completion

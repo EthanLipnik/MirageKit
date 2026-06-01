@@ -12,34 +12,12 @@ import Testing
 
 @Suite("Desktop Encoder Bitrate")
 struct DesktopEncoderBitrateTests {
-    @Test("Fixed lowest-latency desktop caps excessive manual bitrate")
-    func fixedLowestLatencyDesktopCapsExcessiveManualBitrate() {
+    @Test("Desktop encoder honors the user's manual bitrate")
+    func desktopEncoderHonorsManualBitrate() {
+        // The host must never cap the user's chosen bitrate; it drops frames
+        // under load instead. (Custom/adaptive-off owns the tradeoff.)
         let bitrate = MirageHostService.resolvedDesktopEncoderBitrate(
-            requestedBitrate: 300_000_000,
-            latencyMode: .lowestLatency,
-            allowRuntimeQualityAdjustment: false
-        )
-
-        #expect(bitrate == 150_000_000)
-    }
-
-    @Test("Adaptive lowest-latency desktop preserves manual bitrate")
-    func adaptiveLowestLatencyDesktopPreservesManualBitrate() {
-        let bitrate = MirageHostService.resolvedDesktopEncoderBitrate(
-            requestedBitrate: 300_000_000,
-            latencyMode: .lowestLatency,
-            allowRuntimeQualityAdjustment: true
-        )
-
-        #expect(bitrate == 300_000_000)
-    }
-
-    @Test("Smooth desktop preserves manual bitrate")
-    func smoothDesktopPreservesManualBitrate() {
-        let bitrate = MirageHostService.resolvedDesktopEncoderBitrate(
-            requestedBitrate: 300_000_000,
-            latencyMode: .smoothest,
-            allowRuntimeQualityAdjustment: false
+            requestedBitrate: 300_000_000
         )
 
         #expect(bitrate == 300_000_000)

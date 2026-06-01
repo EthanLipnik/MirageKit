@@ -14,23 +14,11 @@ import MirageKit
 import ScreenCaptureKit
 
 extension MirageHostService {
-    /// Normalizes a requested desktop bitrate and caps fixed-quality lowest-latency streams.
-    nonisolated static func resolvedDesktopEncoderBitrate(
-        requestedBitrate: Int?,
-        latencyMode: MirageStreamLatencyMode,
-        allowRuntimeQualityAdjustment: Bool?
-    ) -> Int? {
-        guard let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
-            bitrate: requestedBitrate
-        ) else {
-            return nil
-        }
-        guard (latencyMode == .lowestLatency || latencyMode == .balanced),
-              allowRuntimeQualityAdjustment == false,
-              normalizedBitrate > desktopLowestLatencyFixedQualityBitrateCapBps else {
-            return normalizedBitrate
-        }
-        return desktopLowestLatencyFixedQualityBitrateCapBps
+    /// Normalizes a requested desktop bitrate. The user's chosen bitrate is
+    /// honored literally — under load the host drops frames rather than capping
+    /// or reducing the configured rate (custom/adaptive-off owns the tradeoff).
+    nonisolated static func resolvedDesktopEncoderBitrate(requestedBitrate: Int?) -> Int? {
+        MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate)
     }
 
 /// Start streaming the desktop (unified or secondary display mode)

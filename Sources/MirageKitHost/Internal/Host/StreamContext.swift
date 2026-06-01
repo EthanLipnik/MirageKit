@@ -149,6 +149,7 @@ actor StreamContext {
     var emergencyRecoveryCleanPFrames: Int = 0
     var emergencyRecoveryScaleChangeInProgress = false
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
+    var encodeStageLastLogTime: CFAbsoluteTime = 0
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
     var receiverPFrameTimingSampleLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0

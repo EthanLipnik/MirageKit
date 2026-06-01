@@ -321,14 +321,19 @@ extension StreamContext {
             captureEngine = nil
             throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
         }
+        let latencyMode = latencyMode
+        let hostBufferingPolicy = hostBufferingPolicy
         await engine.setAdmissionDropper { [weak self] in
             let snapshot = frameInboxSnapshot.pendingSnapshot
             let backpressure = self?.backpressureActiveSnapshot ?? false
-            let pendingThreshold = backpressure
-                ? max(1, snapshot.capacity - 1)
-                : snapshot.capacity
-            let pendingPressure = snapshot.pending >= pendingThreshold
-            guard pendingPressure || backpressure else { return false }
+            let shouldDrop = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+                latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy,
+                pendingFrameCount: snapshot.pending,
+                frameCapacity: snapshot.capacity,
+                backpressureActive: backpressure
+            )
+            guard shouldDrop else { return false }
             if frameInboxSnapshot.scheduleIfNeeded() {
                 Task(priority: .userInitiated) { await self?.processPendingFrames() }
             }

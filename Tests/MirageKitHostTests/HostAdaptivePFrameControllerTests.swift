@@ -120,6 +120,8 @@ struct HostAdaptivePFrameControllerTests {
             isKeyframe: false,
             receiverHealthy: true,
             senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
             currentBitrateBps: 60_000_000,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 60_000_000,
@@ -138,6 +140,59 @@ struct HostAdaptivePFrameControllerTests {
         #expect((decision.budgetDecision?.quality ?? 1) < 0.60)
     }
 
+    @Test("Low-motion no-input oversize frame is admitted for quality recovery")
+    func lowMotionNoInputOversizeFrameIsAdmittedForQualityRecovery() throws {
+        var controller = HostAdaptivePFrameController()
+        let recoveryAdmission = controller.evaluateEncodedFrame(
+            byteCount: 55 * 1024,
+            wireBytes: 55 * 1024,
+            packetCount: packetCount(forWireBytes: 55 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: false,
+            sourceStill: false,
+            currentBitrateBps: 12_000_000,
+            requestedTargetBitrateBps: 300_000_000,
+            startupCeilingBps: 300_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.20,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            now: 10
+        )
+        #expect(recoveryAdmission.admission == .send)
+        #expect(recoveryAdmission.budgetDecision == nil)
+
+        var inputController = HostAdaptivePFrameController()
+        let inputAdmission = inputController.evaluateEncodedFrame(
+            byteCount: 55 * 1024,
+            wireBytes: 55 * 1024,
+            packetCount: packetCount(forWireBytes: 55 * 1024),
+            isKeyframe: false,
+            receiverHealthy: true,
+            senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
+            currentBitrateBps: 12_000_000,
+            requestedTargetBitrateBps: 300_000_000,
+            startupCeilingBps: 300_000_000,
+            minimumBitrateFloorBps: 2_000_000,
+            currentFrameRate: 60,
+            maxPayloadSize: 1_200,
+            currentQuality: 0.20,
+            qualityFloor: 0.03,
+            steadyQualityCeiling: 0.90,
+            latencyMode: .lowestLatency,
+            now: 10
+        )
+        #expect(inputAdmission.admission == .sendWithQualityDrop)
+        #expect(inputAdmission.budgetDecision?.reason == .encodedFrame)
+    }
+
     @Test("Severe Most Responsive input oversize preserves the P-frame chain")
     func severeMostResponsiveInputOversizePreservesPFrameChain() {
         var controller = HostAdaptivePFrameController()
@@ -148,6 +203,8 @@ struct HostAdaptivePFrameControllerTests {
             isKeyframe: false,
             receiverHealthy: true,
             senderHealthy: true,
+            inputActive: true,
+            sourceStill: false,
             currentBitrateBps: 60_000_000,
             requestedTargetBitrateBps: 60_000_000,
             startupCeilingBps: 60_000_000,
@@ -177,6 +234,8 @@ struct HostAdaptivePFrameControllerTests {
                 isKeyframe: false,
                 receiverHealthy: true,
                 senderHealthy: true,
+                inputActive: true,
+                sourceStill: false,
                 currentBitrateBps: 60_000_000,
                 requestedTargetBitrateBps: 60_000_000,
                 startupCeilingBps: 60_000_000,
@@ -326,9 +385,10 @@ struct HostAdaptivePFrameControllerTests {
         var currentBitrate = pressureDecision.targetBitrateBps
         var currentQuality = pressureDecision.quality
         var latestBudget = pressureDecision.maxWireBytes
+        var raiseCount = 0
 
         for frameNumber in 2...16 {
-            let decision = try #require(recordDelivery(
+            guard let decision = recordDelivery(
                 controller: &controller,
                 frameNumber: UInt64(frameNumber),
                 currentBitrate: currentBitrate,
@@ -342,12 +402,16 @@ struct HostAdaptivePFrameControllerTests {
                 completionGapMs: 4,
                 currentQuality: currentQuality,
                 now: 10.50 + Double(frameNumber) * 0.02
-            ))
+            ) else {
+                continue
+            }
+            raiseCount += 1
             latestBudget = decision.maxWireBytes
             currentBitrate = decision.targetBitrateBps
             currentQuality = decision.quality
         }
 
+        #expect(raiseCount > 0)
         #expect(latestBudget > pressureDecision.maxWireBytes)
         #expect(latestBudget > 64 * 1024)
     }

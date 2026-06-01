@@ -396,6 +396,7 @@ extension MirageClientService {
     private static func isLocalProximityInterfaceName(_ name: String) -> Bool {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.hasPrefix("anpi") ||
+            normalized.hasPrefix("apni") ||
             normalized.hasPrefix("awdl") ||
             normalized.hasPrefix("llw") ||
             normalized.hasPrefix("bridge")

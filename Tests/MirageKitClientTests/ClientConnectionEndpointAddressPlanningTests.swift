@@ -15,6 +15,89 @@ import Testing
 @Suite("Client Connection Endpoint Address Planning")
 struct ClientConnectionEndpointAddressPlanningTests {
     @MainActor
+    @Test("Client waits for AWDL scoped address evidence without attempting hostname fallback")
+    func controlSessionAttemptsSkipAwdlWithoutScopedLiteral() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61050))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61051))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: [
+                LoomDiscoveredInterface(name: "en0", type: .wifi, index: 8),
+                LoomDiscoveredInterface(name: "awdl0", type: .other, index: 12),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        // No awdl0-scoped literal was resolved, so AWDL must not be attempted:
+        // the .local%awdl0 hostname form cannot bring up AWDL. The planner still
+        // reports pending AWDL evidence so bootstrap can briefly replan from a
+        // fresher Bonjour snapshot before committing to LAN fallback.
+        #expect(attempts.allSatisfy { $0.routeTier != .awdl })
+        #expect(service.hasPendingAwdlScopedAddressResolution(for: host))
+        #expect(service.shouldWaitForPendingAwdlScopedAddress(host: host, attempts: attempts))
+        // LAN fallback is still planned so the connection still succeeds.
+        #expect(!attempts.isEmpty)
+
+        let scopedAwdlAddress = try #require(IPv6Address("fe80::2%awdl0"))
+        let refreshedHost = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: host.advertisement,
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+                .ipv6(scopedAwdlAddress),
+            ],
+            discoveredInterfaces: host.discoveredInterfaces
+        )
+        let refreshedAttempts = service.controlSessionAttempts(
+            for: refreshedHost,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        let refreshedAwdlAttempts = refreshedAttempts.filter { $0.routeTier == .awdl }
+        #expect(!service.hasPendingAwdlScopedAddressResolution(for: refreshedHost))
+        #expect(refreshedAwdlAttempts.map(\.transportKind) == [.udp, .tcp])
+        #expect(refreshedAwdlAttempts.allSatisfy { $0.isPeerToPeerPreferred })
+        #expect(refreshedAwdlAttempts.allSatisfy { $0.proximityInterfaceNames == ["awdl0"] })
+        #expect(
+            refreshedAttempts.prefix(refreshedAwdlAttempts.count).allSatisfy {
+                $0.routeTier == .awdl
+            }
+        )
+    }
+
+    @MainActor
     @Test("Client ranks proximity Bonjour interfaces before resolved IP fallback")
     func controlSessionAttemptsRankProximityInterfacesBeforeFallback() throws {
         let deviceID = UUID()
@@ -69,24 +152,27 @@ struct ClientConnectionEndpointAddressPlanningTests {
                 wiredSubnetSignatures: []
             )
         )
-        let proximityAttempts = Array(attempts.prefix(12))
+        let proximityAttempts = Array(attempts.prefix(15))
         let fallbackAttempts = Array(attempts.suffix(3))
 
-        #expect(attempts.count == 15)
+        #expect(attempts.count == 18)
         #expect(proximityAttempts.allSatisfy { $0.isPeerToPeerPreferred })
         #expect(proximityAttempts.map { $0.proximityInterfaceNames.first ?? "" } == [
             "anpi0", "anpi0", "anpi0",
             "bridge100", "bridge100", "bridge100",
             "llw0", "llw0", "llw0",
+            "en3", "en3", "en3",
             "awdl0", "awdl0", "awdl0",
         ])
         #expect(proximityAttempts.map(\.routeTier) == [
             .applePrivateNCM, .applePrivateNCM, .applePrivateNCM,
             .bridge, .bridge, .bridge,
             .lowLatencyWireless, .lowLatencyWireless, .lowLatencyWireless,
+            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
             .awdl, .awdl, .awdl,
         ])
         #expect(proximityAttempts.map(\.transportKind) == [
+            .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
             .udp, .quic, .tcp,
@@ -273,8 +359,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Client does not prioritize Ethernet when wired subnet signatures do not intersect")
-    func controlSessionAttemptsDoNotPrioritizeEthernetWithoutSubnetIntersection() throws {
+    @Test("Client prioritizes concrete wired Bonjour interfaces without subnet metadata")
+    func controlSessionAttemptsPrioritizeConcreteWiredBonjourInterfaceWithoutSubnetIntersection() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61049))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61050))
@@ -319,9 +405,59 @@ struct ClientConnectionEndpointAddressPlanningTests {
         )
         let proximityAttempts = attempts.filter(\.isPeerToPeerPreferred)
 
-        #expect(proximityAttempts.map(\.routeTier) == [.awdl, .awdl, .awdl])
-        #expect(proximityAttempts.allSatisfy { $0.proximityInterfaceNames == ["awdl0"] })
+        #expect(proximityAttempts.map(\.routeTier) == [
+            .sameWiredEthernet, .sameWiredEthernet, .sameWiredEthernet,
+            .awdl, .awdl, .awdl,
+        ])
+        #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceNames == ["en3"] })
+        #expect(proximityAttempts.prefix(3).allSatisfy { $0.proximityInterfaceKind == .wiredEthernet })
+        #expect(proximityAttempts.prefix(3).allSatisfy { $0.requiredInterfaceType == .wiredEthernet })
+    }
+
+    @MainActor
+    @Test("Client keeps normal LAN fallback from using wired tier without subnet intersection")
+    func controlSessionFallbackDoesNotUseWiredTierWithoutSubnetIntersection() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61058))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61059))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61060))
+        let host = try LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wired": "24:hostwired",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(#require(IPv4Address("192.168.1.50"))),
+            ],
+            discoveredInterfaces: []
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wired,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: ["24:clientwired"]
+            )
+        )
+
         #expect(!attempts.contains { $0.routeTier == .sameWiredEthernet })
+        #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
+        #expect(attempts.map(\.routeTier) == [.wifiLAN, .wifiLAN, .wifiLAN])
     }
 
     @MainActor

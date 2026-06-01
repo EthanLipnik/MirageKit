@@ -28,6 +28,14 @@ extension MirageReceiverHealthController {
     static let normalProbeIncreaseFloorBps = 6_000_000
     static let normalProbeIncreasePercent = 115
     static let normalProbeIncreaseMaximumStepBps = 24_000_000
+    static let qualityRecoveryProbeHealthySampleThreshold = 1
+    static let qualityRecoveryPendingProbeHealthySampleThreshold = 1
+    static let qualityRecoveryProbeIncreaseFloorBps = 24_000_000
+    static let qualityRecoveryProbeIncreasePercent = 175
+    static let qualityRecoveryProbeIncreaseMaximumStepBps = 96_000_000
+    static let qualityRecoverySuccessfulProbeCooldownSeconds: CFAbsoluteTime = 2
+    static let qualityRecoveryFailedProbeCooldownSeconds: CFAbsoluteTime = 6
+    static let qualityRecoveryProbeCooldownBypassSeconds: CFAbsoluteTime = 2
     static let fastStartProbeIncreaseFloorBps = 12_000_000
     static let fastStartProbeIncreasePercent = 120
     static let fastStartProbeIncreaseMaximumStepBps = 32_000_000

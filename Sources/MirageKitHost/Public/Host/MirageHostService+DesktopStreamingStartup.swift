@@ -237,20 +237,7 @@ extension MirageHostService {
         )
         if let codec = request.codec { config.codec = codec }
 
-        let requestedBitrate = config.bitrate
-        config.bitrate = Self.resolvedDesktopEncoderBitrate(
-            requestedBitrate: requestedBitrate,
-            latencyMode: request.latencyMode,
-            allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment
-        )
-        if let requestedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate),
-           let resolvedBitrate = config.bitrate,
-           resolvedBitrate < requestedBitrate {
-            MirageLogger.host(
-                "Desktop stream bitrate capped for fixed lowest-latency quality: " +
-                    "\(mirageFormattedMegabitRate(requestedBitrate)) -> \(mirageFormattedMegabitRate(resolvedBitrate))"
-            )
-        }
+        config.bitrate = Self.resolvedDesktopEncoderBitrate(requestedBitrate: config.bitrate)
 
         if let upscalingMode = request.upscalingMode, upscalingMode != .off, request.codec != .proRes4444 {
             config.applyUpscalingPixelFormat()

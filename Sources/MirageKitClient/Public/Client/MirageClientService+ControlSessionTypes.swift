@@ -122,7 +122,7 @@ extension MirageClientService {
             let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
             switch kind {
             case .applePrivateNCM:
-                return names.contains { $0.hasPrefix("anpi") }
+                return names.contains { $0.hasPrefix("anpi") || $0.hasPrefix("apni") }
             case .awdl:
                 return names.contains { $0.hasPrefix("awdl") }
             case .lowLatencyWireless:
@@ -142,6 +142,7 @@ extension MirageClientService {
             let names = snapshot.interfaceNames.map(normalizedInterfaceName(_:))
             if names.contains(where: { name in
                 name.hasPrefix("anpi") ||
+                    name.hasPrefix("apni") ||
                     name.hasPrefix("awdl") ||
                     name.hasPrefix("llw") ||
                     name.hasPrefix("bridge")

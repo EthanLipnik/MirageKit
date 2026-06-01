@@ -357,6 +357,12 @@ extension StreamContext {
         _ decision: HostFrameBudgetDecision,
         now: CFAbsoluteTime
     ) async {
+        // Adaptive quality off (custom settings): the user owns the tradeoff, so
+        // never reduce bitrate, quality, or fps. Drop frames instead. Freeze/loss
+        // recovery (keyframes, FEC, chain repair) runs via separate paths
+        // (scheduleReceiverFeedbackKeyframeRecoveryIfNeeded, startFrameChainRepair)
+        // and is intentionally left untouched here.
+        guard runtimeQualityAdjustmentEnabled else { return }
         realtimePressureState = decision.state
         realtimePressureReason = decision.reason.rawValue
         realtimeRuntimeBitrateCeilingBps = adaptivePFrameController.runtimeCeilingBps

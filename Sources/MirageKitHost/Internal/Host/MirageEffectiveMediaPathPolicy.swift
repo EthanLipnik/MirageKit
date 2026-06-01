@@ -56,6 +56,9 @@ struct MirageEffectiveMediaPathPolicy: Sendable, Equatable {
         if host.usesAwdlRadioPolicy || client.usesAwdlRadioPolicy {
             return .awdlRadio
         }
+        if host == .proximityWiredLike || client == .proximityWiredLike {
+            return .proximityWiredLike
+        }
         if client != .unknown {
             return client
         }

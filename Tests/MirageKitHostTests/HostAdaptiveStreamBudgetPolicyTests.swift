@@ -94,6 +94,27 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision == nil)
     }
 
+    @Test("AWDL stream keeps a conservative seed but can climb to a high ceiling")
+    func awdlStreamKeepsConservativeSeedButClimbsToHighCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 76_700_000,
+                requestedCeilingBps: 221_500_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .awdlRadio
+            )
+        )
+
+        // AWDL radio is a high-capacity local link (the basis of Sidecar): a
+        // capable link must be allowed to climb to high quality, not be hard
+        // capped near 24 Mbps.
+        #expect((decision?.maximumCeilingBps ?? 0) >= 150_000_000)
+        // The seed stays conservative so a marginal radio is not force-fed bits;
+        // the adaptive controller raises the bitrate only as the link proves clean.
+        #expect((decision?.startupBitrateBps ?? 0) <= 24_000_000)
+    }
+
     private func request(
         requestedBitrateBps: Int?,
         requestedCeilingBps: Int?,

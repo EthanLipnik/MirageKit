@@ -740,4 +740,30 @@ public extension MirageClientMetricsSnapshot {
         get { clientReceivedWorstGapMs }
         set { clientReceivedWorstGapMs = newValue }
     }
+
+    /// True only when the host is ACTIVELY constraining bitrate (pressured,
+    /// severe, or recovery). A non-nil bitrate ceiling or the idle `observing`
+    /// state — both reported from stream init onward — must not count, otherwise
+    /// the client permanently delegates to the host budget and never probes the
+    /// bitrate upward. The string values mirror the host `PressureState` enum.
+    var hostRealtimeBudgetIsActivelyThrottling: Bool {
+        switch hostRealtimePressureState {
+        case "pressured", "severe", "recovery":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// True only when the host is actually producing frames at roughly target
+    /// cadence. ScreenCaptureKit is dynamic-fps: when the host produces few
+    /// frames (static content or a capture-cadence deficit) the resulting
+    /// inter-arrival gaps and low decode FPS are expected, not network
+    /// congestion, and must not suppress bitrate probing. Mirrors the
+    /// receiver-health delivery-cadence gate.
+    var hostIsProducingAtCadence: Bool {
+        let targetFPS = Double(max(1, hostTargetFrameRate))
+        let hostEncodedFPS = max(0, hostEncodedFPS)
+        return hostEncodedFPS >= targetFPS * MirageReceiverHealthController.hostDeliveryCadenceHealthyRatio
+    }
 }

@@ -373,6 +373,43 @@ struct HostKeyframeRecoveryTests {
         #expect(qualityCeilingAfterCut < startupConfiguredCeiling)
     }
 
+    @Test("Adaptive-off streams ignore receiver-feedback budget cuts")
+    func adaptiveOffStreamsIgnoreReceiverFeedbackBudgetCuts() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 300_000_000,
+            runtimeQualityAdjustmentEnabled: false,
+            latencyMode: .lowestLatency
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let startupCeiling = await context.qualityCeiling
+        let now = CFAbsoluteTimeGetCurrent()
+
+        // A severe receiver-panic budget decision (what client loss/freeze
+        // recovery produces). With adaptive quality OFF the host must honor the
+        // user's settings and drop frames instead of cutting bitrate/quality.
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 12_000_000,
+                maxFrameBytes: 64 * 1024,
+                maxWireBytes: 64 * 1024,
+                maxPacketCount: 64,
+                quality: 0.04,
+                qualityCeiling: 0.04,
+                keyframeQuality: 0.04,
+                sendDeadline: now + 1,
+                state: .severe,
+                reason: .clientRecovery
+            ),
+            now: now
+        )
+
+        #expect(await context.qualityCeiling == startupCeiling)
+    }
+
     @Test("Bitrate-capped 6K streams allow a lower runtime quality floor")
     func bitrateCappedQualityFloor() async {
         let context = makeContext(

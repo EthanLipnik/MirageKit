@@ -44,6 +44,19 @@ struct StreamFrameInboxTests {
         #expect(inbox.pendingCount == 0)
     }
 
+    @Test("Capacity-one inbox keeps the freshest enqueued frame")
+    func capacityOneInboxKeepsFreshestFrame() throws {
+        let inbox = StreamFrameInbox(capacity: 1)
+        _ = inbox.enqueue(try makeFrame(captureTime: 1))
+        _ = inbox.enqueue(try makeFrame(captureTime: 2))
+
+        let drainResult = inbox.takeNext(policy: .fifo)
+
+        #expect(drainResult.frame?.captureTime == 2)
+        #expect(drainResult.droppedBeforeDelivery == 0)
+        #expect(inbox.consumeDroppedCount() == 1)
+    }
+
     @Test("Enqueue marks the inbox as scheduled until a drain completes")
     func enqueueMarksScheduledUntilDrainCompletes() throws {
         let inbox = StreamFrameInbox(capacity: 2)

@@ -159,6 +159,9 @@ extension StreamContext {
                 packetRatio: 0
             )
         }
+        let freshnessPolicy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: now, policy: freshnessPolicy)
+        let sourceStill = sourceIsStill(now: now, policy: freshnessPolicy)
         let decision = adaptivePFrameController.evaluateEncodedFrame(
             byteCount: byteCount,
             wireBytes: wireBytes,
@@ -166,6 +169,8 @@ extension StreamContext {
             isKeyframe: isKeyframe,
             receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
             senderHealthy: await senderFrameBudgetIsHealthy(now: now),
+            inputActive: inputActive,
+            sourceStill: sourceStill,
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,

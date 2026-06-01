@@ -231,6 +231,18 @@ extension MirageClientService {
             let interfaceSelectedHost = scopedHost
                 ?? interfaceScopedHost(selectedHost, interface: discoveredInterface.networkInterface)
 
+            // AWDL data paths require an awdl0-scoped link-local literal. The
+            // hostname-plus-interface form is kept out of the actual attempt
+            // list; connection bootstrap can briefly wait for a fresher Bonjour
+            // snapshot that carries the scoped address.
+            if routeTier == .awdl, scopedHost == nil {
+                MirageLogger.client(
+                    "Skipping AWDL control attempts for \(host.name): no awdl0-scoped " +
+                        "address resolved yet"
+                )
+                continue
+            }
+
             guard scopedHost != nil ||
                   discoveredInterface.networkInterface != nil ||
                   discoveredInterface.type != .other ||
@@ -310,6 +322,26 @@ extension MirageClientService {
         guard !interfaceName.isEmpty else { return nil }
         return host.resolvedAddresses.first {
             Self.scopedLinkLocalIPv6InterfaceName($0) == interfaceName.lowercased()
+        }
+    }
+
+    func hasPendingAwdlScopedAddressResolution(for host: LoomPeer) -> Bool {
+        host.discoveredInterfaces.contains { discoveredInterface in
+            discoveredInterface.kind == .awdl &&
+                !awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) &&
+                scopedLinkLocalResolvedHost(for: discoveredInterface, host: host) == nil
+        }
+    }
+
+    func shouldWaitForPendingAwdlScopedAddress(
+        host: LoomPeer,
+        attempts: [ControlSessionAttempt]
+    ) -> Bool {
+        guard hasPendingAwdlScopedAddressResolution(for: host) else { return false }
+        let awdlRank = controlSessionRouteRank(for: .awdl)
+        return !attempts.contains {
+            $0.isPeerToPeerPreferred &&
+                controlSessionRouteRank(for: $0.routeTier) < awdlRank
         }
     }
 
@@ -667,7 +699,10 @@ extension MirageClientService {
         case .lowLatencyWireless:
             .lowLatencyWireless
         case .wiredEthernet:
-            hasSameWiredEthernetRoute(to: host, localNetwork: localNetwork) ? .sameWiredEthernet : nil
+            (hasConcreteWiredProximityInterface(discoveredInterface) ||
+                hasSameWiredEthernetRoute(to: host, localNetwork: localNetwork))
+                ? .sameWiredEthernet
+                : nil
         case .awdl:
             awdlProximityRouteIsSuppressed(for: host, interfaceName: discoveredInterface.name) ? nil : .awdl
         case .wifi, .cellular, .loopback, .overlay, .other:
@@ -699,6 +734,13 @@ extension MirageClientService {
         let hostWired = Set(hostNetwork.wiredSubnetSignatures)
         guard !localWired.isEmpty, !hostWired.isEmpty else { return false }
         return !localWired.intersection(hostWired).isEmpty
+    }
+
+    func hasConcreteWiredProximityInterface(_ discoveredInterface: LoomDiscoveredInterface) -> Bool {
+        if discoveredInterface.networkInterface?.type == .wiredEthernet {
+            return true
+        }
+        return discoveredInterface.type == .wiredEthernet
     }
 
     func hasMixedEthernetSameLANRoute(
@@ -932,7 +974,7 @@ extension MirageClientService {
 
     static func proximityRouteTier(forInterfaceName name: String) -> ControlSessionRouteTier? {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if normalized.hasPrefix("anpi") {
+        if normalized.hasPrefix("anpi") || normalized.hasPrefix("apni") {
             return .applePrivateNCM
         }
         if normalized.hasPrefix("bridge") {

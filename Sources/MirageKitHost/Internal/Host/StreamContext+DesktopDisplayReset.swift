@@ -68,11 +68,19 @@ extension StreamContext {
             await restartCaptureEngine.setCaptureStallStageHandler(captureStallStageHandler)
         }
         let frameInbox = frameInbox
+        let latencyMode = latencyMode
+        let hostBufferingPolicy = hostBufferingPolicy
         await restartCaptureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot
-            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
             let backpressure = self?.backpressureActiveSnapshot ?? false
-            guard pendingPressure || backpressure else { return false }
+            let shouldDrop = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+                latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy,
+                pendingFrameCount: snapshot.pending,
+                frameCapacity: snapshot.capacity,
+                backpressureActive: backpressure
+            )
+            guard shouldDrop else { return false }
 
             if frameInbox.scheduleIfNeeded() {
                 Task(priority: .userInitiated) { await self?.processPendingFrames() }

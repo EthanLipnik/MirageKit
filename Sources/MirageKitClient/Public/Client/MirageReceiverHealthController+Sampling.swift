@@ -23,6 +23,7 @@ struct ReceiverHealthSample {
 struct ReceiverPendingPromotion: Equatable {
     let previousBitrateBps: Int
     let targetBitrateBps: Int
+    let qualityRecovery: Bool
     var cleanSampleCount: Int
     let startedAt: CFAbsoluteTime
 }
@@ -275,15 +276,10 @@ extension MirageReceiverHealthController {
     ) {
         let targetFrameRate = Double(max(1, minimumHealthyFrameRate ?? snapshot.hostTargetFrameRate))
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
-        let hostProductionFPS = max(
-            hostEncodedFPS,
-            snapshot.hostEncodeAttemptFPS ?? 0,
-            snapshot.hostCaptureFPS ?? 0
-        )
         let receivedFPS = max(0, snapshot.receivedFPS)
         let receiverHasStarted = receivedFPS > 0 || snapshot.decodedFPS > 0 || snapshot.submittedFPS > 0
         guard receiverHasStarted,
-              hostProductionFPS >= targetFrameRate * Self.hostDeliveryCadenceHealthyRatio else {
+              hostEncodedFPS >= targetFrameRate * Self.hostDeliveryCadenceHealthyRatio else {
             return (
                 stress: false,
                 severe: false,
@@ -295,7 +291,7 @@ extension MirageReceiverHealthController {
             )
         }
 
-        let expectedReceiverFPS = min(targetFrameRate, hostProductionFPS)
+        let expectedReceiverFPS = min(targetFrameRate, hostEncodedFPS)
         let cadenceStress = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceStressRatio
         let cadenceSevere = receivedFPS < expectedReceiverFPS * Self.clientReceivedCadenceSevereRatio
         let frameIntervalMs = 1_000.0 / max(1.0, expectedReceiverFPS)
@@ -332,11 +328,20 @@ extension MirageReceiverHealthController {
         return now - sessionStartedAt < Self.fastStartDurationSeconds
     }
 
-    func probeCooldown(success: Bool, now: CFAbsoluteTime) -> CFAbsoluteTime {
+    func probeCooldown(
+        success: Bool,
+        now: CFAbsoluteTime,
+        qualityRecovery: Bool = false
+    ) -> CFAbsoluteTime {
         if promotionRecoveryMode == .conservativeProximity {
             return success
                 ? Self.conservativeSuccessfulProbeCooldownSeconds
                 : Self.conservativeFailedProbeCooldownSeconds
+        }
+        if qualityRecovery {
+            return success
+                ? Self.qualityRecoverySuccessfulProbeCooldownSeconds
+                : Self.qualityRecoveryFailedProbeCooldownSeconds
         }
 
         let fastStartActive = isFastStartActive(now: now)

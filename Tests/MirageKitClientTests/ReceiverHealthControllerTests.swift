@@ -533,6 +533,35 @@ struct ReceiverHealthControllerTests {
         )
     }
 
+    @Test("Encode-limited host cadence does not back off receiver health")
+    func encodeLimitedHostCadenceDoesNotBackOffReceiverHealth() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostCaptureFPS = 60
+        snapshot.hostEncodeAttemptFPS = 60
+        snapshot.hostEncodedFPS = 30
+        snapshot.receivedFPS = 30
+        snapshot.decodedFPS = 30
+        snapshot.submittedFPS = 30
+        snapshot.uniqueSubmittedFPS = 30
+        snapshot.clientReceivedWorstGapMs = 34
+        snapshot.clientReceivedFrameIntervalP95Ms = 34
+        snapshot.clientReceivedFrameIntervalP99Ms = 40
+
+        for sampleIndex in 0 ..< 4 {
+            let action = controller.advance(
+                snapshots: [snapshot],
+                currentBitrateBps: 48_000_000,
+                ceilingBps: 48_000_000,
+                now: 10 + Double(sampleIndex * 2)
+            )
+            #expect(action == .none)
+        }
+
+        #expect(controller.state == .stable)
+        #expect(controller.lastTransportPressureReason == nil)
+    }
+
     @Test("Missing host metrics hold")
     func missingHostMetricsHold() {
         var controller = MirageReceiverHealthController()
@@ -671,6 +700,81 @@ struct ReceiverHealthControllerTests {
         #expect(beforeWatchdogDecision == nil)
         #expect(firstDecision == nil)
         #expect(secondDecision != nil)
+    }
+
+    @Test("AWDL route health ignores a one-time startup drop burst")
+    func awdlRouteHealthIgnoresOneTimeStartupDropBurst() throws {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: true,
+            startupBitrateBps: 16_000_000,
+            now: 0
+        )
+        // A single startup keyframe catch-up burst leaves the cumulative
+        // dropped-frame counter > 0 for the rest of the stream. A one-time
+        // burst must not be read as ongoing early-startup failure on every
+        // later tick, otherwise a healthy AWDL link is evicted ~17s in.
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientDroppedFrames = 37
+
+        let baseline = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 5
+        )
+        let firstInWindow = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 16
+        )
+        let secondInWindow = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 18
+        )
+
+        #expect(baseline == nil)
+        #expect(firstInWindow == nil)
+        #expect(secondInWindow == nil)
+    }
+
+    @Test("AWDL route health still demotes on sustained new drops")
+    func awdlRouteHealthDemotesOnSustainedNewDrops() throws {
+        var controller = MirageAwdlRouteHealthController(
+            startedOnAwdl: true,
+            startupBitrateBps: 16_000_000,
+            now: 0
+        )
+        // New drops accruing on every tick (a genuinely failing link) must
+        // still demote.
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.clientDroppedFrames = 5
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 5
+        )
+        snapshot.clientDroppedFrames = 12
+        let firstInWindow = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 16
+        )
+        snapshot.clientDroppedFrames = 20
+        let secondInWindow = controller.advance(
+            snapshots: [snapshot],
+            currentPathKind: .awdl,
+            currentBitrateBps: 16_000_000,
+            now: 18
+        )
+
+        #expect(firstInWindow == nil)
+        #expect(secondInWindow != nil)
     }
 
     func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {

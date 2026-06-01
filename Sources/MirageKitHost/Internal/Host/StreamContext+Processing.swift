@@ -98,6 +98,37 @@ extension StreamContext {
         Int((Double(max(0, bytes)) / 1024.0).rounded())
     }
 
+    private func logEncodeStageIfNeeded(
+        frame: CapturedFrame,
+        encodeStartTime: CFAbsoluteTime,
+        drainDropped: Int,
+        queueBytes: Int,
+        forceKeyframe: Bool
+    ) {
+        guard encodeStartTime - encodeStageLastLogTime >= 0.5 else { return }
+        encodeStageLastLogTime = encodeStartTime
+
+        let captureAgeMs = max(0, (encodeStartTime - frame.captureTime) * 1_000)
+        let pending = frameInbox.pendingSnapshot
+        let policy = activeFrameFreshnessPolicy
+        let inputActive = inputIsActive(now: encodeStartTime, policy: policy)
+        let sourceStill = sourceIsStill(now: encodeStartTime, policy: policy)
+        let targetBitrate = currentTargetBitrateBps ?? encoderConfig.bitrate ?? requestedTargetBitrate ?? 0
+        let targetMbps = Double(targetBitrate) / 1_000_000.0
+        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+        let captureAgeText = captureAgeMs.formatted(.number.precision(.fractionLength(1)))
+        let dirtyText = frame.info.dirtyPercentage.formatted(.number.precision(.fractionLength(1)))
+        let targetText = targetMbps.formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.metrics(
+            "Host encode stage stream \(streamID): " +
+                "captureAge=\(captureAgeText)ms dirty=\(dirtyText)% idle=\(frame.info.isIdleFrame) " +
+                "inputActive=\(inputActive) sourceStill=\(sourceStill) " +
+                "inFlight=\(inFlightCount)/\(maxInFlightFrames) inbox=\(pending.pending)/\(pending.capacity) " +
+                "drainDropped=\(drainDropped) queueKB=\(Self.roundedKilobytes(queueBytes)) " +
+                "quality=\(qualityText) target=\(targetText)Mbps keyframe=\(forceKeyframe)"
+        )
+    }
+
     private func scheduleEncoderResetRetry(after delaySeconds: Double, reason: String) {
         guard shouldEncodeFrames else { return }
         guard delaySeconds > 0 else {
@@ -326,6 +357,13 @@ extension StreamContext {
                 guard let encoder else { continue }
                 encodeAttemptIntervalCount += 1
                 let encodeStartTime = CFAbsoluteTimeGetCurrent()
+                logEncodeStageIfNeeded(
+                    frame: frame,
+                    encodeStartTime: encodeStartTime,
+                    drainDropped: drainResult.droppedBeforeDelivery,
+                    queueBytes: queueBytes,
+                    forceKeyframe: forceKeyframe
+                )
                 if startupBaseTime > 0, !startupFirstEncodeLogged {
                     startupFirstEncodeLogged = true
                     logStartupEvent("first encode attempt")

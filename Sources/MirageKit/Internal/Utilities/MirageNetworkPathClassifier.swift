@@ -190,7 +190,9 @@ package enum MirageNetworkPathClassifier {
             names = interfaceNames
                 .map { $0.lowercased() }
                 .sorted()
-            hasApplePrivateNCM = names.contains { $0.hasPrefix("anpi") }
+            hasApplePrivateNCM = names.contains {
+                $0.hasPrefix("anpi") || $0.hasPrefix("apni")
+            }
             hasAWDL = names.contains { $0.hasPrefix("awdl") }
             hasLowLatencyWireless = names.contains { $0.hasPrefix("llw") }
             hasBridge = names.contains { $0.hasPrefix("bridge") }
@@ -198,6 +200,7 @@ package enum MirageNetworkPathClassifier {
             hasProximity = hasApplePrivateNCM || hasAWDL || hasLowLatencyWireless
             hasNonProximityRouteInterface = names.contains {
                 !$0.hasPrefix("anpi") &&
+                    !$0.hasPrefix("apni") &&
                     !$0.hasPrefix("awdl") &&
                     !$0.hasPrefix("llw") &&
                     !$0.hasPrefix("utun") &&
