@@ -51,10 +51,23 @@ extension StreamContext {
     }
 
     func scheduleProcessingIfNeeded() {
+        guard shouldEncodeFrames else { return }
         guard frameInbox.hasPending else { return }
         if frameInbox.scheduleIfNeeded() {
             Task(priority: .userInitiated) { await processPendingFrames() }
         }
+    }
+
+    func scheduleProcessingAfterFrameInboxEnqueue(_ shouldScheduleDrain: Bool) {
+        guard shouldScheduleDrain else {
+            scheduleProcessingIfNeeded()
+            return
+        }
+        guard shouldEncodeFrames else {
+            _ = frameInbox.markDrainComplete()
+            return
+        }
+        Task(priority: .userInitiated) { await processPendingFrames() }
     }
 
     func resetStalledInFlightIfNeeded(label: String) -> Bool {

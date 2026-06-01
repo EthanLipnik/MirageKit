@@ -39,18 +39,27 @@ extension StreamContext {
         logFreshnessBurstKeyframeRecovery(reason: reason)
 
         let now = CFAbsoluteTimeGetCurrent()
-        if !recoveryCauseBypassesAdaptiveKeyframeCooldown(recoveryCause),
+        let requiresImmediateChainRepair = recoveryCauseRequiresImmediateChainRepair(recoveryCause)
+        if !requiresImmediateChainRepair,
+           !recoveryCauseBypassesAdaptiveKeyframeCooldown(recoveryCause),
            isRecoveryKeyframeCooldownActive(now: now) {
             logRecoveryKeyframeCooldownSuppression(reason: reason, now: now)
             return false
         }
+        if requiresImmediateChainRepair {
+            lastKeyframeRequestTime = 0
+            if !usesConstrainedKeyframeInFlightWindow {
+                keyframeSendDeadline = 0
+                keyframeInFlightFrameNumber = nil
+            }
+        }
 
         return queueKeyframe(
             reason: reason,
-            checkInFlight: true,
-            requiresFlush: false,
-            requiresReset: false,
-            advanceEpochOnReset: false,
+            checkInFlight: !requiresImmediateChainRepair || usesConstrainedKeyframeInFlightWindow,
+            requiresFlush: requiresImmediateChainRepair,
+            requiresReset: requiresImmediateChainRepair,
+            advanceEpochOnReset: requiresImmediateChainRepair,
             urgent: true
         )
     }

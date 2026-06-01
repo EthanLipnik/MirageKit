@@ -252,8 +252,12 @@ extension StreamContext {
             targetBitrateBps: targetBitrateBps,
             outputSize: currentEncodedSize
         )
+        let shouldRefreshConfiguredQualityCeiling = targets.frameQuality > configuredQualityCeiling ||
+            reason == HostAdaptivePFrameController.Reason.healthy.rawValue ||
+            reason == HostAdaptivePFrameController.Reason.startup.rawValue
         guard encoderConfig.frameQuality != targets.frameQuality ||
             encoderConfig.keyframeQuality != targets.keyframeQuality ||
+            (shouldRefreshConfiguredQualityCeiling && configuredQualityCeiling != targets.frameQuality) ||
             steadyQualityCeiling != targets.frameQuality else {
             return
         }
@@ -261,6 +265,9 @@ extension StreamContext {
         let previousSteadyQualityCeiling = steadyQualityCeiling
         encoderConfig.frameQuality = targets.frameQuality
         encoderConfig.keyframeQuality = targets.keyframeQuality
+        if shouldRefreshConfiguredQualityCeiling {
+            configuredQualityCeiling = targets.frameQuality
+        }
         steadyQualityCeiling = targets.frameQuality
         qualityCeiling = min(resolvedQualityCeiling, targets.frameQuality)
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)

@@ -396,7 +396,17 @@ extension StreamContext {
     func recoveryCauseBypassesAdaptiveKeyframeCooldown(
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
-        recoveryCause == .decodeError || recoveryCause == .freezeTimeout
+        recoveryCause == .decodeError ||
+            recoveryCause == .freezeTimeout ||
+            recoveryCause == .memoryBudget
+    }
+
+    func recoveryCauseRequiresImmediateChainRepair(
+        _ recoveryCause: MirageMediaFeedbackRecoveryCause
+    ) -> Bool {
+        recoveryCause == .decodeError ||
+            recoveryCause == .freezeTimeout ||
+            recoveryCause == .memoryBudget
     }
 
     func logRecoveryKeyframeCooldownSuppression(reason: String, now: CFAbsoluteTime) {
@@ -734,10 +744,11 @@ extension StreamContext {
         reason: String,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) {
+        var shouldScheduleDrain = false
         if pendingKeyframeReason != nil {
-            _ = enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason)
+            shouldScheduleDrain = enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason)
         }
-        scheduleProcessingIfNeeded()
+        scheduleProcessingAfterFrameInboxEnqueue(shouldScheduleDrain)
     }
 }
 #endif

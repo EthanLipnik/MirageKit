@@ -60,6 +60,53 @@ struct HostKeyframeRecoveryTests {
         #expect(await decodeContext.pendingKeyframeReason == "Keyframe request")
     }
 
+    @Test("Memory-budget keyframe requests bypass startup keyframe cooldown")
+    func memoryBudgetKeyframeRequestsBypassStartupKeyframeCooldown() async {
+        let context = makeContext()
+        await context.recordCaptureIngress(makeIdleFrame())
+        await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
+        await context.markKeyframeInFlight(frameNumber: 0)
+
+        let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
+
+        #expect(ack.accepted)
+        #expect(await context.pendingKeyframeReason == "Keyframe request")
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(context.epoch == 1)
+        #expect(context.frameInbox.pendingCount == 1)
+    }
+
+    @Test("Running memory-budget recovery drains synthetic keyframe frame")
+    func runningMemoryBudgetRecoveryDrainsSyntheticKeyframeFrame() async throws {
+        let context = makeContext()
+        await context.configureRunningForRepairRetryTest()
+        await context.recordCaptureIngress(makeIdleFrame())
+
+        let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
+
+        #expect(ack.accepted)
+        try await waitForSyntheticFrameDrain(on: context)
+        await context.stop()
+    }
+
+    @Test("Startup-gated synthetic recovery frame drains after encoding opens")
+    func startupGatedSyntheticRecoveryFrameDrainsAfterEncodingOpens() async throws {
+        let context = makeContext()
+        await context.recordCaptureIngress(makeIdleFrame())
+
+        let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
+
+        #expect(ack.accepted)
+        #expect(context.frameInbox.pendingCount == 1)
+
+        await context.configureRunningForRepairRetryTest()
+        await context.scheduleProcessingIfNeeded()
+
+        try await waitForSyntheticFrameDrain(on: context)
+        await context.stop()
+    }
+
     @Test("Receiver decode-recovery feedback schedules keyframe even when explicit request is lost")
     func receiverDecodeRecoveryFeedbackSchedulesKeyframe() async {
         let context = makeContext()
@@ -267,6 +314,63 @@ struct HostKeyframeRecoveryTests {
         let baseline = await baselineContext.activeQuality
         #expect(boosted <= 0.06)
         #expect(boosted + 0.07 < baseline)
+    }
+
+    @Test("Runtime bitrate raises update active quality ceiling")
+    func runtimeBitrateRaisesUpdateActiveQualityCeiling() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 32_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: true
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let startupQuality = await context.activeQuality
+        #expect(startupQuality < 0.50)
+
+        await context.refreshRuntimeQualityTargets(
+            for: 180_000_000,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
+        )
+
+        let raisedQuality = await context.activeQuality
+        #expect(raisedQuality >= 0.70)
+        #expect(raisedQuality > startupQuality + 0.20)
+        #expect(await context.configuredQualityCeiling >= 0.70)
+        #expect(await context.qualityCeiling >= 0.70)
+    }
+
+    @Test("Runtime recovery cuts do not collapse configured quality ceiling")
+    func runtimeRecoveryCutsDoNotCollapseConfiguredQualityCeiling() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 32_000_000,
+            runtimeQualityAdjustmentEnabled: true,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: true
+        )
+        let displaySize = CGSize(width: 2752, height: 2064)
+        await context.updateCaptureSizesIfNeeded(displaySize)
+        await context.applyDerivedQuality(for: displaySize, logLabel: nil)
+
+        let startupQuality = await context.activeQuality
+        let startupConfiguredCeiling = await context.configuredQualityCeiling
+
+        await context.refreshRuntimeQualityTargets(
+            for: 4_800_000,
+            reason: HostAdaptivePFrameController.Reason.clientRecovery.rawValue
+        )
+
+        let cutQuality = await context.activeQuality
+        let configuredCeilingAfterCut = await context.configuredQualityCeiling
+        let qualityCeilingAfterCut = await context.qualityCeiling
+        #expect(cutQuality < startupQuality)
+        #expect(abs(configuredCeilingAfterCut - startupConfiguredCeiling) < 0.0001)
+        #expect(qualityCeilingAfterCut < startupConfiguredCeiling)
     }
 
     @Test("Bitrate-capped 6K streams allow a lower runtime quality floor")
@@ -534,6 +638,22 @@ struct HostKeyframeRecoveryTests {
                 dirtyPercentage: 0,
                 isIdleFrame: true
             )
+        )
+    }
+
+    private func waitForSyntheticFrameDrain(on context: StreamContext) async throws {
+        let deadline = CFAbsoluteTimeGetCurrent() + 1.0
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let pendingKeyframeReason = await context.pendingKeyframeReason
+            if context.frameInbox.pendingCount == 0, pendingKeyframeReason == nil {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let pendingKeyframeReason = await context.pendingKeyframeReason ?? "nil"
+        Issue.record(
+            "Expected synthetic keyframe frame to drain; pending=\(context.frameInbox.pendingCount), pendingKeyframeReason=\(pendingKeyframeReason)"
         )
     }
 

@@ -263,11 +263,12 @@ extension StreamContext {
     ) -> Bool {
         guard shouldConsiderStillQualityProbe(now: now) else { return false }
         shouldAdmitIdleQualityProbeFrame = true
-        guard enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason) else {
+        let shouldScheduleDrain = enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason)
+        guard shouldScheduleDrain else {
             return false
         }
         lastStillQualityProbeEncodeTime = now
-        scheduleProcessingIfNeeded()
+        scheduleProcessingAfterFrameInboxEnqueue(shouldScheduleDrain)
         MirageLogger.metrics(
             "Still quality probe scheduled for stream \(streamID): reason=\(reason)"
         )
