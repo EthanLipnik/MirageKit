@@ -114,8 +114,16 @@ extension StreamContext {
     /// Process pending frames (encodes using HEVC and can switch to freshest-frame delivery).
     func processPendingFrames() async {
         defer {
-            frameInbox.markDrainComplete()
+            let canDrainPendingFrames = !isResizing &&
+                shouldEncodeFrames &&
+                !needsEncoderReset &&
+                !isKeyframeEncoding &&
+                inFlightCount < maxInFlightFrames
+            let shouldResumeDrain = frameInbox.markDrainComplete(scheduleIfPending: canDrainPendingFrames)
             schedulePipelineStatsLog()
+            if shouldResumeDrain {
+                Task(priority: .userInitiated) { await self.processPendingFrames() }
+            }
         }
         if isResizing || !shouldEncodeFrames {
             frameInbox.discardAll()

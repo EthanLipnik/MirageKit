@@ -32,6 +32,10 @@ private extension StreamController {
     func testSeedRecoveryKeyframeDispatchTimes(_ times: [CFAbsoluteTime]) {
         recoveryKeyframeDispatchTimes = times
     }
+
+    func testSeedClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) {
+        clientRecoveryStatus = status
+    }
 }
 
 @Suite("Stream Controller Recovery", .serialized)
@@ -337,6 +341,52 @@ struct StreamControllerRecoveryTests {
             pendingRenderFrameAgeMs: StreamController.stalePendingRenderFrameRecoveryAgeMs + 1
         )
         #expect(staleDecision == .requestKeyframe)
+
+        await controller.stop()
+    }
+
+    @Test("Freeze recovery retries awaiting keyframe with no progress after bounded grace")
+    func freezeRecoveryRetriesAwaitingKeyframeWithNoProgressAfterBoundedGrace() async {
+        let clock = StreamControllerManualTimeProvider(start: 1500)
+        let controller = StreamController(
+            streamID: 121,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        let retryGrace = StreamController.localAwaitingKeyframeNoProgressRetryGrace
+        let snapshot = FrameReassembler.KeyframeWaitSnapshot(
+            isAwaitingKeyframe: true,
+            awaitingSince: clock.now - 1,
+            latestPacketReceivedTime: clock.now - 0.05,
+            latestPendingKeyframeProgress: nil,
+            transportPathKind: .wifi,
+            mediaPathProfile: .localWiFi,
+            pendingFrameCount: 0,
+            pendingKeyframeCount: 0,
+            incompleteFrameTimeouts: 0,
+            incompleteFrameNoProgressTimeouts: 0,
+            incompleteFrameLifetimeTimeouts: 0,
+            forwardGapTimeouts: 0
+        )
+
+        await controller.testSeedClientRecoveryStatus(.keyframeRecovery)
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - retryGrace + 0.1)
+        let deferredDecision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: snapshot,
+            pendingRenderFrameCount: 0,
+            pendingRenderFrameAgeMs: 0
+        )
+        #expect(deferredDecision == .deferRetryGrace)
+
+        await controller.testSeedLastRecoveryRequestDispatchTime(clock.now - retryGrace - 0.1)
+        let retryDecision = await controller.freezeRecoveryDecision(
+            now: clock.now,
+            snapshot: snapshot,
+            pendingRenderFrameCount: 0,
+            pendingRenderFrameAgeMs: 0
+        )
+        #expect(retryDecision == .requestKeyframe)
 
         await controller.stop()
     }

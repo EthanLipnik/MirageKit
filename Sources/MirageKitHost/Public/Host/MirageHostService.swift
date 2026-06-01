@@ -432,6 +432,7 @@ public final class MirageHostService {
 
     /// Cursor monitoring counters and cached bounds for desktop streams.
     var cursorMonitor: CursorMonitor?
+    var cursorMonitoringStartTask: Task<Void, Never>?
     var cursorUpdateMessagesSinceLastSample: UInt64 = 0
     var cursorPositionMessagesSinceLastSample: UInt64 = 0
     var droppedCursorUpdateMessagesSinceLastSample: UInt64 = 0

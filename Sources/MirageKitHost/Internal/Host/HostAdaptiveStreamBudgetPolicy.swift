@@ -75,16 +75,24 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             min(hostMaximum, clientCeiling ?? hostMaximum)
         )
 
-        let clientStartupLimited = if let requestedTarget, pathBudget.honorsRequestedStartup {
-            requestedTarget
+        let explicitStartup = normalized(request.enteredBitrateBps)
+        let clientStartupLimited = if let explicitStartup, pathBudget.honorsRequestedStartup {
+            explicitStartup
+        } else if let requestedTarget, pathBudget.honorsRequestedStartup {
+            min(hostStartup, requestedTarget)
         } else if let requestedTarget {
             min(hostStartup, requestedTarget)
         } else {
             hostStartup
         }
         var startupBitrate = min(maximumCeiling, max(1, clientStartupLimited))
-        if let requestedTarget, !pathBudget.honorsRequestedStartup, requestedTarget > hostStartup {
+        if let requestedTarget, explicitStartup == nil, requestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
+        } else if let requestedTarget, !pathBudget.honorsRequestedStartup, requestedTarget > hostStartup {
+            startupBitrate = min(maximumCeiling, hostStartup)
+        }
+        if let explicitStartup {
+            startupBitrate = min(maximumCeiling, explicitStartup)
         }
 
         let minimumFloor = min(

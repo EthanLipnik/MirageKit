@@ -42,7 +42,7 @@ struct RenderCadenceSmoothingTests {
         #expect(telemetry.overwrittenPendingFrames == 0)
         #expect(telemetry.smoothestQueueDrops == 0)
         #expect(telemetry.coalescedBeforeSubmitCount == 0)
-        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.playoutDelayFrames == 4)
     }
 
     @Test("Smoothest ProMotion render store keeps a bounded FIFO playout queue")
@@ -75,7 +75,7 @@ struct RenderCadenceSmoothingTests {
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.pendingFrameCount == 13)
         #expect(telemetry.smoothestQueueDrops == 0)
-        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.playoutDelayFrames == 4)
     }
 
     @Test("Smoothest holds the first frame until its playout target")
@@ -105,7 +105,7 @@ struct RenderCadenceSmoothingTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 100)
 
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.playoutDelayFrames == 0)
+        #expect(telemetry.playoutDelayFrames == 4)
     }
 
     @Test("Smoothest drops stale backlog before presenting a fresh frame")
@@ -234,8 +234,8 @@ struct RenderCadenceSmoothingTests {
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 96)
     }
 
-    @Test("Balanced Wi-Fi uses zero playout hold and immediate display timing")
-    func balancedWifiUsesZeroPlayoutHoldAndImmediateDisplayTiming() {
+    @Test("Balanced Wi-Fi uses two-frame playout hold and immediate display timing")
+    func balancedWifiUsesTwoFramePlayoutHoldAndImmediateDisplayTiming() {
         let streamID: StreamID = 414
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -258,7 +258,7 @@ struct RenderCadenceSmoothingTests {
         )
 
         let pendingDelayMs = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs
-        #expect(pendingDelayMs == 0)
+        #expect(abs((pendingDelayMs ?? 0) - (1000.0 / 60.0 * 2.0)) < 0.001)
 
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
         #expect(timing.latencyMode == .balanced)
@@ -317,6 +317,7 @@ struct RenderCadenceSmoothingTests {
             presentationTime: .zero,
             for: streamID
         )
+        Thread.sleep(forTimeInterval: 0.040)
         let first = try #require(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero))
         MirageRenderStreamStore.shared.markSubmitted(cursor: first.cursor, for: streamID)
 
@@ -331,9 +332,10 @@ struct RenderCadenceSmoothingTests {
             for: streamID
         )
 
-        let next = try #require(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: first.cursor))
-        #expect(next.targetPlayoutDelayMs == 0)
-        #expect(MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID).smoothestTargetDelayMs == 0)
+        let pendingDelayMs = MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs
+        #expect(abs((pendingDelayMs ?? 0) - (1000.0 / 60.0 * 2.0)) < 0.001)
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(abs(telemetry.smoothestTargetDelayMs - (1000.0 / 60.0 * 2.0)) < 0.001)
     }
 
     @Test("Smoothest hard resets only beyond the path debt limit")
@@ -422,7 +424,7 @@ struct RenderCadenceSmoothingTests {
             displayFPS: 60,
             latencyMode: .smoothest
         )
-        #expect(cadenceTarget.playoutDelayFrames == 0)
+        #expect(cadenceTarget.playoutDelayFrames == 4)
 
         let lowestLatencyTiming = MirageRenderPresentationTiming(
             targetFPS: 60,

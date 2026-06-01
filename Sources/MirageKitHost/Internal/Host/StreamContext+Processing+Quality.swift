@@ -164,12 +164,8 @@ extension StreamContext {
             wireBytes: wireBytes,
             packetCount: packetCount,
             isKeyframe: isKeyframe,
-            isRecoveryKeyframe: isKeyframe && keyframeUsesEmergencyBudget,
-            adaptiveKeyframeAllowed: !isRecoveryKeyframeCooldownActive(now: now),
             receiverHealthy: receiverFrameBudgetCanRaiseQuality(now: now),
             senderHealthy: await senderFrameBudgetIsHealthy(now: now),
-            inputActive: inputIsActive(now: now),
-            sourceStill: sourceIsStill(now: now),
             currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -179,16 +175,13 @@ extension StreamContext {
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
             steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
             now: now
         )
         if !isKeyframe, let budgetDecision = decision.budgetDecision {
             await applyFrameBudgetDecision(budgetDecision, now: now)
         }
         return decision
-    }
-
-    private var keyframeUsesEmergencyBudget: Bool {
-        pendingEmergencyKeyframeQuality != nil || frameChainState != .normal
     }
 
     func handleDroppedPFrameForTransportBudget(
@@ -200,13 +193,13 @@ extension StreamContext {
     ) async {
         droppedFrameCount += 1
         startFrameChainRepair(
-            reason: "transport-p-frame-over-budget",
+            reason: "transport-p-frame-catastrophic-oversize",
             now: now
         )
         await noteEmergencyKeyframePrepared(using: evaluation.budgetDecision)
         await scheduleEmergencyChainRepairKeyframe(
-            reason: "Transport P-frame chain repair",
-            bypassesRecoveryCooldown: false,
+            reason: "Transport P-frame catastrophic oversize",
+            bypassesRecoveryCooldown: true,
             now: now
         )
         logAdaptivePFrameAdmissionIfNeeded(
@@ -215,37 +208,7 @@ extension StreamContext {
             wireBytes: wireBytes,
             packetCount: packetCount,
             evaluation: evaluation,
-            action: "drop-chain-repair",
-            now: now
-        )
-    }
-
-    func handleDroppedRecoveryKeyframeForTransportBudget(
-        byteCount: Int,
-        wireBytes: Int,
-        packetCount: Int,
-        evaluation: HostEncodedFrameAdmissionDecision,
-        encodedAt now: CFAbsoluteTime
-    ) async {
-        droppedFrameCount += 1
-        await noteEmergencyKeyframePrepared(using: evaluation.budgetDecision)
-        let didLowerScale = await advanceEmergencyRecoveryScaleIfPossible(
-            reason: "adaptive-repair-keyframe-over-budget",
-            now: now
-        )
-        scheduleFrameChainRepairKeyframeRetry(
-            reason: didLowerScale
-                ? "Adaptive repair keyframe retry after scale change"
-                : "Adaptive repair keyframe over budget",
-            bypassesRecoveryCooldown: latestReceiverRecoveryCause == .decodeError
-        )
-        logAdaptivePFrameAdmissionIfNeeded(
-            frameNumber: nil,
-            byteCount: byteCount,
-            wireBytes: wireBytes,
-            packetCount: packetCount,
-            evaluation: evaluation,
-            action: "drop-keyframe-retry",
+            action: "drop-catastrophic-chain-repair",
             now: now
         )
     }
@@ -293,15 +256,33 @@ extension StreamContext {
         shouldConsiderStillQualityProbe(now: now)
     }
 
+    @discardableResult
+    func scheduleStillQualityProbeIfNeeded(
+        now: CFAbsoluteTime,
+        reason: String
+    ) -> Bool {
+        guard shouldConsiderStillQualityProbe(now: now) else { return false }
+        shouldAdmitIdleQualityProbeFrame = true
+        guard enqueueSyntheticFrameFromLastCaptureIfNeeded(now: now, reason: reason) else {
+            return false
+        }
+        lastStillQualityProbeEncodeTime = now
+        scheduleProcessingIfNeeded()
+        MirageLogger.metrics(
+            "Still quality probe scheduled for stream \(streamID): reason=\(reason)"
+        )
+        return true
+    }
+
     private func shouldConsiderStillQualityProbe(now: CFAbsoluteTime) -> Bool {
         let policy = activeFrameFreshnessPolicy
         let inputActive = inputIsActive(now: now, policy: policy)
-        guard sourceIsStill(now: now, policy: policy) else { return false }
+        let sourceStill = sourceIsStill(now: now, policy: policy)
         guard runtimeQualityAdjustmentEnabled, !inputActive else { return false }
         guard activeQuality + 0.005 < configuredQualityCeiling else { return false }
         guard now - lastStillQualityProbeEncodeTime >= policy.stillQualityProbeInterval else { return false }
         guard (packetSender?.queuedByteCount ?? 0) <= queuePressureBytes else { return false }
-        return receiverFrameBudgetCanRaiseQuality(now: now)
+        return sourceStill || receiverFrameBudgetCanRaiseQuality(now: now)
     }
 
     func receiverFrameBudgetIsHealthy(now: CFAbsoluteTime) -> Bool {
@@ -334,12 +315,16 @@ extension StreamContext {
         guard lastReceiverFeedbackTime > 0, now - lastReceiverFeedbackTime <= 2.5 else { return true }
         if frameChainState != .normal { return false }
         if realtimePressureState == .recovery { return false }
-        if receiverReassemblyBacklogFrames > 0 { return false }
-        if receiverReassemblyBacklogBytes > 0 { return false }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return false }
         let policy = activeFrameFreshnessPolicy
         let inputActive = inputIsActive(now: now, policy: policy)
         let sourceStill = sourceIsStill(now: now, policy: policy)
+        let allowedReassemblyBacklogFrames = sourceStill && !inputActive
+            ? min(2, policy.stillMaxUnstartedPFrames)
+            : 0
+        let allowedReassemblyBacklogBytes = sourceStill && !inputActive ? 256 * 1024 : 0
+        if receiverReassemblyBacklogFrames > allowedReassemblyBacklogFrames { return false }
+        if receiverReassemblyBacklogBytes > allowedReassemblyBacklogBytes { return false }
         let allowedDecodeBacklog = sourceStill && !inputActive ? 1 : 0
         if receiverDecodeBacklogFrames > allowedDecodeBacklog { return false }
         if !policy.allowsPresentationFreshness(
@@ -435,6 +420,7 @@ extension StreamContext {
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
             steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
             now: now
         )
         guard let decision else { return }

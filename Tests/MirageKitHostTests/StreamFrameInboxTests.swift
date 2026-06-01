@@ -56,6 +56,20 @@ struct StreamFrameInboxTests {
         #expect(inbox.scheduleIfNeeded() == true)
     }
 
+    @Test("Drain completion can reserve pending work atomically")
+    func drainCompletionCanReservePendingWorkAtomically() throws {
+        let inbox = StreamFrameInbox(capacity: 2)
+
+        #expect(inbox.enqueue(try makeFrame(captureTime: 1)) == true)
+        #expect(inbox.enqueue(try makeFrame(captureTime: 2)) == false)
+
+        #expect(inbox.markDrainComplete(scheduleIfPending: true) == true)
+        #expect(inbox.scheduleIfNeeded() == false)
+
+        inbox.markDrainComplete()
+        #expect(inbox.scheduleIfNeeded() == true)
+    }
+
     private func makeFrame(captureTime: CFAbsoluteTime) throws -> CapturedFrame {
         let buffer = try #require(makePixelBuffer())
         return CapturedFrame(

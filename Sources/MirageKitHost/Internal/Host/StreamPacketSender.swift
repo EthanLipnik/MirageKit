@@ -141,8 +141,16 @@ extension StreamPacketSender {
     func setTargetBitrateBps(_ bitrate: Int?) {
         let sanitized = max(0, bitrate ?? 0)
         guard sanitized != pacerRateBps else { return }
+        let oldRate = pacerRateBps
+        let oldTokens = pacerTokensBytes
         pacerRateBps = sanitized
-        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        pacerTokensBytes = Self.retunedPacketPacerTokens(
+            currentTokensBytes: oldTokens,
+            oldRateBps: oldRate,
+            newRateBps: sanitized,
+            maxPayloadSize: maxPayloadSize
+        )
+        pacerLastRefillTime = CFAbsoluteTimeGetCurrent()
     }
 
     /// Advances the sender generation so already queued or in-flight work becomes stale.

@@ -190,15 +190,6 @@ extension StreamContext {
                 encodedAt: now
             )
             return
-        case .dropKeyframeRetryLowerScale:
-            await handleDroppedRecoveryKeyframeForTransportBudget(
-                byteCount: frameByteCount,
-                wireBytes: projectedPlan.wireBytes,
-                packetCount: projectedPlan.packetCount,
-                evaluation: admissionDecision,
-                encodedAt: now
-            )
-            return
         }
 
         let reservation = callbackSequencer.reserve(

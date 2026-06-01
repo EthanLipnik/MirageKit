@@ -81,7 +81,10 @@ final class FrameReassembler: @unchecked Sendable {
 
     struct PendingPFrameTimingSample: Sendable, Equatable {
         let frameNumber: UInt32
-        let assemblyLatencyMs: Double
+        let completedAt: Date
+        let packetSpanMs: Double
+        let completionGapMs: Double
+        let firstPacketGapMs: Double
     }
 
     final class FrameLossHandler: @unchecked Sendable {
@@ -187,7 +190,9 @@ final class FrameReassembler: @unchecked Sendable {
     var hasSignaledGapFrameLoss: Bool = false
     var pFrameCompletionLatencySamples: [PFrameCompletionLatencySample] = []
     var pendingPFrameTimingSamples: [PendingPFrameTimingSample] = []
-    let pendingPFrameTimingSampleLimit = 256
+    let pendingPFrameTimingSampleLimit = 128
+    var lastCompletedVideoFrameCompletedAt: Date?
+    var lastCompletedVideoFrameFirstPacketAt: Date?
 
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer

@@ -179,10 +179,14 @@ final class StreamFrameInbox: @unchecked Sendable {
     }
 
     /// Mark the drain as complete.
-    func markDrainComplete() {
+    @discardableResult
+    func markDrainComplete(scheduleIfPending: Bool = false) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         isScheduled = false
+        guard scheduleIfPending, frameCount > 0 else { return false }
+        isScheduled = true
+        return true
     }
 }
 

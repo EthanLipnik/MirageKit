@@ -189,6 +189,30 @@ struct HostKeyframeRecoveryTests {
         #expect(context.dynamicFrameFlags.contains(.discontinuity))
     }
 
+    @Test("Emergency repair keyframe arms progress retry while running")
+    func emergencyRepairKeyframeArmsProgressRetryWhileRunning() async {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+        await context.configureRunningForRepairRetryTest()
+        await context.startFrameChainRepair(
+            reason: "unit-test",
+            firstBrokenFrame: 40,
+            now: now
+        )
+
+        let queued = await context.scheduleEmergencyChainRepairKeyframe(
+            reason: "unit-test",
+            bypassesRecoveryCooldown: true,
+            now: now
+        )
+
+        #expect(queued)
+        #expect(await context.pendingKeyframeReason == "unit-test")
+        #expect(await context.frameChainRepairKeyframeRetryTask != nil)
+
+        await context.stop()
+    }
+
     @Test("Low-latency high-res boost does not force compression at 600 Mbps")
     func lowLatencyHighResBoostRespectsHighBitrateHeadroom() async {
         let boostedContext = makeContext(
@@ -376,6 +400,36 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeReason == "Keyframe request")
     }
 
+    @Test("Still quality probe synthesizes cached idle frame without SCK input")
+    func stillQualityProbeSynthesizesCachedIdleFrameWithoutSCKInput() async {
+        let context = makeContext()
+        let now = CFAbsoluteTimeGetCurrent()
+
+        await context.recordCaptureIngress(makeIdleFrame())
+        await context.applyFrameBudgetDecision(
+            HostFrameBudgetDecision(
+                targetBitrateBps: 8_000_000,
+                maxFrameBytes: 16 * 1024,
+                maxWireBytes: 16 * 1024,
+                maxPacketCount: 14,
+                quality: 0.10,
+                qualityCeiling: 0.10,
+                keyframeQuality: 0.10,
+                sendDeadline: now + 1,
+                state: .pressured,
+                reason: .pFrameLatency
+            ),
+            now: now
+        )
+        let scheduled = await context.scheduleStillQualityProbeIfNeeded(
+            now: now + 1.0,
+            reason: "test"
+        )
+
+        #expect(scheduled)
+        #expect(context.frameInbox.pendingCount == 1)
+    }
+
     @Test("Keyframe packet pacing override caps send rate and burst budget")
     func startupPacketPacingCapsKeyframeBurstBudget() {
         let pacingOverride = StreamContext.keyframePacingOverride()
@@ -555,6 +609,11 @@ private extension StreamContext {
     ) {
         frameChainState = state
         suppressEncodedNonKeyframesUntilKeyframe = suppressPFrames
+    }
+
+    func configureRunningForRepairRetryTest() {
+        isRunning = true
+        shouldEncodeFrames = true
     }
 }
 #endif

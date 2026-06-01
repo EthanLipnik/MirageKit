@@ -91,6 +91,25 @@ extension StreamPacketSender {
     nonisolated static let maxReliableQueuedWorkItems: Int = 240
     nonisolated static let maxReliableQueuedBytes: Int = 192 * 1024 * 1024
 
+    nonisolated static func retunedPacketPacerTokens(
+        currentTokensBytes: Double,
+        oldRateBps: Int,
+        newRateBps: Int,
+        maxPayloadSize: Int
+    ) -> Double {
+        guard oldRateBps > 0, newRateBps > 0 else { return 0 }
+        let oldBytesPerSecond = Double(oldRateBps) / 8.0
+        let newBytesPerSecond = Double(newRateBps) / 8.0
+        guard oldBytesPerSecond > 0, newBytesPerSecond > 0 else { return 0 }
+
+        let scaledTokens = currentTokensBytes * newBytesPerSecond / oldBytesPerSecond
+        let burstBytes = max(
+            Double(max(1, maxPayloadSize)),
+            newBytesPerSecond / 1_000.0 * packetPacerSteadyStateFrameBurstMaxWindowMs
+        )
+        return min(burstBytes, max(-burstBytes, scaledTokens))
+    }
+
     enum DependencyFrameDropReason: String, Sendable {
         case generationAbort = "generation-abort"
         case oversizedFrame = "oversized-frame"

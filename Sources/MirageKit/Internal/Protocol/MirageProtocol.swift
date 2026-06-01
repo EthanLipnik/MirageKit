@@ -12,7 +12,7 @@ import Foundation
 package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
 /// Mirage wire-contract version for session bootstrap and media packets, encoded as YYMMDD.
-package let mirageProtocolVersion: UInt32 = 260529
+package let mirageProtocolVersion: UInt32 = 260531
 
 /// Registration packet magic values.
 package let mirageAudioRegistrationMagic: UInt32 = 0x4D49_5241 // "MIRA"

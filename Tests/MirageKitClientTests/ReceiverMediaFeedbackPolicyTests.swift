@@ -12,8 +12,8 @@ import Testing
 
 @Suite("Receiver Media Feedback Policy")
 struct ReceiverMediaFeedbackPolicyTests {
-    @Test("Receiver feedback decodes legacy payloads without optional latency fields")
-    func receiverFeedbackDecodesLegacyPayloadsWithoutOptionalLatencyFields() throws {
+    @Test("Receiver feedback rejects legacy payloads without timing samples")
+    func receiverFeedbackRejectsLegacyPayloadsWithoutTimingSamples() throws {
         let payload = Data(
             #"""
             {
@@ -41,20 +41,9 @@ struct ReceiverMediaFeedbackPolicyTests {
             """#.utf8
         )
 
-        let feedback = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: payload)
-
-        #expect(feedback.pFrameCompletionLatencyP95Ms == nil)
-        #expect(feedback.pFrameTimingSamples.isEmpty)
-        #expect(feedback.latePFrameCount == nil)
-        #expect(feedback.reliabilityCauses.isEmpty)
-        #expect(feedback.recoveryCause == .none)
-        #expect(feedback.latestAcceptedFrameNumber == nil)
-        #expect(feedback.latestPresentedFrameNumber == nil)
-        #expect(feedback.latestPresentedFrameAgeMs == nil)
-        #expect(feedback.decodeQueueDepth == nil)
-        #expect(feedback.presentationQueueDepth == nil)
-        #expect(feedback.audioDroppedFrameCount == nil)
-        #expect(feedback.audioGateActive == nil)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: payload)
+        }
     }
 
     @Test("Receiver feedback timing samples encode and decode")
@@ -66,8 +55,20 @@ struct ReceiverMediaFeedbackPolicyTests {
             targetFPS: 60,
             recoveryState: .idle,
             pFrameTimingSamples: [
-                ReceiverPFrameTimingSample(frameNumber: 40, assemblyLatencyMs: 6.5),
-                ReceiverPFrameTimingSample(frameNumber: 41, assemblyLatencyMs: 12.25)
+                ReceiverPFrameTimingSample(
+                    frameNumber: 40,
+                    packetSpanMs: 6.5,
+                    completionGapMs: 16.7,
+                    completionAgeAtFeedbackMs: 3.0,
+                    firstPacketGapMs: 16.6
+                ),
+                ReceiverPFrameTimingSample(
+                    frameNumber: 41,
+                    packetSpanMs: 12.25,
+                    completionGapMs: 18.5,
+                    completionAgeAtFeedbackMs: 2.0,
+                    firstPacketGapMs: 17.0
+                )
             ],
             latestAcceptedFrameNumber: 41,
             latestPresentedFrameNumber: 40,
@@ -81,8 +82,20 @@ struct ReceiverMediaFeedbackPolicyTests {
         let decoded = try JSONDecoder().decode(ReceiverMediaFeedbackMessage.self, from: encoded)
 
         #expect(decoded.pFrameTimingSamples == [
-            ReceiverPFrameTimingSample(frameNumber: 40, assemblyLatencyMs: 6.5),
-            ReceiverPFrameTimingSample(frameNumber: 41, assemblyLatencyMs: 12.25)
+            ReceiverPFrameTimingSample(
+                frameNumber: 40,
+                packetSpanMs: 6.5,
+                completionGapMs: 16.7,
+                completionAgeAtFeedbackMs: 3.0,
+                firstPacketGapMs: 16.6
+            ),
+            ReceiverPFrameTimingSample(
+                frameNumber: 41,
+                packetSpanMs: 12.25,
+                completionGapMs: 18.5,
+                completionAgeAtFeedbackMs: 2.0,
+                firstPacketGapMs: 17.0
+            )
         ])
         #expect(decoded.latestAcceptedFrameNumber == 41)
         #expect(decoded.latestPresentedFrameNumber == 40)
@@ -259,7 +272,36 @@ struct ReceiverMediaFeedbackPolicyTests {
         let samples = reassembler.consumePFrameTimingSamples()
         #expect(samples.count == 1)
         #expect(samples.first?.frameNumber == 2)
-        #expect((samples.first?.assemblyLatencyMs ?? -1) >= 0)
+        #expect((samples.first?.packetSpanMs ?? -1) >= 0)
+        #expect((samples.first?.completionGapMs ?? -1) >= 0)
+        #expect((samples.first?.completionAgeAtFeedbackMs ?? -1) >= 0)
+        #expect((samples.first?.firstPacketGapMs ?? -1) >= 0)
+    }
+
+    @Test("Receiver feedback keeps newest 128 timing samples")
+    func receiverFeedbackKeepsNewest128TimingSamples() {
+        let samples = (0..<140).map {
+            ReceiverPFrameTimingSample(
+                frameNumber: UInt32($0),
+                packetSpanMs: Double($0),
+                completionGapMs: Double($0) + 1,
+                completionAgeAtFeedbackMs: 0,
+                firstPacketGapMs: Double($0) + 2
+            )
+        }
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 12,
+            sentAtUptime: 105,
+            targetFPS: 60,
+            recoveryState: .idle,
+            pFrameTimingSamples: samples,
+            metrics: metrics()
+        )
+
+        #expect(feedback.pFrameTimingSamples.count == 128)
+        #expect(feedback.pFrameTimingSamples.first?.frameNumber == 12)
+        #expect(feedback.pFrameTimingSamples.last?.frameNumber == 139)
     }
 
     @Test("Receiver feedback metrics report aged receive gaps between frames")

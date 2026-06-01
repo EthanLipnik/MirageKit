@@ -45,17 +45,17 @@ struct HostFrameFreshnessPolicy: Sendable, Equatable {
                 stillContentWindow: max(0.18, Double(3) / Double(safeFrameRate)),
                 inputMaxPresentationDepth: 1,
                 passiveMotionMaxPresentationDepth: 2,
-                stillMaxPresentationDepth: 4,
+                stillMaxPresentationDepth: 3,
                 inputPresentationAgeCapMs: max(80.0, frameMs * 5.0),
                 passiveMotionPresentationAgeCapMs: max(150.0, frameMs * 9.0),
                 inputMaxUnstartedPFrames: 1,
-                passiveMotionMaxUnstartedPFrames: 1,
+                passiveMotionMaxUnstartedPFrames: 2,
                 stillMaxUnstartedPFrames: 3,
                 inputQueuedPFrameAgeCapMs: max(40.0, frameMs * 2.0),
                 passiveMotionQueuedPFrameAgeCapMs: max(80.0, frameMs * 4.0),
                 stillQueuedPFrameAgeCapMs: max(220.0, frameMs * 12.0),
                 stillQualityProbeInterval: Double(1) / Double(safeFrameRate),
-                stillQualityKeyframeInterval: 0.40
+                stillQualityKeyframeInterval: 2.00
             )
         case .balanced:
             return HostFrameFreshnessPolicy(
@@ -64,18 +64,18 @@ struct HostFrameFreshnessPolicy: Sendable, Equatable {
                 inputActiveWindow: 0.50,
                 stillContentWindow: max(0.22, Double(4) / Double(safeFrameRate)),
                 inputMaxPresentationDepth: 2,
-                passiveMotionMaxPresentationDepth: 3,
-                stillMaxPresentationDepth: 5,
+                passiveMotionMaxPresentationDepth: 4,
+                stillMaxPresentationDepth: 4,
                 inputPresentationAgeCapMs: max(125.0, frameMs * 7.0),
                 passiveMotionPresentationAgeCapMs: max(250.0, frameMs * 15.0),
                 inputMaxUnstartedPFrames: 2,
-                passiveMotionMaxUnstartedPFrames: 2,
+                passiveMotionMaxUnstartedPFrames: 4,
                 stillMaxUnstartedPFrames: 4,
                 inputQueuedPFrameAgeCapMs: max(80.0, frameMs * 4.0),
                 passiveMotionQueuedPFrameAgeCapMs: max(140.0, frameMs * 8.0),
                 stillQueuedPFrameAgeCapMs: max(320.0, frameMs * 18.0),
                 stillQualityProbeInterval: Double(2) / Double(safeFrameRate),
-                stillQualityKeyframeInterval: 0.50
+                stillQualityKeyframeInterval: 2.00
             )
         case .smoothest:
             return HostFrameFreshnessPolicy(
@@ -84,18 +84,18 @@ struct HostFrameFreshnessPolicy: Sendable, Equatable {
                 inputActiveWindow: 0.70,
                 stillContentWindow: max(0.28, Double(5) / Double(safeFrameRate)),
                 inputMaxPresentationDepth: 2,
-                passiveMotionMaxPresentationDepth: 4,
+                passiveMotionMaxPresentationDepth: 6,
                 stillMaxPresentationDepth: 6,
                 inputPresentationAgeCapMs: max(180.0, frameMs * 10.0),
                 passiveMotionPresentationAgeCapMs: max(500.0, frameMs * 30.0),
                 inputMaxUnstartedPFrames: 2,
-                passiveMotionMaxUnstartedPFrames: 3,
-                stillMaxUnstartedPFrames: 5,
+                passiveMotionMaxUnstartedPFrames: 6,
+                stillMaxUnstartedPFrames: 6,
                 inputQueuedPFrameAgeCapMs: max(120.0, frameMs * 7.0),
                 passiveMotionQueuedPFrameAgeCapMs: max(250.0, frameMs * 15.0),
                 stillQueuedPFrameAgeCapMs: max(650.0, frameMs * 36.0),
                 stillQualityProbeInterval: Double(3) / Double(safeFrameRate),
-                stillQualityKeyframeInterval: 0.75
+                stillQualityKeyframeInterval: 2.50
             )
         }
     }

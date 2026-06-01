@@ -97,6 +97,10 @@ extension StreamController {
         if snapshot.isAwaitingKeyframe,
            clientRecoveryStatus == .keyframeRecovery,
            lastRecoveryRequestDispatchTime > 0 {
+            let duplicateGrace = keyframeRetryGrace(for: snapshot)
+            if now - lastRecoveryRequestDispatchTime >= duplicateGrace {
+                return .requestKeyframe
+            }
             return .deferRetryGrace
         }
 

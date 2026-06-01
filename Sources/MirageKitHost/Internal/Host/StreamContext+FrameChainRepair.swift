@@ -65,6 +65,9 @@ extension StreamContext {
         if pendingEmergencyKeyframeQuality == nil {
             pendingEmergencyKeyframeQuality = emergencyKeyframeQuality()
         }
+        if bypassesRecoveryCooldown {
+            lastKeyframeRequestTime = 0
+        }
         let queued = await scheduleCoalescedRecoveryKeyframe(
             reason: reason,
             noteLoss: false,
@@ -84,6 +87,10 @@ extension StreamContext {
         frameChainRepairKeyframeRetryTask?.cancel()
         frameChainRepairKeyframeRetryTask = nil
         frameChainState = .emergencyKeyframePending(reason: reason, openedAt: now)
+        scheduleFrameChainRepairKeyframeProgressCheck(
+            reason: reason,
+            bypassesRecoveryCooldown: bypassesRecoveryCooldown
+        )
         return true
     }
 
@@ -94,7 +101,14 @@ extension StreamContext {
 
     func noteEmergencyKeyframePrepared(using decision: HostFrameBudgetDecision?) async {
         let decisionQuality = decision?.keyframeQuality ?? emergencyKeyframeQuality()
-        pendingEmergencyKeyframeQuality = min(decisionQuality, emergencyKeyframeQuality())
+        if decision?.reason == .adaptiveRepair {
+            pendingEmergencyKeyframeQuality = max(
+                0.02,
+                min(decisionQuality, keyframeQuality, resolvedQualityCeiling)
+            )
+        } else {
+            pendingEmergencyKeyframeQuality = min(decisionQuality, emergencyKeyframeQuality())
+        }
         if let pendingEmergencyKeyframeQuality {
             await encoder?.prepareForKeyframe(quality: pendingEmergencyKeyframeQuality)
         }
@@ -144,7 +158,7 @@ extension StreamContext {
         let didSend = completion.didSend
 
         if didSend {
-                recordFrameTransportCompletion(completion)
+            recordFrameTransportCompletion(completion)
             await applyFrameTransportBudgetFeedback(completion, now: now)
         }
 
@@ -374,19 +388,37 @@ extension StreamContext {
         )
     }
 
+    private func scheduleFrameChainRepairKeyframeProgressCheck(
+        reason: String,
+        bypassesRecoveryCooldown: Bool
+    ) {
+        guard isRunning, shouldEncodeFrames else { return }
+        frameChainRepairKeyframeRetryTask?.cancel()
+        frameChainRepairKeyframeRetryTask = Task(priority: .userInitiated) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            await self?.retryFrameChainRepairKeyframe(
+                reason: reason,
+                bypassesRecoveryCooldown: bypassesRecoveryCooldown
+            )
+        }
+    }
+
     private func frameChainRepairKeyframeRetryDelay(
         now: CFAbsoluteTime,
         bypassesRecoveryCooldown: Bool
     ) -> CFAbsoluteTime {
         let inFlightDelay = max(0, keyframeSendDeadline - now)
         let requestDelay: CFAbsoluteTime
-        if lastKeyframeRequestTime > 0 {
+        if bypassesRecoveryCooldown {
+            requestDelay = 0
+        } else if lastKeyframeRequestTime > 0 {
             requestDelay = max(0, activeKeyframeRequestCooldown - (now - lastKeyframeRequestTime))
         } else {
             requestDelay = 0
         }
         let recoveryDelay = bypassesRecoveryCooldown ? 0 : recoveryKeyframeCooldownRemaining(now: now)
-        return max(0.05, inFlightDelay, requestDelay, recoveryDelay) + 0.025
+        return max(0.05, inFlightDelay, requestDelay, recoveryDelay)
     }
 
     private func retryFrameChainRepairKeyframe(
@@ -394,7 +426,7 @@ extension StreamContext {
         bypassesRecoveryCooldown: Bool
     ) async {
         frameChainRepairKeyframeRetryTask = nil
-        guard isRunning else { return }
+        guard isRunning, shouldEncodeFrames else { return }
         switch frameChainState {
         case .chainBroken:
             await scheduleEmergencyChainRepairKeyframe(
@@ -402,8 +434,40 @@ extension StreamContext {
                 bypassesRecoveryCooldown: bypassesRecoveryCooldown,
                 now: CFAbsoluteTimeGetCurrent()
             )
+        case let .emergencyKeyframePending(pendingReason, openedAt):
+            guard pendingReceiverAcceptedKeyframeFrameNumber == nil,
+                  keyframeInFlightFrameNumber == nil else {
+                return
+            }
+            if isKeyframeEncoding {
+                scheduleFrameChainRepairKeyframeProgressCheck(
+                    reason: reason,
+                    bypassesRecoveryCooldown: bypassesRecoveryCooldown
+                )
+                return
+            }
+            if pendingKeyframeReason != nil {
+                scheduleProcessingForPendingKeyframe(reason: reason)
+                scheduleFrameChainRepairKeyframeProgressCheck(
+                    reason: reason,
+                    bypassesRecoveryCooldown: bypassesRecoveryCooldown
+                )
+                return
+            }
+            frameChainState = .chainBroken(
+                reason: pendingReason,
+                firstBrokenFrame: nil,
+                openedAt: openedAt
+            )
+            MirageLogger.stream(
+                "Frame-chain repair keyframe made no encode progress; requeueing (\(pendingReason))"
+            )
+            await scheduleEmergencyChainRepairKeyframe(
+                reason: pendingReason,
+                bypassesRecoveryCooldown: bypassesRecoveryCooldown,
+                now: CFAbsoluteTimeGetCurrent()
+            )
         case .normal,
-             .emergencyKeyframePending,
              .postKeyframeCooling:
             break
         }

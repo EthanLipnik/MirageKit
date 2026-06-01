@@ -262,15 +262,19 @@ extension StreamContext {
         encoderConfig.frameQuality = targets.frameQuality
         encoderConfig.keyframeQuality = targets.keyframeQuality
         steadyQualityCeiling = targets.frameQuality
-        qualityCeiling = resolvedQualityCeiling
+        qualityCeiling = min(resolvedQualityCeiling, targets.frameQuality)
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
             for: min(targets.keyframeQuality, qualityCeiling)
         )
 
         let previousActiveQuality = activeQuality
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
+        if activeQuality > targets.frameQuality {
+            activeQuality = targets.frameQuality
+            await encoder?.updateQuality(activeQuality)
+        } else if reason == HostAdaptivePFrameController.Reason.healthy.rawValue,
+                  activeQuality < targets.frameQuality {
+            activeQuality = min(qualityCeiling, targets.frameQuality)
             await encoder?.updateQuality(activeQuality)
         }
 

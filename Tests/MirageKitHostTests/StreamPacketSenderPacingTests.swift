@@ -64,6 +64,34 @@ struct StreamPacketSenderPacingTests {
         #expect(parameters.burstBytes > 1_200)
     }
 
+    @Test("Bitrate retunes preserve token debt")
+    func bitrateRetunesPreserveTokenDebt() {
+        let debt = -24_000.0
+        let retunedDebt = StreamPacketSender.retunedPacketPacerTokens(
+            currentTokensBytes: debt,
+            oldRateBps: 80_000_000,
+            newRateBps: 40_000_000,
+            maxPayloadSize: 1_200
+        )
+
+        #expect(retunedDebt < 0)
+        #expect(abs(retunedDebt - debt * 0.5) < 0.001)
+    }
+
+    @Test("Bitrate retunes clamp credit instead of creating a fresh burst")
+    func bitrateRetunesClampCreditInsteadOfCreatingFreshBurst() {
+        let retunedCredit = StreamPacketSender.retunedPacketPacerTokens(
+            currentTokensBytes: 80_000,
+            oldRateBps: 40_000_000,
+            newRateBps: 80_000_000,
+            maxPayloadSize: 1_200
+        )
+        let expectedBurst = Double(80_000_000) / 8.0 / 1_000.0 *
+            StreamPacketSender.packetPacerSteadyStateFrameBurstMaxWindowMs
+
+        #expect(retunedCredit == expectedBurst)
+    }
+
     @Test("Fragment plans reject header counts that cannot fit on the wire")
     func fragmentPlansRejectHeaderCountsThatCannotFitOnTheWire() {
         let maxPayloadSize = 512

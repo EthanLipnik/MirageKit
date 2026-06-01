@@ -11,7 +11,7 @@ import Foundation
 
 /// Normalized frame-cadence model used to derive timing budgets for a stream.
 package struct MirageStreamCadenceTarget: Sendable, Equatable {
-    package static let maximumPlayoutDelayFrames = 2
+    package static let maximumPlayoutDelayFrames = 4
 
     /// Capture or encoded-source cadence after clamping to Mirage's supported FPS range.
     package let sourceFPS: Int
@@ -52,9 +52,9 @@ package struct MirageStreamCadenceTarget: Sendable, Equatable {
         case .lowestLatency:
             0
         case .balanced:
-            0
+            2
         case .smoothest:
-            0
+            4
         }
     }
 

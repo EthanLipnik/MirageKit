@@ -150,6 +150,7 @@ actor StreamContext {
     var emergencyRecoveryScaleChangeInProgress = false
     var encodedFrameQualityLastLogTime: CFAbsoluteTime = 0
     var senderFreshnessLastLogTime: CFAbsoluteTime = 0
+    var receiverPFrameTimingSampleLastLogTime: CFAbsoluteTime = 0
     var lastStillQualityProbeEncodeTime: CFAbsoluteTime = 0
     var lastStillQualityRefreshKeyframeTime: CFAbsoluteTime = 0
     nonisolated(unsafe) var shouldAdmitIdleQualityProbeFrame = false
@@ -252,6 +253,7 @@ actor StreamContext {
     var realtimeRuntimeBitrateCeilingBps: Int?
     var realtimeEncoderRateHintBps: Int?
     var realtimeSenderPacingBitrateBps: Int?
+    var realtimeLastEncoderRateRaiseTime: CFAbsoluteTime = 0
     var realtimePressureState: HostAdaptivePFrameController.PressureState = .observing
     var realtimePressureReason: String?
     var realtimeLastLoggedState: HostAdaptivePFrameController.PressureState = .observing

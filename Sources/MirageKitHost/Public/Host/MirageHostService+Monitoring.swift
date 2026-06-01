@@ -14,15 +14,29 @@ import AppKit
 // MARK: - Cursor and Window Activity Monitoring
 
 extension MirageHostService {
+    /// Starts or stops cursor monitoring based on whether any stream can use cursor updates.
+    func updateCursorMonitoringForActiveStreams() {
+        let shouldMonitor = !activeStreams.isEmpty || desktopStreamID != nil
+        if shouldMonitor {
+            startCursorMonitoringIfNeeded()
+        } else {
+            stopCursorMonitoring()
+        }
+    }
+
     /// Starts cursor monitoring for active app and desktop streams.
-    func startCursorMonitoring() {
-        cursorMonitor = CursorMonitor(
+    private func startCursorMonitoringIfNeeded() {
+        guard cursorMonitor == nil else { return }
+
+        let monitor = CursorMonitor(
             pollingRate: Double(MirageInteractionCadence.targetFPS120),
             windowFrameRefreshRate: 30
         )
+        cursorMonitor = monitor
 
-        Task {
-            await cursorMonitor?.start(
+        cursorMonitoringStartTask?.cancel()
+        cursorMonitoringStartTask = Task { [weak self, monitor] in
+            await monitor.start(
                 windowFrameProvider: { [weak self] in
                     guard let self else { return [] }
 
@@ -79,6 +93,22 @@ extension MirageHostService {
                     }
                 }
             )
+            await MainActor.run { [weak self] in
+                if self?.cursorMonitor === monitor {
+                    self?.cursorMonitoringStartTask = nil
+                }
+            }
+        }
+    }
+
+    /// Stops cursor monitoring when no stream needs cursor updates.
+    func stopCursorMonitoring() {
+        cursorMonitoringStartTask?.cancel()
+        cursorMonitoringStartTask = nil
+        guard let monitor = cursorMonitor else { return }
+        cursorMonitor = nil
+        Task {
+            await monitor.stop()
         }
     }
 

@@ -37,16 +37,29 @@ extension StreamContext {
         let senderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: senderPacingBitrateBps ?? targetBitrate
         ) ?? targetBitrate
+        let now = CFAbsoluteTimeGetCurrent()
         let transportBitrateChanged = targetBitrate != currentTargetBitrateBps
-        let encoderHintChanged = encoderRateHint != encoderConfig.bitrate
+        let desiredEncoderHintChanged = encoderRateHint != realtimeEncoderRateHintBps
         let senderPacingChanged = senderPacingBitrate != realtimeSenderPacingBitrateBps
-        guard transportBitrateChanged || encoderHintChanged || senderPacingChanged else {
+        guard transportBitrateChanged || desiredEncoderHintChanged || senderPacingChanged else {
             await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
             return
         }
 
         let previousBitrate = encoderConfig.bitrate
-        encoderConfig.bitrate = encoderRateHint
+        let previousEncoderRate = previousBitrate ?? 0
+        let isEncoderRaise = encoderRateHint > previousEncoderRate
+        let raiseRatio = previousEncoderRate > 0
+            ? Double(encoderRateHint) / Double(previousEncoderRate)
+            : Double.infinity
+        let shouldApplyEncoderRetune = !isEncoderRaise ||
+            previousEncoderRate == 0 ||
+            raiseRatio >= 1.12 ||
+            now - realtimeLastEncoderRateRaiseTime >= 0.25
+        let encoderHintChanged = shouldApplyEncoderRetune && encoderRateHint != encoderConfig.bitrate
+        if shouldApplyEncoderRetune {
+            encoderConfig.bitrate = encoderRateHint
+        }
         currentTargetBitrateBps = targetBitrate
         realtimeEncoderRateHintBps = encoderRateHint
         realtimeSenderPacingBitrateBps = senderPacingBitrate
@@ -57,13 +70,16 @@ extension StreamContext {
                 previousBitrate: previousBitrate,
                 targetBitrate: encoderRateHint
             )
+            if isEncoderRaise {
+                realtimeLastEncoderRateRaiseTime = now
+            }
         }
         await refreshRuntimeQualityTargets(for: encoderRateHint, reason: reason)
 
         MirageLogger.metrics(
             "Realtime stream budget applied encoded-frame budget for stream \(streamID): " +
                 "target=\(targetBitrate) ceiling=\(ceiling) encoderHint=\(encoderRateHint) " +
-                "senderPacing=\(senderPacingBitrate) reason=\(reason)"
+                "senderPacing=\(senderPacingBitrate) retune=\(shouldApplyEncoderRetune) reason=\(reason)"
         )
         logBitrateContract(event: "realtime_budget_update")
     }

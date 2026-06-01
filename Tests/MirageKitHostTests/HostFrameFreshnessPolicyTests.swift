@@ -35,11 +35,39 @@ struct HostFrameFreshnessPolicyTests {
             lastInputTime: 0,
             lastNonIdleCaptureTime: 99,
             decodeBacklogFrames: 1,
-            presentationBacklogFrames: 4,
+            presentationBacklogFrames: 3,
             latestPresentedFrameAgeMs: 2_000
         )
 
         #expect(await context.receiverFrameBudgetCanRaiseQuality(now: 100))
+    }
+
+    @Test("Receiver quality gate allows small reassembly backlog for still content")
+    func receiverQualityGateAllowsSmallReassemblyBacklogForStillContent() async {
+        let context = makeContext(latencyMode: .lowestLatency)
+        await context.configureReceiverFreshnessForTesting(
+            now: 100,
+            lastInputTime: 0,
+            lastNonIdleCaptureTime: 99,
+            reassemblyBacklogFrames: 1,
+            reassemblyBacklogBytes: 128 * 1024,
+            presentationBacklogFrames: 3,
+            latestPresentedFrameAgeMs: 2_000
+        )
+
+        #expect(await context.receiverFrameBudgetCanRaiseQuality(now: 100))
+
+        await context.configureReceiverFreshnessForTesting(
+            now: 100,
+            lastInputTime: 0,
+            lastNonIdleCaptureTime: 99,
+            reassemblyBacklogFrames: 3,
+            reassemblyBacklogBytes: 128 * 1024,
+            presentationBacklogFrames: 3,
+            latestPresentedFrameAgeMs: 2_000
+        )
+
+        #expect(!(await context.receiverFrameBudgetCanRaiseQuality(now: 100)))
     }
 
     @Test("Receiver quality gate blocks stale presented age during input motion")
@@ -79,13 +107,13 @@ struct HostFrameFreshnessPolicyTests {
         let policy = HostFrameFreshnessPolicy.policy(for: .lowestLatency, frameRate: 60)
 
         #expect(policy.allowsPresentationFreshness(
-            depth: 4,
+            depth: 3,
             latestPresentedFrameAgeMs: 2_000,
             inputActive: false,
             sourceStill: true
         ))
         #expect(!policy.allowsPresentationFreshness(
-            depth: 5,
+            depth: 4,
             latestPresentedFrameAgeMs: 2_000,
             inputActive: false,
             sourceStill: true
@@ -177,6 +205,8 @@ private extension StreamContext {
         now: CFAbsoluteTime,
         lastInputTime: CFAbsoluteTime,
         lastNonIdleCaptureTime: CFAbsoluteTime,
+        reassemblyBacklogFrames: Int = 0,
+        reassemblyBacklogBytes: Int = 0,
         decodeBacklogFrames: Int = 0,
         presentationBacklogFrames: Int,
         latestPresentedFrameAgeMs: Double
@@ -184,8 +214,8 @@ private extension StreamContext {
         lastReceiverFeedbackTime = now
         lastClientInputTime = lastInputTime
         self.lastNonIdleCapturedFrameTime = lastNonIdleCaptureTime
-        receiverReassemblyBacklogFrames = 0
-        receiverReassemblyBacklogBytes = 0
+        receiverReassemblyBacklogFrames = reassemblyBacklogFrames
+        receiverReassemblyBacklogBytes = reassemblyBacklogBytes
         receiverDecodeBacklogFrames = decodeBacklogFrames
         receiverPresentationBacklogFrames = presentationBacklogFrames
         receiverLatestPresentedFrameAgeMs = latestPresentedFrameAgeMs

@@ -50,11 +50,23 @@ package struct MediaFeedbackFrameRange: Codable, Sendable, Equatable {
 
 package struct ReceiverPFrameTimingSample: Codable, Sendable, Equatable {
     package let frameNumber: UInt32
-    package let assemblyLatencyMs: Double
+    package let packetSpanMs: Double
+    package let completionGapMs: Double
+    package let completionAgeAtFeedbackMs: Double
+    package let firstPacketGapMs: Double
 
-    package init(frameNumber: UInt32, assemblyLatencyMs: Double) {
+    package init(
+        frameNumber: UInt32,
+        packetSpanMs: Double,
+        completionGapMs: Double,
+        completionAgeAtFeedbackMs: Double,
+        firstPacketGapMs: Double
+    ) {
         self.frameNumber = frameNumber
-        self.assemblyLatencyMs = max(0, assemblyLatencyMs)
+        self.packetSpanMs = max(0, packetSpanMs)
+        self.completionGapMs = max(0, completionGapMs)
+        self.completionAgeAtFeedbackMs = max(0, completionAgeAtFeedbackMs)
+        self.firstPacketGapMs = max(0, firstPacketGapMs)
     }
 }
 
@@ -155,7 +167,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.sentAtUptime = sentAtUptime
         self.targetFPS = max(1, min(240, targetFPS))
         self.ackRanges = ackRanges
-        self.pFrameTimingSamples = Array(pFrameTimingSamples.prefix(Self.maximumPFrameTimingSamples))
+        self.pFrameTimingSamples = Array(pFrameTimingSamples.suffix(Self.maximumPFrameTimingSamples))
         self.lostFrameCount = lostFrameCount
         self.discardedPacketCount = discardedPacketCount
         self.jitterP95Ms = max(0, jitterP95Ms)
@@ -268,7 +280,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         )
     }
 
-    private static let maximumPFrameTimingSamples = 96
+    private static let maximumPFrameTimingSamples = 128
 
     private enum CodingKeys: String, CodingKey {
         case streamID
@@ -325,10 +337,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             sentAtUptime: try container.decode(Double.self, forKey: .sentAtUptime),
             targetFPS: try container.decode(Int.self, forKey: .targetFPS),
             ackRanges: try container.decodeIfPresent([MediaFeedbackFrameRange].self, forKey: .ackRanges) ?? [],
-            pFrameTimingSamples: try container.decodeIfPresent(
+            pFrameTimingSamples: try container.decode(
                 [ReceiverPFrameTimingSample].self,
                 forKey: .pFrameTimingSamples
-            ) ?? [],
+            ),
             lostFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .lostFrameCount) ?? 0,
             discardedPacketCount: try container.decodeIfPresent(UInt64.self, forKey: .discardedPacketCount) ?? 0,
             jitterP95Ms: try container.decodeIfPresent(Double.self, forKey: .jitterP95Ms) ?? 0,
@@ -422,9 +434,7 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encode(sentAtUptime, forKey: .sentAtUptime)
         try container.encode(targetFPS, forKey: .targetFPS)
         try container.encode(ackRanges, forKey: .ackRanges)
-        if !pFrameTimingSamples.isEmpty {
-            try container.encode(pFrameTimingSamples, forKey: .pFrameTimingSamples)
-        }
+        try container.encode(pFrameTimingSamples, forKey: .pFrameTimingSamples)
         try container.encode(lostFrameCount, forKey: .lostFrameCount)
         try container.encode(discardedPacketCount, forKey: .discardedPacketCount)
         try container.encode(jitterP95Ms, forKey: .jitterP95Ms)

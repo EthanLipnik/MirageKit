@@ -14,6 +14,7 @@ import MirageKit
 extension MirageHostService {
     /// Notifies the delegate after the active stream collection gains or loses a stream.
     func notifyActiveStreamActivityChanged() {
+        updateCursorMonitoringForActiveStreams()
         delegate?.activeStreamsDidChange()
     }
 

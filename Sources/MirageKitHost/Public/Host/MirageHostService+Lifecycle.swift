@@ -69,8 +69,6 @@ public extension MirageHostService {
 
         ensureScreenParametersObserver()
 
-        startCursorMonitoring()
-
         await startSessionStateMonitoring()
     }
 
@@ -200,8 +198,7 @@ public extension MirageHostService {
         await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
         removeScreenParametersObserver()
 
-        await cursorMonitor?.stop()
-        cursorMonitor = nil
+        stopCursorMonitoring()
 
         // Clear any stuck modifiers before stopping
         inputController.clearAllModifiers()

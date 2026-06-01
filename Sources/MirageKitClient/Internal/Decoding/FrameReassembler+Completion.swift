@@ -126,8 +126,9 @@ extension FrameReassembler {
             }
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
 
+            let completedAt = Date()
             if !frame.isKeyframe {
-                recordPFrameCompletionLatencyLocked(frameNumber: frameNumber, frame: frame, now: Date())
+                recordPFrameCompletionLatencyLocked(frameNumber: frameNumber, frame: frame, now: completedAt)
                 MirageFrameIntegrityDiagnostics.shared.recordPFrame(
                     source: .reassembledPFrame,
                     streamID: streamID,
@@ -135,6 +136,8 @@ extension FrameReassembler {
                     frameBytes: output,
                     expectedBytes: frame.expectedTotalBytes
                 )
+            } else {
+                recordCompletedVideoFrameTimingLocked(frame: frame, completedAt: completedAt)
             }
 
             let buffer = frame.buffer
@@ -256,15 +259,19 @@ extension FrameReassembler {
         return ranges
     }
 
-    func consumePFrameTimingSamples(limit: Int = 96) -> [ReceiverPFrameTimingSample] {
+    func consumePFrameTimingSamples(limit: Int = 128) -> [ReceiverPFrameTimingSample] {
         lock.lock()
         defer { lock.unlock() }
         guard !pendingPFrameTimingSamples.isEmpty else { return [] }
         let sampleLimit = max(1, limit)
+        let now = Date()
         let samples = pendingPFrameTimingSamples.suffix(sampleLimit).map {
             ReceiverPFrameTimingSample(
                 frameNumber: $0.frameNumber,
-                assemblyLatencyMs: $0.assemblyLatencyMs
+                packetSpanMs: $0.packetSpanMs,
+                completionGapMs: $0.completionGapMs,
+                completionAgeAtFeedbackMs: max(0, now.timeIntervalSince($0.completedAt) * 1000),
+                firstPacketGapMs: $0.firstPacketGapMs
             )
         }
         pendingPFrameTimingSamples.removeAll(keepingCapacity: true)

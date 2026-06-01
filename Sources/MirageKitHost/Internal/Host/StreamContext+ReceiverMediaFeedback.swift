@@ -45,6 +45,7 @@ extension StreamContext {
             currentQuality: activeQuality,
             qualityFloor: qualityFloor,
             steadyQualityCeiling: configuredQualityCeiling,
+            latencyMode: latencyMode,
             now: now
         )
         if mediaPathProfile.usesAwdlRadioPolicy {
@@ -69,6 +70,7 @@ extension StreamContext {
         }
         noteReceiverAcceptedKeyframeIfNeeded(feedback, now: now)
         noteReceiverPresentationRecoveryEvidenceIfNeeded(feedback, now: now)
+        scheduleStillQualityProbeIfNeeded(now: now, reason: "receiver-feedback")
         await scheduleReceiverFeedbackKeyframeRecoveryIfNeeded(feedback, now: now)
     }
 
@@ -249,22 +251,37 @@ extension StreamContext {
         var latestDecision: HostFrameBudgetDecision?
         let canLearnCapacity = receiverFrameBudgetCanLearnCapacity(now: now)
         let quarantineReason = receiverFrameBudgetCapacityLearningQuarantineReason(now: now)
+        let inputActive = inputIsActive(now: now)
+        let sourceStill = sourceIsStill(now: now)
+        var matchedSampleCount = 0
+        var missingCompletionCount = 0
+        var decisionCount = 0
+        var latestSampleFrame: UInt32?
         for sample in samples {
+            latestSampleFrame = sample.frameNumber
             guard let completion = recentFrameTransportCompletions.last(where: {
                 $0.frameNumber == sample.frameNumber && !$0.isKeyframe && $0.didSend
             }) else {
+                missingCompletionCount += 1
                 continue
             }
-            latestDecision = adaptivePFrameController.recordFrameTransportCompletion(
+            matchedSampleCount += 1
+            let decision = adaptivePFrameController.recordFrameTransportCompletion(
                 frameNumber: UInt64(completion.frameNumber),
                 wireBytes: completion.wireBytes,
                 packetCount: completion.packetCount,
                 isKeyframe: false,
-                sendCompletionMs: sample.assemblyLatencyMs,
+                sendCompletionMs: sample.packetSpanMs,
+                packetSpanMs: sample.packetSpanMs,
+                completionGapMs: sample.completionGapMs,
+                completionAgeAtFeedbackMs: sample.completionAgeAtFeedbackMs,
+                firstPacketGapMs: sample.firstPacketGapMs,
                 timingSource: .clientAssembled,
                 receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
                 capacityLearningAllowed: canLearnCapacity,
                 capacityLearningQuarantineReason: quarantineReason,
+                inputActive: inputActive,
+                sourceStill: sourceStill,
                 currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
                 requestedTargetBitrateBps: requestedTargetBitrate,
                 startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
@@ -274,10 +291,47 @@ extension StreamContext {
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
                 steadyQualityCeiling: configuredQualityCeiling,
+                latencyMode: latencyMode,
                 now: now
-            ) ?? latestDecision
+            )
+            if let decision {
+                latestDecision = decision
+                decisionCount += 1
+            }
         }
+        logReceiverPFrameTimingSamplesIfNeeded(
+            total: samples.count,
+            matched: matchedSampleCount,
+            missingCompletion: missingCompletionCount,
+            decisions: decisionCount,
+            latestFrame: latestSampleFrame,
+            canLearnCapacity: canLearnCapacity,
+            quarantineReason: quarantineReason,
+            now: now
+        )
         return latestDecision
+    }
+
+    private func logReceiverPFrameTimingSamplesIfNeeded(
+        total: Int,
+        matched: Int,
+        missingCompletion: Int,
+        decisions: Int,
+        latestFrame: UInt32?,
+        canLearnCapacity: Bool,
+        quarantineReason: String?,
+        now: CFAbsoluteTime
+    ) {
+        guard now - receiverPFrameTimingSampleLastLogTime >= 0.5 else { return }
+        guard missingCompletion > 0 || decisions == 0 || quarantineReason != nil else { return }
+        receiverPFrameTimingSampleLastLogTime = now
+        let latestFrameText = latestFrame.map(String.init) ?? "none"
+        MirageLogger.metrics(
+            "event=receiver_p_frame_timing_samples stream=\(streamID) total=\(total) " +
+                "matched=\(matched) missingCompletion=\(missingCompletion) decisions=\(decisions) " +
+                "latestFrame=\(latestFrameText) canLearn=\(canLearnCapacity) " +
+                "quarantine=\(quarantineReason ?? "none")"
+        )
     }
 
     private func isFrameNumber(_ frameNumber: UInt32, newerThan current: UInt32?) -> Bool {
@@ -329,18 +383,16 @@ extension StreamContext {
     private func applyFrameBudgetQuality(_ decision: HostFrameBudgetDecision) async -> Bool {
         let previousQuality = activeQuality
         if decision.state == .observing {
-            qualityCeiling = resolvedQualityCeiling
+            qualityCeiling = min(resolvedQualityCeiling, steadyQualityCeiling)
         } else {
-            qualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling)
+            qualityCeiling = min(resolvedQualityCeiling, decision.qualityCeiling, steadyQualityCeiling)
         }
         qualityFloor = resolvedRuntimeQualityFloor(for: qualityCeiling)
         keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(
             for: min(decision.keyframeQuality, qualityCeiling)
         )
         let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
-        activeQuality = decision.state == .observing
-            ? max(previousQuality, decisionQuality)
-            : decisionQuality
+        activeQuality = decision.state == .observing ? qualityCeiling : decisionQuality
         guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return false }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(
@@ -370,6 +422,7 @@ extension StreamContext {
         if queued {
             lastStillQualityRefreshKeyframeTime = now
             shouldAdmitIdleQualityProbeFrame = true
+            scheduleProcessingForPendingKeyframe(reason: "Still quality refresh", now: now)
         }
     }
 

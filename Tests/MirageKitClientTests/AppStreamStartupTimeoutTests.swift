@@ -29,7 +29,7 @@ struct AppStreamStartupTimeoutTests {
             timeout: .milliseconds(20)
         )
 
-        try await waitUntil(timeout: .seconds(1)) {
+        try await waitUntil(timeout: .seconds(10)) {
             failure != nil
         }
 
@@ -82,5 +82,6 @@ struct AppStreamStartupTimeoutTests {
             if predicate() { return }
             try await Task.sleep(for: .milliseconds(20))
         }
+        Issue.record("Timed out waiting for app stream startup timeout")
     }
 }

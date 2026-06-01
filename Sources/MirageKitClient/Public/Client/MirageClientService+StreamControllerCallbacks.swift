@@ -236,11 +236,15 @@ extension MirageClientService {
             metrics.reassemblerPendingBytes > 1_000_000 ||
             metrics.decodeBacklogFrames > 2 ||
             metrics.pendingFrameCount > 2
+        let visibleStress = metrics.presentationStallCount > 0 ||
+            metrics.displayTickNoFrameCount > 0 ||
+            (metrics.layerAcceptedFPS > 0 && metrics.visibleFrameFPS < metrics.layerAcceptedFPS * 0.85)
         let stressed = recoveryState != .idle ||
             receiverCadencePressure ||
             receiveGapPressure ||
             pFramePressure ||
             backlogPressure ||
+            visibleStress ||
             hasAudioPressure
         return stressed ? 0.10 : receiverMediaFeedbackInterval
     }

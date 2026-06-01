@@ -72,7 +72,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 1
         case .balanced:
-            return 3
+            return 4
         case .smoothest:
             return min(
                 32,
@@ -89,7 +89,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return sourceFrameIntervalMs
         case .balanced:
-            return max(45, displayFrameIntervalMs * 3)
+            return max(120, displayFrameIntervalMs * 6)
         case .smoothest:
             return max(300, baseTargetPlayoutDelayMs + 250)
         }
@@ -139,7 +139,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            return 0
+            return displayFrameIntervalMs * 2
         case .smoothest:
             switch transportPathKind {
             case .wired, .loopback:
@@ -162,7 +162,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            return 0
+            return displayFrameIntervalMs
         case .smoothest:
             switch transportPathKind {
             case .awdl:
@@ -185,7 +185,7 @@ struct MiragePresentationLatencyPolicy: Equatable, Sendable {
         case .lowestLatency:
             return 0
         case .balanced:
-            return displayFrameIntervalMs
+            return displayFrameIntervalMs * 3
         case .smoothest:
             return max(350, baseTargetPlayoutDelayMs * 2)
         }

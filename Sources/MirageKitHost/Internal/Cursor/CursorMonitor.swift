@@ -109,10 +109,7 @@ actor CursorMonitor {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
-        lastCursorTypes.removeAll()
-        lastVisibility.removeAll()
-        lastCursorPositions.removeAll()
-        lastCursorPositionSentAt.removeAll()
+        clearTrackedStreamState()
         cachedStreams.removeAll()
         lastWindowFrameRefreshTime = 0
         onCursorChange = nil
@@ -149,8 +146,7 @@ actor CursorMonitor {
         now: CFAbsoluteTime
     )
     async -> [(StreamID, CGRect)] {
-        let shouldRefreshFrames = cachedStreams.isEmpty ||
-            lastWindowFrameRefreshTime == 0 ||
+        let shouldRefreshFrames = lastWindowFrameRefreshTime == 0 ||
             now - lastWindowFrameRefreshTime >= windowFrameRefreshInterval
         if shouldRefreshFrames {
             cachedStreams = await MainActor.run { windowFrameProvider() }
@@ -161,6 +157,11 @@ actor CursorMonitor {
 
     /// Samples the current cursor state and publishes changes for active streams.
     private func pollCursor(streams: [(StreamID, CGRect)]) async {
+        guard !streams.isEmpty else {
+            clearTrackedStreamState()
+            return
+        }
+
         let sample = await currentCursorSample()
         let mouseLocation = sample.mouseLocation
 
@@ -211,6 +212,13 @@ actor CursorMonitor {
             lastCursorPositions.removeValue(forKey: streamID)
             lastCursorPositionSentAt.removeValue(forKey: streamID)
         }
+    }
+
+    private func clearTrackedStreamState() {
+        lastCursorTypes.removeAll()
+        lastVisibility.removeAll()
+        lastCursorPositions.removeAll()
+        lastCursorPositionSentAt.removeAll()
     }
 
     private func currentCursorSample() async -> CursorSample {

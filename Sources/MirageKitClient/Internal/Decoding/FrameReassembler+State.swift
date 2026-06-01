@@ -322,11 +322,25 @@ extension FrameReassembler {
 
     func recordPFrameCompletionLatencyLocked(frameNumber: UInt32, frame: PendingFrame, now: Date) {
         let latencyMs = max(0, frame.lastProgressAt.timeIntervalSince(frame.receivedAt) * 1000)
+        let completionGapMs = max(
+            0,
+            now.timeIntervalSince(lastCompletedVideoFrameCompletedAt ?? frame.receivedAt) * 1000
+        )
+        let firstPacketGapMs = max(
+            0,
+            frame.receivedAt.timeIntervalSince(lastCompletedVideoFrameFirstPacketAt ?? frame.receivedAt) * 1000
+        )
         pFrameCompletionLatencySamples.append(
             PFrameCompletionLatencySample(completedAt: now, latencyMs: latencyMs)
         )
         pendingPFrameTimingSamples.append(
-            PendingPFrameTimingSample(frameNumber: frameNumber, assemblyLatencyMs: latencyMs)
+            PendingPFrameTimingSample(
+                frameNumber: frameNumber,
+                completedAt: now,
+                packetSpanMs: latencyMs,
+                completionGapMs: completionGapMs,
+                firstPacketGapMs: firstPacketGapMs
+            )
         )
         if pendingPFrameTimingSamples.count > pendingPFrameTimingSampleLimit {
             pendingPFrameTimingSamples.removeFirst(
@@ -334,6 +348,12 @@ extension FrameReassembler {
             )
         }
         trimPFrameCompletionLatencySamplesLocked(now: now)
+        recordCompletedVideoFrameTimingLocked(frame: frame, completedAt: now)
+    }
+
+    func recordCompletedVideoFrameTimingLocked(frame: PendingFrame, completedAt: Date) {
+        lastCompletedVideoFrameCompletedAt = completedAt
+        lastCompletedVideoFrameFirstPacketAt = frame.receivedAt
     }
 
     func pFrameCompletionLatencyMetricsLocked(

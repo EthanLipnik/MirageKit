@@ -202,6 +202,7 @@ extension StreamContext {
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
                 steadyQualityCeiling: configuredQualityCeiling,
+                latencyMode: latencyMode,
                 now: now
             )
         } else {
@@ -215,6 +216,7 @@ extension StreamContext {
                 currentQuality: activeQuality,
                 qualityFloor: qualityFloor,
                 steadyQualityCeiling: configuredQualityCeiling,
+                latencyMode: latencyMode,
                 now: now
             )
         }
