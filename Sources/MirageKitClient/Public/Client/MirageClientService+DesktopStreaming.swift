@@ -142,6 +142,7 @@ public extension MirageClientService {
             }
         }
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
+        request.allowEncoderCatchUpQualityAdjustment = encoderRequest.allowEncoderCatchUpQualityAdjustment
         request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
         request.disableResolutionCap = encoderRequest.disableResolutionCap
         request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps

@@ -73,6 +73,9 @@ package struct StartDesktopStreamMessage: Codable {
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
 
+    /// Client-requested quality reduction when host encoding falls behind.
+    package var allowEncoderCatchUpQualityAdjustment: Bool?
+
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
 
@@ -135,6 +138,7 @@ package struct StartDesktopStreamMessage: Codable {
         latencyMode: MirageStreamLatencyMode? = nil,
         hostBufferingPolicy: MirageHostBufferingPolicy? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
+        allowEncoderCatchUpQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
@@ -161,6 +165,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.latencyMode = latencyMode
         self.hostBufferingPolicy = hostBufferingPolicy
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+        self.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
@@ -195,6 +200,7 @@ package struct StartDesktopStreamMessage: Codable {
             latencyMode: request.latencyMode,
             hostBufferingPolicy: request.hostBufferingPolicy,
             allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
+            allowEncoderCatchUpQualityAdjustment: request.allowEncoderCatchUpQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: request.disableResolutionCap,
             streamScale: request.streamScale,

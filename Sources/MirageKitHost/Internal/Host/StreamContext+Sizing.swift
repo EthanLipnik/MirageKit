@@ -150,11 +150,17 @@ extension StreamContext {
     }
 
     func scaledOutputSize(for baseSize: CGSize) -> CGSize {
-        MirageStreamGeometry.resolveEncodedPlan(
+        let effectiveEncoderMaxWidth = disableResolutionCap
+            ? nil
+            : encoderMaxWidth ?? Int(Self.maxEncodedWidth)
+        let effectiveEncoderMaxHeight = disableResolutionCap
+            ? nil
+            : encoderMaxHeight ?? Int(Self.maxEncodedHeight)
+        return MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: baseSize,
             requestedStreamScale: streamScale,
-            encoderMaxWidth: encoderMaxWidth ?? Int(Self.maxEncodedWidth),
-            encoderMaxHeight: encoderMaxHeight ?? Int(Self.maxEncodedHeight),
+            encoderMaxWidth: effectiveEncoderMaxWidth,
+            encoderMaxHeight: effectiveEncoderMaxHeight,
             disableResolutionCap: disableResolutionCap
         ).encodedPixelSize
     }

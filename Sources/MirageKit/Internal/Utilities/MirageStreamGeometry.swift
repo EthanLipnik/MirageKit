@@ -22,7 +22,7 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     /// Caller-requested stream scale after clamping to Mirage's supported range.
     package let requestedStreamScale: CGFloat
 
-    /// Stream scale after applying encoder limits and resolution caps.
+    /// Stream scale after applying encoder limits and resolution caps when enabled.
     package let resolvedStreamScale: CGFloat
 
     /// Final encoded pixel size after scale resolution and encoder alignment.
@@ -78,6 +78,7 @@ package struct MirageStreamGeometry: Sendable, Equatable {
     }
 
     /// Resolves encoded stream size from a pixel-size base and optional encoder limits.
+    /// When resolution caps are disabled, the requested scale is authoritative.
     package static func resolveEncodedPlan(
         basePixelSize: CGSize,
         requestedStreamScale: CGFloat = 1.0,
@@ -88,11 +89,11 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         let normalizedBasePixelSize = alignedEncodedSize(basePixelSize)
         let clampedRequestedScale = clampStreamScale(requestedStreamScale)
         let resolvedScale: CGFloat
-        let widthLimit = positiveEncoderLimit(encoderMaxWidth) ?? normalizedBasePixelSize.width
-        let heightLimit = positiveEncoderLimit(encoderMaxHeight) ?? normalizedBasePixelSize.height
-        let hasExplicitResolutionLimit = positiveEncoderLimit(encoderMaxWidth) != nil ||
-            positiveEncoderLimit(encoderMaxHeight) != nil
-        if disableResolutionCap && !hasExplicitResolutionLimit {
+        let effectiveEncoderMaxWidth = disableResolutionCap ? nil : encoderMaxWidth
+        let effectiveEncoderMaxHeight = disableResolutionCap ? nil : encoderMaxHeight
+        let widthLimit = positiveEncoderLimit(effectiveEncoderMaxWidth) ?? normalizedBasePixelSize.width
+        let heightLimit = positiveEncoderLimit(effectiveEncoderMaxHeight) ?? normalizedBasePixelSize.height
+        if disableResolutionCap {
             resolvedScale = clampedRequestedScale
         } else {
             let widthScale = normalizedBasePixelSize.width > 0 ? widthLimit / normalizedBasePixelSize.width : 1.0

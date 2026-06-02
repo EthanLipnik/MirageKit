@@ -77,6 +77,7 @@ extension StreamContext {
         guard elapsedMs > maxEncodeTimeMs else { return false }
         MirageLogger.stream("Encoder in-flight stalled for \(Int(elapsedMs))ms (\(label)), scheduling reset")
         inFlightCount = 0
+        encoderInFlightCountSnapshot = inFlightCount
         lastEncodeActivityTime = 0
         isKeyframeEncoding = false
         needsEncoderReset = true
@@ -125,8 +126,17 @@ extension StreamContext {
                 "inputActive=\(inputActive) sourceStill=\(sourceStill) " +
                 "inFlight=\(inFlightCount)/\(maxInFlightFrames) inbox=\(pending.pending)/\(pending.capacity) " +
                 "drainDropped=\(drainDropped) queueKB=\(Self.roundedKilobytes(queueBytes)) " +
-                "quality=\(qualityText) target=\(targetText)Mbps keyframe=\(forceKeyframe)"
+            "quality=\(qualityText) target=\(targetText)Mbps keyframe=\(forceKeyframe)"
         )
+    }
+
+    private func recordEncodeStartCaptureAge(
+        frame: CapturedFrame,
+        encodeStartTime: CFAbsoluteTime
+    ) {
+        let captureAgeMs = max(0, (encodeStartTime - frame.captureTime) * 1_000)
+        latestEncodeStartCaptureAgeMs = captureAgeMs
+        worstEncodeStartCaptureAgeMs = max(worstEncodeStartCaptureAgeMs, captureAgeMs)
     }
 
     private func scheduleEncoderResetRetry(after delaySeconds: Double, reason: String) {
@@ -201,9 +211,27 @@ extension StreamContext {
 
         while inFlightCount < maxInFlightFrames {
             let queueBytesBeforeDrain = packetSender?.queuedByteCount ?? 0
+            let encoderAverageEncodeMs = await encoder?.averageEncodeTimeMs ?? encoderAverageEncodeMsSnapshot
+            encoderAverageEncodeMsSnapshot = encoderAverageEncodeMs
+            encoderInFlightCountSnapshot = inFlightCount
+            let pendingBeforeDrain = frameInbox.pendingSnapshot
+            let encoderLagSnapshot = HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: encoderAverageEncodeMs,
+                inFlightCount: inFlightCount,
+                frameRate: currentFrameRate
+            )
+            let shouldDrainNewestForEncoderLag = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+                latencyMode: latencyMode,
+                hostBufferingPolicy: hostBufferingPolicy,
+                pendingFrameCount: pendingBeforeDrain.pending,
+                frameCapacity: pendingBeforeDrain.capacity,
+                encoderLag: encoderLagSnapshot
+            )
             let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
                 .newest
             } else if queueBytesBeforeDrain > queuePressureBytes {
+                .newest
+            } else if shouldDrainNewestForEncoderLag {
                 .newest
             } else {
                 .fifo
@@ -213,8 +241,9 @@ extension StreamContext {
                 let droppedCount = UInt64(drainResult.droppedBeforeDelivery)
                 captureDroppedIntervalCount += droppedCount
                 droppedFrameCount += droppedCount
+                let dropReason = shouldDrainNewestForEncoderLag ? "Encoder lag" : "Latency burst"
                 MirageLogger.metrics(
-                    "Latency burst dropped \(drainResult.droppedBeforeDelivery) stale frames before encode for stream \(streamID)"
+                    "\(dropReason) dropped \(drainResult.droppedBeforeDelivery) stale frames before encode for stream \(streamID)"
                 )
             }
             guard let frame = drainResult.frame else { return }
@@ -226,6 +255,7 @@ extension StreamContext {
                 let stuckTime = (CFAbsoluteTimeGetCurrent() - lastEncodeActivityTime) * 1000
                 MirageLogger.stream("Encoder stuck for \(Int(stuckTime))ms, scheduling reset")
                 inFlightCount = 0
+                encoderInFlightCountSnapshot = inFlightCount
                 lastEncodeActivityTime = 0
                 needsEncoderReset = true
             }
@@ -357,6 +387,7 @@ extension StreamContext {
                 guard let encoder else { continue }
                 encodeAttemptIntervalCount += 1
                 let encodeStartTime = CFAbsoluteTimeGetCurrent()
+                recordEncodeStartCaptureAge(frame: frame, encodeStartTime: encodeStartTime)
                 logEncodeStageIfNeeded(
                     frame: frame,
                     encodeStartTime: encodeStartTime,
@@ -389,6 +420,7 @@ extension StreamContext {
                 // inFlightCount=0, skips its decrement, and the pipeline stalls.
                 if inFlightCount == 0 { lastEncodeActivityTime = encodeStartTime }
                 inFlightCount += 1
+                encoderInFlightCountSnapshot = inFlightCount
                 if forceKeyframe { isKeyframeEncoding = true }
 
                 let result = try await encoder.encodeFrame(frame, forceKeyframe: forceKeyframe)
@@ -399,6 +431,7 @@ extension StreamContext {
                     if isIdleFrame { idleEncodedCount += 1 }
                 case let .skipped(reason):
                     inFlightCount -= 1
+                    encoderInFlightCountSnapshot = inFlightCount
                     if inFlightCount == 0 {
                         lastEncodeActivityTime = 0
                         if forceKeyframe { isKeyframeEncoding = false }
@@ -414,6 +447,7 @@ extension StreamContext {
                 }
             } catch {
                 inFlightCount -= 1
+                encoderInFlightCountSnapshot = inFlightCount
                 if inFlightCount == 0 {
                     lastEncodeActivityTime = 0
                     if forceKeyframe { isKeyframeEncoding = false }
@@ -430,6 +464,8 @@ extension StreamContext {
     func finishEncoding() async {
         guard inFlightCount > 0 else { return }
         inFlightCount -= 1
+        encoderInFlightCountSnapshot = inFlightCount
+        encoderAverageEncodeMsSnapshot = await encoder?.averageEncodeTimeMs ?? encoderAverageEncodeMsSnapshot
         lastEncodeActivityTime = CFAbsoluteTimeGetCurrent()
 
         if inFlightCount == 0, isKeyframeEncoding {

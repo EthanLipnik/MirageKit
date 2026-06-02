@@ -63,8 +63,8 @@ struct MirageStreamGeometryTests {
         #expect(abs(aspect - (4.0 / 3.0)) < 0.005)
     }
 
-    @Test("Geometry honors explicit encoder limits even when default caps are disabled")
-    func geometryHonorsExplicitEncoderLimitsWhenDefaultCapsAreDisabled() {
+    @Test("Geometry ignores encoder limits when resolution caps are disabled")
+    func geometryIgnoresEncoderLimitsWhenResolutionCapsAreDisabled() {
         let geometry = MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: CGSize(width: 8240, height: 4000),
             requestedStreamScale: 1.0,
@@ -73,9 +73,8 @@ struct MirageStreamGeometryTests {
             disableResolutionCap: true
         )
 
-        #expect(geometry.encodedPixelSize.width <= 3840)
-        #expect(geometry.encodedPixelSize.height <= 2160)
-        #expect(geometry.resolvedStreamScale < 1.0)
+        #expect(geometry.encodedPixelSize == CGSize(width: 8240, height: 4000))
+        #expect(geometry.resolvedStreamScale == 1.0)
     }
 
     @Test("Geometry keeps uncapped scale when no explicit encoder limit exists")

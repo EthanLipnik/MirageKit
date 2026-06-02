@@ -26,6 +26,8 @@ extension StreamContext {
     /// Clears in-flight encoder bookkeeping for a stream reconfiguration.
     private func resetInFlightEncodingStateForReconfiguration() {
         inFlightCount = 0
+        encoderInFlightCountSnapshot = 0
+        encoderAverageEncodeMsSnapshot = 0
         lastEncodeActivityTime = 0
         isKeyframeEncoding = false
         needsEncoderReset = false
@@ -57,6 +59,7 @@ extension StreamContext {
     /// Clears capture, startup, and pressure state that is no longer valid after reconfiguration.
     private func clearCaptureAndPressureStateForReconfiguration() {
         clearBackpressureState(log: false)
+        realtimeLastEncoderThroughputAdjustmentTime = 0
         lastCapturedFrame = nil
         cachedStartupFrame = nil
         lastCapturedFrameTime = 0

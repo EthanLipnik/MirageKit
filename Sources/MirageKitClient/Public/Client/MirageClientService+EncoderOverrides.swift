@@ -166,6 +166,13 @@ extension MirageClientService {
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
+        if let allowEncoderCatchUpQualityAdjustment = overrides.allowEncoderCatchUpQualityAdjustment {
+            request.allowEncoderCatchUpQualityAdjustment = allowEncoderCatchUpQualityAdjustment
+            MirageLogger.client(
+                "Requesting encoder catch-up quality adjustment: " +
+                    "\(allowEncoderCatchUpQualityAdjustment ? "enabled" : "disabled")"
+            )
+        }
         if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
             request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
             MirageLogger

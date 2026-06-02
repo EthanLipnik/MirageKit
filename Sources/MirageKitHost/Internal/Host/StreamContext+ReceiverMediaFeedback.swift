@@ -279,7 +279,6 @@ extension StreamContext {
                 timingSource: .clientAssembled,
                 receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
                 capacityLearningAllowed: canLearnCapacity,
-                capacityLearningQuarantineReason: quarantineReason,
                 inputActive: inputActive,
                 sourceStill: sourceStill,
                 currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
@@ -398,7 +397,7 @@ extension StreamContext {
             for: min(decision.keyframeQuality, qualityCeiling)
         )
         let decisionQuality = max(qualityFloor, min(qualityCeiling, decision.quality))
-        activeQuality = decision.state == .observing ? qualityCeiling : decisionQuality
+        activeQuality = decisionQuality
         guard abs(Double(activeQuality - previousQuality)) > 0.0001 else { return false }
         await encoder?.updateQuality(activeQuality)
         MirageLogger.metrics(

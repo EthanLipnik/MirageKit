@@ -38,15 +38,10 @@ package struct MirageDesktopBitrateRequestSemantics: Sendable, Equatable {
             )
         }
 
-        let scaledRequestedTargetBitrate = Int((Double(enteredBitrateBps) * geometryScaleFactor).rounded(.down))
-        let scaledBitrateAdaptationCeiling = bitrateAdaptationCeilingBps.map {
-            Int((Double($0) * geometryScaleFactor).rounded(.down))
-        }
-
         return MirageDesktopBitrateRequestSemantics(
             enteredBitrateBps: enteredBitrateBps,
-            requestedTargetBitrateBps: max(1, scaledRequestedTargetBitrate),
-            bitrateAdaptationCeilingBps: scaledBitrateAdaptationCeiling.map { max(1, $0) },
+            requestedTargetBitrateBps: max(1, enteredBitrateBps),
+            bitrateAdaptationCeilingBps: bitrateAdaptationCeilingBps.map { max(1, $0) },
             geometryScaleFactor: geometryScaleFactor
         )
     }

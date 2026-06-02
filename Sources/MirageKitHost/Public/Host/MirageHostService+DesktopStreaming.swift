@@ -15,8 +15,8 @@ import ScreenCaptureKit
 
 extension MirageHostService {
     /// Normalizes a requested desktop bitrate. The user's chosen bitrate is
-    /// honored literally — under load the host drops frames rather than capping
-    /// or reducing the configured rate (custom/adaptive-off owns the tradeoff).
+    /// honored literally as the client ceiling; HEVC streams may start below it
+    /// and climb as the host proves encoder and transport headroom.
     nonisolated static func resolvedDesktopEncoderBitrate(requestedBitrate: Int?) -> Int? {
         MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: requestedBitrate)
     }
@@ -37,6 +37,7 @@ func startDesktopStream(
     latencyMode: MirageStreamLatencyMode = .lowestLatency,
     hostBufferingPolicy: MirageHostBufferingPolicy = .freshestFrame,
     allowRuntimeQualityAdjustment: Bool?,
+    allowEncoderCatchUpQualityAdjustment: Bool?,
     lowLatencyHighResolutionCompressionBoost: Bool,
     disableResolutionCap: Bool,
     streamScale: CGFloat?,
@@ -147,6 +148,7 @@ async throws {
             latencyMode: latencyMode,
             hostBufferingPolicy: hostBufferingPolicy,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
+            allowEncoderCatchUpQualityAdjustment: allowEncoderCatchUpQualityAdjustment,
             upscalingMode: upscalingMode,
             targetFrameRate: targetFrameRate,
             disableResolutionCap: disableResolutionCap
@@ -219,6 +221,7 @@ async throws {
             audioConfiguration: resolvedAudioConfiguration,
             mediaMaxPacketSize: mediaMaxPacketSize,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
+            allowEncoderCatchUpQualityAdjustment: allowEncoderCatchUpQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             capturePressureProfile: capturePressureProfile,

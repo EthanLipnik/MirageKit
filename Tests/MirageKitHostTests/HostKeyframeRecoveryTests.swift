@@ -260,8 +260,8 @@ struct HostKeyframeRecoveryTests {
         await context.stop()
     }
 
-    @Test("Low-latency high-res boost does not force compression at 600 Mbps")
-    func lowLatencyHighResBoostRespectsHighBitrateHeadroom() async {
+    @Test("Low-latency high-res boost keeps a modest encoder-speed bias at 600 Mbps")
+    func lowLatencyHighResBoostKeepsModestEncoderSpeedBiasAtHighBitrate() async {
         let boostedContext = makeContext(
             frameRate: 60,
             bitrate: 600_000_000,
@@ -284,8 +284,9 @@ struct HostKeyframeRecoveryTests {
 
         let boosted = await boostedContext.activeQuality
         let baseline = await baselineContext.activeQuality
-        #expect(boosted >= 0.90)
-        #expect(abs(boosted - baseline) < 0.02)
+        #expect(boosted >= 0.82)
+        #expect(boosted < baseline)
+        #expect(abs(boosted - baseline) < 0.10)
     }
 
     @Test("Low-latency high-res boost remains aggressive at 25 Mbps")
@@ -316,8 +317,8 @@ struct HostKeyframeRecoveryTests {
         #expect(boosted + 0.07 < baseline)
     }
 
-    @Test("Runtime bitrate raises update active quality ceiling")
-    func runtimeBitrateRaisesUpdateActiveQualityCeiling() async {
+    @Test("Runtime bitrate raises quality ceiling without active quality jump")
+    func runtimeBitrateRaisesQualityCeilingWithoutActiveQualityJump() async {
         let context = makeContext(
             frameRate: 60,
             bitrate: 32_000_000,
@@ -338,8 +339,7 @@ struct HostKeyframeRecoveryTests {
         )
 
         let raisedQuality = await context.activeQuality
-        #expect(raisedQuality >= 0.70)
-        #expect(raisedQuality > startupQuality + 0.20)
+        #expect(abs(raisedQuality - startupQuality) < 0.0001)
         #expect(await context.configuredQualityCeiling >= 0.70)
         #expect(await context.qualityCeiling >= 0.70)
     }

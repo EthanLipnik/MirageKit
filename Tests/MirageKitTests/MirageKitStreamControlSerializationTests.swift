@@ -432,6 +432,7 @@ struct MirageKitStreamControlSerializationTests {
             latencyMode: .lowestLatency,
             hostBufferingPolicy: .freshestFrame,
             allowRuntimeQualityAdjustment: false,
+            allowEncoderCatchUpQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
             streamScale: 1.0,
@@ -449,6 +450,7 @@ struct MirageKitStreamControlSerializationTests {
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)
+        #expect(decoded.allowEncoderCatchUpQualityAdjustment == true)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
     }
 

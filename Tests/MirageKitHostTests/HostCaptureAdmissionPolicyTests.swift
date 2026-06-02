@@ -50,5 +50,93 @@ struct HostCaptureAdmissionPolicyTests {
 
         #expect(shouldDrop)
     }
+
+    @Test("Encoder lag admits newest replacement for balanced freshest-frame streams")
+    func encoderLagAdmitsNewestReplacementForBalancedFreshestFrameStreams() {
+        let shouldDrop = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+            latencyMode: .balanced,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 2,
+            frameCapacity: 2,
+            backpressureActive: false,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 1,
+                frameRate: 60
+            )
+        )
+
+        #expect(!shouldDrop)
+    }
+
+    @Test("Balanced encoder lag drains newest when pending frames would go stale")
+    func balancedEncoderLagDrainsNewestWhenPendingFramesWouldGoStale() {
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .balanced,
+            hostBufferingPolicy: .freshestFrame,
+            pendingFrameCount: 2,
+            frameCapacity: 2,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 1,
+                frameRate: 60
+            )
+        )
+
+        #expect(shouldDrainNewest)
+    }
+
+    @Test("Smoothest encoder lag keeps a short elastic queue")
+    func smoothestEncoderLagKeepsShortElasticQueue() {
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .smoothest,
+            hostBufferingPolicy: .stability,
+            pendingFrameCount: 2,
+            frameCapacity: 3,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 1,
+                frameRate: 60
+            )
+        )
+
+        #expect(!shouldDrainNewest)
+    }
+
+    @Test("Smoothest encoder lag cuts before backlog can grow")
+    func smoothestEncoderLagCutsBeforeBacklogCanGrow() {
+        let shouldDropNewestCapture = HostCaptureAdmissionPolicy.shouldDropCapturedFrame(
+            latencyMode: .smoothest,
+            hostBufferingPolicy: .stability,
+            pendingFrameCount: 3,
+            frameCapacity: 3,
+            backpressureActive: false,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 1,
+                frameRate: 60
+            )
+        )
+        let shouldDrainNewest = HostCaptureAdmissionPolicy.shouldDrainNewestBeforeEncode(
+            latencyMode: .smoothest,
+            hostBufferingPolicy: .stability,
+            pendingFrameCount: 3,
+            frameCapacity: 3,
+            encoderLag: HostCaptureAdmissionPolicy.EncoderLagSnapshot(
+                averageEncodeMs: 30,
+                inFlightCount: 1,
+                frameRate: 60
+            )
+        )
+
+        #expect(!shouldDropNewestCapture)
+        #expect(shouldDrainNewest)
+        #expect(
+            HostCaptureAdmissionPolicy.preEncodeBacklogCapMs(
+                latencyMode: .smoothest,
+                frameRate: 60
+            ) <= 3_000
+        )
+    }
 }
 #endif

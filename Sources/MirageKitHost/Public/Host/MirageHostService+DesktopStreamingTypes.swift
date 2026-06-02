@@ -176,6 +176,7 @@ extension MirageHostService {
         let latencyMode: MirageStreamLatencyMode
         let hostBufferingPolicy: MirageHostBufferingPolicy
         let allowRuntimeQualityAdjustment: Bool?
+        let allowEncoderCatchUpQualityAdjustment: Bool?
         let upscalingMode: MirageUpscalingMode?
         let targetFrameRate: Int?
         let disableResolutionCap: Bool
@@ -188,6 +189,7 @@ extension MirageHostService {
         let audioConfiguration: MirageAudioConfiguration
         let mediaMaxPacketSize: Int
         let allowRuntimeQualityAdjustment: Bool?
+        let allowEncoderCatchUpQualityAdjustment: Bool?
         let lowLatencyHighResolutionCompressionBoost: Bool
         let disableResolutionCap: Bool
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile

@@ -24,6 +24,7 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostFullPixels: Double = 10_500_000 // ~5K and above
     private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.06
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
+    private static let lowLatencyHighResolutionBoostMinimumPressureScale: Float = 0.45
     private static let mapperMinimumQuality: Float = 0.03
 
     private struct DerivedQualityTargets {
@@ -46,6 +47,7 @@ extension StreamContext {
                 requestedCeilingBps: bitrateAdaptationCeiling,
                 enteredBitrateBps: explicitEnteredTargetBitrate,
                 runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+                encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled,
                 codec: encoderConfig.codec,
                 outputSize: outputSize,
                 frameRate: currentFrameRate,
@@ -65,6 +67,7 @@ extension StreamContext {
         bitrateAdaptationCeiling = decision.maximumCeilingBps
         realtimeRuntimeBitrateCeilingBps = decision.startupBitrateBps
         realtimeMinimumBitrateFloorBps = decision.minimumBitrateFloorBps
+        encoderThroughputMinimumBitrateFloorBps = decision.encoderThroughputMinimumBitrateFloorBps
         realtimeSenderPacingBitrateBps = decision.startupBitrateBps
         await packetSender?.setTargetBitrateBps(decision.startupBitrateBps)
         if encoder != nil, previousBitrate != decision.startupBitrateBps {
@@ -171,7 +174,10 @@ extension StreamContext {
             height: height,
             frameRate: frameRate
         ) {
-            Float(MirageBitrateQualityMapper.compressionPressure(for: bpp))
+            max(
+                Self.lowLatencyHighResolutionBoostMinimumPressureScale,
+                Float(MirageBitrateQualityMapper.compressionPressure(for: bpp))
+            )
         } else {
             1.0
         }
@@ -278,10 +284,6 @@ extension StreamContext {
         let previousActiveQuality = activeQuality
         if activeQuality > targets.frameQuality {
             activeQuality = targets.frameQuality
-            await encoder?.updateQuality(activeQuality)
-        } else if reason == HostAdaptivePFrameController.Reason.healthy.rawValue,
-                  activeQuality < targets.frameQuality {
-            activeQuality = min(qualityCeiling, targets.frameQuality)
             await encoder?.updateQuality(activeQuality)
         }
 

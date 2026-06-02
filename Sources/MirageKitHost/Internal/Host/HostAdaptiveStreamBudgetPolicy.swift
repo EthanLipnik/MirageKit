@@ -16,6 +16,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let requestedCeilingBps: Int?
         let enteredBitrateBps: Int?
         let runtimeQualityAdjustmentEnabled: Bool
+        let encoderCatchUpQualityAdjustmentEnabled: Bool
         let codec: MirageVideoCodec
         let outputSize: CGSize
         let frameRate: Int
@@ -27,6 +28,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         let startupBitrateBps: Int
         let maximumCeilingBps: Int
         let minimumBitrateFloorBps: Int
+        let encoderThroughputMinimumBitrateFloorBps: Int
         let reason: String
     }
 
@@ -41,6 +43,8 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     }
 
     private static let fallbackMinimumFloorBps = 4_000_000
+    private static let highResolutionManualStartupPixels = 10_500_000.0
+    private static let highResolutionManualFloorFraction = 0.60
 
     static func resolve(_ request: Request) -> Decision? {
         guard request.runtimeQualityAdjustmentEnabled else { return nil }
@@ -76,8 +80,18 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         )
 
         let explicitStartup = normalized(request.enteredBitrateBps)
-        let clientStartupLimited = if let explicitStartup, pathBudget.honorsRequestedStartup {
-            explicitStartup
+        let manualFloor = request.requestedCeilingBps == nil ? manualMinimumFloorBitrate(
+            explicitStartup: explicitStartup,
+            maximumCeiling: maximumCeiling,
+            outputSize: request.outputSize
+        ) : nil
+        let clientStartupLimited = if let explicitStartup {
+            manualStartupBitrate(
+                explicitStartup: explicitStartup,
+                hostStartup: hostStartup,
+                outputSize: request.outputSize,
+                pathBudget: pathBudget
+            )
         } else if let requestedTarget, pathBudget.honorsRequestedStartup {
             min(hostStartup, requestedTarget)
         } else if let requestedTarget {
@@ -85,20 +99,25 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
         } else {
             hostStartup
         }
-        var startupBitrate = min(maximumCeiling, max(1, clientStartupLimited))
+        var startupBitrate = min(maximumCeiling, max(manualFloor ?? 1, clientStartupLimited))
         if let requestedTarget, explicitStartup == nil, requestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
         } else if let requestedTarget, !pathBudget.honorsRequestedStartup, requestedTarget > hostStartup {
             startupBitrate = min(maximumCeiling, hostStartup)
         }
-        if let explicitStartup {
-            startupBitrate = min(maximumCeiling, explicitStartup)
-        }
 
         let minimumFloor = min(
-            max(1, startupBitrate),
-            max(1, pathBudget.minimumFloorBps)
+            max(1, maximumCeiling),
+            max(1, pathBudget.minimumFloorBps, manualFloor ?? 0)
         )
+        let encoderThroughputMinimumFloor = if request.encoderCatchUpQualityAdjustmentEnabled {
+            min(
+                max(1, maximumCeiling),
+                max(1, pathBudget.minimumFloorBps)
+            )
+        } else {
+            minimumFloor
+        }
         let boundedCeiling = max(startupBitrate, maximumCeiling, minimumFloor)
         let reason = pathBudget.label
 
@@ -106,6 +125,7 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             startupBitrateBps: startupBitrate,
             maximumCeilingBps: boundedCeiling,
             minimumBitrateFloorBps: minimumFloor,
+            encoderThroughputMinimumBitrateFloorBps: encoderThroughputMinimumFloor,
             reason: reason
         )
     }
@@ -113,6 +133,35 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     private static func normalized(_ bitrate: Int?) -> Int? {
         guard let bitrate, bitrate > 0 else { return nil }
         return bitrate
+    }
+
+    private static func manualStartupBitrate(
+        explicitStartup: Int,
+        hostStartup: Int,
+        outputSize: CGSize,
+        pathBudget: PathBudget
+    ) -> Int {
+        guard pathBudget.honorsRequestedStartup else {
+            return min(explicitStartup, hostStartup)
+        }
+        let pixelCount = max(0, outputSize.width) * max(0, outputSize.height)
+        guard pixelCount >= highResolutionManualStartupPixels,
+              explicitStartup > hostStartup else {
+            return explicitStartup
+        }
+        return hostStartup
+    }
+
+    private static func manualMinimumFloorBitrate(
+        explicitStartup: Int?,
+        maximumCeiling: Int,
+        outputSize: CGSize
+    ) -> Int? {
+        guard let explicitStartup else { return nil }
+        let pixelCount = max(0, outputSize.width) * max(0, outputSize.height)
+        guard pixelCount >= highResolutionManualStartupPixels else { return nil }
+        let floor = Int((Double(explicitStartup) * highResolutionManualFloorFraction).rounded(.down))
+        return min(maximumCeiling, max(1, floor))
     }
 
     private static func clientMaximumCeiling(

@@ -89,6 +89,39 @@ struct HostAdaptivePFrameControllerTests {
         #expect(decision.maxWireBytes < frameBytes(for: 60_000_000))
     }
 
+    @Test("Receiver pressure still cuts while capacity learning is paused")
+    func receiverPressureStillCutsWhileCapacityLearningIsPaused() throws {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = try #require(recordDelivery(
+            controller: &controller,
+            capacityLearningAllowed: false,
+            wireBytes: 240 * 1024,
+            packetSpanMs: 80,
+            completionGapMs: 80
+        ))
+
+        #expect(decision.reason == .pFrameLatency)
+        #expect(decision.state == .severe)
+        #expect(decision.maxWireBytes < frameBytes(for: 60_000_000))
+    }
+
+    @Test("Clean samples do not raise quality while capacity learning is paused")
+    func cleanSamplesDoNotRaiseQualityWhileCapacityLearningIsPaused() {
+        var controller = HostAdaptivePFrameController()
+
+        let decision = recordDelivery(
+            controller: &controller,
+            capacityLearningAllowed: false,
+            wireBytes: 20 * 1024,
+            packetSpanMs: 3,
+            completionGapMs: 3,
+            currentQuality: 0.40
+        )
+
+        #expect(decision == nil)
+    }
+
     @Test("Timing cuts can fall below the old requested latency floor")
     func timingCutsCanFallBelowOldRequestedLatencyFloor() throws {
         var controller = HostAdaptivePFrameController()
@@ -609,6 +642,7 @@ private func recordDelivery(
     minimumFloor: Int = 2_000_000,
     inputActive: Bool = true,
     sourceStill: Bool = false,
+    capacityLearningAllowed: Bool = true,
     completionAgeAtFeedbackMs: Double = 0,
     wireBytes: Int,
     packetSpanMs: Double,
@@ -629,7 +663,7 @@ private func recordDelivery(
         firstPacketGapMs: completionGapMs,
         timingSource: .clientAssembled,
         receiverHealthy: true,
-        capacityLearningAllowed: true,
+        capacityLearningAllowed: capacityLearningAllowed,
         inputActive: inputActive,
         sourceStill: sourceStill,
         currentBitrateBps: currentBitrate,

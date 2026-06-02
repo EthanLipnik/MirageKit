@@ -47,6 +47,182 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.maximumCeilingBps == 60_000_000)
     }
 
+    @Test("High-resolution custom bitrate keeps a readability floor and manual ceiling")
+    func highResolutionCustomBitrateKeepsReadabilityFloorAndManualCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 300_000_000,
+                requestedCeilingBps: nil,
+                enteredBitrateBps: 300_000_000,
+                outputWidth: 5088,
+                outputHeight: 2864,
+                mediaPathProfile: .proximityWiredLike,
+                transportPathKind: .wired
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 180_000_000)
+        #expect(decision?.maximumCeilingBps == 300_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 180_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 12_000_000)
+    }
+
+    @Test("High-resolution custom bitrate can keep encoder catch-up pinned to readability floor")
+    func highResolutionCustomBitrateCanKeepEncoderCatchUpPinnedToReadabilityFloor() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 300_000_000,
+                requestedCeilingBps: nil,
+                enteredBitrateBps: 300_000_000,
+                encoderCatchUpQualityAdjustmentEnabled: false,
+                outputWidth: 5088,
+                outputHeight: 2864,
+                mediaPathProfile: .proximityWiredLike,
+                transportPathKind: .wired
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 180_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 180_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 180_000_000)
+    }
+
+    @Test("High-resolution custom adaptive stream keeps elastic recovery floor")
+    func highResolutionCustomAdaptiveStreamKeepsElasticRecoveryFloor() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 300_000_000,
+                requestedCeilingBps: 300_000_000,
+                enteredBitrateBps: 300_000_000,
+                outputWidth: 5088,
+                outputHeight: 2864,
+                mediaPathProfile: .proximityWiredLike,
+                transportPathKind: .wired
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 140_000_000)
+        #expect(decision?.maximumCeilingBps == 300_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 12_000_000)
+        #expect(decision?.encoderThroughputMinimumBitrateFloorBps == 12_000_000)
+    }
+
+    @Test("Realtime budget clamps encoder hint to manual readability floor")
+    func realtimeBudgetClampsEncoderHintToManualReadabilityFloor() async {
+        let context = makeContext(
+            bitrate: 300_000_000,
+            enteredBitrate: 300_000_000,
+            bitrateAdaptationCeiling: nil,
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.applyRealtimeBudgetBitrate(
+            12_000_000,
+            ceilingBitrateBps: 300_000_000,
+            encoderRateHintBps: 12_000_000,
+            senderPacingBitrateBps: 12_000_000,
+            reason: "unit-test"
+        )
+
+        let settings = await context.encoderSettings
+        #expect(settings.bitrate == 180_000_000)
+        #expect(context.currentTargetBitrateBps == 180_000_000)
+        #expect(await context.realtimeEncoderRateHintBps == 180_000_000)
+        #expect(await context.realtimeSenderPacingBitrateBps == 180_000_000)
+    }
+
+    @Test("Encoder throughput waits for fixed custom backlog grace")
+    func encoderThroughputWaitsForFixedCustomBacklogGrace() async {
+        let context = makeContext(
+            bitrate: 300_000_000,
+            enteredBitrate: 300_000_000,
+            bitrateAdaptationCeiling: nil,
+            encoderCatchUpQualityAdjustmentEnabled: true,
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setEncodeBacklogForCatchUpTest(500)
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 33,
+            encodeAttemptFPS: 20,
+            encodedFPS: 20,
+            at: 10
+        )
+
+        let settings = await context.encoderSettings
+        #expect(settings.bitrate == 180_000_000)
+        #expect(context.currentTargetBitrateBps == 180_000_000)
+        #expect(await context.realtimeEncoderRateHintBps == nil)
+    }
+
+    @Test("Encoder throughput can cut below manual readability floor after backlog grace")
+    func encoderThroughputCanCutBelowManualReadabilityFloorAfterBacklogGrace() async {
+        let context = makeContext(
+            bitrate: 300_000_000,
+            enteredBitrate: 300_000_000,
+            bitrateAdaptationCeiling: nil,
+            encoderCatchUpQualityAdjustmentEnabled: true,
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setEncodeBacklogForCatchUpTest(1_200)
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 33,
+            encodeAttemptFPS: 20,
+            encodedFPS: 20,
+            at: 10
+        )
+
+        let settings = await context.encoderSettings
+        #expect((settings.bitrate ?? 0) < 180_000_000)
+        #expect((context.currentTargetBitrateBps ?? 0) < 180_000_000)
+        #expect(await context.realtimeEncoderRateHintBps == settings.bitrate)
+    }
+
+    @Test("Encoder throughput stays at readability floor when disabled")
+    func encoderThroughputStaysAtReadabilityFloorWhenDisabled() async {
+        let context = makeContext(
+            bitrate: 300_000_000,
+            enteredBitrate: 300_000_000,
+            bitrateAdaptationCeiling: nil,
+            encoderCatchUpQualityAdjustmentEnabled: false,
+            transportPathKind: .wired,
+            mediaPathProfile: .proximityWiredLike
+        )
+        let outputSize = CGSize(width: 5088, height: 2864)
+
+        await context.configureRunningForRealtimeBudgetTest()
+        await context.updateCaptureSizesIfNeeded(outputSize)
+        await context.applyDerivedQuality(for: outputSize, logLabel: nil)
+        await context.setEncodeBacklogForCatchUpTest(1_200)
+        await context.applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: 33,
+            encodeAttemptFPS: 20,
+            encodedFPS: 20,
+            at: 10
+        )
+
+        let settings = await context.encoderSettings
+        #expect(settings.bitrate == 180_000_000)
+        #expect(context.currentTargetBitrateBps == 180_000_000)
+        #expect(await context.realtimeEncoderRateHintBps == nil)
+    }
+
     @Test("Missing client ceiling keeps host-owned recovery ceiling")
     func missingClientCeilingKeepsHostOwnedRecoveryCeiling() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(
@@ -120,6 +296,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         requestedCeilingBps: Int?,
         enteredBitrateBps: Int? = nil,
         runtimeQualityAdjustmentEnabled: Bool = true,
+        encoderCatchUpQualityAdjustmentEnabled: Bool = true,
         outputWidth: Double = 1920,
         outputHeight: Double = 1080,
         frameRate: Int = 60,
@@ -131,6 +308,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             requestedCeilingBps: requestedCeilingBps,
             enteredBitrateBps: enteredBitrateBps,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+            encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled,
             codec: .hevc,
             outputSize: CGSize(width: outputWidth, height: outputHeight),
             frameRate: frameRate,
@@ -143,6 +321,7 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         bitrate: Int,
         enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
+        encoderCatchUpQualityAdjustmentEnabled: Bool = true,
         transportPathKind: MirageNetworkPathKind,
         mediaPathProfile: MirageMediaPathProfile
     ) -> StreamContext {
@@ -158,12 +337,25 @@ struct HostAdaptiveStreamBudgetPolicyTests {
             streamKind: .desktop,
             encoderConfig: config,
             runtimeQualityAdjustmentEnabled: true,
+            encoderCatchUpQualityAdjustmentEnabled: encoderCatchUpQualityAdjustmentEnabled,
             latencyMode: .lowestLatency,
             transportPathKind: transportPathKind,
             mediaPathProfile: mediaPathProfile,
             enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )
+    }
+}
+
+private extension StreamContext {
+    func configureRunningForRealtimeBudgetTest() {
+        isRunning = true
+        shouldEncodeFrames = true
+    }
+
+    func setEncodeBacklogForCatchUpTest(_ milliseconds: Double) {
+        latestEncodeStartCaptureAgeMs = milliseconds
+        worstEncodeStartCaptureAgeMs = milliseconds
     }
 }
 #endif

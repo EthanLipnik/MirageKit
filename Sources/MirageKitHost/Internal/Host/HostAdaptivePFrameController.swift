@@ -531,7 +531,6 @@ struct HostAdaptivePFrameController: Equatable {
         timingSource: TimingSource = .localSendCompletion,
         receiverHealthy: Bool,
         capacityLearningAllowed: Bool = true,
-        capacityLearningQuarantineReason: String? = nil,
         inputActive: Bool = false,
         sourceStill: Bool = false,
         currentBitrateBps: Int?,
@@ -560,14 +559,6 @@ struct HostAdaptivePFrameController: Equatable {
         )
         guard !isKeyframe else { return nil }
         guard timingSource != .localSendCompletion else { return nil }
-        guard capacityLearningAllowed else {
-            if let capacityLearningQuarantineReason {
-                latestReason = capacityLearningQuarantineReason == "local-send-completion"
-                    ? latestReason
-                    : .pFrameLatency
-            }
-            return nil
-        }
 
         let policy = ModePolicy.policy(for: latencyMode)
         let sampleAgeMs = max(0, completionAgeAtFeedbackMs ?? 0)
@@ -614,29 +605,31 @@ struct HostAdaptivePFrameController: Equatable {
             timingSource: timingSource,
             receiverHealthy: receiverHealthy
         )
-        if shouldLearnCapacity(
-            wireBytes: wireBytes,
-            currentTarget: currentTarget,
-            packetCount: packetCount,
-            currentPacketTarget: packetTarget
-        ) || shouldLearnCleanUpwardCapacity(
-            sampleBytesPerMs: sampleBytesPerMs,
-            deliveryMs: transportDeliveryMs,
-            targetClearMs: targetClearMs,
-            receiverHealthy: receiverHealthy
-        ) {
-            learnCapacity(
-                from: sample,
-                allowsDownwardLearning: !isNearPathFloor(
-                    targetBytes: currentTarget,
-                    packetTarget: packetTarget,
-                    input: input,
-                    currentFrameRate: currentFrameRate,
-                    maxPayloadSize: maxPayloadSize
+        if capacityLearningAllowed {
+            if shouldLearnCapacity(
+                wireBytes: wireBytes,
+                currentTarget: currentTarget,
+                packetCount: packetCount,
+                currentPacketTarget: packetTarget
+            ) || shouldLearnCleanUpwardCapacity(
+                sampleBytesPerMs: sampleBytesPerMs,
+                deliveryMs: transportDeliveryMs,
+                targetClearMs: targetClearMs,
+                receiverHealthy: receiverHealthy
+            ) {
+                learnCapacity(
+                    from: sample,
+                    allowsDownwardLearning: !isNearPathFloor(
+                        targetBytes: currentTarget,
+                        packetTarget: packetTarget,
+                        input: input,
+                        currentFrameRate: currentFrameRate,
+                        maxPayloadSize: maxPayloadSize
+                    )
                 )
-            )
+            }
+            updateCleanBaseline(from: sample)
         }
-        updateCleanBaseline(from: sample)
 
         let safeBytes = safeFrameWireBytes(
             sampleBytesPerMs: sampleBytesPerMs,
@@ -691,7 +684,9 @@ struct HostAdaptivePFrameController: Equatable {
             )
         }
 
-        guard receiverHealthy, now >= qualityRaiseSuppressedUntil else { return nil }
+        guard capacityLearningAllowed,
+              receiverHealthy,
+              now >= qualityRaiseSuppressedUntil else { return nil }
         let motionClass = motionClass(inputActive: inputActive, sourceStill: qualityStillEnough)
         let predictedCurrentMs = predictedDeliveryMs(
             wireBytes: currentTarget,

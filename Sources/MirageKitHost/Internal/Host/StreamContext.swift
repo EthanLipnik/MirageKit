@@ -202,6 +202,8 @@ actor StreamContext {
     var lastEncodeAttemptFPS: Double?
     var lastCaptureCadenceMetrics: StreamCaptureCadenceMetrics?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
+    var latestEncodeStartCaptureAgeMs: Double = 0
+    var worstEncodeStartCaptureAgeMs: Double = 0
     var startupBaseTime: CFAbsoluteTime = 0
     var startupLabel: String = ""
     var startupFirstCaptureLogged = false
@@ -241,6 +243,8 @@ actor StreamContext {
     var queuePressureBytes: Int = 1_200_000
     var backpressureActive: Bool = false
     nonisolated(unsafe) var backpressureActiveSnapshot: Bool = false
+    nonisolated(unsafe) var encoderAverageEncodeMsSnapshot: Double = 0
+    nonisolated(unsafe) var encoderInFlightCountSnapshot: Int = 0
     var backpressureActivatedAt: CFAbsoluteTime = 0
     var transportSendErrorTimestamps: [CFAbsoluteTime] = []
     var lastTransportSendErrorRecoveryTime: CFAbsoluteTime = 0
@@ -255,12 +259,14 @@ actor StreamContext {
     var realtimeEncoderRateHintBps: Int?
     var realtimeSenderPacingBitrateBps: Int?
     var realtimeLastEncoderRateRaiseTime: CFAbsoluteTime = 0
+    var realtimeLastEncoderThroughputAdjustmentTime: CFAbsoluteTime = 0
     var realtimePressureState: HostAdaptivePFrameController.PressureState = .observing
     var realtimePressureReason: String?
     var realtimeLastLoggedState: HostAdaptivePFrameController.PressureState = .observing
     var realtimeLastLoggedBitrateCeilingBps: Int?
     var realtimeLastLogTime: CFAbsoluteTime = 0
     nonisolated(unsafe) var realtimeMinimumBitrateFloorBps: Int = 12_000_000
+    var encoderThroughputMinimumBitrateFloorBps: Int = 12_000_000
     var receiverReassemblyBacklogFrames = 0
     var receiverReassemblyBacklogBytes = 0
     var receiverDecodeBacklogFrames = 0
@@ -362,6 +368,10 @@ actor StreamContext {
     var requestedStreamScale: CGFloat
     /// When false, runtime quality adjustments remain fixed at derived baseline quality.
     let runtimeQualityAdjustmentEnabled: Bool
+    /// Whether the client supplied an adaptive ceiling before host startup budgeting normalized it.
+    let clientRequestedBitrateAdaptationCeiling: Bool
+    /// When true, encoder overload may temporarily lower quality below the manual readability floor.
+    let encoderCatchUpQualityAdjustmentEnabled: Bool
     /// When true, lowest-latency high-resolution streams use stronger compression.
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.
@@ -392,6 +402,7 @@ actor StreamContext {
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         additionalFrameFlags: FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
+        encoderCatchUpQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = false,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
@@ -449,6 +460,8 @@ actor StreamContext {
         captureFrameRateOverride = nil
         captureFrameRate = resolvedEncoderConfig.targetFrameRate
         self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
+        clientRequestedBitrateAdaptationCeiling = bitrateAdaptationCeiling != nil
+        self.encoderCatchUpQualityAdjustmentEnabled = encoderCatchUpQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled =
             lowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap

@@ -117,6 +117,7 @@ extension MirageHostService {
                 latencyMode: latencyMode,
                 hostBufferingPolicy: hostBufferingPolicy,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
+                allowEncoderCatchUpQualityAdjustment: request.allowEncoderCatchUpQualityAdjustment,
                 lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost ?? false,
                 disableResolutionCap: request.disableResolutionCap ?? false,
                 streamScale: request.streamScale,

@@ -27,11 +27,17 @@ extension StreamContext {
         logLabel: String?
     )
     -> CGFloat {
+        let effectiveEncoderMaxWidth = disableResolutionCap
+            ? nil
+            : encoderMaxWidth ?? Int(Self.maxEncodedWidth)
+        let effectiveEncoderMaxHeight = disableResolutionCap
+            ? nil
+            : encoderMaxHeight ?? Int(Self.maxEncodedHeight)
         let plan = MirageStreamGeometry.resolveEncodedPlan(
             basePixelSize: baseSize,
             requestedStreamScale: requestedScale,
-            encoderMaxWidth: encoderMaxWidth ?? Int(Self.maxEncodedWidth),
-            encoderMaxHeight: encoderMaxHeight ?? Int(Self.maxEncodedHeight),
+            encoderMaxWidth: effectiveEncoderMaxWidth,
+            encoderMaxHeight: effectiveEncoderMaxHeight,
             disableResolutionCap: disableResolutionCap
         )
         let resolved = plan.resolvedStreamScale

@@ -13,6 +13,27 @@ import MirageKit
 
 #if os(macOS)
 extension StreamContext {
+    private static func formattedFPS(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(1)))
+    }
+
+    private func encoderCatchUpBacklogThresholdMs() -> Double {
+        let fixedCustomQuality = explicitEnteredTargetBitrate != nil &&
+            !clientRequestedBitrateAdaptationCeiling
+        if fixedCustomQuality {
+            return 1_000
+        }
+
+        switch latencyMode {
+        case .lowestLatency:
+            return 0
+        case .balanced:
+            return 350
+        case .smoothest:
+            return 1_000
+        }
+    }
+
     /// Logs periodic stream pipeline metrics and updates adaptive in-flight depth.
     func logPipelineStatsIfNeeded() async {
         let now = CFAbsoluteTimeGetCurrent()
@@ -32,6 +53,8 @@ extension StreamContext {
         lastCaptureFPS = captureFPS
         lastEncodeAttemptFPS = encodeAttemptFPS
         let encodeAvgMs = await encoder?.averageEncodeTimeMs ?? 0
+        encoderAverageEncodeMsSnapshot = encodeAvgMs
+        encoderInFlightCountSnapshot = inFlightCount
         let pendingCount = frameInbox.pendingCount
         if metricsEnabled {
             let queueBytes = packetSender?.queuedByteCount ?? 0
@@ -47,6 +70,7 @@ extension StreamContext {
             let queueKB = Self.roundedKilobytes(queueBytes)
             let captureGapText = captureGapMs.formatted(.number.precision(.fractionLength(1)))
             let syntheticText = syntheticFPS.formatted(.number.precision(.fractionLength(1)))
+            let encodeBacklogText = worstEncodeStartCaptureAgeMs.formatted(.number.precision(.fractionLength(1)))
 
             let callbackFailures = encoder?.consumeCallbackFailureCount() ?? 0
 
@@ -56,13 +80,19 @@ extension StreamContext {
                     "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
                     "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
                     "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
-                    "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
+                    "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms encodeBacklogMax=\(encodeBacklogText)ms"
             )
         }
 
         await updateInFlightLimitIfNeeded(
             averageEncodeMs: encodeAvgMs,
             pendingCount: pendingCount,
+            at: now
+        )
+        await applyEncoderThroughputBudgetIfNeeded(
+            averageEncodeMs: encodeAvgMs,
+            encodeAttemptFPS: encodeAttemptFPS,
+            encodedFPS: encodeFPS,
             at: now
         )
         resetPipelineStatsWindow()
@@ -84,6 +114,7 @@ extension StreamContext {
         encodeSkipInactiveIntervalCount = 0
         encodeSkipNoSessionIntervalCount = 0
         syntheticIntervalCount = 0
+        worstEncodeStartCaptureAgeMs = 0
     }
 
     /// Adjusts encoder concurrency to balance latency and encode budget pressure.
@@ -140,6 +171,137 @@ extension StreamContext {
         let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
         let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
+    }
+
+    func applyEncoderThroughputBudgetIfNeeded(
+        averageEncodeMs: Double,
+        encodeAttemptFPS: Double,
+        encodedFPS: Double,
+        at now: CFAbsoluteTime
+    ) async {
+        guard runtimeQualityAdjustmentEnabled,
+              encoderConfig.codec != .proRes4444,
+              averageEncodeMs > 0,
+              currentFrameRate > 0,
+              isRunning else {
+            return
+        }
+
+        let cadenceTarget = MirageStreamCadenceTarget(
+            sourceFPS: currentFrameRate,
+            displayFPS: currentFrameRate,
+            latencyMode: latencyMode
+        )
+        let frameBudgetMs = cadenceTarget.sourceFrameBudgetMs
+        guard frameBudgetMs > 0 else { return }
+
+        let pressureThreshold: Double
+        let healthyThreshold: Double
+        let minimumReductionRatio: Double
+        switch latencyMode {
+        case .lowestLatency:
+            pressureThreshold = 1.08
+            healthyThreshold = 0.82
+            minimumReductionRatio = 0.68
+        case .balanced:
+            pressureThreshold = 1.25
+            healthyThreshold = 0.84
+            minimumReductionRatio = 0.74
+        case .smoothest:
+            pressureThreshold = 1.65
+            healthyThreshold = 0.90
+            minimumReductionRatio = 0.82
+        }
+
+        let currentBitrate = currentTargetBitrateBps ??
+            encoderConfig.bitrate ??
+            requestedTargetBitrate ??
+            startupBitrate ??
+            0
+        let ceilingBitrate = bitrateAdaptationCeiling ??
+            explicitEnteredTargetBitrate ??
+            requestedTargetBitrate ??
+            startupBitrate ??
+            currentBitrate
+        guard currentBitrate > 0, ceilingBitrate > 0 else { return }
+
+        if averageEncodeMs >= frameBudgetMs * pressureThreshold {
+            guard encoderCatchUpQualityAdjustmentEnabled else { return }
+            let encoderBacklogMs = worstEncodeStartCaptureAgeMs
+            let backlogThresholdMs = encoderCatchUpBacklogThresholdMs()
+            guard backlogThresholdMs <= 0 || encoderBacklogMs >= backlogThresholdMs else { return }
+            guard now - realtimeLastEncoderThroughputAdjustmentTime >= 0.45 else { return }
+            let budgetRatio = max(0.01, frameBudgetMs / averageEncodeMs)
+            let reductionRatio = min(0.92, max(minimumReductionRatio, budgetRatio * 1.05))
+            let minimumFloor = max(1, encoderThroughputMinimumBitrateFloorBps)
+            let targetBitrate = max(
+                minimumFloor,
+                Int((Double(currentBitrate) * reductionRatio).rounded(.down))
+            )
+            guard targetBitrate < currentBitrate else { return }
+
+            realtimePressureState = .pressured
+            realtimePressureReason = "encoder-throughput"
+            realtimeLastEncoderThroughputAdjustmentTime = now
+            await applyRealtimeBudgetBitrate(
+                targetBitrate,
+                ceilingBitrateBps: ceilingBitrate,
+                encoderRateHintBps: targetBitrate,
+                senderPacingBitrateBps: targetBitrate,
+                minimumBitrateFloorBps: minimumFloor,
+                reason: "encoder-throughput"
+            )
+            let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
+            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+            let backlogText = encoderBacklogMs.formatted(.number.precision(.fractionLength(1)))
+            let thresholdText = backlogThresholdMs.formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.metrics(
+                "Encoder throughput budget cut stream \(streamID): " +
+                    "encodeAvg=\(avgText)ms budget=\(budgetText)ms backlog=\(backlogText)ms " +
+                    "threshold=\(thresholdText)ms " +
+                    "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
+                    "encodedFPS=\(Self.formattedFPS(encodedFPS))"
+            )
+            return
+        }
+
+        guard currentBitrate < ceilingBitrate,
+              averageEncodeMs <= frameBudgetMs * healthyThreshold,
+              receiverFrameBudgetCanRaiseQuality(now: now),
+              await senderFrameBudgetIsHealthy(now: now) else {
+            return
+        }
+        guard now - realtimeLastEncoderThroughputAdjustmentTime >= 0.65 else { return }
+
+        let policy = activeFrameFreshnessPolicy
+        let sourceStill = sourceIsStill(now: now, policy: policy)
+        let inputActive = inputIsActive(now: now, policy: policy)
+        let raiseRatio = sourceStill && !inputActive ? 1.28 : 1.16
+        let raiseStep = sourceStill && !inputActive ? 24_000_000 : 8_000_000
+        let targetBitrate = min(
+            ceilingBitrate,
+            max(currentBitrate + raiseStep, Int((Double(currentBitrate) * raiseRatio).rounded(.up)))
+        )
+        guard targetBitrate > currentBitrate else { return }
+
+        realtimePressureState = .observing
+        realtimePressureReason = HostAdaptivePFrameController.Reason.healthy.rawValue
+        realtimeLastEncoderThroughputAdjustmentTime = now
+        await applyRealtimeBudgetBitrate(
+            targetBitrate,
+            ceilingBitrateBps: ceilingBitrate,
+            encoderRateHintBps: targetBitrate,
+            senderPacingBitrateBps: targetBitrate,
+            reason: HostAdaptivePFrameController.Reason.healthy.rawValue
+        )
+        let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
+        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.metrics(
+            "Encoder throughput budget raised stream \(streamID): " +
+                "encodeAvg=\(avgText)ms budget=\(budgetText)ms " +
+                "target=\(currentBitrate)->\(targetBitrate) attemptFPS=\(Self.formattedFPS(encodeAttemptFPS)) " +
+                "encodedFPS=\(Self.formattedFPS(encodedFPS))"
+        )
     }
 
     func evaluateEncodedFrameBudget(
@@ -362,6 +524,13 @@ extension StreamContext {
         if receiverPresentationBacklogFrames > 3 { return "presentation-backlog" }
         if receiverLostFrameCount > 0 || receiverDiscardedPacketCount > 0 { return "receiver-loss" }
         if receiverReassemblyBacklogFrames > 2 || receiverReassemblyBacklogBytes > 650_000 { return "reassembly-backlog" }
+        let frameBudgetMs = 1_000.0 / Double(max(1, currentFrameRate))
+        if let receiverAckLagMs,
+           lastReceiverAckTime > 0,
+           now - lastReceiverAckTime <= 1.0,
+           receiverAckLagMs > frameBudgetMs * 2.0 {
+            return "receiver-ack-lag"
+        }
         return nil
     }
 
@@ -413,11 +582,10 @@ extension StreamContext {
             packetCount: completion.packetCount,
             isKeyframe: completion.isKeyframe,
             sendCompletionMs: completion.sendCompletionMs,
-                timingSource: .localSendCompletion,
-                receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
-                capacityLearningAllowed: false,
-                capacityLearningQuarantineReason: "local-send-completion",
-                currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
+            timingSource: .localSendCompletion,
+            receiverHealthy: receiverFrameBudgetIsHealthy(now: now),
+            capacityLearningAllowed: false,
+            currentBitrateBps: currentTargetBitrateBps ?? encoderConfig.bitrate,
             requestedTargetBitrateBps: requestedTargetBitrate,
             startupCeilingBps: bitrateAdaptationCeiling ?? startupBitrate,
             minimumBitrateFloorBps: realtimeMinimumBitrateFloorBps,

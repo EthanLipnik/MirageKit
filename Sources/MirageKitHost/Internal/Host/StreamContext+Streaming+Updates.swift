@@ -19,6 +19,7 @@ extension StreamContext {
         ceilingBitrateBps: Int?,
         encoderRateHintBps: Int? = nil,
         senderPacingBitrateBps: Int? = nil,
+        minimumBitrateFloorBps: Int? = nil,
         reason: String
     ) async {
         guard isRunning else { return }
@@ -26,17 +27,26 @@ extension StreamContext {
             bitrate: bitrate
         ) else { return }
         let ceiling = ceilingBitrateBps ?? bitrateAdaptationCeiling ?? requestedTargetBitrate ?? normalizedBitrate
+        let minimumBitrateFloor = max(1, minimumBitrateFloorBps ?? realtimeMinimumBitrateFloorBps)
         let targetBitrate = min(
-            max(realtimeMinimumBitrateFloorBps, normalizedBitrate),
-            max(realtimeMinimumBitrateFloorBps, ceiling)
+            max(minimumBitrateFloor, normalizedBitrate),
+            max(minimumBitrateFloor, ceiling)
         )
         guard targetBitrate > 0 else { return }
-        let encoderRateHint = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        let normalizedEncoderRateHint = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: encoderRateHintBps ?? targetBitrate
         ) ?? targetBitrate
-        let senderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+        let encoderRateHint = min(
+            max(minimumBitrateFloor, normalizedEncoderRateHint),
+            max(minimumBitrateFloor, ceiling)
+        )
+        let normalizedSenderPacingBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: senderPacingBitrateBps ?? targetBitrate
         ) ?? targetBitrate
+        let senderPacingBitrate = min(
+            max(minimumBitrateFloor, normalizedSenderPacingBitrate),
+            max(minimumBitrateFloor, ceiling)
+        )
         let now = CFAbsoluteTimeGetCurrent()
         let transportBitrateChanged = targetBitrate != currentTargetBitrateBps
         let desiredEncoderHintChanged = encoderRateHint != realtimeEncoderRateHintBps
