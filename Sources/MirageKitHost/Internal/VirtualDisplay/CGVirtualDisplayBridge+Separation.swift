@@ -21,6 +21,29 @@ func desktopMirroringDisplayIDs(
     displays.filter { $0 != targetDisplayID && !isMirageDisplay($0) }
 }
 
+func displaySeparationShouldSkipForMirageOnlyHeadlessTopology(
+    displays: [CGDirectDisplayID],
+    virtualDisplayID: CGDirectDisplayID,
+    isHeadless: Bool,
+    isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
+)
+-> Bool {
+    guard isHeadless, displays.contains(virtualDisplayID) else { return false }
+    return displays.allSatisfy { $0 == virtualDisplayID || isMirageDisplay($0) }
+}
+
+func primaryNonMirageDisplayID(
+    mainDisplayID: CGDirectDisplayID,
+    onlineDisplayIDs: [CGDirectDisplayID],
+    isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
+)
+-> CGDirectDisplayID? {
+    if onlineDisplayIDs.contains(mainDisplayID), !isMirageDisplay(mainDisplayID) {
+        return mainDisplayID
+    }
+    return onlineDisplayIDs.first { !isMirageDisplay($0) }
+}
+
 enum DisplayMirroringTargetStabilityDecision: Equatable {
     case stable
     case waitForTargetOnline
@@ -227,6 +250,18 @@ extension CGVirtualDisplayBridge {
         isHeadless: Bool
     )
     -> Bool {
+        if displaySeparationShouldSkipForMirageOnlyHeadlessTopology(
+            displays: displays,
+            virtualDisplayID: virtualDisplayID,
+            isHeadless: isHeadless
+        ) {
+            configuredDisplayOrigins[virtualDisplayID] = CGDisplayBounds(virtualDisplayID).origin
+            MirageLogger.host(
+                "Skipping display separation configuration because only Mirage displays are online"
+            )
+            return true
+        }
+
         let newMainDisplayID = CGMainDisplayID()
         let originalMainExists = displays.contains(originalMainDisplayID)
 

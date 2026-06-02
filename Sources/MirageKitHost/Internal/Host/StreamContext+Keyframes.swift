@@ -425,6 +425,7 @@ extension StreamContext {
         requiresReset: Bool = false,
         advanceEpochOnReset: Bool = true,
         ignoreExistingInFlight: Bool = false,
+        supersedesInFlightGeometry: Bool = false,
         bypassesRecoveryCooldown: Bool = false
     ) async -> Bool {
         let now = CFAbsoluteTimeGetCurrent()
@@ -434,8 +435,8 @@ extension StreamContext {
             logRecoveryKeyframeCooldownSuppression(reason: reason, now: now)
             return false
         }
-        let effectiveIgnoreExistingInFlight = ignoreExistingInFlight &&
-            !usesConstrainedKeyframeInFlightWindow
+        let effectiveIgnoreExistingInFlight = supersedesInFlightGeometry ||
+            (ignoreExistingInFlight && !usesConstrainedKeyframeInFlightWindow)
         if effectiveIgnoreExistingInFlight {
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0

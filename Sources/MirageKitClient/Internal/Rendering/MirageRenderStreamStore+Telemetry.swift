@@ -244,7 +244,8 @@ extension MirageRenderStreamStore {
     /// Builds and resets the rolling render telemetry counters for one stream.
     func renderTelemetrySnapshot(
         for streamID: StreamID,
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
+        consumesCounters: Bool = true
     ) -> RenderTelemetrySnapshot {
         guard let state = streamStateIfPresent(for: streamID) else {
             return RenderTelemetrySnapshot(
@@ -393,29 +394,31 @@ extension MirageRenderStreamStore {
         let displayTickIntervalP95Ms = percentile(displayTickIntervalSamples, percentile: 0.95)
         let displayTickIntervalP99Ms = percentile(displayTickIntervalSamples, percentile: 0.99)
         let playoutDelayFrames = state.playoutDelayFrames
-        state.overwrittenPendingFramesSinceLastSnapshot = 0
-        state.smoothestQueueDropsSinceLastSnapshot = 0
-        state.smoothestDepthDropsSinceLastSnapshot = 0
-        state.smoothestAgeDropsSinceLastSnapshot = 0
-        state.smoothestDropsUnder100msSinceLastSnapshot = 0
-        state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
-        state.smoothestDisplayDebtDropsSinceLastSnapshot = 0
-        state.smoothestFifoResetCountSinceLastSnapshot = 0
-        state.lateFrameDropsSinceLastSnapshot = 0
-        state.coalescedFramesSinceLastSnapshot = 0
-        state.duplicateRemoteTimestampsSinceLastSnapshot = 0
-        state.correctedStreamTimestampsSinceLastSnapshot = 0
-        state.displayLayerNotReadyCountSinceLastSnapshot = 0
-        state.repeatedFrameCountSinceLastSnapshot = 0
-        state.displayTickNoFrameCountSinceLastSnapshot = 0
-        state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot = 0
-        state.frameArrivalFallbackCountSinceLastSnapshot = 0
-        state.frameArrivalFallbackScheduledCountSinceLastSnapshot = 0
-        state.frameArrivalFallbackSubmittedCountSinceLastSnapshot = 0
-        state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot = 0
-        state.missedVSyncCountSinceLastSnapshot = 0
-        state.presentationStallCountSinceLastSnapshot = 0
-        state.worstPresentationGapMsSinceLastSnapshot = 0
+        if consumesCounters {
+            state.overwrittenPendingFramesSinceLastSnapshot = 0
+            state.smoothestQueueDropsSinceLastSnapshot = 0
+            state.smoothestDepthDropsSinceLastSnapshot = 0
+            state.smoothestAgeDropsSinceLastSnapshot = 0
+            state.smoothestDropsUnder100msSinceLastSnapshot = 0
+            state.smoothestDroppedFrameAgeMaxMsSinceLastSnapshot = 0
+            state.smoothestDisplayDebtDropsSinceLastSnapshot = 0
+            state.smoothestFifoResetCountSinceLastSnapshot = 0
+            state.lateFrameDropsSinceLastSnapshot = 0
+            state.coalescedFramesSinceLastSnapshot = 0
+            state.duplicateRemoteTimestampsSinceLastSnapshot = 0
+            state.correctedStreamTimestampsSinceLastSnapshot = 0
+            state.displayLayerNotReadyCountSinceLastSnapshot = 0
+            state.repeatedFrameCountSinceLastSnapshot = 0
+            state.displayTickNoFrameCountSinceLastSnapshot = 0
+            state.frameArrivedAfterNoFrameTickCountSinceLastSnapshot = 0
+            state.frameArrivalFallbackCountSinceLastSnapshot = 0
+            state.frameArrivalFallbackScheduledCountSinceLastSnapshot = 0
+            state.frameArrivalFallbackSubmittedCountSinceLastSnapshot = 0
+            state.noFrameTickToFrameArrivalMaxMsSinceLastSnapshot = 0
+            state.missedVSyncCountSinceLastSnapshot = 0
+            state.presentationStallCountSinceLastSnapshot = 0
+            state.worstPresentationGapMsSinceLastSnapshot = 0
+        }
 
         let sourceTargetFPS = max(1, state.sourceTargetFPS)
         let decodeRatio = decodeFPS / Double(sourceTargetFPS)

@@ -203,7 +203,8 @@ extension MirageHostService {
             allowsClientResize: false,
             presentationResolution: presentationResolution,
             virtualDisplaySnapshot: nil,
-            usesDisplayRefreshCadence: nil
+            usesDisplayRefreshCadence: nil,
+            acceptedDisplayScaleFactor: fallback.scaleFactor
         )
     }
 
@@ -323,7 +324,8 @@ extension MirageHostService {
             allowsClientResize: true,
             presentationResolution: request.displayResolution,
             virtualDisplaySnapshot: context,
-            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence,
+            acceptedDisplayScaleFactor: context.scaleFactor
         )
     }
 

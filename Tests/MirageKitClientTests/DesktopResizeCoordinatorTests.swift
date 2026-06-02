@@ -90,6 +90,26 @@ struct DesktopResizeCoordinatorTests {
         #expect(!oneXTarget.isEffectivelySameStreamGeometry(as: retinaTarget))
     }
 
+    @Test("Contract equality ignores raw stream scale when resolved geometry matches")
+    func contractEqualityIgnoresRawStreamScaleWhenResolvedGeometryMatches() {
+        let startup = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+        let firstDrawable = DesktopResizeCoordinator.RequestGeometry(
+            logicalResolution: CGSize(width: 1600, height: 1200),
+            displayScaleFactor: 2.0,
+            requestedStreamScale: 0.86,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+
+        #expect(startup.isEffectivelySameStreamGeometry(as: firstDrawable))
+    }
+
     @Test("Accepts only the matching active transition")
     func acceptsOnlyMatchingActiveTransition() {
         let coordinator = DesktopResizeCoordinator()

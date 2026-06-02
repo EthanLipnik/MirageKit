@@ -137,7 +137,7 @@ extension MirageClientService {
         guard controlPathSnapshot?.mediaProfile.usesAwdlRadioPolicy == true else {
             return policy
         }
-        return .freshestFrame
+        return .stability
     }
 
     func applyCurrentClientPathFields(to request: inout StartDesktopStreamMessage) {

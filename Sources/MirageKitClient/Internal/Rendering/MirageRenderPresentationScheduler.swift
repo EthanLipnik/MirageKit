@@ -208,12 +208,18 @@ final class MirageRenderPresentationScheduler: @unchecked Sendable {
 
     private var submitsOnFrameArrival: Bool {
         guard let streamID else { return false }
-        return MirageRenderStreamStore.shared.presentationTiming(for: streamID).latencyMode == .lowestLatency
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        guard !timing.usesFixedRealtimeDisplayPolicy else { return false }
+        return timing.latencyMode == .lowestLatency
     }
 
     private var allowsFrameArrivalCatchUpFallback: Bool {
         guard let streamID else { return false }
-        switch MirageRenderStreamStore.shared.presentationTiming(for: streamID).latencyMode {
+        let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
+        if timing.usesFixedRealtimeDisplayPolicy {
+            return !displayClockActive || lastDisplayTickWallTime == 0
+        }
+        switch timing.latencyMode {
         case .lowestLatency, .balanced:
             return true
         case .smoothest:

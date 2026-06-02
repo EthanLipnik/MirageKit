@@ -184,6 +184,7 @@ async throws {
     let presentationResolution = acquiredCaptureContext.presentationResolution
     let virtualDisplaySnapshot = acquiredCaptureContext.virtualDisplaySnapshot
     let usesDisplayRefreshCadence = acquiredCaptureContext.usesDisplayRefreshCadence
+    let acceptedDisplayScaleFactor = acquiredCaptureContext.acceptedDisplayScaleFactor ?? desktopBackingScale.scaleFactor
     desktopCaptureSource = captureSource
 
     applyMainDisplayFallbackProfileIfNeeded(captureSource: captureSource, config: &config)
@@ -265,7 +266,7 @@ async throws {
             streamID: streamID,
             clientContext: clientContext,
             streamContext: streamContext,
-            requestedScaleFactor: desktopBackingScale.scaleFactor,
+            requestedScaleFactor: acceptedDisplayScaleFactor,
             audioConfiguration: resolvedAudioConfiguration,
             mode: mode,
             startupRequestID: startupRequestID,
@@ -293,7 +294,7 @@ async throws {
             captureSource: captureSource,
             allowsClientResize: allowsClientResize,
             presentationResolution: presentationResolution,
-            acceptedDisplayScaleFactor: desktopBackingScale.scaleFactor
+            acceptedDisplayScaleFactor: acceptedDisplayScaleFactor
         ),
         logDesktopStartStep: logDesktopStartStep
     )

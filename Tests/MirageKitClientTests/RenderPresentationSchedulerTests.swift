@@ -259,13 +259,13 @@ struct RenderPresentationSchedulerTests {
         #expect(telemetry.frameArrivalFallbackSubmittedCount == 1)
     }
 
-    @Test("AWDL catches up on frame arrival after an empty display tick")
-    func awdlCatchesUpOnFrameArrivalAfterEmptyDisplayTick() {
+    @Test("AWDL waits for display tick after an empty tick")
+    func awdlWaitsForDisplayTickAfterEmptyTick() {
         let streamID: StreamID = 921
         configureAwdlPresentationTiming(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
-        #expect(timing.latencyMode == .lowestLatency)
+        #expect(timing.latencyMode == .balanced)
         #expect(timing.usesFixedRealtimeDisplayPolicy)
 
         let pendingFrames = SimulatedPendingFrames()
@@ -290,6 +290,11 @@ struct RenderPresentationSchedulerTests {
         scheduler.handleFrameAvailable(referenceTime: 1.010)
 
         #expect(scheduledCallbacks.isEmpty)
+        #expect(pendingFrames.submittedCount == 0)
+        #expect(pendingFrames.pendingCount == 1)
+
+        wallTime += 0.006
+        scheduler.handleDisplayTick(referenceTime: 1.016)
         #expect(pendingFrames.submittedCount == 1)
         #expect(pendingFrames.pendingCount == 0)
     }

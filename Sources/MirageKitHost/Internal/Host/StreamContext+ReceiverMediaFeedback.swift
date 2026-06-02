@@ -17,7 +17,7 @@ extension StreamContext {
         receiverReassemblyBacklogFrames = feedback.reassemblyBacklogFrames
         receiverReassemblyBacklogBytes = feedback.reassemblyBacklogBytes
         receiverDecodeBacklogFrames = feedback.decodeQueueDepth ?? feedback.decodeBacklogFrames
-        receiverPresentationBacklogFrames = feedback.presentationQueueDepth ?? feedback.presentationBacklogFrames
+        receiverPresentationBacklogFrames = feedback.presentationBacklogFrames
         receiverLatestAcceptedFrameNumber = feedback.latestAcceptedFrameNumber
         receiverLatestPresentedFrameNumber = feedback.latestPresentedFrameNumber
         receiverLatestPresentedFrameAgeMs = feedback.latestPresentedFrameAgeMs
@@ -350,6 +350,75 @@ extension StreamContext {
             )
         }
 
+        guard mediaPathProfile.usesAwdlRadioPolicy else { return }
+        await applyAwdlInteractiveDisplayStep(decision, now: now)
+    }
+
+    private func applyAwdlInteractiveDisplayStep(
+        _ decision: HostStreamTransportController.Decision,
+        now: CFAbsoluteTime
+    ) async {
+        guard runtimeQualityAdjustmentEnabled else { return }
+        if let targetFPS = decision.awdlTargetFrameRate {
+            await applyAwdlInteractiveFrameRate(targetFPS, now: now, reason: decision.awdlPolicyTrigger?.rawValue)
+        }
+        if let scale = decision.awdlResolutionScale {
+            await applyAwdlInteractiveScale(scale, now: now, reason: decision.awdlPolicyTrigger?.rawValue)
+        }
+    }
+
+    private func applyAwdlInteractiveFrameRate(
+        _ targetFPS: Int,
+        now: CFAbsoluteTime,
+        reason: String?
+    ) async {
+        let clamped = max(1, min(60, targetFPS))
+        guard clamped != currentFrameRate else { return }
+        let isDemotion = clamped < currentFrameRate
+        let cooldown: CFAbsoluteTime = isDemotion ? 1.0 : 8.0
+        guard lastAwdlInteractiveFrameRateAdjustmentTime == 0 ||
+            now - lastAwdlInteractiveFrameRateAdjustmentTime >= cooldown else {
+            return
+        }
+        do {
+            try await updateFrameRate(clamped)
+            lastAwdlInteractiveFrameRateAdjustmentTime = now
+            MirageLogger.metrics(
+                "AWDL interactive cadence step for stream \(streamID): " +
+                    "targetFPS=\(clamped) reason=\(reason ?? "policy")"
+            )
+        } catch {
+            MirageLogger.error(.stream, error: error, message: "AWDL frame-rate step failed: ")
+        }
+    }
+
+    private func applyAwdlInteractiveScale(
+        _ resolutionScale: Double,
+        now: CFAbsoluteTime,
+        reason: String?
+    ) async {
+        let multiplier = max(0.75, min(1.0, resolutionScale))
+        let baseScale = awdlInteractiveBaseStreamScale ?? requestedStreamScale
+        awdlInteractiveBaseStreamScale = baseScale
+        let targetScale = CGFloat(Double(baseScale) * multiplier)
+        guard abs(Double(targetScale - requestedStreamScale)) > 0.0001 else { return }
+        let isDemotion = targetScale < requestedStreamScale
+        let cooldown: CFAbsoluteTime = isDemotion ? 4.0 : 20.0
+        guard lastAwdlInteractiveScaleAdjustmentTime == 0 ||
+            now - lastAwdlInteractiveScaleAdjustmentTime >= cooldown else {
+            return
+        }
+        do {
+            try await updateStreamScale(targetScale)
+            lastAwdlInteractiveScaleAdjustmentTime = now
+            MirageLogger.metrics(
+                "AWDL interactive scale step for stream \(streamID): " +
+                    "targetScale=\(String(format: "%.3f", Double(targetScale))) " +
+                    "multiplier=\(String(format: "%.3f", multiplier)) reason=\(reason ?? "policy")"
+            )
+        } catch {
+            MirageLogger.error(.stream, error: error, message: "AWDL scale step failed: ")
+        }
     }
 
     func applyFrameBudgetDecision(
@@ -507,6 +576,8 @@ extension StreamContext {
         let policyTargetFPS = decision?.awdlTargetFrameRate?.description ??
             latestAwdlPolicy?.targetFrameRate.description ??
             "n/a"
+        let policyScale = decision?.awdlResolutionScale ??
+            latestAwdlPolicy?.resolutionScale
         let packetTelemetry = await packetSender?.telemetrySnapshot
         let loomProfile = mediaSendProfileRawValue ?? "unknown"
         let loomMaxOutstandingPackets = mediaSendProfileMaxOutstandingPackets.map { "\($0)" } ?? "unknown"
@@ -522,6 +593,7 @@ extension StreamContext {
             "AWDL host receiver feedback: stream=\(streamID) " +
                 "trigger=\(trigger.rawValue) policy=\(policyState)/\(policyTrigger) " +
                 "pacingHold=\(pacing) policyTargetFPS=\(policyTargetFPS) " +
+                "policyScale=\(formatAwdlMetric(policyScale ?? 1.0)) " +
                 "loomProfile=\(loomProfile) " +
                 "loomMaxOutstandingPackets=\(loomMaxOutstandingPackets) " +
                 "loomMaxOutstandingBytes=\(loomMaxOutstandingBytes) " +
@@ -554,6 +626,9 @@ extension StreamContext {
                 "forwardGaps=\(feedback.reassemblerForwardGapTimeouts ?? 0) " +
                 "playoutTargetMs=\(formatAwdlMetric(feedback.playoutDelayTargetMs ?? 0)) " +
                 "playoutFrames=\(feedback.playoutDelayFrames ?? 0) " +
+                "queueFrames=\(feedback.presentationQueueDepth ?? feedback.queueEstimateFrames) " +
+                "targetQueueFrames=\(feedback.presentationTargetFrames ?? 0) " +
+                "underfillFrames=\(feedback.presentationUnderfillFrames ?? 0) " +
                 "presentGapMaxMs=\(formatAwdlMetric(feedback.worstPresentationGapMs ?? 0)) " +
                 "underflows=\(feedback.displayTickNoFrameCount ?? 0) " +
                 "presentationStalls=\(feedback.presentationStallCount ?? 0) " +

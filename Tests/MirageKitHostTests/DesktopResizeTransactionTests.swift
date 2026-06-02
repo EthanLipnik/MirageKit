@@ -360,6 +360,78 @@ struct DesktopResizeTransactionTests {
         #expect(displaysToMirror == [display1, display2, display3])
     }
 
+    @Test("Desktop mirroring has no targets when only Mirage displays are online")
+    func desktopMirroringHasNoTargetsWhenOnlyMirageDisplaysAreOnline() {
+        let staleMirageDisplay23: CGDirectDisplayID = 23
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let displaysToMirror = desktopMirroringDisplayIDs(
+            displays: [staleMirageDisplay23, targetMirageDisplay24],
+            targetDisplayID: targetMirageDisplay24,
+            isMirageDisplay: { $0 == staleMirageDisplay23 || $0 == targetMirageDisplay24 }
+        )
+
+        #expect(displaysToMirror.isEmpty)
+    }
+
+    @Test("Display separation skips configuration for headless Mirage-only topology")
+    func displaySeparationSkipsConfigurationForHeadlessMirageOnlyTopology() {
+        let staleMirageDisplay23: CGDirectDisplayID = 23
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let shouldSkip = displaySeparationShouldSkipForMirageOnlyHeadlessTopology(
+            displays: [staleMirageDisplay23, targetMirageDisplay24],
+            virtualDisplayID: targetMirageDisplay24,
+            isHeadless: true,
+            isMirageDisplay: { $0 == staleMirageDisplay23 || $0 == targetMirageDisplay24 }
+        )
+
+        #expect(shouldSkip)
+    }
+
+    @Test("Display separation does not skip when a non-Mirage host display exists")
+    func displaySeparationDoesNotSkipWhenNonMirageHostDisplayExists() {
+        let hostDisplay3: CGDirectDisplayID = 3
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let shouldSkip = displaySeparationShouldSkipForMirageOnlyHeadlessTopology(
+            displays: [hostDisplay3, targetMirageDisplay24],
+            virtualDisplayID: targetMirageDisplay24,
+            isHeadless: true,
+            isMirageDisplay: { $0 == targetMirageDisplay24 }
+        )
+
+        #expect(!shouldSkip)
+    }
+
+    @Test("Primary non-Mirage display falls back from Mirage main display")
+    func primaryNonMirageDisplayFallsBackFromMirageMainDisplay() {
+        let hostDisplay3: CGDirectDisplayID = 3
+        let mirageMainDisplay24: CGDirectDisplayID = 24
+
+        let displayID = primaryNonMirageDisplayID(
+            mainDisplayID: mirageMainDisplay24,
+            onlineDisplayIDs: [mirageMainDisplay24, hostDisplay3],
+            isMirageDisplay: { $0 == mirageMainDisplay24 }
+        )
+
+        #expect(displayID == hostDisplay3)
+    }
+
+    @Test("Primary non-Mirage display is unavailable for Mirage-only topology")
+    func primaryNonMirageDisplayIsUnavailableForMirageOnlyTopology() {
+        let staleMirageDisplay23: CGDirectDisplayID = 23
+        let mirageMainDisplay24: CGDirectDisplayID = 24
+
+        let displayID = primaryNonMirageDisplayID(
+            mainDisplayID: mirageMainDisplay24,
+            onlineDisplayIDs: [staleMirageDisplay23, mirageMainDisplay24],
+            isMirageDisplay: { $0 == staleMirageDisplay23 || $0 == mirageMainDisplay24 }
+        )
+
+        #expect(displayID == nil)
+    }
+
     @Test("Display mirroring target stability accepts matching target without residual Mirage displays")
     func displayMirroringTargetStabilityAcceptsStableTarget() {
         let targetMirageDisplay24: CGDirectDisplayID = 24

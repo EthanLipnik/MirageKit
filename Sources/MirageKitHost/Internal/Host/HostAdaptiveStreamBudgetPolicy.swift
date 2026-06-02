@@ -195,18 +195,14 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
     ) -> PathBudget {
         switch mediaPathProfile {
         case .awdlRadio:
-            // AWDL radio is a high-capacity local link (the basis of Sidecar).
-            // Keep a conservative startup seed so a marginal/contended radio is
-            // not force-fed bits, but allow the ceiling to climb to Wi-Fi levels
-            // so the adaptive controller can reach high quality on a capable link.
             return PathBudget(
-                startupBitsPerPixelPerFrame: 0.055,
-                maximumBitsPerPixelPerFrame: 0.530,
-                startupCapBps: 16_000_000,
-                maximumCapBps: 180_000_000,
-                minimumFloorBps: 4_000_000,
+                startupBitsPerPixelPerFrame: 0.075,
+                maximumBitsPerPixelPerFrame: 0.280,
+                startupCapBps: 32_000_000,
+                maximumCapBps: 120_000_000,
+                minimumFloorBps: 18_000_000,
                 honorsRequestedStartup: false,
-                label: "awdl"
+                label: "awdlInteractiveDisplay"
             )
         case .localWiFi:
             return PathBudget(

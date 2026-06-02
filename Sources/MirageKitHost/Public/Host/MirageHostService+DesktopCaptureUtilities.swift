@@ -70,7 +70,7 @@ extension MirageHostService {
         }
     }
 
-    /// Resolves the main ScreenCaptureKit display for desktop capture fallback.
+    /// Resolves the main ScreenCaptureKit display for capture warmup.
     func findMainSCDisplayWithRetry(maxAttempts: Int, delayMs: UInt64) async throws -> SCDisplayWrapper {
         for attempt in 1 ... maxAttempts {
             do {
@@ -78,7 +78,9 @@ extension MirageHostService {
                 MirageLogger.host("Found main SCDisplay on attempt \(attempt)")
                 return scDisplay
             } catch {
-                if attempt < maxAttempts { try await Task.sleep(for: .milliseconds(Int64(delayMs))) } else {
+                if attempt < maxAttempts {
+                    try await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                } else {
                     MirageLogger.host("Failed to find main SCDisplay after \(maxAttempts) attempts")
                     throw error
                 }
@@ -87,15 +89,51 @@ extension MirageHostService {
         throw MirageError.protocolError("Failed to find main SCDisplay")
     }
 
-    /// Builds a main-display desktop capture fallback when virtual-display capture cannot be used.
+    /// Builds a non-Mirage host-display capture fallback when virtual-display capture cannot be used.
     func mainDisplayDesktopCaptureFallback(
         reason: String,
         maxAttempts: Int = 8,
         delayMs: UInt64 = 80
     )
     async throws -> DesktopMainDisplayCaptureFallback {
-        let display = try await findMainSCDisplayWithRetry(maxAttempts: maxAttempts, delayMs: delayMs)
+        guard let fallbackDisplayID = resolvePrimaryNonMirageDisplayID() else {
+            MirageLogger.host(
+                "Desktop capture fallback unavailable: no non-Mirage displays are online, reason=\(reason)"
+            )
+            throw MirageError.protocolError("Main display fallback unavailable because only Mirage displays are online")
+        }
+
+        var display: SCDisplayWrapper?
+        for attempt in 1 ... maxAttempts {
+            do {
+                display = try await SharedVirtualDisplayManager.shared.findSCDisplay(
+                    displayID: fallbackDisplayID,
+                    maxAttempts: 1
+                )
+                MirageLogger.host("Found fallback SCDisplay \(fallbackDisplayID) on attempt \(attempt)")
+                break
+            } catch {
+                if attempt < maxAttempts {
+                    try await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                } else {
+                    MirageLogger.host(
+                        "Failed to find fallback SCDisplay \(fallbackDisplayID) after \(maxAttempts) attempts"
+                    )
+                    throw error
+                }
+            }
+        }
+
+        guard let display else {
+            throw MirageError.protocolError("Failed to find fallback SCDisplay \(fallbackDisplayID)")
+        }
         let displayID = display.display.displayID
+        guard !CGVirtualDisplayBridge.isMirageDisplay(displayID) else {
+            MirageLogger.host(
+                "Desktop capture fallback rejected Mirage display \(displayID), reason=\(reason)"
+            )
+            throw MirageError.protocolError("Main display fallback resolved to a Mirage display")
+        }
         let bounds = CGDisplayBounds(displayID)
         let pixelWidth = CGDisplayPixelsWide(displayID)
         let pixelHeight = CGDisplayPixelsHigh(displayID)

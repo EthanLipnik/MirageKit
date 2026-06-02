@@ -355,10 +355,11 @@ extension MirageClientService {
                 appSessionID: pendingStreamSetupAppSessionID
             )
         )
-        pendingStreamSetupRequestID = nil
-        pendingStreamSetupKind = nil
-        pendingStreamSetupAppSessionID = nil
-        pendingStreamSetupLatencyMode = nil
+        if pendingStreamSetupKind == .desktop {
+            clearPendingDesktopStreamStartState()
+        } else {
+            clearPendingStreamSetup()
+        }
         MirageLogger.client("Sent cancel stream setup")
     }
 }

@@ -314,7 +314,15 @@ public extension MirageClientService {
         invalidateCurrentConnectAttempt()
 
         if let controlChannel, case .connected = connectionState {
-            await sendDisconnectNoticeBeforeTeardown(over: controlChannel)
+            sendDisconnectNoticeInBackgroundBeforeTransportCancel(over: controlChannel)
+            await handleDisconnect(
+                reason: DisconnectMessage.DisconnectReason.userRequested.rawValue,
+                state: .disconnected,
+                notifyDelegate: false,
+                forceCleanup: true,
+                cancelTransport: false
+            )
+            return
         }
 
         await handleDisconnect(

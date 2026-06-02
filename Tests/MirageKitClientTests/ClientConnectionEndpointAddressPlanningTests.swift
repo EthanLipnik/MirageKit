@@ -461,8 +461,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
     }
 
     @MainActor
-    @Test("Explicit VPN route skips local candidates and starts QUIC first")
-    func explicitVPNRouteSkipsLocalCandidatesAndStartsQUICFirst() throws {
+    @Test("Explicit VPN route skips local candidates and starts UDP first")
+    func explicitVPNRouteSkipsLocalCandidatesAndStartsUDPFirst() throws {
         let deviceID = UUID()
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61052))
         let quicPort = try #require(NWEndpoint.Port(rawValue: 61053))
@@ -510,8 +510,8 @@ struct ClientConnectionEndpointAddressPlanningTests {
         #expect(attempts.allSatisfy { !$0.isPeerToPeerPreferred })
         #expect(attempts.map(\.candidateKind) == [.overlay, .overlay, .overlay])
         #expect(attempts.map(\.routeTier) == [.vpn, .vpn, .vpn])
-        #expect(attempts.map(\.transportKind) == [.quic, .udp, .tcp])
-        #expect(service.controlSessionInitialConnectTimeout(for: attempts[0]) == .seconds(6))
+        #expect(attempts.map(\.transportKind) == [.udp, .quic, .tcp])
+        #expect(service.controlSessionInitialConnectTimeout(for: attempts[0]) == .seconds(5))
         #expect(service.absoluteControlSessionConnectTimeout(for: attempts[0]) == .seconds(45))
     }
 

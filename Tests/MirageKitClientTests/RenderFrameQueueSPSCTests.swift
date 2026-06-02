@@ -241,6 +241,12 @@ struct RenderFrameQueueSPSCTests {
             for: streamID
         )
 
+        let nonConsumingTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(
+            for: streamID,
+            consumesCounters: false
+        )
+        #expect(nonConsumingTelemetry.displayLayerNotReadyCount == 1)
+
         let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         #expect(telemetry.submitAttemptFPS >= 1)
         #expect(telemetry.layerAcceptedFPS >= 1)

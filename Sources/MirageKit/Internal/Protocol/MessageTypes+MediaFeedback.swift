@@ -113,6 +113,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
     package let latestPresentedFrameAgeMs: Double?
     package let decodeQueueDepth: Int?
     package let presentationQueueDepth: Int?
+    package let presentationTargetFrames: Int?
+    package let presentationUnderfillFrames: Int?
+    package let receiverJitterP95Ms: Double?
+    package let receiverJitterP99Ms: Double?
     package let audioDroppedFrameCount: UInt64?
     package let audioGateActive: Bool?
 
@@ -159,6 +163,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         latestPresentedFrameAgeMs: Double? = nil,
         decodeQueueDepth: Int? = nil,
         presentationQueueDepth: Int? = nil,
+        presentationTargetFrames: Int? = nil,
+        presentationUnderfillFrames: Int? = nil,
+        receiverJitterP95Ms: Double? = nil,
+        receiverJitterP99Ms: Double? = nil,
         audioDroppedFrameCount: UInt64? = nil,
         audioGateActive: Bool? = nil
     ) {
@@ -204,6 +212,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         self.latestPresentedFrameAgeMs = latestPresentedFrameAgeMs.map { max(0, $0) }
         self.decodeQueueDepth = decodeQueueDepth.map { max(0, $0) }
         self.presentationQueueDepth = presentationQueueDepth.map { max(0, $0) }
+        self.presentationTargetFrames = presentationTargetFrames.map { max(0, $0) }
+        self.presentationUnderfillFrames = presentationUnderfillFrames.map { max(0, $0) }
+        self.receiverJitterP95Ms = receiverJitterP95Ms.map { max(0, $0) }
+        self.receiverJitterP99Ms = receiverJitterP99Ms.map { max(0, $0) }
         self.audioDroppedFrameCount = audioDroppedFrameCount
         self.audioGateActive = audioGateActive
     }
@@ -275,6 +287,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             latestPresentedFrameAgeMs: nil,
             decodeQueueDepth: nil,
             presentationQueueDepth: nil,
+            presentationTargetFrames: nil,
+            presentationUnderfillFrames: nil,
+            receiverJitterP95Ms: nil,
+            receiverJitterP99Ms: nil,
             audioDroppedFrameCount: nil,
             audioGateActive: nil
         )
@@ -325,6 +341,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         case latestPresentedFrameAgeMs
         case decodeQueueDepth
         case presentationQueueDepth
+        case presentationTargetFrames
+        case presentationUnderfillFrames
+        case receiverJitterP95Ms
+        case receiverJitterP99Ms
         case audioDroppedFrameCount
         case audioGateActive
     }
@@ -422,6 +442,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
             ),
             decodeQueueDepth: try container.decodeIfPresent(Int.self, forKey: .decodeQueueDepth),
             presentationQueueDepth: try container.decodeIfPresent(Int.self, forKey: .presentationQueueDepth),
+            presentationTargetFrames: try container.decodeIfPresent(Int.self, forKey: .presentationTargetFrames),
+            presentationUnderfillFrames: try container.decodeIfPresent(Int.self, forKey: .presentationUnderfillFrames),
+            receiverJitterP95Ms: try container.decodeIfPresent(Double.self, forKey: .receiverJitterP95Ms),
+            receiverJitterP99Ms: try container.decodeIfPresent(Double.self, forKey: .receiverJitterP99Ms),
             audioDroppedFrameCount: try container.decodeIfPresent(UInt64.self, forKey: .audioDroppedFrameCount),
             audioGateActive: try container.decodeIfPresent(Bool.self, forKey: .audioGateActive)
         )
@@ -478,6 +502,10 @@ package struct ReceiverMediaFeedbackMessage: Codable, Sendable, Equatable {
         try container.encodeIfPresent(latestPresentedFrameAgeMs, forKey: .latestPresentedFrameAgeMs)
         try container.encodeIfPresent(decodeQueueDepth, forKey: .decodeQueueDepth)
         try container.encodeIfPresent(presentationQueueDepth, forKey: .presentationQueueDepth)
+        try container.encodeIfPresent(presentationTargetFrames, forKey: .presentationTargetFrames)
+        try container.encodeIfPresent(presentationUnderfillFrames, forKey: .presentationUnderfillFrames)
+        try container.encodeIfPresent(receiverJitterP95Ms, forKey: .receiverJitterP95Ms)
+        try container.encodeIfPresent(receiverJitterP99Ms, forKey: .receiverJitterP99Ms)
         try container.encodeIfPresent(audioDroppedFrameCount, forKey: .audioDroppedFrameCount)
         try container.encodeIfPresent(audioGateActive, forKey: .audioGateActive)
     }

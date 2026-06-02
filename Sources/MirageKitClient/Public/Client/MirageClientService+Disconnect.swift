@@ -53,11 +53,21 @@ extension MirageClientService {
         timeoutTask.cancel()
     }
 
+    func sendDisconnectNoticeInBackgroundBeforeTransportCancel(
+        over controlChannel: MirageControlChannel
+    ) {
+        Task { @MainActor in
+            await sendDisconnectNoticeBeforeTeardown(over: controlChannel)
+            await controlChannel.cancel()
+        }
+    }
+
     func handleDisconnect(
         reason: String,
         state: ConnectionState,
         notifyDelegate: Bool,
-        forceCleanup: Bool = false
+        forceCleanup: Bool = false,
+        cancelTransport: Bool = true
     ) async {
         if case .disconnected = connectionState, !forceCleanup {
             return
@@ -91,13 +101,15 @@ extension MirageClientService {
         lastDisconnectReason = reason
         connectionState = state
 
-        if let disconnectedControlChannel {
-            Task {
-                await disconnectedControlChannel.cancel()
-            }
-        } else {
-            Task {
-                await disconnectedLoomSession?.cancel()
+        if cancelTransport {
+            if let disconnectedControlChannel {
+                Task {
+                    await disconnectedControlChannel.cancel()
+                }
+            } else {
+                Task {
+                    await disconnectedLoomSession?.cancel()
+                }
             }
         }
         cancelPendingConnectTask()

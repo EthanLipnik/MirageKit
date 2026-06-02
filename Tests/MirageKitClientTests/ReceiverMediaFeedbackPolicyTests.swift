@@ -131,11 +131,34 @@ struct ReceiverMediaFeedbackPolicyTests {
         #expect(feedback.reassemblyBacklogFrames == 11)
         #expect(feedback.reassemblyBacklogKeyframes == 1)
         #expect(feedback.decodeBacklogFrames == 18)
+        #expect(feedback.presentationQueueDepth == nil)
         #expect(feedback.presentationBacklogFrames == 5)
         #expect(feedback.recoveryState == .keyframeRecovery)
         #expect(feedback.recoveryCause == .frameLoss)
         #expect(feedback.reliabilityCauses.contains(.keyframeStarvation))
         #expect(feedback.reliabilityCauses.contains(.memoryPressure))
+    }
+
+    @Test("Healthy buffered playout depth is not reported as presentation backlog")
+    func healthyBufferedPlayoutDepthIsNotReportedAsPresentationBacklog() {
+        let feedback = MirageClientService.makeReceiverMediaFeedback(
+            streamID: 1,
+            sequence: 12,
+            sentAtUptime: 105,
+            targetFPS: 60,
+            recoveryState: .idle,
+            presentationQueueDepth: 5,
+            metrics: metrics(
+                pendingFrameCount: 5,
+                smoothestTargetDelayMs: 80
+            )
+        )
+
+        #expect(feedback.queueEstimateFrames == 5)
+        #expect(feedback.presentationQueueDepth == 5)
+        #expect(feedback.presentationTargetFrames == 5)
+        #expect(feedback.presentationBacklogFrames == 0)
+        #expect(feedback.presentationUnderfillFrames == 0)
     }
 
     @Test("Transport-proven receiver fragment loss is reported separately from local drops")
@@ -326,6 +349,7 @@ struct ReceiverMediaFeedbackPolicyTests {
         droppedFrames: UInt64 = 0,
         decodeBacklogFrames: Int = 0,
         pendingFrameCount: Int = 0,
+        smoothestTargetDelayMs: Double = 0,
         smoothestQueueDrops: UInt64 = 0,
         presentationStallCount: UInt64 = 0,
         reassemblerPendingFrameCount: Int = 0,
@@ -351,7 +375,7 @@ struct ReceiverMediaFeedbackPolicyTests {
             pendingFrameAgeMs: 30,
             smoothestDisplayDebtMs: 0,
             smoothestDisplayDebtCapMs: 0,
-            smoothestTargetDelayMs: 0,
+            smoothestTargetDelayMs: smoothestTargetDelayMs,
             overwrittenPendingFrames: 3,
             smoothestQueueDrops: smoothestQueueDrops,
             smoothestDisplayDebtDrops: 0,

@@ -8,6 +8,111 @@
 import CoreGraphics
 import Foundation
 
+package struct DesktopGeometryIdentity: Sendable, Equatable {
+    package let logicalSize: CGSize
+    package let displayPixelSize: CGSize
+    package let encodedPixelSize: CGSize
+    package let disableResolutionCap: Bool
+
+    package init(
+        logicalSize: CGSize,
+        displayPixelSize: CGSize,
+        encodedPixelSize: CGSize,
+        disableResolutionCap: Bool
+    ) {
+        self.logicalSize = DesktopGeometryIdentity.alignedPointSize(logicalSize)
+        self.displayPixelSize = DesktopGeometryIdentity.alignedPixelSize(displayPixelSize)
+        self.encodedPixelSize = DesktopGeometryIdentity.alignedPixelSize(encodedPixelSize)
+        self.disableResolutionCap = disableResolutionCap
+    }
+
+    private static func alignedPointSize(_ size: CGSize) -> CGSize {
+        MirageStreamGeometry.normalizedLogicalSize(size)
+    }
+
+    private static func alignedPixelSize(_ size: CGSize) -> CGSize {
+        MirageStreamGeometry.alignedEncodedSize(size)
+    }
+}
+
+package struct DesktopGeometryContract: Sendable, Equatable {
+    package let logicalSize: CGSize
+    package let requestedDisplayScaleFactor: CGFloat?
+    package let acceptedDisplayScaleFactor: CGFloat
+    package let displayPixelSize: CGSize
+    package let requestedStreamScale: CGFloat
+    package let resolvedStreamScale: CGFloat
+    package let encodedPixelSize: CGSize
+    package let encoderMaxWidth: Int?
+    package let encoderMaxHeight: Int?
+    package let disableResolutionCap: Bool
+
+    package var identity: DesktopGeometryIdentity {
+        DesktopGeometryIdentity(
+            logicalSize: logicalSize,
+            displayPixelSize: displayPixelSize,
+            encodedPixelSize: encodedPixelSize,
+            disableResolutionCap: disableResolutionCap
+        )
+    }
+
+    package init(
+        logicalSize: CGSize,
+        requestedDisplayScaleFactor: CGFloat?,
+        requestedStreamScale: CGFloat,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil,
+        disableResolutionCap: Bool = false
+    ) {
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: logicalSize,
+            displayScaleFactor: requestedDisplayScaleFactor ?? 1.0,
+            requestedStreamScale: requestedStreamScale,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        )
+        self.init(
+            logicalSize: geometry.logicalSize,
+            requestedDisplayScaleFactor: requestedDisplayScaleFactor,
+            acceptedDisplayScaleFactor: geometry.displayScaleFactor,
+            displayPixelSize: geometry.displayPixelSize,
+            requestedStreamScale: geometry.requestedStreamScale,
+            resolvedStreamScale: geometry.resolvedStreamScale,
+            encodedPixelSize: geometry.encodedPixelSize,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        )
+    }
+
+    package init(
+        logicalSize: CGSize,
+        requestedDisplayScaleFactor: CGFloat?,
+        acceptedDisplayScaleFactor: CGFloat,
+        displayPixelSize: CGSize,
+        requestedStreamScale: CGFloat,
+        resolvedStreamScale: CGFloat,
+        encodedPixelSize: CGSize,
+        encoderMaxWidth: Int?,
+        encoderMaxHeight: Int?,
+        disableResolutionCap: Bool
+    ) {
+        self.logicalSize = MirageStreamGeometry.normalizedLogicalSize(logicalSize)
+        self.requestedDisplayScaleFactor = requestedDisplayScaleFactor.map {
+            MirageStreamGeometry.clampedDisplayScaleFactor($0)
+        }
+        self.acceptedDisplayScaleFactor = MirageStreamGeometry.clampedDisplayScaleFactor(acceptedDisplayScaleFactor)
+        self.displayPixelSize = MirageStreamGeometry.alignedEncodedSize(displayPixelSize)
+        self.requestedStreamScale = MirageStreamGeometry.clampStreamScale(requestedStreamScale)
+        self.resolvedStreamScale = MirageStreamGeometry.clampStreamScale(resolvedStreamScale)
+        self.encodedPixelSize = MirageStreamGeometry.alignedEncodedSize(encodedPixelSize)
+        self.encoderMaxWidth = encoderMaxWidth
+        self.encoderMaxHeight = encoderMaxHeight
+        self.disableResolutionCap = disableResolutionCap
+    }
+}
+
 /// Canonical stream sizing result shared by client display requests and host encoder setup.
 package struct MirageStreamGeometry: Sendable, Equatable {
     /// Logical point size after Mirage's even-dimension normalization.

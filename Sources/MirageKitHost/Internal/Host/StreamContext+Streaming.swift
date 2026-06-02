@@ -151,6 +151,12 @@ extension StreamContext {
         baseFrameFlagsSnapshot: FrameFlags
     ) async {
         guard let packetSender else { return }
+        guard shouldEncodeFrames else {
+            MirageLogger.stream(
+                "Dropping encoded frame after client background pause stream=\(streamID) keyframe=\(isKeyframe)"
+            )
+            return
+        }
 
         let now = CFAbsoluteTimeGetCurrent()
         if !isKeyframe, suppressEncodedNonKeyframesUntilKeyframe || frameChainSuppressesPFrames {

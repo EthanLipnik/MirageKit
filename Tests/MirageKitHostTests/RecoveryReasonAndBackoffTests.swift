@@ -85,6 +85,62 @@ struct RecoveryReasonMappingTests {
         #expect(await context.softRecoveryCount == 0)
     }
 
+    @Test("Repeated client background pause clears sender queue while already paused")
+    func repeatedClientBackgroundPauseClearsSenderQueueWhileAlreadyPaused() async throws {
+        let context = makeContext()
+        let pendingCompletions = Locked<[StreamPacketSenderPendingSendCompletion]>([])
+        await context.setupPacketSender(sendPacket: { _, onComplete in
+            pendingCompletions.withLock {
+                $0.append(StreamPacketSenderPendingSendCompletion(onComplete: onComplete))
+            }
+        })
+        let sender = try #require(await context.packetSender)
+        await context.pauseForClientBackground()
+
+        sender.enqueue(
+            makeStreamPacketWorkItem(
+                payload: makeStreamPacketPayload(byteCount: 4096),
+                streamID: 9,
+                frameNumber: 1,
+                sequenceNumberStart: 10,
+                generation: sender.currentGeneration
+            )
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(sender.queuedByteCount > 0)
+        #expect(!context.shouldEncodeFrames)
+
+        await context.pauseForClientBackground()
+
+        #expect(sender.queuedByteCount == 0)
+        #expect(!context.shouldEncodeFrames)
+
+        completePendingStreamPacketSends(pendingCompletions)
+        await sender.stop()
+    }
+
+    @Test("Client foreground resume schedules reset keyframe and chain repair")
+    func clientForegroundResumeSchedulesResetKeyframeAndChainRepair() async {
+        let context = makeContext()
+        await context.pauseForClientBackground()
+
+        await context.resumeAfterClientForeground()
+
+        #expect(context.shouldEncodeFrames)
+        #expect(await context.pendingKeyframeReason == "Client foreground resume")
+        #expect(await context.pendingKeyframeRequiresFlush)
+        #expect(await context.pendingKeyframeRequiresReset)
+        #expect(await context.pendingKeyframeUrgent)
+        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+
+        switch await context.frameChainState {
+        case let .chainBroken(reason, _, _):
+            #expect(reason == "client-foreground-resume")
+        default:
+            Issue.record("Expected foreground resume to enter frame-chain repair")
+        }
+    }
+
     @Test("Constrained path keeps in-flight keyframe instead of queueing another")
     func constrainedPathKeepsInFlightKeyframe() async {
         let context = makeContext(transportPathKind: .awdl)

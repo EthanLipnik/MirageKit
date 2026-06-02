@@ -28,19 +28,20 @@ struct MirageAwdlMediaControllerTests {
         #expect(decision.state == .warmup)
         #expect(decision.trigger == .stable)
         #expect(decision.targetFrameRate == 60)
-        #expect(decision.hostPacingBudgetBps == 24_000_000)
-        #expect(decision.keyframePacingBudgetBps == 24_000_000)
+        #expect(decision.hostPacingBudgetBps == 32_000_000)
+        #expect(decision.keyframePacingBudgetBps == 32_000_000)
         #expect(decision.pFramePacketBurst == 2)
         #expect(decision.keyframePacketBurst == 4)
         #expect(decision.pFrameFECBlockSize == 0)
         #expect(decision.keyframeFECBlockSize == 4)
         #expect(decision.continuityWindowMs == 180)
         #expect(decision.playoutDelayMs == 24)
+        #expect(decision.resolutionScale == 1.0)
         #expect(
             MirageAwdlMediaController.fixedLatencyMode(
                 requestedLatencyMode: .smoothest,
                 mediaPathProfile: .awdlRadio
-            ) == .lowestLatency
+            ) == .balanced
         )
     }
 
@@ -96,7 +97,7 @@ struct MirageAwdlMediaControllerTests {
 
         _ = controller.update(with: stressSignal)
         let stressed = controller.update(with: stressSignal)
-        #expect(stressed.playoutDelayMs == 180)
+        #expect(stressed.playoutDelayMs == 120)
 
         let firstStable = controller.update(with: stableSignal)
         #expect(firstStable.playoutDelayMs <= 80)
@@ -153,13 +154,13 @@ struct MirageAwdlMediaControllerTests {
         ) == 0)
     }
 
-    @Test("Sustained high-refresh AWDL pressure demotes to sixty")
-    func sustainedHighRefreshAwdlPressureDemotesToSixty() {
+    @Test("Sustained AWDL pressure demotes cadence before quality")
+    func sustainedAwdlPressureDemotesCadenceBeforeQuality() {
         var controller = MirageAwdlMediaController()
         let signal = MirageAwdlMediaController.Signal(
             mediaPathProfile: .awdlRadio,
-            currentFrameRate: 120,
-            targetFrameRate: 120,
+            currentFrameRate: 60,
+            targetFrameRate: 60,
             pFrameCompletionLatencyP95Ms: 80,
             latePFrameCount: 4
         )
@@ -170,8 +171,9 @@ struct MirageAwdlMediaControllerTests {
         let decision = controller.update(with: signal)
 
         #expect(decision.state == .demote)
-        #expect(decision.trigger == .demote)
-        #expect(decision.targetFrameRate == 60)
+        #expect(decision.trigger == .pFrameLatency)
+        #expect(decision.targetFrameRate == 30)
+        #expect(decision.resolutionScale == 0.875)
         #expect(decision.qualityReductionAllowed)
     }
 }

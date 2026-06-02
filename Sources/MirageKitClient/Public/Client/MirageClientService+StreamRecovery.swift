@@ -43,7 +43,7 @@ enum MirageClientStreamRecoveryTrigger {
         case .manual:
             true
         case .applicationActivation:
-            false
+            true
         }
     }
 
@@ -53,7 +53,7 @@ enum MirageClientStreamRecoveryTrigger {
         case .manual:
             true
         case .applicationActivation:
-            false
+            true
         }
     }
 
@@ -75,6 +75,14 @@ extension MirageClientService {
         requestStreamRecovery(for: streamID, trigger: .manual)
     }
 
+    /// Requests stream recovery after the application foregrounds.
+    ///
+    /// This path keeps recovery active until a newer frame is presented, which matches the failure
+    /// mode where decode and presentation state went stale while packets continued flowing.
+    public func requestApplicationActivationStreamRecovery(for streamID: StreamID) {
+        requestStreamRecovery(for: streamID, trigger: .applicationActivation)
+    }
+
     func replayPendingApplicationActivationRecoveryIfNeeded(for streamID: StreamID) {
         guard pendingApplicationActivationRecoveryStreamIDs.remove(streamID) != nil else { return }
         MirageLogger.client(
@@ -92,6 +100,10 @@ extension MirageClientService {
         let controller = controllersByStream[streamID]
         let reassembler = controller?.reassembler
         let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(
+            for: streamID,
+            consumesCounters: false
+        )
 
         return ForegroundStreamHealthSnapshot(
             streamID: streamID,
@@ -99,6 +111,11 @@ extension MirageClientService {
             hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
             latestPacketTime: reassembler?.latestPacketReceivedTime ?? 0,
             submittedSequence: submissionSnapshot.sequence,
+            submittedTime: submissionSnapshot.submittedTime,
+            visibleFrameFPS: renderTelemetry.visibleFrameFPS,
+            pendingFrameCount: renderTelemetry.pendingFrameCount,
+            pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+            decodeHealthy: renderTelemetry.decodeHealthy,
             isAwaitingKeyframe: reassembler?.isAwaitingKeyframe ?? true
         )
     }
@@ -250,7 +267,6 @@ extension MirageClientService {
         cancelForegroundRecoveryMonitor(for: streamID)
         if trigger == .applicationActivation {
             startForegroundRecoveryMonitor(for: streamID, controller: controller, trigger: trigger)
-            return
         }
 
         Task { [weak self] in

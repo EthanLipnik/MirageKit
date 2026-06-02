@@ -26,6 +26,8 @@ extension StreamContext {
     private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
     private static let lowLatencyHighResolutionBoostMinimumPressureScale: Float = 0.45
     private static let mapperMinimumQuality: Float = 0.03
+    private static let awdlInteractiveFrameQualityFloor: Float = 0.12
+    private static let awdlInteractiveKeyframeQualityFloor: Float = 0.10
 
     private struct DerivedQualityTargets {
         let frameQuality: Float
@@ -101,7 +103,11 @@ extension StreamContext {
             hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
         }
         let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
-        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+        let floor = max(minimumFloor, ceiling * floorFactor)
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return min(ceiling, max(Self.awdlInteractiveFrameQualityFloor, floor))
+        }
+        return min(ceiling, floor)
     }
 
     /// Returns the runtime keyframe quality floor for the active bitrate policy.
@@ -115,7 +121,11 @@ extension StreamContext {
             hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
         }
         let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
-        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+        let floor = max(minimumFloor, ceiling * floorFactor)
+        if mediaPathProfile.usesAwdlRadioPolicy {
+            return min(ceiling, max(Self.awdlInteractiveKeyframeQualityFloor, floor))
+        }
+        return min(ceiling, floor)
     }
 
     private func runtimeBitratePressureRatio() -> Float? {
@@ -140,6 +150,7 @@ extension StreamContext {
         frameRate: Int
     ) -> LowLatencyHighResolutionQualityBoost {
         guard lowLatencyHighResolutionCompressionBoostEnabled,
+              !mediaPathProfile.usesAwdlRadioPolicy,
               latencyMode == .lowestLatency || latencyMode == .balanced else {
             return LowLatencyHighResolutionQualityBoost(
                 frameQuality: frameQuality,

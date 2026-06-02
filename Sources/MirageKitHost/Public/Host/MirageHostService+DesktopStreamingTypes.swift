@@ -146,6 +146,7 @@ extension MirageHostService {
         let presentationResolution: CGSize
         let virtualDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?
         let usesDisplayRefreshCadence: Bool?
+        let acceptedDisplayScaleFactor: CGFloat?
     }
 
     struct DesktopMainDisplayCaptureFallback {

@@ -106,7 +106,8 @@ extension StreamContext {
             await scheduleCoalescedRecoveryKeyframe(
                 reason: "Desktop resize reset",
                 noteLoss: true,
-                ignoreExistingInFlight: true
+                ignoreExistingInFlight: true,
+                supersedesInFlightGeometry: true
             )
         }
         MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")

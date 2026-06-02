@@ -28,6 +28,20 @@ extension MirageHostService {
         return displays.first { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
     }
 
+    func resolvePrimaryNonMirageDisplayID() -> CGDirectDisplayID? {
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &displayCount)
+        guard displayCount > 0 else { return nil }
+
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
+
+        return primaryNonMirageDisplayID(
+            mainDisplayID: CGMainDisplayID(),
+            onlineDisplayIDs: Array(displays.prefix(Int(displayCount)))
+        )
+    }
+
     func captureDisplayMirroringSnapshot(for displayIDs: [CGDirectDisplayID])
     -> [CGDirectDisplayID: CGDirectDisplayID] {
         var snapshot: [CGDirectDisplayID: CGDirectDisplayID] = [:]
@@ -203,6 +217,13 @@ extension MirageHostService {
         requiresResidualMirageDisplaysClear: Bool = true
     )
     async -> Bool {
+        let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
+
+        guard !displaysToMirror.isEmpty else {
+            MirageLogger.host("No displays found to mirror")
+            return true
+        }
+
         guard await waitForDisplayMirroringTargetStability(
             targetDisplayID: targetDisplayID,
             expectedPixelResolution: expectedPixelResolution,
@@ -212,13 +233,6 @@ extension MirageHostService {
                 "Display mirroring setup deferred because target display \(targetDisplayID) did not stabilize"
             )
             return false
-        }
-
-        let displaysToMirror = CGVirtualDisplayBridge.displaysToMirror(excludingDisplayID: targetDisplayID)
-
-        guard !displaysToMirror.isEmpty else {
-            MirageLogger.host("No displays found to mirror")
-            return true
         }
 
         captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: false)

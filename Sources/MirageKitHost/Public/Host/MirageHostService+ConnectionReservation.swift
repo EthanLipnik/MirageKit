@@ -27,20 +27,12 @@ extension MirageHostService {
         existingClient: MirageConnectedClient? = nil,
         incomingPeerIdentity: LoomPeerIdentity? = nil
     ) -> MirageSessionBootstrapRejectionReason? {
-        if let existingClient,
-           let incomingPeerIdentity,
-           shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) {
-            return nil
-        }
-
-        guard request.requestTakeoverIfBusy else {
-            return .hostBusy
-        }
-
-        guard trustEvaluation.decision == .trusted else {
-            return .takeoverRequiresTrustedRequester
-        }
-
+        MirageLogger.host(
+            "Allowing busy-host replacement requestTakeoverIfBusy=\(request.requestTakeoverIfBusy) " +
+                "trustDecision=\(String(describing: trustEvaluation.decision)) " +
+                "existingClientID=\(existingClient?.id.uuidString.lowercased() ?? "nil") " +
+                "incomingClientID=\(incomingPeerIdentity?.deviceID.uuidString.lowercased() ?? "nil")"
+        )
         return nil
     }
 

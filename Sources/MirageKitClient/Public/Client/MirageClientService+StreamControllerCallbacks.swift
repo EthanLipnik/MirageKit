@@ -228,14 +228,23 @@ extension MirageClientService {
         let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
         let receiverCadencePressure = metrics.receivedFPS > 0 &&
             metrics.receivedFPS < Double(max(1, targetFPS)) * 0.85
+        let receiverJitterP95Ms = Self.receiverJitterMs(
+            receivedFrameIntervalMs: metrics.receivedFrameIntervalP95Ms,
+            frameBudgetMs: frameBudgetMs
+        )
+        let receiverJitterP99Ms = Self.receiverJitterMs(
+            receivedFrameIntervalMs: metrics.receivedFrameIntervalP99Ms,
+            frameBudgetMs: frameBudgetMs
+        )
         let receiveGapPressure = metrics.receivedWorstGapMs > frameBudgetMs * 3.0 ||
-            metrics.receivedFrameIntervalP95Ms > frameBudgetMs * 2.0 ||
-            metrics.receivedFrameIntervalP99Ms > frameBudgetMs * 2.5
+            receiverJitterP95Ms > frameBudgetMs ||
+            receiverJitterP99Ms > frameBudgetMs * 1.5
         let pFramePressure = metrics.reassemblerPFrameCompletionLatencyP95Ms > frameBudgetMs * 2.5
+        let presentationBacklogFrames = Self.presentationBacklogFrames(targetFPS: targetFPS, metrics: metrics)
         let backlogPressure = metrics.reassemblerPendingFrameCount > 3 ||
             metrics.reassemblerPendingBytes > 1_000_000 ||
             metrics.decodeBacklogFrames > 2 ||
-            metrics.pendingFrameCount > 2
+            presentationBacklogFrames > 2
         let visibleStress = metrics.presentationStallCount > 0 ||
             metrics.displayTickNoFrameCount > 0 ||
             (metrics.layerAcceptedFPS > 0 && metrics.visibleFrameFPS < metrics.layerAcceptedFPS * 0.85)
@@ -285,7 +294,7 @@ extension MirageClientService {
             reassemblyBacklogKeyframes: metrics.reassemblerPendingKeyframeCount,
             reassemblyBacklogBytes: metrics.reassemblerPendingBytes,
             decodeBacklogFrames: metrics.decodeBacklogFrames,
-            presentationBacklogFrames: metrics.pendingFrameCount,
+            presentationBacklogFrames: presentationBacklogFrames(targetFPS: targetFPS, metrics: metrics),
             decodedFPS: metrics.decodedFPS,
             receivedFPS: metrics.receivedFPS,
             rendererAcceptedFPS: metrics.layerAcceptedFPS,
@@ -315,9 +324,49 @@ extension MirageClientService {
             latestPresentedFrameAgeMs: latestPresentedFrameAgeMs,
             decodeQueueDepth: decodeQueueDepth,
             presentationQueueDepth: presentationQueueDepth,
+            presentationTargetFrames: presentationTargetFrames(targetFPS: targetFPS, metrics: metrics),
+            presentationUnderfillFrames: presentationUnderfillFrames(targetFPS: targetFPS, metrics: metrics),
+            receiverJitterP95Ms: receiverJitterMs(
+                receivedFrameIntervalMs: metrics.receivedFrameIntervalP95Ms,
+                frameBudgetMs: 1_000.0 / Double(max(1, targetFPS))
+            ),
+            receiverJitterP99Ms: receiverJitterMs(
+                receivedFrameIntervalMs: metrics.receivedFrameIntervalP99Ms,
+                frameBudgetMs: 1_000.0 / Double(max(1, targetFPS))
+            ),
             audioDroppedFrameCount: audioDroppedFrameCount,
             audioGateActive: audioGateActive
         )
+    }
+
+    nonisolated private static func presentationTargetFrames(
+        targetFPS: Int,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> Int {
+        guard metrics.smoothestTargetDelayMs > 0 else { return 0 }
+        let frameBudgetMs = 1_000.0 / Double(max(1, targetFPS))
+        return max(1, Int((metrics.smoothestTargetDelayMs / frameBudgetMs).rounded(.up)))
+    }
+
+    nonisolated private static func presentationBacklogFrames(
+        targetFPS: Int,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> Int {
+        max(0, metrics.pendingFrameCount - presentationTargetFrames(targetFPS: targetFPS, metrics: metrics))
+    }
+
+    nonisolated private static func presentationUnderfillFrames(
+        targetFPS: Int,
+        metrics: StreamController.ClientFrameMetrics
+    ) -> Int {
+        max(0, presentationTargetFrames(targetFPS: targetFPS, metrics: metrics) - metrics.pendingFrameCount)
+    }
+
+    nonisolated private static func receiverJitterMs(
+        receivedFrameIntervalMs: Double,
+        frameBudgetMs: Double
+    ) -> Double {
+        max(0, receivedFrameIntervalMs - frameBudgetMs)
     }
 
     nonisolated static func receiverReliabilityCauses(

@@ -265,8 +265,8 @@ struct RenderCadenceSmoothingTests {
         #expect(timing.displaysImmediately)
     }
 
-    @Test("AWDL radio keeps lowest latency with bounded realtime playout")
-    func awdlRadioKeepsLowestLatencyWithBoundedRealtimePlayout() {
+    @Test("AWDL radio uses buffered realtime playout")
+    func awdlRadioUsesBufferedRealtimePlayout() {
         let streamID: StreamID = 416
         MirageRenderStreamStore.shared.clear(for: streamID)
         defer { MirageRenderStreamStore.shared.clear(for: streamID) }
@@ -292,7 +292,7 @@ struct RenderCadenceSmoothingTests {
         #expect(MirageRenderStreamStore.shared.frameForPresentation(for: streamID, after: .zero) == nil)
         #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.targetPlayoutDelayMs == 24)
         let timing = MirageRenderStreamStore.shared.presentationTiming(for: streamID)
-        #expect(timing.latencyMode == .lowestLatency)
+        #expect(timing.latencyMode == .balanced)
         #expect(!timing.displaysImmediately)
     }
 

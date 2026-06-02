@@ -103,4 +103,26 @@ struct MirageStreamGeometryTests {
         #expect(geometry.encodedPixelSize != CGSize(width: 736, height: 416))
         #expect(abs(aspect - baseAspect) / baseAspect < 0.002)
     }
+
+    @Test("Desktop geometry contract identity compares resolved display and encoded pixels")
+    func desktopGeometryContractIdentityComparesResolvedDisplayAndEncodedPixels() {
+        let startup = DesktopGeometryContract(
+            logicalSize: CGSize(width: 1600, height: 1200),
+            requestedDisplayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+        let firstDrawable = DesktopGeometryContract(
+            logicalSize: CGSize(width: 1600, height: 1200),
+            requestedDisplayScaleFactor: 2.0,
+            requestedStreamScale: 0.86,
+            encoderMaxWidth: 2752,
+            encoderMaxHeight: 2064
+        )
+
+        #expect(startup.requestedStreamScale != firstDrawable.requestedStreamScale)
+        #expect(startup.resolvedStreamScale == firstDrawable.resolvedStreamScale)
+        #expect(startup.identity == firstDrawable.identity)
+    }
 }

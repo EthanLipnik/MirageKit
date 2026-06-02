@@ -286,6 +286,9 @@ actor StreamContext {
     var lastReceiverFeedbackTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackLogTime: CFAbsoluteTime = 0
     var lastAwdlReceiverFeedbackTrigger: HostStreamTransportController.PressureTrigger = .none
+    var lastAwdlInteractiveFrameRateAdjustmentTime: CFAbsoluteTime = 0
+    var lastAwdlInteractiveScaleAdjustmentTime: CFAbsoluteTime = 0
+    var awdlInteractiveBaseStreamScale: CGFloat?
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -436,6 +439,10 @@ actor StreamContext {
         let effectiveHostBufferingPolicy = resolvedMediaPathProfile.usesAwdlRadioPolicy
             ? MirageHostBufferingPolicy.stability
             : hostBufferingPolicy
+        resolvedEncoderConfig.targetFrameRate = MirageAwdlMediaController.fixedDisplayTargetFrameRate(
+            requestedFrameRate: resolvedEncoderConfig.targetFrameRate,
+            mediaPathProfile: resolvedMediaPathProfile
+        )
 
         self.streamID = streamID
         self.windowID = windowID

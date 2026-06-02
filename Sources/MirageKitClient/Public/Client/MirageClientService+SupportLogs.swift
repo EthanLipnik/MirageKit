@@ -25,32 +25,41 @@ public extension MirageClientService {
         let requestID = UUID()
         let request = HostSupportLogArchiveRequestMessage(requestID: requestID)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            hostSupportLogArchiveRequestID = requestID
-            hostSupportLogArchiveContinuation = continuation
-            hostSupportLogArchiveTransferTask?.cancel()
-            hostSupportLogArchiveTransferTask = nil
-            hostSupportLogArchiveTimeoutTask?.cancel()
-            hostSupportLogArchiveTimeoutTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(45))
-                } catch {
-                    return
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                hostSupportLogArchiveRequestID = requestID
+                hostSupportLogArchiveContinuation = continuation
+                hostSupportLogArchiveTransferTask?.cancel()
+                hostSupportLogArchiveTransferTask = nil
+                hostSupportLogArchiveTimeoutTask?.cancel()
+                hostSupportLogArchiveTimeoutTask = Task { @MainActor [weak self] in
+                    do {
+                        try await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(45))
+                    } catch {
+                        return
+                    }
+                    guard let self,
+                          hostSupportLogArchiveContinuation != nil else {
+                        return
+                    }
+                    completeHostSupportLogArchiveRequest(
+                        .failure(MirageError.protocolError("Timed out exporting host support logs"))
+                    )
                 }
-                guard let self,
-                      hostSupportLogArchiveContinuation != nil else {
-                    return
+                Task { @MainActor [weak self] in
+                    do {
+                        try await self?.sendControlMessage(.hostSupportLogArchiveRequest, content: request)
+                    } catch {
+                        self?.completeHostSupportLogArchiveRequest(.failure(error))
+                    }
                 }
-                completeHostSupportLogArchiveRequest(
-                    .failure(MirageError.protocolError("Timed out exporting host support logs"))
-                )
             }
+        } onCancel: {
             Task { @MainActor [weak self] in
-                do {
-                    try await self?.sendControlMessage(.hostSupportLogArchiveRequest, content: request)
-                } catch {
-                    self?.completeHostSupportLogArchiveRequest(.failure(error))
+                guard self?.hostSupportLogArchiveRequestID == requestID else {
+                    return
                 }
+                self?.completeHostSupportLogArchiveRequest(.failure(CancellationError()))
             }
         }
     }

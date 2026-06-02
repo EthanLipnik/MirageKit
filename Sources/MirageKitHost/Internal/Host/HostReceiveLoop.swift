@@ -78,6 +78,12 @@ final class HostReceiveLoop: @unchecked Sendable {
         .receiverMediaFeedback,
     ]
 
+    private static let highPriorityDirectTypes: Set<ControlMessageType> = [
+        .disconnect,
+        .cancelStreamSetup,
+        .hostSupportLogArchiveRequest,
+    ]
+
     private let receiveChunk: @Sendable (
         @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void
     ) -> Void
@@ -288,6 +294,11 @@ final class HostReceiveLoop: @unchecked Sendable {
             return true
         } else {
             if state.entries.count >= maxControlBacklog {
+                if Self.highPriorityDirectTypes.contains(type) {
+                    discardQueuedMessageToPreserveHighPriorityControl(type, state: &state)
+                }
+            }
+            if state.entries.count >= maxControlBacklog {
                 MirageLogger.host(
                     "Client \(clientName) control backlog full; dropping newest non-coalesced message \(type)"
                 )
@@ -373,6 +384,41 @@ final class HostReceiveLoop: @unchecked Sendable {
             MirageLogger.host(
                 "Client \(clientName) control backlog full; dropping older queued input to preserve latest input"
             )
+        }
+    }
+
+    private func discardQueuedMessageToPreserveHighPriorityControl(
+        _ type: ControlMessageType,
+        state: inout State
+    ) {
+        if let index = state.entries.firstIndex(where: {
+            if case .coalesced = $0 {
+                return true
+            }
+            return false
+        }) {
+            let entry = state.entries.remove(at: index)
+            if case let .coalesced(coalescedKey) = entry {
+                state.coalesced.removeValue(forKey: coalescedKey)
+                MirageLogger.host(
+                    "Client \(clientName) control backlog full; dropping stale \(coalescedKey) to preserve \(type)"
+                )
+            }
+            return
+        }
+
+        if let index = state.entries.firstIndex(where: {
+            if case let .direct(message) = $0 {
+                return !Self.highPriorityDirectTypes.contains(message.type)
+            }
+            return false
+        }) {
+            let entry = state.entries.remove(at: index)
+            if case let .direct(message) = entry {
+                MirageLogger.host(
+                    "Client \(clientName) control backlog full; dropping queued \(message.type) to preserve \(type)"
+                )
+            }
         }
     }
 

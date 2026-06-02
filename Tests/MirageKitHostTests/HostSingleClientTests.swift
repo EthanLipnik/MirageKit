@@ -207,9 +207,9 @@ struct HostSingleClientTests {
         #expect(rejectionReason == nil)
     }
 
-    @Test("Trusted automatic takeover is rejected while busy")
+    @Test("Accepted automatic replacement is allowed while busy")
     @MainActor
-    func trustedAutomaticTakeoverIsRejectedWhileBusy() {
+    func acceptedAutomaticReplacementIsAllowedWhileBusy() {
         let host = MirageHostService()
         let existingClient = MirageConnectedClient(
             id: UUID(),
@@ -240,17 +240,17 @@ struct HostSingleClientTests {
             incomingPeerIdentity: incomingPeer
         )
 
-        #expect(rejectionReason == .hostBusy)
+        #expect(rejectionReason == nil)
     }
 
-    @Test("Untrusted explicit takeover requires trusted requester")
+    @Test("Accepted replacement does not require explicit takeover intent")
     @MainActor
-    func untrustedExplicitTakeoverRequiresTrustedRequester() {
+    func acceptedReplacementDoesNotRequireExplicitTakeoverIntent() {
         let host = MirageHostService()
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: false,
-            requestTakeoverIfBusy: true
+            requestTakeoverIfBusy: false
         )
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
@@ -258,7 +258,7 @@ struct HostSingleClientTests {
             trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         )
 
-        #expect(rejectionReason == .takeoverRequiresTrustedRequester)
+        #expect(rejectionReason == nil)
     }
 }
 #endif

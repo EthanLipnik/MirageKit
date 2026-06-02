@@ -14,23 +14,46 @@ import MirageKit
 extension StreamContext {
     /// Pauses encoding while the client is backgrounded and drops queued frames that would arrive stale.
     func pauseForClientBackground() async {
-        guard shouldEncodeFrames else { return }
+        let wasEncoding = shouldEncodeFrames
         shouldEncodeFrames = false
         frameInbox.discardAll()
         await packetSender?.resetQueue(reason: "client background pause")
-        MirageLogger.stream("Stream \(streamID) paused for client background")
+        if wasEncoding {
+            MirageLogger.stream("Stream \(streamID) paused for client background")
+        } else {
+            MirageLogger.stream("Stream \(streamID) cleaned up repeated client background pause")
+        }
     }
 
     /// Resumes foreground encoding from a fresh keyframe so the client does not present stale deltas.
     func resumeAfterClientForeground() async {
-        guard !shouldEncodeFrames else { return }
-        lastKeyframeTime = 0
-        if let encoder {
-            await encoder.resetFrameNumber()
-            await encoder.forceKeyframe()
-        }
+        let wasEncoding = shouldEncodeFrames
         shouldEncodeFrames = true
-        MirageLogger.stream("Stream \(streamID) resumed after client foreground")
+        lastKeyframeTime = 0
+        frameInbox.discardAll()
+        await packetSender?.resetQueue(reason: "client foreground resume")
+
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        keyframeInFlightFrameNumber = nil
+
+        let now = CFAbsoluteTimeGetCurrent()
+        startFrameChainRepair(
+            reason: "client-foreground-resume",
+            now: now
+        )
+        let scheduledRecoveryKeyframe = await scheduleCoalescedRecoveryKeyframe(
+            reason: "Client foreground resume",
+            resetFrameNumber: true,
+            noteLoss: true,
+            requiresReset: true,
+            ignoreExistingInFlight: true,
+            bypassesRecoveryCooldown: true
+        )
+        MirageLogger.stream(
+            "Stream \(streamID) resumed after client foreground " +
+                "wasEncoding=\(wasEncoding) recoveryKeyframeScheduled=\(scheduledRecoveryKeyframe)"
+        )
     }
 
     /// Stops packet production during a desktop resize preflight while keeping capture state available.
@@ -54,7 +77,8 @@ extension StreamContext {
             reason: "Desktop resize resume",
             resetFrameNumber: true,
             noteLoss: true,
-            ignoreExistingInFlight: true
+            ignoreExistingInFlight: true,
+            supersedesInFlightGeometry: true
         )
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }

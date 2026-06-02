@@ -30,6 +30,7 @@ struct HostStreamTransportController: Equatable {
         var awdlPolicyState: MirageAwdlMediaController.State?
         var awdlPolicyTrigger: MirageAwdlMediaController.Trigger?
         var awdlTargetFrameRate: Int?
+        var awdlResolutionScale: Double?
     }
 
     private static let awdlPacingHoldSeconds: CFAbsoluteTime = MirageAwdlMediaController.pacingHoldSeconds
@@ -75,7 +76,8 @@ struct HostStreamTransportController: Equatable {
                 awdlPacingTrigger: awdlDeadline > 0 ? .clientRecovery : .clear,
                 awdlPolicyState: awdlDecision?.state,
                 awdlPolicyTrigger: awdlDecision?.trigger,
-                awdlTargetFrameRate: awdlDecision?.targetFrameRate
+                awdlTargetFrameRate: awdlDecision?.targetFrameRate,
+                awdlResolutionScale: awdlDecision?.resolutionScale
             )
         }
 
@@ -104,7 +106,8 @@ struct HostStreamTransportController: Equatable {
                     awdlPacingTrigger: pressureTrigger,
                     awdlPolicyState: awdlDecision?.state,
                     awdlPolicyTrigger: awdlDecision?.trigger,
-                    awdlTargetFrameRate: awdlDecision?.targetFrameRate
+                    awdlTargetFrameRate: awdlDecision?.targetFrameRate,
+                    awdlResolutionScale: awdlDecision?.resolutionScale
                 )
             }
             return Decision(
@@ -113,7 +116,8 @@ struct HostStreamTransportController: Equatable {
                 awdlPacingTrigger: .clear,
                 awdlPolicyState: nil,
                 awdlPolicyTrigger: nil,
-                awdlTargetFrameRate: nil
+                awdlTargetFrameRate: nil,
+                awdlResolutionScale: nil
             )
         }
 
@@ -127,7 +131,8 @@ struct HostStreamTransportController: Equatable {
                     awdlPacingTrigger: .clear,
                     awdlPolicyState: awdlDecision?.state,
                     awdlPolicyTrigger: awdlDecision?.trigger,
-                    awdlTargetFrameRate: awdlDecision?.targetFrameRate
+                    awdlTargetFrameRate: awdlDecision?.targetFrameRate,
+                    awdlResolutionScale: awdlDecision?.resolutionScale
                 )
             }
             return nil
@@ -198,8 +203,9 @@ struct HostStreamTransportController: Equatable {
             feedback.discardedPacketCount >= 6 ||
             feedback.lostFrameCount + feedback.discardedPacketCount >= 6
         let targetFrameIntervalMs = 1_000.0 / Double(max(1, max(currentFrameRate, feedback.targetFPS)))
+        let receiverJitterP99Ms = feedback.receiverJitterP99Ms ?? feedback.jitterP99Ms
         let awdlJitterStress = mediaPathProfile.usesAwdlRadioPolicy &&
-            feedback.jitterP99Ms >= max(60.0, targetFrameIntervalMs * 4.0)
+            receiverJitterP99Ms >= max(45.0, targetFrameIntervalMs * 3.0)
         let pFrameLatencyP95 = feedback.pFrameCompletionLatencyP95Ms ?? 0
         let awdlPFrameLatencyStress = mediaPathProfile.usesAwdlRadioPolicy &&
             (pFrameLatencyP95 >= max(50.0, targetFrameIntervalMs * 3.0) ||

@@ -27,23 +27,23 @@ final class DesktopResizeCoordinator {
         let encoderMaxHeight: Int?
 
         func isEffectivelySameStreamGeometry(as other: RequestGeometry) -> Bool {
-            guard Self.approximatelyEqual(logicalResolution.width, other.logicalResolution.width),
-                  Self.approximatelyEqual(logicalResolution.height, other.logicalResolution.height),
-                  Self.approximatelyEqual(displayScaleFactor, other.displayScaleFactor),
-                  Self.approximatelyEqual(requestedStreamScale, other.requestedStreamScale) else {
-                return false
-            }
-
-            let currentGeometry = resolvedGeometry
-            let otherGeometry = other.resolvedGeometry
-            return Self.pixelSizesEqual(currentGeometry.displayPixelSize, otherGeometry.displayPixelSize) &&
-                Self.pixelSizesEqual(currentGeometry.encodedPixelSize, otherGeometry.encodedPixelSize)
+            contract.identity == other.contract.identity
         }
 
         private var resolvedGeometry: MirageStreamGeometry {
             MirageStreamGeometry.resolve(
                 logicalSize: logicalResolution,
                 displayScaleFactor: displayScaleFactor,
+                requestedStreamScale: requestedStreamScale,
+                encoderMaxWidth: encoderMaxWidth,
+                encoderMaxHeight: encoderMaxHeight
+            )
+        }
+
+        private var contract: DesktopGeometryContract {
+            DesktopGeometryContract(
+                logicalSize: logicalResolution,
+                requestedDisplayScaleFactor: displayScaleFactor,
                 requestedStreamScale: requestedStreamScale,
                 encoderMaxWidth: encoderMaxWidth,
                 encoderMaxHeight: encoderMaxHeight

@@ -44,6 +44,21 @@ public extension MirageClientService {
         /// Latest submitted packet sequence observed by the receiver.
         public let submittedSequence: UInt64
 
+        /// Wall-clock time for the latest submitted frame.
+        public let submittedTime: CFAbsoluteTime
+
+        /// Unique visible frame submissions observed over the current telemetry window.
+        public let visibleFrameFPS: Double
+
+        /// Number of frames currently queued for presentation.
+        public let pendingFrameCount: Int
+
+        /// Age of the oldest pending presentation frame in milliseconds.
+        public let pendingFrameAgeMs: Double
+
+        /// Whether decode cadence is healthy relative to the stream target.
+        public let decodeHealthy: Bool
+
         /// Whether the receiver is waiting for a keyframe before decoding can continue.
         public let isAwaitingKeyframe: Bool
 
@@ -54,6 +69,11 @@ public extension MirageClientService {
             hasVideoMediaStream: Bool,
             latestPacketTime: CFAbsoluteTime,
             submittedSequence: UInt64,
+            submittedTime: CFAbsoluteTime = 0,
+            visibleFrameFPS: Double = 0,
+            pendingFrameCount: Int = 0,
+            pendingFrameAgeMs: Double = 0,
+            decodeHealthy: Bool = true,
             isAwaitingKeyframe: Bool
         ) {
             self.streamID = streamID
@@ -61,6 +81,11 @@ public extension MirageClientService {
             self.hasVideoMediaStream = hasVideoMediaStream
             self.latestPacketTime = latestPacketTime
             self.submittedSequence = submittedSequence
+            self.submittedTime = submittedTime
+            self.visibleFrameFPS = visibleFrameFPS
+            self.pendingFrameCount = pendingFrameCount
+            self.pendingFrameAgeMs = pendingFrameAgeMs
+            self.decodeHealthy = decodeHealthy
             self.isAwaitingKeyframe = isAwaitingKeyframe
         }
     }
