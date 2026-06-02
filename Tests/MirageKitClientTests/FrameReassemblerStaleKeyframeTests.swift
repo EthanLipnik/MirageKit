@@ -301,8 +301,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.snapshotMetrics.pendingFrameCount == 1)
     }
 
-    @Test("Severe forward gap enters keyframe wait after grace expires")
-    func severeForwardGapEntersKeyframeWaitAfterGraceExpires() {
+    @Test("Severe forward gap forwards to decoder after grace expires")
+    func severeForwardGapForwardsToDecoderAfterGraceExpires() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -357,10 +357,10 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 1)
+        #expect(deliveredCounter.value == 2)
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .severeForwardGap)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
     @Test("Smoothest severe forward gap waits for reorder timeout")
@@ -478,10 +478,10 @@ struct FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 1)
+        #expect(deliveredCounter.value == 4)
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .forwardGapTimeout)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
     @Test("Smoothest non-VPN severe forward gap also waits for reorder timeout")
@@ -563,7 +563,7 @@ struct FrameReassemblerStaleKeyframeTests {
 
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .severeForwardGap)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
 }

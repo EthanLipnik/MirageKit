@@ -150,8 +150,8 @@ struct FrameReassemblerMemoryBudgetTests {
         #expect(deliveredFrames.values == [10])
     }
 
-    @Test("Memory pressure trim clears pending reassembly and requests recovery")
-    func memoryPressureTrimClearsPendingReassemblyAndRequestsRecovery() {
+    @Test("Memory pressure trim clears pending reassembly without keyframe wait")
+    func memoryPressureTrimClearsPendingReassemblyWithoutKeyframeWait() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
 
         for frameNumber in UInt32(1) ... UInt32(2) {
@@ -177,7 +177,7 @@ struct FrameReassemblerMemoryBudgetTests {
         #expect(metrics.pendingFrameCount == 0)
         #expect(metrics.pendingFrameBytes == 0)
         #expect(metrics.frameBufferPoolRetainedBytes == 0)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
     @Test("Memory budget can evict a single over-budget pending frame")
@@ -217,7 +217,7 @@ struct FrameReassemblerMemoryBudgetTests {
         let metrics = reassembler.snapshotMetrics
         #expect(metrics.pendingFrameCount == 0)
         #expect(metrics.budgetEvictions == 1)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
     @Test("Oversized frame headers are rejected before allocation")

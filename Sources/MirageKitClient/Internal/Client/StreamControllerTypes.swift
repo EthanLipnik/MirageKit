@@ -77,6 +77,19 @@ extension StreamController {
                 .startupTimeout
             }
         }
+
+        var allowsExplicitKeyframeRequest: Bool {
+            switch self {
+            case .decodeErrorThreshold,
+                 .manualRecovery,
+                 .startupKeyframeTimeout:
+                true
+            case .frameLoss,
+                 .freezeTimeout,
+                 .memoryBudget:
+                false
+            }
+        }
     }
 
     enum StreamRecoveryDecision: String, Equatable {
@@ -102,9 +115,6 @@ extension StreamController {
 
     enum FreezeRecoveryEpisodeState: String, Equatable {
         case presenterProbe = "presenter-probe"
-        case requestingKeyframe = "requesting-keyframe"
-        case awaitingKeyframePresentation = "awaiting-keyframe-presentation"
-        case hardRecovery = "hard-recovery"
     }
 
     struct FreezeRecoveryEpisode: Equatable {
@@ -114,7 +124,6 @@ extension StreamController {
         let baselineSubmittedSequence: UInt64
         var lastActionTime: CFAbsoluteTime
         var presenterProbeAttempted: Bool
-        var keyframeRequestAttempts: Int
     }
 
     enum FirstPresentedFrameAwaitMode: Equatable {

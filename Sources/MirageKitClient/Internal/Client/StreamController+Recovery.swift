@@ -57,7 +57,7 @@ extension StreamController {
         )
     }
 
-    /// Handles compressed-frame queue overflow without feeding dependent P-frames into VideoToolbox.
+    /// Handles compressed-frame queue overflow while letting the decoder determine whether recovery needs a keyframe.
     func handleDecodeQueueDependencyBreak(droppedFrame: FrameData, queueDepth: Int) async {
         droppedFrame.releaseBuffer()
         let clearedQueuedFrames = clearQueuedDecodeFramesOnly()
@@ -66,23 +66,9 @@ extension StreamController {
         maybeLogDecodeBackpressure(queueDepth: queueDepth)
         logQueueDropIfNeeded()
 
-        decodeQueueRequiresKeyframe = true
-        reassembler.beginKeyframeWait()
-        startFreezeMonitorIfNeeded()
-
         MirageLogger.client(
             "Decode backpressure broke compressed-frame dependency chain for stream \(streamID); " +
-                "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), requesting keyframe"
-        )
-        if presentationTier == .activeLive {
-            await enterKeyframeRecoveryIfNeeded(
-                reason: "decode-backpressure",
-                cause: .memoryBudget
-            )
-        }
-        _ = await requestKeyframeRecovery(
-            reason: .memoryBudget,
-            bypassRetryGate: true
+                "droppedCurrent=1, clearedQueuedFrames=\(clearedQueuedFrames), continuing until decoder error"
         )
     }
 
@@ -116,38 +102,25 @@ extension StreamController {
         }
 
         if presentationTier == .passiveSnapshot {
-            reassembler.beginKeyframeWait()
             MirageLogger.client(
-                "Frame loss detected for passive stream \(streamID); requesting recovery keyframe"
+                "Frame loss detected for passive stream \(streamID); waiting for natural keyframe or decode error"
             )
-            await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
 
         if reason.requestsImmediateActiveRecovery {
-            reassembler.beginKeyframeWait()
             MirageLogger.client(
-                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
+                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); continuing until decoder error"
             )
-            await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-\(reason.rawValue)")
-            await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
 
         if reason == .memoryBudget {
-            reassembler.beginKeyframeWait()
             discardQueuedFramesForRecovery()
-            startFreezeMonitorIfNeeded()
-            if memoryBudgetRecoveryTask != nil {
-                MirageLogger.client(
-                    "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
-                        "memory-budget recovery already settling"
-                )
-                return
-            }
-            scheduleMemoryBudgetRecoveryIfNeeded()
+            cancelMemoryBudgetRecoveryTask()
             MirageLogger.client(
-                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); deferring recovery keyframe while memory pressure settles"
+                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); " +
+                    "cleared local decode backlog without keyframe request"
             )
             return
         }
@@ -178,10 +151,8 @@ extension StreamController {
                     discardQueuedFramesForRecovery()
                     MirageLogger.client(
                         "Frame loss timeout for stream \(streamID) could not recover pending render frames; " +
-                            "droppedPendingRenderFrames=\(droppedPendingFrames), requesting keyframe"
+                            "droppedPendingRenderFrames=\(droppedPendingFrames), waiting for decoder error"
                     )
-                    await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-unhandled-pending-render")
-                    await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
                     return
                 }
                 discardQueuedFramesForRecovery()
@@ -210,14 +181,11 @@ extension StreamController {
            presentationTier == .activeLive,
            hasPresentedFirstFrame {
             let snapshot = reassembler.keyframeWaitSnapshot
-            reassembler.beginKeyframeWait()
             discardQueuedFramesForRecovery()
             MirageLogger.client(
                 "Frame loss timeout for stream \(streamID) had no presenter recovery path; " +
-                    "requesting one recovery keyframe (path=\(snapshot.transportPathKind.rawValue))"
+                    "waiting for decoder error (path=\(snapshot.transportPathKind.rawValue))"
             )
-            await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-unhandled")
-            await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
             return
         }
 
@@ -291,16 +259,13 @@ extension StreamController {
             return true
         }
 
-        reassembler.beginKeyframeWait()
         discardQueuedFramesForRecovery()
         MirageLogger.client(
             "Frame loss timeout for stream \(streamID) had no decoded or presented progress beyond recovery floor; " +
-                "requesting one recovery keyframe " +
+                "waiting for decoder error " +
                 "(usefulProgressAgeMs=\(Int((noUsefulProgressDuration * 1000).rounded())), " +
                 "floorMs=\(Int((floor * 1000).rounded())), path=\(snapshot.transportPathKind.rawValue))"
         )
-        await enterKeyframeRecoveryIfNeeded(reason: "frame-loss-timeout-no-progress")
-        await requestKeyframeRecoveryIfPossible(reason: .frameLoss)
         return true
     }
 
@@ -314,6 +279,13 @@ extension StreamController {
     }
 
     func requestKeyframeRecovery(reason: RecoveryReason, bypassRetryGate: Bool = false) async -> Bool {
+        guard reason.allowsExplicitKeyframeRequest else {
+            MirageLogger.client(
+                "Recovery keyframe request suppressed for non-decode recovery " +
+                    "(\(reason.logLabel)) for stream \(streamID)"
+            )
+            return false
+        }
         let now = currentTime
         let coalesceInterval = Self.keyframeRequestCoalesceInterval(targetFPS: decodeSchedulerTargetFPS)
         if !bypassRetryGate,

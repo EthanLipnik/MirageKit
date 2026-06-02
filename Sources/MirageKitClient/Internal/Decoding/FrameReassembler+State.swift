@@ -57,7 +57,6 @@ extension FrameReassembler {
             pendingFrames.removeAll(keepingCapacity: false)
             if evictedFrames > 0 {
                 droppedFrameCount += UInt64(evictedFrames)
-                beginAwaitingKeyframe()
             }
             purgedRetainedBytes = bufferPool.purgeRetainedBuffers()
             result = MemoryTrimResult(

@@ -117,7 +117,7 @@ extension StreamControllerRecoveryTests {
         await controller.markFirstFramePresented()
 
         await controller.requestRecovery(
-            reason: .frameLoss,
+            reason: .manualRecovery,
             restartRecoveryLoop: false,
             awaitFirstPresentedFrame: true,
             firstPresentedFrameWaitReason: "test-hard-recovery"

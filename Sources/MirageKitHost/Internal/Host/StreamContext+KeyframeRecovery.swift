@@ -30,15 +30,33 @@ extension StreamContext {
         let reason = "Keyframe request"
         let queued = queueKeyframeRecoveryRequest(recoveryCause: recoveryCause)
         guard queued else { return false }
+        recordAcceptedExplicitKeyframeRequest(recoveryCause: recoveryCause, now: now)
         await completeAcceptedKeyframeRecoveryRequest(now: now, reason: reason)
         return true
     }
 
     private func queueKeyframeRecoveryRequest(recoveryCause: MirageMediaFeedbackRecoveryCause = .none) -> Bool {
         let reason = "Keyframe request"
+        guard recoveryCause.allowsExplicitKeyframeRequest else {
+            MirageLogger.stream(
+                "\(reason) skipped for non-decode recovery cause \(recoveryCause.rawValue)"
+            )
+            return false
+        }
+
         logFreshnessBurstKeyframeRecovery(reason: reason)
 
         let now = CFAbsoluteTimeGetCurrent()
+        guard !shouldSuppressDuplicateExplicitKeyframeRequest(
+            recoveryCause: recoveryCause,
+            now: now
+        ) else {
+            MirageLogger.stream(
+                "\(reason) skipped duplicate explicit request cause=\(recoveryCause.rawValue)"
+            )
+            return false
+        }
+
         let requiresImmediateChainRepair = recoveryCauseRequiresImmediateChainRepair(recoveryCause)
         if !requiresImmediateChainRepair,
            !recoveryCauseBypassesAdaptiveKeyframeCooldown(recoveryCause),
@@ -62,6 +80,25 @@ extension StreamContext {
             advanceEpochOnReset: requiresImmediateChainRepair,
             urgent: true
         )
+    }
+
+    private func shouldSuppressDuplicateExplicitKeyframeRequest(
+        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        guard lastAcceptedExplicitKeyframeRequestTime > 0,
+              recoveryCause == lastAcceptedExplicitKeyframeRequestCause else {
+            return false
+        }
+        return now - lastAcceptedExplicitKeyframeRequestTime < explicitKeyframeRequestDuplicateWindow
+    }
+
+    private func recordAcceptedExplicitKeyframeRequest(
+        recoveryCause: MirageMediaFeedbackRecoveryCause,
+        now: CFAbsoluteTime
+    ) {
+        lastAcceptedExplicitKeyframeRequestCause = recoveryCause
+        lastAcceptedExplicitKeyframeRequestTime = now
     }
 
     private func completeAcceptedKeyframeRecoveryRequest(now: CFAbsoluteTime, reason: String) async {
@@ -99,6 +136,22 @@ extension StreamContext {
             accepted: accepted,
             state: state
         )
+    }
+}
+
+private extension MirageMediaFeedbackRecoveryCause {
+    var allowsExplicitKeyframeRequest: Bool {
+        switch self {
+        case .decodeError,
+             .manual,
+             .startupTimeout,
+             .none:
+            true
+        case .frameLoss,
+             .freezeTimeout,
+             .memoryBudget:
+            false
+        }
     }
 }
 #endif

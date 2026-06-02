@@ -4,14 +4,14 @@
 //
 //  Created by Ethan Lipnik on 5/12/26.
 //
-//  Deferred keyframe recovery after memory-budget frame drops.
+//  Deferred local recovery after memory-budget frame drops.
 //
 
 import Foundation
 import MirageKit
 
 extension StreamController {
-    /// Schedules a bounded keyframe request after memory pressure has time to settle.
+    /// Schedules a bounded local recovery check after memory pressure has time to settle.
     func scheduleMemoryBudgetRecoveryIfNeeded() {
         guard presentationTier == .activeLive,
               hasPresentedFirstFrame,
@@ -49,12 +49,10 @@ extension StreamController {
             return
         }
 
+        discardQueuedFramesForRecovery()
         MirageLogger.client(
-            "Memory-budget recovery requesting a single keyframe for stream \(streamID) after deferred stall check"
+            "Memory-budget recovery cleared local decode backlog for stream \(streamID) after deferred stall check"
         )
-        await enterKeyframeRecoveryIfNeeded(reason: "memory-budget", cause: .memoryBudget)
-        if await requestKeyframeRecovery(reason: .memoryBudget) {
-            lastFreezeRecoveryTime = now
-        }
+        lastFreezeRecoveryTime = now
     }
 }

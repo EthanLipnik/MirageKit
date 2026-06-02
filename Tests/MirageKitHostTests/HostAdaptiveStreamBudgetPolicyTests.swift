@@ -30,6 +30,43 @@ struct HostAdaptiveStreamBudgetPolicyTests {
         #expect(decision?.minimumBitrateFloorBps == 3_000_000)
     }
 
+    @Test("VPN automatic stream honors selected client ceiling")
+    func vpnAutomaticStreamHonorsSelectedClientCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 64_000_000,
+                requestedCeilingBps: 64_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .vpnOrOverlay,
+                transportPathKind: .vpn
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 64_000_000)
+        #expect(decision?.maximumCeilingBps == 64_000_000)
+        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+    }
+
+    @Test("VPN custom stream can ramp beyond automatic ceiling")
+    func vpnCustomStreamCanRampBeyondAutomaticCeiling() {
+        let decision = HostAdaptiveStreamBudgetPolicy.resolve(
+            request(
+                requestedBitrateBps: 300_000_000,
+                requestedCeilingBps: nil,
+                enteredBitrateBps: 300_000_000,
+                outputWidth: 2752,
+                outputHeight: 2064,
+                mediaPathProfile: .vpnOrOverlay,
+                transportPathKind: .vpn
+            )
+        )
+
+        #expect(decision?.startupBitrateBps == 153_363_456)
+        #expect(decision?.maximumCeilingBps == 153_363_456)
+        #expect(decision?.minimumBitrateFloorBps == 8_000_000)
+    }
+
     @Test("Custom adaptive bitrate remains the upper bound")
     func customAdaptiveBitrateRemainsUpperBound() {
         let decision = HostAdaptiveStreamBudgetPolicy.resolve(

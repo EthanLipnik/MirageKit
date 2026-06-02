@@ -113,10 +113,9 @@ package enum MirageNetworkPathClassifier {
         remoteEndpointDescription: String? = nil
     ) -> MirageNetworkPathSnapshot {
         let interfaces = InterfaceSummary(interfaceNames)
+        let selectedWiFi = usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity)
         let kind: MirageNetworkPathKind
-        if interfaces.hasOverlay {
-            kind = .vpn
-        } else if usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity) {
+        if selectedWiFi {
             kind = .wifi
         } else if usesWired {
             kind = .wired
@@ -128,6 +127,8 @@ package enum MirageNetworkPathClassifier {
             kind = .loopback
         } else if interfaces.hasBridge {
             kind = .wired
+        } else if interfaces.hasOverlay {
+            kind = .vpn
         } else if usesOther {
             kind = .other
         } else {

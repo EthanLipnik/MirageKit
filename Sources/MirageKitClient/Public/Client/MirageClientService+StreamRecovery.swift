@@ -43,7 +43,7 @@ enum MirageClientStreamRecoveryTrigger {
         case .manual:
             true
         case .applicationActivation:
-            true
+            false
         }
     }
 
@@ -53,7 +53,7 @@ enum MirageClientStreamRecoveryTrigger {
         case .manual:
             true
         case .applicationActivation:
-            true
+            false
         }
     }
 

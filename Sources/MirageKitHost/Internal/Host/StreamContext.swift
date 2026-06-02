@@ -142,6 +142,9 @@ actor StreamContext {
     let emergencyKeyframeBudgetRatio: Double = 0.70
     var lastSuccessfulKeyframeSendTime: CFAbsoluteTime = 0
     var latestReceiverRecoveryCause: MirageMediaFeedbackRecoveryCause = .none
+    var lastAcceptedExplicitKeyframeRequestCause: MirageMediaFeedbackRecoveryCause = .none
+    var lastAcceptedExplicitKeyframeRequestTime: CFAbsoluteTime = 0
+    let explicitKeyframeRequestDuplicateWindow: CFAbsoluteTime = 1.0
     var frameChainRepairKeyframeRetryTask: Task<Void, Never>?
     var pendingReceiverAcceptedKeyframeFrameNumber: UInt32?
     var emergencyRecoveryBaseStreamScale: CGFloat?

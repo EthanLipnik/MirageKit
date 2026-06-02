@@ -46,13 +46,17 @@ package enum MirageMediaPathProfile: String, Codable, Sendable, Equatable {
         usesOther: Bool = false
     ) -> MirageMediaPathProfile {
         let interfaces = InterfaceSummary(interfaceNames)
-        if interfaces.hasOverlay || pathKind == .vpn || usesCellular || pathKind == .cellular {
-            return .vpnOrOverlay
-        }
         let selectedWiFi = pathKind == .wifi ||
-            (usesWiFi && (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity))
+            (
+                pathKind != .vpn &&
+                    usesWiFi &&
+                    (interfaces.hasNonProximityRouteInterface || !interfaces.hasProximity)
+            )
         if selectedWiFi {
             return .localWiFi
+        }
+        if interfaces.hasOverlay || pathKind == .vpn || usesCellular || pathKind == .cellular {
+            return .vpnOrOverlay
         }
         if interfaces.hasApplePrivateNCM || interfaces.hasLowLatencyWireless {
             return .proximityWiredLike

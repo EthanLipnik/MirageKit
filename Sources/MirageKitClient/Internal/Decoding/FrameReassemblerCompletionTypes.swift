@@ -111,6 +111,9 @@ extension FrameReassembler {
         /// Buffered forward gaps that reached the reorder timeout.
         let forwardGapTimeouts: UInt64
 
+        /// Whether cleanup advanced past a timed-out P-frame gap so later complete frames can decode.
+        let skippedForwardGap: Bool
+
         /// Frame-loss reason represented by this timeout cleanup.
         var frameLossReason: FrameLossReason? {
             if missingExpectedPFrameGapTimedOut {

@@ -123,8 +123,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Passive tier frame loss requests bounded recovery keyframe")
-    func passiveTierFrameLossRequestsBoundedRecoveryKeyframe() async throws {
+    @Test("Passive tier frame loss waits for natural keyframe or decode error")
+    func passiveTierFrameLossWaitsForNaturalKeyframeOrDecodeError() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 96
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -139,10 +139,8 @@ struct StreamControllerRecoveryTests {
         await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal()
-        try await streamControllerWaitUntil("passive frame loss keyframe request") {
-            keyframeCounter.value >= 1
-        }
-        #expect(keyframeCounter.value >= 1)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }
@@ -589,8 +587,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Decode queue dependency break enters keyframe wait")
-    func decodeQueueDependencyBreakEntersKeyframeWait() async throws {
+    @Test("Decode queue dependency break clears local backlog without keyframe")
+    func decodeQueueDependencyBreakClearsLocalBacklogWithoutKeyframe() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let releaseCounter = StreamControllerLockedCounter()
         let controller = StreamController(streamID: 3, maxPayloadSize: 1200)
@@ -617,11 +615,11 @@ struct StreamControllerRecoveryTests {
             queueDepth: StreamController.maxQueuedFrames
         )
 
-        #expect(await controller.decodeQueueRequiresKeyframe)
-        #expect(await controller.reassembler.isAwaitingKeyframe)
-        #expect(await controller.clientRecoveryCause == .memoryBudget)
+        #expect(await controller.decodeQueueRequiresKeyframe == false)
+        #expect(await controller.reassembler.isAwaitingKeyframe == false)
+        #expect(await controller.clientRecoveryCause == .none)
         #expect(releaseCounter.value == 1)
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }

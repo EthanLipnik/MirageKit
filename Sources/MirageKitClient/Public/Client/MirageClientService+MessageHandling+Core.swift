@@ -68,7 +68,8 @@ extension MirageClientService {
             provisionalHost?.deviceType
                 ?? provisionalHost?.advertisement.deviceType
                 ?? .unknown
-        let sourceAdvertisement = provisionalHost?.advertisement ?? LoomPeerAdvertisement()
+        let sourceAdvertisement = provisionalHost?.advertisement ??
+            LoomPeerAdvertisement(protocolVersion: Int(MirageKit.protocolVersion))
         let canonicalAdvertisement = LoomPeerAdvertisement(
             protocolVersion: sourceAdvertisement.protocolVersion,
             deviceID: hostID,

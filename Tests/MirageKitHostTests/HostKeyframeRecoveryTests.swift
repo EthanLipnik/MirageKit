@@ -40,8 +40,8 @@ struct HostKeyframeRecoveryTests {
         #expect(await context.pendingKeyframeRequiresFlush == false)
     }
 
-    @Test("Decode-error and freeze keyframe requests bypass adaptive cooldown")
-    func decodeErrorAndFreezeKeyframeRequestsBypassAdaptiveCooldown() async {
+    @Test("Only decode-error keyframe requests bypass adaptive cooldown")
+    func onlyDecodeErrorKeyframeRequestsBypassAdaptiveCooldown() async {
         let context = makeContext()
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -50,7 +50,7 @@ struct HostKeyframeRecoveryTests {
         #expect(!frameLossAck.accepted)
 
         let freezeAck = await context.requestKeyframe(recoveryCause: .freezeTimeout)
-        #expect(freezeAck.accepted)
+        #expect(!freezeAck.accepted)
 
         let decodeContext = makeContext()
         await decodeContext.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -60,8 +60,8 @@ struct HostKeyframeRecoveryTests {
         #expect(await decodeContext.pendingKeyframeReason == "Keyframe request")
     }
 
-    @Test("Memory-budget keyframe requests bypass startup keyframe cooldown")
-    func memoryBudgetKeyframeRequestsBypassStartupKeyframeCooldown() async {
+    @Test("Memory-budget keyframe requests are suppressed")
+    func memoryBudgetKeyframeRequestsAreSuppressed() async {
         let context = makeContext()
         await context.recordCaptureIngress(makeIdleFrame())
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -69,21 +69,21 @@ struct HostKeyframeRecoveryTests {
 
         let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
 
-        #expect(ack.accepted)
-        #expect(await context.pendingKeyframeReason == "Keyframe request")
-        #expect(await context.pendingKeyframeRequiresReset)
-        #expect(await context.pendingKeyframeRequiresFlush)
-        #expect(context.epoch == 1)
-        #expect(context.frameInbox.pendingCount == 1)
+        #expect(!ack.accepted)
+        #expect(await context.pendingKeyframeReason == nil)
+        #expect(await context.pendingKeyframeRequiresReset == false)
+        #expect(await context.pendingKeyframeRequiresFlush == false)
+        #expect(context.epoch == 0)
+        #expect(context.frameInbox.pendingCount == 0)
     }
 
-    @Test("Running memory-budget recovery drains synthetic keyframe frame")
-    func runningMemoryBudgetRecoveryDrainsSyntheticKeyframeFrame() async throws {
+    @Test("Running decode-error recovery drains synthetic keyframe frame")
+    func runningDecodeErrorRecoveryDrainsSyntheticKeyframeFrame() async throws {
         let context = makeContext()
         await context.configureRunningForRepairRetryTest()
         await context.recordCaptureIngress(makeIdleFrame())
 
-        let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
+        let ack = await context.requestKeyframe(recoveryCause: .decodeError)
 
         #expect(ack.accepted)
         try await waitForSyntheticFrameDrain(on: context)
@@ -95,7 +95,7 @@ struct HostKeyframeRecoveryTests {
         let context = makeContext()
         await context.recordCaptureIngress(makeIdleFrame())
 
-        let ack = await context.requestKeyframe(recoveryCause: .memoryBudget)
+        let ack = await context.requestKeyframe(recoveryCause: .decodeError)
 
         #expect(ack.accepted)
         #expect(context.frameInbox.pendingCount == 1)
@@ -123,8 +123,8 @@ struct HostKeyframeRecoveryTests {
         #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
     }
 
-    @Test("Receiver no-progress freeze feedback with transport evidence bypasses adaptive cooldown")
-    func receiverNoProgressFreezeFeedbackWithTransportEvidenceBypassesAdaptiveCooldown() async {
+    @Test("Receiver no-progress freeze feedback does not schedule keyframe")
+    func receiverNoProgressFreezeFeedbackDoesNotScheduleKeyframe() async {
         let context = makeContext()
 
         await context.setLastSuccessfulKeyframeSendTimeForTesting(CFAbsoluteTimeGetCurrent())
@@ -137,8 +137,20 @@ struct HostKeyframeRecoveryTests {
             )
         )
 
-        #expect(await context.pendingKeyframeReason == "Receiver feedback keyframe recovery")
-        #expect(context.suppressEncodedNonKeyframesUntilKeyframe)
+        #expect(await context.pendingKeyframeReason == nil)
+        #expect(!context.suppressEncodedNonKeyframesUntilKeyframe)
+    }
+
+    @Test("Duplicate explicit keyframe requests are suppressed")
+    func duplicateExplicitKeyframeRequestsAreSuppressed() async {
+        let context = makeContext()
+
+        let firstAck = await context.requestKeyframe(recoveryCause: .decodeError)
+        let secondAck = await context.requestKeyframe(recoveryCause: .decodeError)
+
+        #expect(firstAck.accepted)
+        #expect(!secondAck.accepted)
+        #expect(await context.softRecoveryCount == 1)
     }
 
     @Test("Recovery keyframe waits for receiver acknowledgement before resuming P-frames")

@@ -66,7 +66,7 @@ struct ClientSoftwareUpdateHandlingTests {
         )
 
         #expect(rejection.isTerminal)
-        #expect(rejection.userFacingMessage == "Host: The host received an incompatible Mirage handshake. Update Mirage on both devices.")
+        #expect(rejection.userFacingMessage == "Host: The host could not finish setup with this device. Try again.")
     }
 
     @Test("Local network blocked rejection uses Proximity Connect wording")

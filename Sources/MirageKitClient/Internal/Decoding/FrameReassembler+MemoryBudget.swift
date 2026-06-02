@@ -43,10 +43,10 @@ extension FrameReassembler {
         }
 
         if evictedCount > 0 {
-            beginKeyframeWaitLocked()
             MirageLogger.client(
                 "Frame reassembler memory budget evicted \(evictedCount) pending frame(s) for stream \(streamID); " +
-                    "pendingBytes=\(pendingFrameBytesLocked()), pendingFrames=\(pendingFrames.count)"
+                    "pendingBytes=\(pendingFrameBytesLocked()), pendingFrames=\(pendingFrames.count), " +
+                    "continuing until decoder error"
             )
         }
 

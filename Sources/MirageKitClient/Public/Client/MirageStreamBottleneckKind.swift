@@ -32,7 +32,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         case .encodeBound:
             "Encode-bound"
         case .hostCadenceLimited:
-            "Host cadence limited"
+            "Host source limited"
         case .networkBound:
             "Network-bound"
         case .decodeBound:
@@ -54,7 +54,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         case .encodeBound:
             "Capture is healthy, but host encode throughput is behind target."
         case .hostCadenceLimited:
-            "The host is capturing or encoding below the requested frame rate while transport pressure is clean."
+            "The host is capturing or encoding below the requested frame rate while transport pressure is not the primary limiter."
         case .networkBound:
             "Transport pressure is dropping cadence before frames reach the client."
         case .decodeBound:

@@ -13,6 +13,7 @@ extension FrameReassembler {
         // Frame skipping logic: determine if we should deliver this frame
         let shouldDeliver: Bool
         var retainedForInOrderDelivery = false
+        var completionFrameLossReason: FrameLossReason?
 
         if frame.isKeyframe {
             // Always deliver keyframes unless a newer keyframe was already delivered.
@@ -67,38 +68,39 @@ extension FrameReassembler {
                     )
                     let severeGapGrace = severeForwardGapGraceLocked()
                     if severeGapAge >= severeGapGrace {
-                        beginKeyframeWaitLocked()
                         hasSignaledGapFrameLoss = true
                         MirageLogger.log(
                             .frameAssembly,
                             "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) " +
                                 "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
                                 "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
-                                "graceMs=\(Int((severeGapGrace * 1000).rounded())); entering keyframe wait"
+                                "graceMs=\(Int((severeGapGrace * 1000).rounded())); forwarding to decoder"
                         )
-                        return FrameCompletionResult(
-                            frame: nil,
-                            frameLossReason: .severeForwardGap,
-                            retainedForInOrderDelivery: false
+                        lastCompletedFrame = frameNumber &- 1
+                        completionFrameLossReason = .severeForwardGap
+                        shouldDeliver = isAfterKeyframeAnchor
+                        retainedForInOrderDelivery = false
+                    } else {
+                        MirageLogger.log(
+                            .frameAssembly,
+                            "severe_forward_gap_buffered expected=\(expectedNextFrame) received=\(frameNumber) " +
+                                "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
+                                "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
+                                "graceMs=\(Int((severeGapGrace * 1000).rounded())), " +
+                                "media=\(mediaPathProfile.rawValue)"
                         )
+                        shouldDeliver = false
+                        retainedForInOrderDelivery = true
                     }
-                    MirageLogger.log(
-                        .frameAssembly,
-                        "severe_forward_gap_buffered expected=\(expectedNextFrame) received=\(frameNumber) " +
-                            "gapFrames=\(gapFrames), threshold=\(severeForwardGapFrameThreshold), " +
-                            "ageMs=\(Int((severeGapAge * 1000).rounded())), " +
-                            "graceMs=\(Int((severeGapGrace * 1000).rounded())), " +
-                            "media=\(mediaPathProfile.rawValue)"
-                    )
                 } else {
                     MirageLogger.log(
                         .frameAssembly,
                         "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) " +
                             "gapFrames=\(gapFrames) media=\(mediaPathProfile.rawValue)"
                     )
+                    shouldDeliver = false
+                    retainedForInOrderDelivery = true
                 }
-                shouldDeliver = false
-                retainedForInOrderDelivery = true
             } else {
                 shouldDeliver = isForwardFrame && isAfterKeyframeAnchor
             }
@@ -153,7 +155,7 @@ extension FrameReassembler {
                     contentRect: frame.contentRect,
                     releaseBuffer: releaseBuffer
                 ),
-                frameLossReason: nil,
+                frameLossReason: completionFrameLossReason,
                 retainedForInOrderDelivery: false
             )
         } else {
@@ -337,6 +339,7 @@ extension FrameReassembler {
         var missingFragmentTimeouts: UInt64 = 0
         var timedOutExpectedPFrame = false
         var framesToRemove: [UInt32] = []
+        var timedOutPFrameNumbers: [UInt32] = []
         for (frameNumber, frame) in pendingFrames {
             if frame.isKeyframe, isStaleKeyframeLocked(frameNumber) {
                 framesToRemove.append(frameNumber)
@@ -389,6 +392,7 @@ extension FrameReassembler {
                     )
                 } else {
                     timedOutPFrameCount += 1
+                    timedOutPFrameNumbers.append(frameNumber)
                     let expectedFrame = lastCompletedFrame &+ 1
                     if frameNumber == expectedFrame {
                         timedOutExpectedPFrame = true
@@ -407,6 +411,10 @@ extension FrameReassembler {
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
+        let skippedForwardGap = skipTimedOutForwardGapLocked(
+            timedOutPFrameNumbers: timedOutPFrameNumbers,
+            missingExpectedPFrameGapTimedOut: missingExpectedPFrameGapTimedOut
+        )
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
         incompleteFrameTimeoutCount += incompleteFrameTimeouts
         incompleteFrameNoProgressTimeoutCount += incompleteFrameNoProgressTimeouts
@@ -416,13 +424,8 @@ extension FrameReassembler {
             forwardGapTimeoutCount += 1
         }
 
-        // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
-        // times out, or when a buffered forward gap persists without the expected frame ever arriving.
-        let shouldEnterAwaitingKeyframe = (
-            timedOutKeyframeCount > 0 ||
-                timedOutExpectedPFrame ||
-                missingExpectedPFrameGapTimedOut
-        ) && !awaitingKeyframe
+        // Decoder errors, not ordinary P-frame loss, decide when an established stream needs a fresh keyframe.
+        let shouldEnterAwaitingKeyframe = timedOutKeyframeCount > 0 && !awaitingKeyframe
 
         if missingExpectedPFrameGapTimedOut {
             let expectedFrame = lastCompletedFrame &+ 1
@@ -449,8 +452,39 @@ extension FrameReassembler {
             incompleteFrameNoProgressTimeouts: incompleteFrameNoProgressTimeouts,
             incompleteFrameLifetimeTimeouts: incompleteFrameLifetimeTimeouts,
             missingFragmentTimeouts: missingFragmentTimeouts,
-            forwardGapTimeouts: missingExpectedPFrameGapTimedOut ? 1 : 0
+            forwardGapTimeouts: missingExpectedPFrameGapTimedOut ? 1 : 0,
+            skippedForwardGap: skippedForwardGap
         )
+    }
+
+    private func skipTimedOutForwardGapLocked(
+        timedOutPFrameNumbers: [UInt32],
+        missingExpectedPFrameGapTimedOut: Bool
+    ) -> Bool {
+        guard hasDeliveredKeyframeAnchor, !awaitingKeyframe else { return false }
+
+        var skippedGap = false
+        let timedOutPFrames = Set(timedOutPFrameNumbers)
+        while timedOutPFrames.contains(lastCompletedFrame &+ 1) {
+            lastCompletedFrame &+= 1
+            skippedGap = true
+        }
+
+        guard missingExpectedPFrameGapTimedOut,
+              let earliestBufferedFrame = pendingFrames
+              .keys
+              .filter({ isFrameNewer($0, than: lastCompletedFrame) })
+              .min() else {
+            return skippedGap
+        }
+
+        let skippedFrom = lastCompletedFrame &+ 1
+        lastCompletedFrame = earliestBufferedFrame &- 1
+        MirageLogger.log(
+            .frameAssembly,
+            "Skipping timed-out P-frame gap: skippedFrom=\(skippedFrom) nextFrame=\(earliestBufferedFrame)"
+        )
+        return true
     }
 
     func beginKeyframeWaitLocked() {

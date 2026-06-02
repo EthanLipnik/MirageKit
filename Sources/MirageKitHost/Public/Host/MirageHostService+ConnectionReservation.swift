@@ -27,9 +27,36 @@ extension MirageHostService {
         existingClient: MirageConnectedClient? = nil,
         incomingPeerIdentity: LoomPeerIdentity? = nil
     ) -> MirageSessionBootstrapRejectionReason? {
+        if let existingClient,
+           let incomingPeerIdentity,
+           shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) {
+            MirageLogger.host(
+                "Allowing same-device busy-host replacement existingClientID=\(existingClient.id.uuidString.lowercased()) " +
+                    "incomingClientID=\(incomingPeerIdentity.deviceID.uuidString.lowercased())"
+            )
+            return nil
+        }
+
+        guard request.requestTakeoverIfBusy else {
+            MirageLogger.host(
+                "Rejecting busy-host connection without takeover request " +
+                    "existingClientID=\(existingClient?.id.uuidString.lowercased() ?? "nil") " +
+                    "incomingClientID=\(incomingPeerIdentity?.deviceID.uuidString.lowercased() ?? "nil")"
+            )
+            return .hostBusy
+        }
+
+        guard trustEvaluation.decision == .trusted else {
+            MirageLogger.host(
+                "Rejecting busy-host takeover by untrusted client trustDecision=\(String(describing: trustEvaluation.decision)) " +
+                    "existingClientID=\(existingClient?.id.uuidString.lowercased() ?? "nil") " +
+                    "incomingClientID=\(incomingPeerIdentity?.deviceID.uuidString.lowercased() ?? "nil")"
+            )
+            return .takeoverRequiresTrustedRequester
+        }
+
         MirageLogger.host(
-            "Allowing busy-host replacement requestTakeoverIfBusy=\(request.requestTakeoverIfBusy) " +
-                "trustDecision=\(String(describing: trustEvaluation.decision)) " +
+            "Allowing trusted busy-host takeover " +
                 "existingClientID=\(existingClient?.id.uuidString.lowercased() ?? "nil") " +
                 "incomingClientID=\(incomingPeerIdentity?.deviceID.uuidString.lowercased() ?? "nil")"
         )

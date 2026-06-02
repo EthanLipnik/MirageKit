@@ -188,8 +188,8 @@ struct StreamControllerHardRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Gap-related active-stream frame loss requests immediate keyframe")
-    func gapRelatedFrameLossAfterFirstDecodeRequestsImmediateKeyframe() async throws {
+    @Test("Gap-related active-stream frame loss waits for decoder error")
+    func gapRelatedFrameLossAfterFirstDecodeWaitsForDecoderError() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let controller = StreamController(streamID: 1149, maxPayloadSize: 1200)
 
@@ -202,16 +202,14 @@ struct StreamControllerHardRecoveryTests {
 
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal(reason: .severeForwardGap)
-        try await streamControllerWaitUntil("gap-related keyframe request") {
-            keyframeCounter.value >= 1
-        }
-        #expect(keyframeCounter.value >= 1)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }
 
-    @Test("Remote keyframe recovery retries awaiting keyframe with no progress on bounded grace")
-    func remoteKeyframeRecoveryRetriesAwaitingKeyframeWithNoProgressOnBoundedGrace() async throws {
+    @Test("Remote frame-loss keyframe recovery is suppressed while awaiting decoder error")
+    func remoteFrameLossKeyframeRecoveryIsSuppressedWhileAwaitingDecoderError() async throws {
         let clock = StreamControllerManualTimeProvider(start: 7000)
         let keyframeCounter = StreamControllerLockedCounter()
         let controller = StreamController(
@@ -233,23 +231,23 @@ struct StreamControllerHardRecoveryTests {
         let reassembler = await controller.reassembler
         reassembler.beginKeyframeWait()
 
-        #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
-        #expect(keyframeCounter.value == 1)
+        #expect(!(await controller.requestKeyframeRecovery(reason: .frameLoss)))
+        #expect(keyframeCounter.value == 0)
 
         clock.advance(by: StreamController.remoteAwaitingKeyframeNoProgressRetryGrace - 0.1)
         #expect(!(await controller.requestKeyframeRecovery(reason: .frameLoss)))
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
 
         clock.advance(by: 0.2)
-        #expect(await controller.requestKeyframeRecovery(reason: .frameLoss))
-        #expect(keyframeCounter.value == 2)
+        #expect(!(await controller.requestKeyframeRecovery(reason: .frameLoss)))
+        #expect(keyframeCounter.value == 0)
         #expect(await controller.clientRecoveryStatus != .hardRecovery)
 
         await controller.stop()
     }
 
-    @Test("Memory-budget frame loss requests one delayed keyframe after pressure settles")
-    func memoryBudgetFrameLossRequestsDelayedKeyframe() async throws {
+    @Test("Memory-budget frame loss clears local backlog without keyframe")
+    func memoryBudgetFrameLossClearsLocalBacklogWithoutKeyframe() async throws {
         let keyframeCounter = StreamControllerLockedCounter()
         let streamID: StreamID = 150
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -264,13 +262,8 @@ struct StreamControllerHardRecoveryTests {
 
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal(reason: .memoryBudget)
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .milliseconds(700))
         #expect(keyframeCounter.value == 0)
-
-        try await streamControllerWaitUntil("memory-budget delayed keyframe request") {
-            keyframeCounter.value == 1
-        }
-        #expect(keyframeCounter.value == 1)
 
         await controller.stop()
         MirageRenderStreamStore.shared.clear(for: streamID)
@@ -299,8 +292,8 @@ struct StreamControllerHardRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Frame-loss timeout requests keyframe after useful progress stalls")
-    func frameLossTimeoutRequestsKeyframeAfterUsefulProgressStalls() async throws {
+    @Test("Frame-loss timeout waits for decoder error after useful progress stalls")
+    func frameLossTimeoutWaitsForDecoderErrorAfterUsefulProgressStalls() async throws {
         let streamID: StreamID = 156
         let keyframeCounter = StreamControllerLockedCounter()
         let clock = StreamControllerManualTimeProvider(start: 9000)
@@ -331,9 +324,9 @@ struct StreamControllerHardRecoveryTests {
         clock.advance(by: 0.2)
         await controller.handleFrameLossSignal()
 
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
         let reassembler = await controller.reassembler
-        #expect(reassembler.isAwaitingKeyframe)
+        #expect(!reassembler.isAwaitingKeyframe)
 
         await controller.stop()
     }

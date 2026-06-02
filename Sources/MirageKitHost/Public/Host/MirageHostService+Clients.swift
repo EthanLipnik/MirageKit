@@ -49,10 +49,7 @@ extension MirageHostService {
     )
     async {
         if let expectedSessionID,
-           Self.shouldIgnoreDisconnectForExpectedSession(
-               resolvedClientID: findClientContext(sessionID: expectedSessionID)?.client.id,
-               requestedClientID: client.id
-           ) {
+           shouldIgnoreDisconnectForSupersededSession(expectedSessionID, clientID: client.id) {
             MirageLogger.host(
                 "Ignoring disconnect for superseded client session \(expectedSessionID.uuidString) (\(client.name))"
             )
@@ -105,6 +102,9 @@ extension MirageHostService {
             streamSetupLifecycleBySessionID.removeValue(forKey: removedSessionID)
         }
         connectedClients.removeAll { $0.id == client.id }
+        if removedSessionID != nil {
+            disconnectingClientIDs.remove(client.id)
+        }
 
         if let removedClientContext {
             await closeClientControlSession(
@@ -206,12 +206,18 @@ extension MirageHostService {
         syncSharedClipboardState()
     }
 
-    private nonisolated static func shouldIgnoreDisconnectForExpectedSession(
-        resolvedClientID: UUID?,
-        requestedClientID: UUID
+    private func shouldIgnoreDisconnectForSupersededSession(
+        _ expectedSessionID: UUID,
+        clientID: UUID
     ) -> Bool {
-        guard let resolvedClientID else { return false }
-        return resolvedClientID != requestedClientID
+        if let activeClientContext = clientsByID[clientID],
+           activeClientContext.sessionID != expectedSessionID {
+            return true
+        }
+        if let expectedClientContext = clientsBySessionID[expectedSessionID] {
+            return expectedClientContext.client.id != clientID
+        }
+        return false
     }
 
     private func closeClientControlSession(
@@ -221,22 +227,53 @@ extension MirageHostService {
     )
     async {
         if notifyClient {
-            let disconnect = DisconnectMessage(reason: reason)
-            do {
-                try await clientContext.send(.disconnect, content: disconnect)
-                try await clientContext.controlChannel.closeStream()
-            } catch {
-                if !isExpectedLifecycleControlSendFailure(error) {
-                    MirageLogger.host(
-                        "Unable to send disconnect notice to \(clientContext.client.name): \(error.localizedDescription)"
-                    )
-                }
-            }
+            await sendDisconnectNoticeBeforeTeardown(clientContext, reason: reason)
         }
 
         // Close the authenticated control session before stream teardown so the
         // remote client exits its streaming scene without waiting for host cleanup.
         await clientContext.controlChannel.cancel()
+    }
+
+    private func sendDisconnectNoticeBeforeTeardown(
+        _ clientContext: ClientContext,
+        reason: DisconnectMessage.DisconnectReason
+    ) async {
+        let waiter = HostDisconnectNoticeWaiter()
+        let sendTask = Task { @MainActor in
+            let disconnect = DisconnectMessage(reason: reason)
+            do {
+                try await clientContext.send(.disconnect, content: disconnect)
+                do {
+                    try await clientContext.controlChannel.closeStream()
+                } catch {
+                    if !self.isExpectedLifecycleControlSendFailure(error) {
+                        MirageLogger.host(
+                            "Unable to close control stream after disconnect notice to \(clientContext.client.name): \(error.localizedDescription)"
+                        )
+                    }
+                }
+            } catch {
+                if !self.isExpectedLifecycleControlSendFailure(error) {
+                    MirageLogger.host(
+                        "Unable to send disconnect notice to \(clientContext.client.name): \(error.localizedDescription)"
+                    )
+                }
+            }
+            waiter.complete()
+        }
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            waiter.complete()
+        }
+
+        await waiter.wait()
+        sendTask.cancel()
+        timeoutTask.cancel()
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {
@@ -247,6 +284,46 @@ extension MirageHostService {
 
         MirageLogger.host("No active streams or clients; destroying managed virtual displays")
         await SharedVirtualDisplayManager.shared.destroyAllAndClear()
+    }
+}
+
+private final class HostDisconnectNoticeWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isComplete = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let continuationToResume = lockedContinuationToResumeForWait(continuation)
+            continuationToResume?.resume()
+        }
+    }
+
+    func complete() {
+        let continuationToResume = lockedContinuationToResumeForComplete()
+        continuationToResume?.resume()
+    }
+
+    private func lockedContinuationToResumeForWait(
+        _ continuation: CheckedContinuation<Void, Never>
+    ) -> CheckedContinuation<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        if isComplete {
+            return continuation
+        }
+        self.continuation = continuation
+        return nil
+    }
+
+    private func lockedContinuationToResumeForComplete() -> CheckedContinuation<Void, Never>? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isComplete else { return nil }
+        isComplete = true
+        let continuationToResume = continuation
+        continuation = nil
+        return continuationToResume
     }
 }
 #endif

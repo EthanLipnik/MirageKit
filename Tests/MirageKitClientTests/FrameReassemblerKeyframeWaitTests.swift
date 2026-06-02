@@ -72,8 +72,8 @@ extension FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
-    @Test("P-frame timeout enters keyframe wait until new anchor arrives")
-    func pFrameTimeoutEntersKeyframeWait() {
+    @Test("P-frame timeout skips gap and continues until decoder error")
+    func pFrameTimeoutSkipsGapAndContinuesUntilDecoderError() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -138,9 +138,9 @@ extension FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 1)
+        #expect(deliveredCounter.value == 2)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
         let timeoutMetrics = reassembler.snapshotMetrics
         #expect(timeoutMetrics.incompleteFrameTimeouts == 1)
         #expect(timeoutMetrics.missingFragmentTimeouts == 1)
@@ -156,12 +156,12 @@ extension FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 2)
+        #expect(deliveredCounter.value == 3)
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
-    @Test("Buffered forward gap without pending expected frame enters keyframe wait")
-    func bufferedForwardGapWithoutExpectedFrameEntersKeyframeWait() {
+    @Test("Buffered forward gap without pending expected frame skips forward")
+    func bufferedForwardGapWithoutExpectedFrameSkipsForward() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -216,9 +216,9 @@ extension FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 1)
+        #expect(deliveredCounter.value == 2)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
 
         let keyframe5 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x05])
         reassembler.processPacket(
@@ -232,12 +232,12 @@ extension FrameReassemblerStaleKeyframeTests {
             )
         )
 
-        #expect(deliveredCounter.value == 2)
+        #expect(deliveredCounter.value == 3)
         #expect(reassembler.isAwaitingKeyframe == false)
     }
 
-    @Test("AWDL buffered forward gap absorbs short radio gap before keyframe wait")
-    func awdlBufferedForwardGapAbsorbsShortRadioGapBeforeKeyframeWait() {
+    @Test("AWDL buffered forward gap absorbs short radio gap before skipping forward")
+    func awdlBufferedForwardGapAbsorbsShortRadioGapBeforeSkippingForward() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         reassembler.setTransportPathKind(.awdl)
         reassembler.setMediaPathProfile(.awdlRadio)
@@ -288,7 +288,7 @@ extension FrameReassemblerStaleKeyframeTests {
 
         #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe)
+        #expect(reassembler.isAwaitingKeyframe == false)
         #expect(reassembler.snapshotMetrics.forwardGapTimeouts == 1)
     }
 }

@@ -236,12 +236,12 @@ struct HostAdaptiveStreamBudgetPolicy: Equatable {
             )
         case .vpnOrOverlay:
             return PathBudget(
-                startupBitsPerPixelPerFrame: 0.070,
-                maximumBitsPerPixelPerFrame: 0.160,
-                startupCapBps: 24_000_000,
-                maximumCapBps: 64_000_000,
-                minimumFloorBps: 4_000_000,
-                honorsRequestedStartup: false,
+                startupBitsPerPixelPerFrame: 0.200,
+                maximumBitsPerPixelPerFrame: 0.450,
+                startupCapBps: 96_000_000,
+                maximumCapBps: 180_000_000,
+                minimumFloorBps: 8_000_000,
+                honorsRequestedStartup: true,
                 label: "remote"
             )
         case .other,

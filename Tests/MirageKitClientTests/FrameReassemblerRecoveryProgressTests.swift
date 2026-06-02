@@ -280,8 +280,8 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(lossCounter.value == 0)
     }
 
-    @Test("P-frame absolute lifetime cap eventually triggers recovery")
-    func pFrameAbsoluteLifetimeCapTriggersRecovery() {
+    @Test("P-frame absolute lifetime cap signals loss without keyframe wait")
+    func pFrameAbsoluteLifetimeCapSignalsLossWithoutKeyframeWait() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
         let deliveredCounter = FrameReassemblerLockedCounter()
         let lossCounter = FrameReassemblerLockedCounter()
@@ -367,7 +367,7 @@ struct FrameReassemblerRecoveryProgressTests {
         let metrics = reassembler.snapshotMetrics
         #expect(deliveredCounter.value == 1)
         #expect(lossCounter.value >= 1)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
         #expect(metrics.incompleteFrameTimeouts == 1)
         #expect(metrics.incompleteFrameNoProgressTimeouts == 0)
         #expect(metrics.incompleteFrameLifetimeTimeouts == 1)
@@ -496,11 +496,11 @@ struct FrameReassemblerRecoveryProgressTests {
         #expect(metrics.budgetEvictions == 1)
         #expect(lossCounter.value == 1)
         #expect(lossReason.value == .memoryBudget)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
-    @Test("Memory budget keyframe wait purges dependent P-frame backlog")
-    func memoryBudgetKeyframeWaitPurgesDependentPFrameBacklog() {
+    @Test("Memory budget evicts dependent P-frame backlog without keyframe wait")
+    func memoryBudgetEvictsDependentPFrameBacklogWithoutKeyframeWait() {
         let reassembler = FrameReassembler(
             streamID: 1,
             maxPayloadSize: 4,
@@ -543,10 +543,10 @@ struct FrameReassemblerRecoveryProgressTests {
         }
 
         let metrics = reassembler.snapshotMetrics
-        #expect(metrics.pendingFrameCount == 0)
+        #expect(metrics.pendingFrameCount == 3)
         #expect(metrics.budgetEvictions == 1)
         #expect(lossReason.value == .memoryBudget)
-        #expect(reassembler.isAwaitingKeyframe == true)
+        #expect(reassembler.isAwaitingKeyframe == false)
     }
 
     @Test("Pending encoded bytes preserve the most progressed keyframe")

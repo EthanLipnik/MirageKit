@@ -207,9 +207,9 @@ struct HostSingleClientTests {
         #expect(rejectionReason == nil)
     }
 
-    @Test("Accepted automatic replacement is allowed while busy")
+    @Test("Busy host without explicit takeover is rejected")
     @MainActor
-    func acceptedAutomaticReplacementIsAllowedWhileBusy() {
+    func busyHostWithoutExplicitTakeoverIsRejected() {
         let host = MirageHostService()
         let existingClient = MirageConnectedClient(
             id: UUID(),
@@ -240,13 +240,31 @@ struct HostSingleClientTests {
             incomingPeerIdentity: incomingPeer
         )
 
-        #expect(rejectionReason == nil)
+        #expect(rejectionReason == .hostBusy)
     }
 
-    @Test("Accepted replacement does not require explicit takeover intent")
+    @Test("Same-device replacement does not require explicit takeover intent")
     @MainActor
-    func acceptedReplacementDoesNotRequireExplicitTakeoverIntent() {
+    func sameDeviceReplacementDoesNotRequireExplicitTakeoverIntent() {
         let host = MirageHostService()
+        let clientID = UUID()
+        let existingClient = MirageConnectedClient(
+            id: clientID,
+            name: "Existing iPad",
+            deviceType: .iPad,
+            connectedAt: Date(),
+            identityKeyID: "old-key"
+        )
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: clientID,
+            name: "Incoming iPad",
+            deviceType: .iPad,
+            iCloudUserID: nil,
+            identityKeyID: "new-key",
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
+        )
         let request = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
             clientRequiresMediaEncryption: false,
@@ -255,10 +273,30 @@ struct HostSingleClientTests {
 
         let rejectionReason = host.busyHostTakeoverRejectionReason(
             for: request,
-            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
+            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false),
+            existingClient: existingClient,
+            incomingPeerIdentity: incomingPeer
         )
 
         #expect(rejectionReason == nil)
+    }
+
+    @Test("Untrusted explicit takeover requires trusted requester")
+    @MainActor
+    func untrustedExplicitTakeoverRequiresTrustedRequester() {
+        let host = MirageHostService()
+        let request = MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            clientRequiresMediaEncryption: false,
+            requestTakeoverIfBusy: true
+        )
+
+        let rejectionReason = host.busyHostTakeoverRejectionReason(
+            for: request,
+            trustEvaluation: LoomTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
+        )
+
+        #expect(rejectionReason == .takeoverRequiresTrustedRequester)
     }
 }
 #endif

@@ -37,11 +37,32 @@ struct ClientNetworkPathStatusTests {
         #expect(!status.usesProximityWiredLikePolicy)
     }
 
-    @Test("Tunnel interface names win over Wi-Fi path flags")
-    func overlayClassifierWinsOverWiFiFlags() {
+    @Test("Selected Wi-Fi path wins over passive tunnel interface names")
+    func selectedWiFiPathWinsOverPassiveTunnelInterfaceNames() {
         let snapshot = MirageNetworkPathClassifier.classify(
             interfaceNames: ["en0", "utun4"],
             usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(snapshot.kind == .wifi)
+        #expect(snapshot.mediaProfile == .localWiFi)
+        #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "Wi-Fi")
+    }
+
+    @Test("Tunnel-only paths use VPN presentation")
+    func tunnelOnlyPathsUseVPNPresentation() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["utun4"],
+            usesWiFi: false,
             usesWired: false,
             usesCellular: false,
             usesLoopback: false,

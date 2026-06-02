@@ -35,9 +35,8 @@ extension StreamController {
     }
 
     func evaluateFreezeState() async {
-        // Only recover when genuinely stuck: presentation stalled AND
-        // reassembler is stuck awaiting a keyframe that will never arrive
-        // (because no P-frames are decoded → no decode errors generated).
+        // Only intervene when presentation is genuinely stuck; the decoder decides
+        // whether the stream needs a recovery keyframe.
         guard hasPresentedFirstFrame,
               presentationTier == .activeLive else { return }
         guard clientRecoveryStatus != .hardRecovery,
@@ -87,10 +86,12 @@ extension StreamController {
                         )
                     }
                 }
-                await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor", cause: .freezeTimeout)
-                if await requestKeyframeRecovery(reason: .freezeTimeout) {
-                    lastFreezeRecoveryTime = now
-                }
+                discardQueuedFramesForRecovery()
+                MirageLogger.client(
+                    "Presentation stall observed while awaiting media for stream \(streamID); " +
+                        "cleared stale local frames without keyframe request"
+                )
+                lastFreezeRecoveryTime = now
                 return
             case .hardRecovery:
                 let metricsSnapshot = metricsTracker.snapshot(now: now)
@@ -100,9 +101,8 @@ extension StreamController {
                     receivedFPS: metricsSnapshot.receivedFPS
                 )
                 MirageLogger.client(
-                    "Presentation stall persisted without packet/keyframe progress for stream \(streamID); escalating to hard recovery"
+                    "Presentation stall persisted without packet/keyframe progress for stream \(streamID); monitoring until decoder error"
                 )
-                await requestRecovery(reason: .freezeTimeout)
                 return
             }
         }
@@ -155,7 +155,7 @@ extension StreamController {
         }
 
         if noMediaProgress, transportFreezeEvidence {
-            await requestFreezeKeyframeRecovery(
+            await performFreezeLocalRecovery(
                 now: now,
                 reason: "no-media-progress",
                 pendingFrameCount: pendingFrameCount,
@@ -193,7 +193,7 @@ extension StreamController {
             if let episode = freezeRecoveryEpisode,
                episode.state == .presenterProbe,
                now - episode.lastActionTime >= Self.freezePresenterProbeGrace {
-                await requestFreezeKeyframeRecovery(
+                await performFreezeLocalRecovery(
                     now: now,
                     reason: "no-media-progress-with-active-host",
                     pendingFrameCount: pendingFrameCount,
@@ -247,7 +247,7 @@ extension StreamController {
                 )
                 return true
             }
-            await requestFreezeKeyframeRecovery(
+            await performFreezeLocalRecovery(
                 now: now,
                 reason: "presenter-probe-timeout",
                 pendingFrameCount: pendingFrameCount,
@@ -323,8 +323,7 @@ extension StreamController {
             startedAt: now,
             baselineSubmittedSequence: snapshot.sequence,
             lastActionTime: now,
-            presenterProbeAttempted: true,
-            keyframeRequestAttempts: 0
+            presenterProbeAttempted: true
         )
         MirageLogger.client(
             "Freeze recovery presenter probe armed for stream \(streamID) " +
@@ -332,7 +331,7 @@ extension StreamController {
         )
     }
 
-    func requestFreezeKeyframeRecovery(
+    func performFreezeLocalRecovery(
         now: CFAbsoluteTime,
         reason: String,
         pendingFrameCount: Int,
@@ -343,17 +342,15 @@ extension StreamController {
             freezeRecoveryEpisodeID &+= 1
             freezeRecoveryEpisode = FreezeRecoveryEpisode(
                 id: freezeRecoveryEpisodeID,
-                state: .requestingKeyframe,
+                state: .presenterProbe,
                 startedAt: now,
                 baselineSubmittedSequence: snapshot.sequence,
                 lastActionTime: now,
-                presenterProbeAttempted: false,
-                keyframeRequestAttempts: 0
+                presenterProbeAttempted: false
             )
         }
-        freezeRecoveryEpisode?.state = .requestingKeyframe
+        freezeRecoveryEpisode?.state = .presenterProbe
         freezeRecoveryEpisode?.lastActionTime = now
-        freezeRecoveryEpisode?.keyframeRequestAttempts += 1
 
         if pendingFrameCount > 0,
            pendingFrameAgeMs >= Self.stalePendingRenderFrameRecoveryAgeMs {
@@ -365,21 +362,11 @@ extension StreamController {
                 )
             }
         }
-        reassembler.beginKeyframeWait()
         discardQueuedFramesForRecovery()
-        await enterKeyframeRecoveryIfNeeded(reason: "freeze-monitor-\(reason)", cause: .freezeTimeout)
-        let didRequest = await requestKeyframeRecovery(reason: .freezeTimeout, bypassRetryGate: true)
-        if didRequest {
-            lastFreezeRecoveryTime = now
-            freezeRecoveryEpisode?.state = .awaitingKeyframePresentation
-        } else if freezeRecoveryEpisode?.keyframeRequestAttempts ?? 0 >= Self.freezeRecoveryEscalationThreshold {
-            freezeRecoveryEpisode?.state = .hardRecovery
-            MirageLogger.client(
-                "Freeze keyframe recovery could not dispatch after bounded attempts for stream \(streamID); " +
-                    "escalating to hard recovery"
-            )
-            await requestRecovery(reason: .freezeTimeout)
-        }
+        MirageLogger.client(
+            "Freeze recovery cleared local queued frames for stream \(streamID) without keyframe request"
+        )
+        lastFreezeRecoveryTime = now
     }
 
     func freezeRecoveryEpisodeHasPresentationProgress() -> Bool {
@@ -496,9 +483,8 @@ extension StreamController {
             )
             MirageLogger.client(
                 "Presentation stall persisted (\(kind.rawValue), attempt \(attempt)) for stream \(streamID); " +
-                    "escalating to hard recovery"
+                    "monitoring until decoder error"
             )
-            await requestRecovery(reason: .freezeTimeout)
             return
         case let .soft(kind):
             let metricsSnapshot = metricsTracker.snapshot(now: now)
@@ -509,9 +495,9 @@ extension StreamController {
             )
             MirageLogger.client(
                 "Presentation stall detected (\(kind.rawValue), attempt \(consecutiveFreezeRecoveries)) for stream \(streamID); " +
-                    "requesting bounded recovery"
+                    "clearing local backlog without keyframe request"
             )
-            await requestSoftRecovery(reason: .freezeTimeout)
+            discardQueuedFramesForRecovery()
         }
     }
 }

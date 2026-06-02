@@ -90,13 +90,10 @@ extension StreamContext {
             false
         }
         guard needsKeyframe else { return }
-        let hasTransportRecoveryEvidence = receiverFeedbackHasTransportRecoveryEvidence(feedback)
-        let hasConfirmedNoProgressFreeze = receiverFeedbackHasConfirmedNoProgressFreeze(feedback)
-        if feedback.recoveryCause == .freezeTimeout,
-           !hasTransportRecoveryEvidence,
-           !hasConfirmedNoProgressFreeze {
+        guard feedback.recoveryCause.allowsReceiverFeedbackKeyframeRecovery else {
             MirageLogger.stream(
-                "Receiver freeze keyframe recovery ignored for stream \(streamID) without transport evidence"
+                "Receiver feedback keyframe recovery ignored for non-decode cause " +
+                    "\(feedback.recoveryCause.rawValue) on stream \(streamID)"
             )
             return
         }
@@ -110,8 +107,7 @@ extension StreamContext {
             return
         }
 
-        let bypassesCooldown = recoveryCauseBypassesAdaptiveKeyframeCooldown(feedback.recoveryCause) ||
-            (feedback.recoveryCause == .freezeTimeout && (hasTransportRecoveryEvidence || hasConfirmedNoProgressFreeze))
+        let bypassesCooldown = recoveryCauseBypassesAdaptiveKeyframeCooldown(feedback.recoveryCause)
         let reason = "Receiver feedback keyframe recovery"
         startFrameChainRepair(
             reason: "receiver-feedback-\(feedback.recoveryCause.rawValue)",
@@ -140,17 +136,6 @@ extension StreamContext {
             feedback.reliabilityCauses.contains(.forwardGapStall) ||
             feedback.reliabilityCauses.contains(.noProgressTimeout) ||
             feedback.reliabilityCauses.contains(.keyframeStarvation)
-    }
-
-    private func receiverFeedbackHasConfirmedNoProgressFreeze(_ feedback: ReceiverMediaFeedbackMessage) -> Bool {
-        guard feedback.recoveryCause == .freezeTimeout,
-              feedback.recoveryState == .keyframeRecovery || feedback.recoveryState == .hardRecovery else {
-            return false
-        }
-        let presentedAgeMs = feedback.latestPresentedFrameAgeMs ?? 0
-        return presentedAgeMs >= 1_500 &&
-            feedback.receivedFPS <= 0.5 &&
-            feedback.decodedFPS <= 0.5
     }
 
     private func applyReceiverFrameAcknowledgements(
@@ -639,6 +624,22 @@ extension StreamContext {
 
     private func formatAwdlMetric(_ value: Double) -> String {
         String(format: "%.1f", max(0, value))
+    }
+}
+
+private extension MirageMediaFeedbackRecoveryCause {
+    var allowsReceiverFeedbackKeyframeRecovery: Bool {
+        switch self {
+        case .decodeError,
+             .startupTimeout,
+             .manual,
+             .none:
+            true
+        case .frameLoss,
+             .freezeTimeout,
+             .memoryBudget:
+            false
+        }
     }
 }
 #endif

@@ -396,17 +396,13 @@ extension StreamContext {
     func recoveryCauseBypassesAdaptiveKeyframeCooldown(
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
-        recoveryCause == .decodeError ||
-            recoveryCause == .freezeTimeout ||
-            recoveryCause == .memoryBudget
+        recoveryCause == .decodeError
     }
 
     func recoveryCauseRequiresImmediateChainRepair(
         _ recoveryCause: MirageMediaFeedbackRecoveryCause
     ) -> Bool {
-        recoveryCause == .decodeError ||
-            recoveryCause == .freezeTimeout ||
-            recoveryCause == .memoryBudget
+        recoveryCause == .decodeError
     }
 
     func logRecoveryKeyframeCooldownSuppression(reason: String, now: CFAbsoluteTime) {

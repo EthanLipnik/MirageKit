@@ -372,6 +372,16 @@ extension FrameReassembler {
             hasSignaledGapFrameLoss = true
             frameLossReason = frameLossReason ?? .forwardGapTimeout
         }
+        if timeoutResult.skippedForwardGap {
+            let drainResult = drainDeliverableFramesLocked()
+            if !drainResult.frames.isEmpty {
+                completedFrames.append(contentsOf: drainResult.frames)
+            }
+            if let drainLossReason = drainResult.frameLossReason {
+                shouldSignalFrameLoss = true
+                frameLossReason = frameLossReason ?? drainLossReason
+            }
+        }
         if !awaitingKeyframe,
            shouldPromotePendingKeyframeLocked(now: packetReceivedAt) {
             let expectedFrame = lastCompletedFrame &+ 1
